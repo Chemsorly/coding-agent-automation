@@ -587,6 +587,91 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         error.Should().NotBeNullOrEmpty();
     }
 
+    // ── HandleFetchModelsAsync — error path (non-zero exit, ReadToEndAsync uses CancellationToken.None) ──
+
+    /// <summary>
+    /// Verifies that HandleFetchModelsAsync completes without throwing when kiro-cli exits non-zero.
+    /// The changed line (ReadToEndAsync(CancellationToken.None)) is exercised by this path.
+    /// The error is swallowed internally via ReportFetchModelsError (hub call may fail in test env).
+    /// </summary>
+    [Fact]
+    public async Task HandleFetchModelsAsync_NonZeroExit_CompletesWithoutThrowing()
+    {
+        // Arrange: point kiro-cli at /usr/bin/false which exits with code 1
+        var origPath = Environment.GetEnvironmentVariable(AgentDefaults.EnvKiroCliPath);
+        try
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, "/usr/bin/false");
+            var service = TestAgentWorkerServiceFactory.Create();
+            var request = new FetchModelsRequest { RequestId = "test-req-error" };
+
+            // Act: invoke via reflection — exception from hub is caught internally
+            var act = async () => await (Task)GetPrivateMethod(service, "HandleFetchModelsAsync")
+                .Invoke(service, [request])!;
+
+            // Assert: method must not propagate exceptions (all errors caught internally)
+            await act.Should().NotThrowAsync(
+                "HandleFetchModelsAsync must swallow all errors via ReportFetchModelsError");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, origPath);
+        }
+    }
+
+    // ── HandleFetchModelsAsync — success path (zero exit, InvokeAsync uses CancellationToken.None) ──
+
+    /// <summary>
+    /// Verifies that HandleFetchModelsAsync completes without throwing when kiro-cli exits zero
+    /// and outputs valid JSON. The changed line (InvokeAsync(…, CancellationToken.None)) is
+    /// exercised by this path. The hub InvokeAsync will fail (no connection) but the exception
+    /// is caught by the surrounding try/catch, so the method must still complete normally.
+    /// </summary>
+    [Fact]
+    public async Task HandleFetchModelsAsync_ZeroExitWithValidJson_CompletesWithoutThrowing()
+    {
+        // Arrange: shell script that outputs valid model JSON to stdout and exits 0
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"fake-kiro-{Guid.NewGuid():N}.sh");
+        try
+        {
+            // Write a shell script that echoes valid JSON and exits 0
+            var validJson = """{"models":[{"model_id":"test-model","description":"Test","rate_multiplier":1.0}]}""";
+            await File.WriteAllTextAsync(scriptPath, $"#!/bin/sh\necho '{validJson}'\nexit 0\n");
+            // Make executable — use chmod process to avoid CA1416 platform guard requirement
+            using var chmod = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "chmod",
+                Arguments = $"+x {scriptPath}",
+                UseShellExecute = false
+            });
+            if (chmod is not null) await chmod.WaitForExitAsync();
+
+            var origPath = Environment.GetEnvironmentVariable(AgentDefaults.EnvKiroCliPath);
+            try
+            {
+                Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, scriptPath);
+                var service = TestAgentWorkerServiceFactory.Create();
+                var request = new FetchModelsRequest { RequestId = "test-req-success" };
+
+                // Act: invoke via reflection — InvokeAsync will fail (no hub) but exception is caught
+                var act = async () => await (Task)GetPrivateMethod(service, "HandleFetchModelsAsync")
+                    .Invoke(service, [request])!;
+
+                // Assert: method must complete without propagating exceptions
+                await act.Should().NotThrowAsync(
+                    "HandleFetchModelsAsync must swallow all errors including hub InvokeAsync failures");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(AgentDefaults.EnvKiroCliPath, origPath);
+            }
+        }
+        finally
+        {
+            if (File.Exists(scriptPath)) File.Delete(scriptPath);
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private static AgentJobSlotManager GetSlotManager(AgentWorkerService service)
