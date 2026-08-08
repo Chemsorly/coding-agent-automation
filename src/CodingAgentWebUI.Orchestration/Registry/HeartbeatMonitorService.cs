@@ -66,7 +66,6 @@ public sealed class HeartbeatMonitorService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
-        // TODO: Add tests for clamping logic with HeartbeatSweepIntervalSeconds set to 0, -1, and 4.
         const int MinSweepIntervalSeconds = 5;
         var intervalSeconds = config.HeartbeatSweepIntervalSeconds;
         if (intervalSeconds < MinSweepIntervalSeconds)
