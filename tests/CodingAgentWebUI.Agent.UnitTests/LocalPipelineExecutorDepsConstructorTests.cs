@@ -111,10 +111,8 @@ public class LocalPipelineExecutorDepsConstructorTests
     [Fact]
     public void DepsConstructor_NullOpenIssueContextWriter_DefaultsToConcreteImpl()
     {
-        // OpenIssueContextWriter defaults to new OpenIssueContextWriter(logger) — must not throw
-        // TODO: This test only asserts no throw. A regression removing the null-coalescing default
-        // would leave _openIssueContextWriter null and only surface at runtime when a method is called
-        // on it. Consider asserting the concrete type of the default once it is observable.
+        // OpenIssueContextWriter defaults to new OpenIssueContextWriter(logger) — must not throw.
+        // TODO: Assert the concrete default type once LocalPipelineExecutor exposes it externally.
         var deps = CreateValidDeps(openIssueContextWriter: null);
         var act = () => new LocalPipelineExecutor(deps);
         act.Should().NotThrow();
@@ -123,11 +121,8 @@ public class LocalPipelineExecutorDepsConstructorTests
     [Fact]
     public void DepsConstructor_NullAgentIdentity_DefaultsToMachineName()
     {
-        // AgentIdentity defaults to new AgentId(Environment.MachineName) — must not throw
-        // TODO: Test name documents a specific expected default (Environment.MachineName) that is never
-        // asserted. A regression removing or changing the null-coalescing default in the primary constructor
-        // would not be caught. Consider asserting the default identity value once LocalPipelineExecutor
-        // exposes it externally.
+        // AgentIdentity defaults to new AgentId(Environment.MachineName) — must not throw.
+        // TODO: Assert the fallback value once LocalPipelineExecutor exposes AgentId externally.
         var deps = CreateValidDeps(agentIdentity: null);
         var act = () => new LocalPipelineExecutor(deps);
         act.Should().NotThrow();
@@ -136,10 +131,8 @@ public class LocalPipelineExecutorDepsConstructorTests
     [Fact]
     public void DepsConstructor_NullReporterFactory_DefaultsToConcrete()
     {
-        // ReporterFactory defaults to new PipelineReporterFactory(logger) — must not throw
-        // TODO: This test only asserts no throw. A regression removing the null-coalescing default
-        // would leave the reporter factory null inside PipelineExecutionContextBuilder and only surface
-        // at runtime. Consider asserting the concrete type of the default once it is observable.
+        // ReporterFactory defaults to new PipelineReporterFactory(logger) — must not throw.
+        // TODO: Assert the concrete default type once LocalPipelineExecutor exposes it externally.
         var deps = CreateValidDeps(reporterFactory: null);
         var act = () => new LocalPipelineExecutor(deps);
         act.Should().NotThrow();

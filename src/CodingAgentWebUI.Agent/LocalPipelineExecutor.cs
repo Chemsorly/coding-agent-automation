@@ -111,13 +111,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
         ArgumentNullException.ThrowIfNull(qualityGateValidator);
         ArgumentNullException.ThrowIfNull(logger);
-        // TODO: When called via the backward-compatible constructor, the five required-param null checks above
-        // run first (preserving original parameter names in ArgumentNullException). The primary constructor
-        // then re-checks the same properties on the deps record (deps.Orchestrator, etc.), making those
-        // inner guards unreachable via this path — they remain relevant only for direct deps-constructor
-        // callers that bypass BuildDepsFromParams. If LocalPipelineExecutorDependencies ever gains nullable
-        // required members, the primary constructor's inner guards could silently become the first line of
-        // defence without callers receiving the expected parameter-named exception.
         return new LocalPipelineExecutorDependencies(orchestrator, httpClientFactory, defaultPipelineConfig,
             qualityGateValidator, logger, brainUpdateService, historyService, openIssueContextWriter,
             agentIdentity, reporterFactory);
