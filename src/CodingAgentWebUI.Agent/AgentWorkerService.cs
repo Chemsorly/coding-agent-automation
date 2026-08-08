@@ -565,7 +565,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
             if (process.ExitCode != 0)
             {
-                var stderr = await process.StandardError.ReadToEndAsync(timeoutCts.Token);
+                var stderr = await process.StandardError.ReadToEndAsync(CancellationToken.None); // intentional: process already exited; timeoutCts.Token may be expired
                 await ReportFetchModelsError(request.RequestId, $"kiro-cli exited with code {process.ExitCode}: {stderr}");
                 return;
             }
@@ -585,15 +585,11 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 }
             }
 
-            // TODO: timeoutCts.Token may already be cancelled here if WaitForExitAsync consumed the full
-            // timeout budget. In that case InvokeAsync throws OperationCanceledException immediately and
-            // the orchestrator never receives the result. Consider using CancellationToken.None (or a
-            // fresh token) for this InvokeAsync call since the process has already exited successfully.
             await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
             {
                 RequestId = request.RequestId,
                 Models = models
-            }, timeoutCts.Token);
+            }, CancellationToken.None); // intentional: process already exited successfully; timeoutCts.Token may be expired
         }
         catch (Exception ex)
         {

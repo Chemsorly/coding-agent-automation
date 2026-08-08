@@ -41,8 +41,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     // (CancellationToken.None with // intentional: comment added by this change); (2)
     // ChatJobDispatcher Task.Run(..., cts.Token) change; (3) the three outputBatcher.AddLineAsync
     // calls that now forward chatToken (MCP config, project steering, project secrets log lines
-    // in AgentWorkerService.cs); (4) HandleFetchModelsAsync success path (timeoutCts.Token added
-    // to ReportFetchModelsResult InvokeAsync). Add source-scan tests for these sites to ensure
+    // in AgentWorkerService.cs). Add source-scan tests for these sites to ensure
     // regressions are caught.
 
     /// <summary>
@@ -131,6 +130,50 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             "ReportFetchModelsError must pass CancellationToken.None — called from error paths without ambient token");
         methodBody.Should().Contain("// intentional:",
             "ReportFetchModelsError must have an // intentional: comment explaining why CancellationToken.None is used");
+    }
+
+    /// <summary>
+    /// Verifies that HandleFetchModelsAsync does not pass timeoutCts.Token to any post-exit
+    /// call (stderr read or InvokeAsync). The process has already exited at both call sites,
+    /// so the timeout token's purpose is exhausted and may already be cancelled.
+    /// Both the error path (stderr ReadToEndAsync) and the success path (ReportFetchModelsResult
+    /// InvokeAsync) must use CancellationToken.None with an // intentional: comment.
+    /// </summary>
+    [Fact]
+    public void SourceCode_HandleFetchModelsAsync_PassesCancellationTokenNone()
+    {
+        var source = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
+
+        var methodStart = source.IndexOf("private async Task HandleFetchModelsAsync(", StringComparison.Ordinal);
+        var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
+        if (methodEnd < 0)
+            methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
+        // TODO: The fallback above only handles private/public access modifiers. If a member with
+        // a different access modifier (internal, protected, protected internal, private protected)
+        // or an attribute/doc comment is inserted after HandleFetchModelsAsync, or if it becomes
+        // the last method in the class, both searches may return -1 and source.Substring will throw
+        // ArgumentOutOfRangeException instead of a meaningful assertion failure. Add:
+        // if (methodEnd < 0) methodEnd = source.Length;
+        if (methodEnd < 0) methodEnd = source.Length;
+        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
+
+        // Locate the end of WaitForExitAsync — all post-exit code follows this call
+        var waitForExitEnd = methodBody.IndexOf("WaitForExitAsync(", StringComparison.Ordinal);
+        waitForExitEnd = methodBody.IndexOf(");", waitForExitEnd, StringComparison.Ordinal) + 2;
+        var postExitBody = methodBody.Substring(waitForExitEnd);
+
+        // TODO: This assertion only verifies that CancellationToken.None appears at least once in
+        // postExitBody. There are two post-exit call sites (stderr ReadToEndAsync error path and
+        // ReportFetchModelsResult InvokeAsync success path); a partial revert of one site would
+        // still satisfy this check. Consider asserting count >= 2:
+        // (postExitBody.Split("CancellationToken.None").Length - 1).Should().BeGreaterOrEqualTo(2, ...)
+        postExitBody.Should().Contain("CancellationToken.None",
+            "HandleFetchModelsAsync must use CancellationToken.None for post-exit calls — timeoutCts.Token may be expired after WaitForExitAsync");
+        postExitBody.Should().Contain("// intentional:",
+            "HandleFetchModelsAsync must have an // intentional: comment in post-exit code explaining why CancellationToken.None is used");
+        postExitBody.Should().NotContain("timeoutCts.Token)",
+            "HandleFetchModelsAsync must not pass timeoutCts.Token to any post-exit call (stderr read or InvokeAsync) — the token may already be cancelled");
     }
 
     /// <summary>
