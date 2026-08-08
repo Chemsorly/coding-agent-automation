@@ -1,7 +1,6 @@
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
-using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
@@ -180,9 +179,4 @@ public sealed class DispatchRevertHandler
         }
     }
 
-    // Telemetry helper: expose WorkDistributionTelemetry for callers that moved dispatch logic here.
-    // The drain service calls this directly — keeping the telemetry call in the dispatch flow.
-    internal static void RecordDispatchLatency(DateTimeOffset dispatchTime, DateTimeOffset? originalEnqueuedAt,
-        DateTimeOffset createdAt, string? agentSelector)
-        => WorkDistributionTelemetry.RecordDispatchLatency(dispatchTime, originalEnqueuedAt, createdAt, agentSelector);
 }
