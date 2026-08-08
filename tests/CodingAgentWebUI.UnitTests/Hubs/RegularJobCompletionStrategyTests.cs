@@ -91,11 +91,6 @@ public sealed class RegularJobCompletionStrategyTests
             FailureCategory = null
         };
 
-        // TODO: The Setup matches on the exact fallback string "Agent reported failure". If CompleteRunAsync
-        // is called with a different string the Setup won't match, returning the default null, which silently
-        // exercises the race-condition fallback path instead of failing the test. Use It.IsAny<string?>() for
-        // the Setup and capture/assert the actual argument separately (e.g. via a Callback), or additionally
-        // assert that TransitionWorkItemAsync was NOT called directly to confirm the normal path was taken.
         _lifecycleManager
             .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
                 "Agent reported failure", FailureReason.AgentError))
@@ -144,12 +139,6 @@ public sealed class RegularJobCompletionStrategyTests
             FailureCategory = null
         };
 
-        // TODO: FailureReason = null means JobCompletionMapper.Apply copies null to run.FailureReason.
-        // The defensive-cleanup path calls CompletionOutcomeResolver.Resolve again with run.FailureReason
-        // (null), producing "Agent reported failure (defensive cleanup after exception)" from the null
-        // branch — but the normal resolve path also produces a null-based fallback. This test cannot
-        // distinguish the two paths. Use a non-null FailureReason in the payload so the normal path
-        // would produce that reason, while the defensive path independently hits its own fallback string.
         _lifecycleManager
             .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
                 It.IsAny<string?>(), It.IsAny<FailureReason?>()))
@@ -181,9 +170,6 @@ public sealed class RegularJobCompletionStrategyTests
 
         _facade.Verify(f => f.RemoveRun("job-1"), Times.Once);
         _facade.Verify(f => f.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId), Times.Once);
-        // TODO: No assertion that TransitionWorkItemAsync is called with WorkItemStatus.Succeeded during
-        // the defensive path. A change that drops or mis-routes that call would not be caught here.
-        // Add: _facade.Verify(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Succeeded, ...), Times.Once)
     }
 
     // ── JobCompletionMapper ───────────────────────────────────────────────────

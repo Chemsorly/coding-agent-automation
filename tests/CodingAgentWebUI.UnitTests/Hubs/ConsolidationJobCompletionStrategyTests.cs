@@ -113,9 +113,6 @@ public sealed class ConsolidationJobCompletionStrategyTests
 
         _facade.Verify(f => f.RemoveRun("job-1"), Times.Once);
         _facade.Verify(f => f.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId), Times.Once);
-        // TODO: RemoveRun and MarkIssueComplete are called unconditionally for all terminal steps.
-        // Add tests verifying cleanup is also invoked for Failed and Cancelled steps so that a future
-        // guard added around the cleanup calls doesn't silently regress those paths.
     }
 
     // ── Error handling ────────────────────────────────────────────────────────

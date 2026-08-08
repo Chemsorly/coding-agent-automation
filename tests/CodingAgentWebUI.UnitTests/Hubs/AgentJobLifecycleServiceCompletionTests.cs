@@ -168,12 +168,6 @@ public sealed class AgentJobLifecycleServiceCompletionTests
 
     // ── Regular path ──────────────────────────────────────────────────────────
 
-    // TODO: Add a test for the regular path where FinalStep=Failed and both run.FailureReason and
-    // payload.FailureReason are null, verifying that the fallback string "Agent reported failure"
-    // is passed to CompleteRunAsync. Currently missing: if the fallback string were changed or the
-    // wrong fallback were passed to CompletionOutcomeResolver.Resolve for this path, no test would
-    // catch it. (Flagged by TestQualityReviewer — WARNING)
-
     [Fact]
     public async Task Regular_completed_step_calls_CompleteRunAsync_with_Succeeded()
     {
@@ -313,9 +307,6 @@ public sealed class AgentJobLifecycleServiceCompletionTests
     // TODO: Add a symmetric test for the orphaned path where FinalStep=Failed and
     // payload.FailureReason is a non-null explicit string, verifying it is propagated to
     // TransitionWorkItemAsync (i.e., the explicit reason takes precedence over the fallback).
-    // Currently missing: a change that discarded payload.FailureReason in the orphaned path and
-    // always used the fallback would not be caught by the existing test suite.
-    // (Flagged by TestQualityReviewer — WARNING)
     [Fact]
     public async Task Orphaned_failed_step_transitions_WorkItem_to_Failed_with_fallback()
     {
@@ -383,10 +374,6 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
 
         _facade.Setup(f => f.GetRun("job-1")).Returns(run);
-        // TODO: _facade.TransitionWorkItemAsync is not set up here. ConsolidationJobCompletionStrategy
-        // calls it internally; Moq's default returns Task.CompletedTask so the test passes silently.
-        // In strict mock mode this would throw. Consider adding an explicit setup or verifying the call
-        // to prevent confusing failures if the mock configuration changes.
 
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
