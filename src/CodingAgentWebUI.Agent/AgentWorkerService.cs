@@ -345,14 +345,17 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             CleanupChatSecrets();
         }
 
-        await ReportChatCompletedAsync(message.SessionId, exitCode, error);
-
-        // TODO: ReportChatCompletedAsync and ReleaseChatSlot() execute outside the try/finally
-        // block. If ReportChatCompletedAsync throws (e.g. SignalR connection dropped),
-        // ReleaseChatSlot() is never called, leaving the agent permanently stuck in Busy state.
-        // Consider wrapping both in a nested try/finally to guarantee slot release under all
-        // failure conditions (consistent with the CleanupChatSecrets pattern above).
-        _slotManager.ReleaseChatSlot();
+        try
+        {
+            await ReportChatCompletedAsync(message.SessionId, exitCode, error);
+        }
+        finally
+        {
+            // Always release the chat slot — runs even if ReportChatCompletedAsync throws
+            // (e.g. SignalR connection dropped). Without this guarantee the agent would be
+            // permanently stuck in Busy state. Mirrors the CleanupChatSecrets pattern above.
+            _slotManager.ReleaseChatSlot();
+        }
 
         // Do NOT send AgentReady — the chat session is still active.
         // The agent will be released when CancelChat is received (End Chat / navigate away).
