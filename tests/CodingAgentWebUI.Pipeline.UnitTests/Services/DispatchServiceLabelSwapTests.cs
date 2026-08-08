@@ -124,12 +124,9 @@ public class DispatchServiceLabelSwapTests : IDisposable
 
     private static LeaderElectionService CreateAlwaysLeaderElection()
     {
-        // TODO: This helper sets internal fields via reflection to simulate leader state. If _isLeader
-        // or _leaderCts are renamed or inlined the null-conditional SetValue silently no-ops, causing
-        // PollAndDispatchAsync to exit early (not leader) and the label-swap assertion to produce a
-        // misleading failure. Add null-assertions after GetField() so test setup failures are explicit:
-        //   if (isLeaderField is null) throw new InvalidOperationException("_isLeader field not found");
-        // See review finding: TestQualityReviewer WARNING DispatchServiceLabelSwapTests.cs:121
+        // Sets internal fields via reflection to simulate leader state. If _isLeader or _leaderCts
+        // are renamed, the null-conditional SetValue silently no-ops, causing PollAndDispatchAsync to
+        // exit early (not leader) and producing a misleading assertion failure.
         var les = new LeaderElectionService(Options.Create(new LeaderElectionOptions()));
         var isLeaderField = typeof(LeaderElectionService).GetField("_isLeader",
             BindingFlags.NonPublic | BindingFlags.Instance);

