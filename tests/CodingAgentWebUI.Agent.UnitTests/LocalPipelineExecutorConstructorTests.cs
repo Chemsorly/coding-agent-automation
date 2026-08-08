@@ -71,6 +71,9 @@ public class LocalPipelineExecutorConstructorTests
     public void Ctor_WithExplicitAgentIdentity_UsesProvidedIdentity()
     {
         // Verifies the agentIdentity optional param is accepted without error
+        // TODO: This test only asserts no throw. A regression that silently drops the provided AgentId
+        // (e.g. always defaulting to Environment.MachineName) would not be caught. Consider asserting
+        // that the identity is actually used when LocalPipelineExecutor exposes an observable AgentId.
         var identity = new AgentId("test-agent-id");
         var act = () => new LocalPipelineExecutor(
             _orchestrator, _httpClientFactory, _config, _validator, _logger,
@@ -82,6 +85,10 @@ public class LocalPipelineExecutorConstructorTests
     public void Ctor_NullAgentIdentity_DefaultsToMachineName()
     {
         // Null agentIdentity falls back to new AgentId(Environment.MachineName) — just verify no throw
+        // TODO: Test name documents a specific expected default (Environment.MachineName) that is never
+        // asserted. A regression removing or changing the null-coalescing default in the primary constructor
+        // would not be caught. Consider asserting the default identity value once LocalPipelineExecutor
+        // exposes it externally.
         var act = () => new LocalPipelineExecutor(
             _orchestrator, _httpClientFactory, _config, _validator, _logger,
             agentIdentity: null);
