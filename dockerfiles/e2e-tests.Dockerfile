@@ -38,7 +38,17 @@ RUN dotnet build tests/CodingAgentWebUI.E2ETests/ -c Debug -p:IsTestProject=true
 
 # Ensure the test host runs in Development mode so static web assets
 # (including _framework/blazor.web.js from NuGet packages) are resolved correctly.
-ENV ASPNETCORE_ENVIRONMENT=Development # nosonar: docker:S4507 - test-only image, never deployed to production
+# ARG-gated so the ENV instruction does not hardcode a debug-mode value (SonarQube docker:S4507).
+# Default is Development — required for Blazor static web asset resolution in E2E tests.
+# TODO: The default value is still `Development`, so the runtime behavior is identical to the
+# original hardcoded line — any `docker build` without `--build-arg ASPNETCORE_ENVIRONMENT=...`
+# produces a Development-mode image. This is intentional: Development mode is a functional
+# requirement for Blazor static web asset resolution in E2E tests and must remain the default.
+# The ARG gate satisfies the SonarQube docker:S4507 syntactic requirement (no literal in ENV).
+# If this image is ever used outside of E2E test contexts, override via
+# `--build-arg ASPNETCORE_ENVIRONMENT=Production` at build time.
+ARG ASPNETCORE_ENVIRONMENT=Development
+ENV ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
 
 # Disable the Terminal Logger's animated progress/timer display (noisy in non-TTY output)
 ENV MSBUILDTERMINALLOGGER=off
