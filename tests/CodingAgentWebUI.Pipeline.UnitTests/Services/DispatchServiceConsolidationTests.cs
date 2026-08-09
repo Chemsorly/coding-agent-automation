@@ -80,6 +80,7 @@ public class DispatchServiceConsolidationTests : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this);
         using var db = new TestPipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
     }
@@ -1162,18 +1163,20 @@ public class DispatchServiceConsolidationTests : IDisposable
         var templateProvider = BuildTemplateProvider();
 
         return new ConsolidationDispatchHandler(
-            dbFactory, _leaderElection, lifecycle, templateProvider, options, transitionService,
-            _mockRunStore.Object,
-            _mockConsolidationService.Object,
-            new ConsolidationJobPreparationService(
-                _mockProviderConfigStore.Object,
+            new ConsolidationDispatchHandlerDependencies(
+                dbFactory, _leaderElection, lifecycle, templateProvider, Mock.Of<IConfiguration>(), transitionService,
+                _mockRunStore.Object,
+                _mockConsolidationService.Object,
+                new ConsolidationJobPreparationService(
+                    _mockProviderConfigStore.Object,
+                    _mockProjectStore.Object,
+                    _mockTokenVending.Object,
+                    Serilog.Log.Logger,
+                    _mockAgentProfileStore.Object),
+                _mockPipelineConfigStore.Object,
                 _mockProjectStore.Object,
-                _mockTokenVending.Object,
-                Serilog.Log.Logger,
                 _mockAgentProfileStore.Object),
-            _mockPipelineConfigStore.Object,
-            _mockProjectStore.Object,
-            _mockAgentProfileStore.Object);
+            options);
     }
 
     private ConsolidationDispatchHandler CreateServiceWithPvcPool(string[] pvcPool, ILabelService? labelService = null)
@@ -1196,18 +1199,20 @@ public class DispatchServiceConsolidationTests : IDisposable
         var templateProvider = BuildTemplateProvider();
 
         return new ConsolidationDispatchHandler(
-            _dbFactory, _leaderElection, lifecycle, templateProvider, options, _transitionService,
-            _mockRunStore.Object,
-            _mockConsolidationService.Object,
-            new ConsolidationJobPreparationService(
-                _mockProviderConfigStore.Object,
+            new ConsolidationDispatchHandlerDependencies(
+                _dbFactory, _leaderElection, lifecycle, templateProvider, Mock.Of<IConfiguration>(), _transitionService,
+                _mockRunStore.Object,
+                _mockConsolidationService.Object,
+                new ConsolidationJobPreparationService(
+                    _mockProviderConfigStore.Object,
+                    _mockProjectStore.Object,
+                    _mockTokenVending.Object,
+                    Serilog.Log.Logger,
+                    _mockAgentProfileStore.Object),
+                _mockPipelineConfigStore.Object,
                 _mockProjectStore.Object,
-                _mockTokenVending.Object,
-                Serilog.Log.Logger,
                 _mockAgentProfileStore.Object),
-            _mockPipelineConfigStore.Object,
-            _mockProjectStore.Object,
-            _mockAgentProfileStore.Object);
+            options);
     }
 
     private static JobTemplateStore BuildTemplateProvider()
@@ -1255,18 +1260,20 @@ public class DispatchServiceConsolidationTests : IDisposable
         var templateProvider = BuildThreeLabelTemplateProvider();
 
         return new ConsolidationDispatchHandler(
-            _dbFactory, _leaderElection, lifecycle, templateProvider, options, _transitionService,
-            _mockRunStore.Object,
-            _mockConsolidationService.Object,
-            new ConsolidationJobPreparationService(
-                _mockProviderConfigStore.Object,
+            new ConsolidationDispatchHandlerDependencies(
+                _dbFactory, _leaderElection, lifecycle, templateProvider, Mock.Of<IConfiguration>(), _transitionService,
+                _mockRunStore.Object,
+                _mockConsolidationService.Object,
+                new ConsolidationJobPreparationService(
+                    _mockProviderConfigStore.Object,
+                    _mockProjectStore.Object,
+                    _mockTokenVending.Object,
+                    Serilog.Log.Logger,
+                    _mockAgentProfileStore.Object),
+                _mockPipelineConfigStore.Object,
                 _mockProjectStore.Object,
-                _mockTokenVending.Object,
-                Serilog.Log.Logger,
                 _mockAgentProfileStore.Object),
-            _mockPipelineConfigStore.Object,
-            _mockProjectStore.Object,
-            _mockAgentProfileStore.Object);
+            options);
     }
 
     private async Task InsertConsolidationWorkItem(Guid id, string runId, string selector)

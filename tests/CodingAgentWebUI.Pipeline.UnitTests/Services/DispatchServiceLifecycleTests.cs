@@ -428,13 +428,15 @@ public class DispatchServiceLifecycleTests : IDisposable
         var workItemId = Guid.NewGuid();
         var enqueueTime = DateTimeOffset.UtcNow.AddHours(-4);
 
-        var run = PipelineRun.CreateImplementation(
-            runId: workItemId.ToString(),
-            issueIdentifier: "owner/repo#bug14",
-            issueTitle: "BUG-14 test",
-            issueProviderConfigId: "provider-1",
-            repoProviderConfigId: "repo-1",
-            startedAt: enqueueTime);
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = workItemId.ToString(),
+            IssueIdentifier = "owner/repo#bug14",
+            IssueTitle = "BUG-14 test",
+            IssueProviderConfigId = "provider-1",
+            RepoProviderConfigId = "repo-1",
+            StartedAt = enqueueTime
+        });
 
         var runService = new OrchestratorRunService(new Mock<Serilog.ILogger>().Object);
         runService.AddRun(run);
@@ -474,13 +476,15 @@ public class DispatchServiceLifecycleTests : IDisposable
         var workItemId = Guid.NewGuid();
         var enqueueTime = DateTimeOffset.UtcNow.AddHours(-4);
 
-        var run = PipelineRun.CreateImplementation(
-            runId: workItemId.ToString(),
-            issueIdentifier: "owner/repo#duration",
-            issueTitle: "Duration test",
-            issueProviderConfigId: "provider-1",
-            repoProviderConfigId: "repo-1",
-            startedAt: enqueueTime);
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = workItemId.ToString(),
+            IssueIdentifier = "owner/repo#duration",
+            IssueTitle = "Duration test",
+            IssueProviderConfigId = "provider-1",
+            RepoProviderConfigId = "repo-1",
+            StartedAt = enqueueTime
+        });
 
         var runService = new OrchestratorRunService(new Mock<Serilog.ILogger>().Object);
         runService.AddRun(run);

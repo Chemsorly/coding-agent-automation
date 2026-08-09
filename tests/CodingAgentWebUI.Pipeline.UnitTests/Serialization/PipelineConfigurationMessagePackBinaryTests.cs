@@ -13,6 +13,9 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Serialization;
 /// </summary>
 public class PipelineConfigurationMessagePackBinaryTests
 {
+    private static readonly string[] s_CustomPathInjected = new[] { "custom/path", "another/path" };
+    private static readonly string[] s_InjectedPaths = new[] { ".injected" };
+
     private static readonly MessagePackSerializerOptions MsgPackOptions =
         ContractlessStandardResolverAllowPrivate.Options;
 
@@ -86,8 +89,8 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.CiNotStartedMaxRetries.Should().Be(10);
         deserialized.StallWarningInterval.Should().Be(TimeSpan.FromMinutes(5));
         deserialized.StallPollInterval.Should().Be(TimeSpan.FromSeconds(15));
-        deserialized.BlacklistedPaths.Should().BeEquivalentTo(new[] { "custom/path", "another/path" });
-        deserialized.PipelineInjectedPaths.Should().BeEquivalentTo(new[] { ".injected" });
+        deserialized.BlacklistedPaths.Should().BeEquivalentTo(s_CustomPathInjected);
+        deserialized.PipelineInjectedPaths.Should().BeEquivalentTo(s_InjectedPaths);
         deserialized.AnalysisCommitThreshold.Should().Be(50);
         deserialized.FailedWorkspaceRetentionDays.Should().Be(14);
         deserialized.BrainReadOnly.Should().BeTrue();

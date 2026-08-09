@@ -142,7 +142,9 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
 
         try
         {
-            await DispatchToAgentAsync(run, type, templateId, feedbackDataJson, workspacePath, agent, liveConfig, ct);
+            await DispatchToAgentAsync(
+                new ConsolidationDispatchContext(run, type, templateId, feedbackDataJson, workspacePath, liveConfig),
+                agent, ct);
             return ConsolidationDispatchResult.Dispatched;
         }
         catch (Exception ex)
@@ -217,7 +219,9 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             // Load live config at dispatch time (same fix as TryDispatchAsync — avoids stale startup singleton)
             var liveConfig = await _configStore.LoadPipelineConfigAsync(ct);
 
-            await DispatchToAgentAsync(run, type, templateId, feedbackDataJson, workspacePath, agent, liveConfig, ct);
+            await DispatchToAgentAsync(
+                new ConsolidationDispatchContext(run, type, templateId, feedbackDataJson, workspacePath, liveConfig),
+                agent, ct);
 
             // Transition run from Queued → Running after successful dispatch
             // (previously done in the deleted DrainConsolidationJobsAsync)
@@ -253,47 +257,54 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         _jobDispatcher.RemoveJob(runId);
     }
 
+    /// <summary>
+    /// Groups the parameters of <see cref="DispatchToAgentAsync"/> that describe what to dispatch,
+    /// reducing its parameter count (S107).
+    /// </summary>
+    private sealed record ConsolidationDispatchContext(
+        ConsolidationRun Run,
+        ConsolidationRunType Type,
+        TemplateId? TemplateId,
+        string? FeedbackDataJson,
+        string WorkspacePath,
+        PipelineConfiguration LiveConfig);
+
     private async Task DispatchToAgentAsync(
-        ConsolidationRun run,
-        ConsolidationRunType type,
-        TemplateId? templateId,
-        string? feedbackDataJson,
-        string workspacePath,
+        ConsolidationDispatchContext ctx,
         AgentEntry agent,
-        PipelineConfiguration liveConfig,
         CancellationToken ct)
     {
         // Delegate config resolution and token vending to shared preparer
-        var preparation = await _jobPreparer.PrepareAsync(type, templateId, agent.Labels, ct);
+        var preparation = await _jobPreparer.PrepareAsync(ctx.Type, ctx.TemplateId, agent.Labels, ct);
 
         // Resolve last successful run timestamp for this type+template
-        var lastSuccessfulRunUtc = await GetLastSuccessfulRunUtcAsync(type, templateId, ct);
+        var lastSuccessfulRunUtc = await GetLastSuccessfulRunUtcAsync(ctx.Type, ctx.TemplateId, ct);
 
         // Build the ConsolidationJobMessage
         var message = new ConsolidationJobMessage
         {
-            JobId = run.RunId,
-            Type = type,
-            TemplateId = templateId?.Value,
-            TemplateName = run.TemplateName,
+            JobId = ctx.Run.RunId,
+            Type = ctx.Type,
+            TemplateId = ctx.TemplateId?.Value,
+            TemplateName = ctx.Run.TemplateName,
             ProviderConfigs = preparation.ProviderConfigs,
-            PipelineConfiguration = liveConfig,
+            PipelineConfiguration = ctx.LiveConfig,
             LastSuccessfulRunUtc = lastSuccessfulRunUtc?.UtcDateTime,
-            FeedbackDataJson = feedbackDataJson,
-            WorkspacePath = workspacePath,
+            FeedbackDataJson = ctx.FeedbackDataJson,
+            WorkspacePath = ctx.WorkspacePath,
             TraceContext = CaptureTraceContext(),
-            AutoDispatch = run.AutoDispatch
+            AutoDispatch = ctx.Run.AutoDispatch
         };
 
         // Assign the job to the agent
-        agent.ActiveJobId = run.RunId;
+        agent.ActiveJobId = ctx.Run.RunId;
         _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
 
         await _agentComm.AssignConsolidationJobAsync(agent.ConnectionId, agent.AgentId, message, ct);
 
         _logger.Information(
             "Consolidation job {RunId} dispatched to agent {AgentId} (type={Type}, template={TemplateName})",
-            run.RunId, agent.AgentId, type, run.TemplateName);
+            ctx.Run.RunId, agent.AgentId, ctx.Type, ctx.Run.TemplateName);
     }
 
     private async Task<ConsolidationRun?> LoadRunAsync(string runId, CancellationToken ct)

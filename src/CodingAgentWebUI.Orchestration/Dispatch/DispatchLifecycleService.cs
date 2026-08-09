@@ -155,7 +155,7 @@ internal sealed class DispatchLifecycleService
         }
 
         // Create K8s Job via JobSpecBuilder
-        if (!await CreateK8sJobAsync(db, item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, logPrefix, onFailure, ct))
+        if (!await CreateK8sJobAsync(db, new K8sJobCreationContext(item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, logPrefix, onFailure), ct))
             return;
 
         // Create per-job K8s Secret if project has secrets
@@ -214,7 +214,7 @@ internal sealed class DispatchLifecycleService
     /// Saves the Dispatched status transition, records metrics, updates concurrency tracking,
     /// and invokes the variant-specific post-dispatch success callback.
     /// </summary>
-    private async Task FinalizeDispatchAsync(
+    private static async Task FinalizeDispatchAsync(
         PipelineDbContext db,
         WorkItemEntity workItem,
         PendingWorkItemProjection item,
@@ -307,59 +307,66 @@ internal sealed class DispatchLifecycleService
     // ── K8s Job Creation ────────────────────────────────────────────────
 
     /// <summary>
+    /// Groups the parameters of <see cref="CreateK8sJobAsync"/> related to the job being created,
+    /// reducing its parameter count (S107).
+    /// </summary>
+    private sealed record K8sJobCreationContext(
+        PendingWorkItemProjection Item,
+        WorkItemEntity WorkItem,
+        JobTemplate Template,
+        string JobName,
+        string? ClaimedPvc,
+        List<string> AvailablePvcs,
+        Dictionary<string, string>? ProjectSecrets,
+        string LogPrefix,
+        Func<Guid, string, Task>? OnFailure);
+
+    /// <summary>
     /// Creates a K8s Job via JobSpecBuilder. Handles 409 Conflict (idempotent) and general failures
     /// (releases PVC, fails WorkItem). Returns true if job creation succeeded (or 409), false if the
     /// caller should return early due to an error.
     /// </summary>
     private async Task<bool> CreateK8sJobAsync(
         PipelineDbContext db,
-        PendingWorkItemProjection item,
-        WorkItemEntity workItem,
-        JobTemplate template,
-        string jobName,
-        string? claimedPvc,
-        List<string> availablePvcs,
-        Dictionary<string, string>? projectSecrets,
-        string logPrefix,
-        Func<Guid, string, Task>? onFailure,
+        K8sJobCreationContext ctx,
         CancellationToken ct)
     {
         try
         {
             var buildCtx = new JobSpecBuilder.BuildContext
             {
-                WorkItemId = item.Id,
-                AgentSelector = item.AgentSelector,
-                TimeoutSeconds = item.TimeoutSeconds,
-                JobName = jobName,
-                ClaimedPvc = claimedPvc,
+                WorkItemId = ctx.Item.Id,
+                AgentSelector = ctx.Item.AgentSelector,
+                TimeoutSeconds = ctx.Item.TimeoutSeconds,
+                JobName = ctx.JobName,
+                ClaimedPvc = ctx.ClaimedPvc,
                 OrchestratorUrl = _options.OrchestratorUrl,
                 AgentApiKeySecretName = _options.AgentApiKeySecretName,
                 AgentServiceAccountName = _options.AgentServiceAccountName,
                 Namespace = _options.Namespace,
                 OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
-                ProjectSecrets = projectSecrets
+                ProjectSecrets = ctx.ProjectSecrets
             };
-            var job = JobSpecBuilder.Build(template, buildCtx);
+            var job = JobSpecBuilder.Build(ctx.Template, buildCtx);
             await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
         }
         catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
             // 409 Conflict = Job already exists = success (idempotent)
-            Log.Information("DispatchLifecycleService: K8s Job {JobName} already exists (409 Conflict), treating as success", jobName);
+            Log.Information("DispatchLifecycleService: K8s Job {JobName} already exists (409 Conflict), treating as success", ctx.JobName);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "DispatchLifecycleService: failed to create K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", jobName, logPrefix, item.Id);
-            if (claimedPvc is not null)
+            Log.Error(ex, "DispatchLifecycleService: failed to create K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", ctx.JobName, ctx.LogPrefix, ctx.Item.Id);
+            if (ctx.ClaimedPvc is not null)
             {
-                workItem.ClaimedPvcName = null;
-                availablePvcs.Add(claimedPvc);
+                ctx.WorkItem.ClaimedPvcName = null;
+                ctx.AvailablePvcs.Add(ctx.ClaimedPvc);
                 await db.SaveChangesAsync(ct);
             }
-            await FailWorkItemAsync(item.Id, $"K8s Job creation failed: {ex.Message}", ct);
-            if (onFailure is not null)
-                await onFailure(item.Id, $"K8s Job creation failed: {ex.Message}");
+            await FailWorkItemAsync(ctx.Item.Id, $"K8s Job creation failed: {ex.Message}", ct);
+            if (ctx.OnFailure is not null)
+                await ctx.OnFailure(ctx.Item.Id, $"K8s Job creation failed: {ex.Message}");
             return false;
         }
 

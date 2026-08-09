@@ -40,11 +40,7 @@ public sealed class GitLabValidationService
             return inputError;
 
         // Input is valid — parse is guaranteed to succeed after ValidateInputParameters
-        // TODO: Prefer int.Parse(projectId) here to surface any drift between ValidateInputParameters
-        // and this call site immediately (throws instead of silently defaulting numericProjectId to 0,
-        // which is a valid GitLab project ID and would cause a mis-targeted API call).
-        // See review finding: DotNetSpecialist WARNING GitLabValidationService.cs:42
-        int.TryParse(projectId, out var numericProjectId);
+        var numericProjectId = int.Parse(projectId);
 
         IGitLabClient client;
         try

@@ -9,6 +9,8 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// </summary>
 public class OutputBatcherHubExtensionsTests
 {
+    private static readonly string[] s_RemainingLines = new[] { "remaining-line-1", "remaining-line-2" };
+
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
 
     [Fact]
@@ -113,7 +115,7 @@ public class OutputBatcherHubExtensionsTests
 
         // Assert
         flushedBatches.Should().ContainSingle()
-            .Which.Should().BeEquivalentTo(new[] { "remaining-line-1", "remaining-line-2" });
+            .Which.Should().BeEquivalentTo(s_RemainingLines);
     }
 
     [Fact]

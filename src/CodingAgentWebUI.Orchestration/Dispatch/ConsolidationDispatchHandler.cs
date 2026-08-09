@@ -38,62 +38,43 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
-    public ConsolidationDispatchHandler(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        ILeaderElectionService leaderElection,
-        DispatchLifecycleService lifecycle,
-        JobTemplateStore templateProvider,
-        IConfiguration configuration,
-        WorkItemTransitionService transitionService,
-        IConsolidationRunStore? consolidationRunStore = null,
-        IConsolidationService? consolidationService = null,
-        IConsolidationJobPreparationService? consolidationJobPreparer = null,
-        IPipelineConfigStore? pipelineConfigStore = null,
-        IProjectStore? projectStore = null,
-        IAgentProfileStore? agentProfileStore = null)
+    public ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps)
     {
-        _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
-        _lifecycle = lifecycle;
-        _transitionService = transitionService;
-        _consolidationRunStore = consolidationRunStore;
-        _consolidationService = consolidationService;
-        _consolidationJobPreparer = consolidationJobPreparer;
-        _pipelineConfigStore = pipelineConfigStore;
-        _projectStore = projectStore;
-        _options = DispatchServiceOptionsFactory.Create(configuration);
-        _eligibilityChecker = new DispatchEligibilityChecker(templateProvider, agentProfileStore);
+        ArgumentNullException.ThrowIfNull(deps);
+        _dbFactory = deps.DbFactory;
+        _leaderElection = deps.LeaderElection;
+        _lifecycle = deps.Lifecycle;
+        _transitionService = deps.TransitionService;
+        _consolidationRunStore = deps.ConsolidationRunStore;
+        _consolidationService = deps.ConsolidationService;
+        _consolidationJobPreparer = deps.ConsolidationJobPreparer;
+        _pipelineConfigStore = deps.PipelineConfigStore;
+        _projectStore = deps.ProjectStore;
+        _options = DispatchServiceOptionsFactory.Create(deps.Configuration);
+        _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
         _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
     }
 
     /// <summary>
-    /// Test constructor accepting a pre-built JobTemplateStore.
+    /// Test constructor accepting a pre-built <see cref="DispatchServiceOptions"/> instead of
+    /// <see cref="IConfiguration"/>. Accepts a 2-parameter signature (deps + options) to stay
+    /// well within the S107 threshold.
     /// </summary>
-    internal ConsolidationDispatchHandler(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        ILeaderElectionService leaderElection,
-        DispatchLifecycleService lifecycle,
-        JobTemplateStore templateProvider,
-        DispatchServiceOptions options,
-        WorkItemTransitionService transitionService,
-        IConsolidationRunStore? consolidationRunStore = null,
-        IConsolidationService? consolidationService = null,
-        IConsolidationJobPreparationService? consolidationJobPreparer = null,
-        IPipelineConfigStore? pipelineConfigStore = null,
-        IProjectStore? projectStore = null,
-        IAgentProfileStore? agentProfileStore = null)
+    internal ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps, DispatchServiceOptions options)
     {
-        _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
-        _lifecycle = lifecycle;
-        _transitionService = transitionService;
-        _consolidationRunStore = consolidationRunStore;
-        _consolidationService = consolidationService;
-        _consolidationJobPreparer = consolidationJobPreparer;
-        _pipelineConfigStore = pipelineConfigStore;
-        _projectStore = projectStore;
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(options);
+        _dbFactory = deps.DbFactory;
+        _leaderElection = deps.LeaderElection;
+        _lifecycle = deps.Lifecycle;
+        _transitionService = deps.TransitionService;
+        _consolidationRunStore = deps.ConsolidationRunStore;
+        _consolidationService = deps.ConsolidationService;
+        _consolidationJobPreparer = deps.ConsolidationJobPreparer;
+        _pipelineConfigStore = deps.PipelineConfigStore;
+        _projectStore = deps.ProjectStore;
         _options = options;
-        _eligibilityChecker = new DispatchEligibilityChecker(templateProvider, agentProfileStore);
+        _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
         _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
     }
 

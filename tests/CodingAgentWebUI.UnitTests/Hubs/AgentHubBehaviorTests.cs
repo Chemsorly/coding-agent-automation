@@ -14,6 +14,8 @@ namespace CodingAgentWebUI.UnitTests.Hubs;
 /// <summary>Unit tests for <see cref="AgentHub"/> behavior (method logic, not models).</summary>
 public sealed class AgentHubBehaviorTests : IDisposable
 {
+    private static readonly string[] s_SecurityStyleAgents = new[] { "security-agent", "style-agent" };
+
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
     private readonly Mock<IConsolidationService> _mockConsolidation = new();
@@ -26,7 +28,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     private AgentHub CreateHub(string connectionId = "conn-1")
     {
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             Mock.Of<IChangeNotifier>(),
@@ -38,7 +40,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -971,7 +973,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var changeNotifier = Mock.Of<IChangeNotifier>();
         var chatNotifier = Mock.Of<IChatNotifier>();
 
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             chatNotifier,
             changeNotifier,
@@ -983,7 +985,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -997,7 +999,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var changeNotifier = Mock.Of<IChangeNotifier>();
         var chatNotifier = Mock.Of<IChatNotifier>();
 
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             chatNotifier,
             changeNotifier,
@@ -1009,7 +1011,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            new AgentOrphanRecoveryService(_mockFacade.Object, changeNotifier, _mockLogger.Object));
+            new AgentOrphanRecoveryService(_mockFacade.Object, changeNotifier, _mockLogger.Object)));
 
         // Build a real HttpContext with the agentId query param
         var httpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();
@@ -1036,7 +1038,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         public Microsoft.AspNetCore.Http.HttpContext? HttpContext { get; set; }
     }
 
-    private IAgentJobLifecycleService CreateRealLifecycleService(IChangeNotifier changeNotifier)
+    private AgentJobLifecycleService CreateRealLifecycleService(IChangeNotifier changeNotifier)
     {
         var issueOps = new AgentIssueOperations(
             _mockFacade.Object,
@@ -1340,7 +1342,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.CodeReviewCriticalCount.Should().Be(3);
         run.CodeReviewWarningCount.Should().Be(5);
         run.CodeReviewSuggestionCount.Should().Be(7);
-        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "security-agent", "style-agent" });
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(s_SecurityStyleAgents);
     }
 
     [Fact]
@@ -1472,7 +1474,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var encoded = "security-agent\x1Fstyle-agent";
         await hub.ReportStepTransition("job-1", PipelineStep.ReviewingCode, DateTimeOffset.UtcNow,
             new Dictionary<string, string> { ["CodeReviewAgentsRun"] = encoded });
-        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "security-agent", "style-agent" });
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(s_SecurityStyleAgents);
     }
 
     [Fact]

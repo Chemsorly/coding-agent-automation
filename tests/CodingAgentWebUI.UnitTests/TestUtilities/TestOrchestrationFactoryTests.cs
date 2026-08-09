@@ -71,13 +71,15 @@ public class TestOrchestrationFactoryTests
     public async Task NullHistoryService_AddRunToHistoryAsync_PersistsRun()
     {
         var svc = new TestOrchestrationFactory.NullHistoryService();
-        var run = PipelineRun.CreateImplementation(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: "owner/repo#1",
-            issueTitle: "Test issue",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            initiatedBy: "test");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "Test issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "test"
+        });
         run.CurrentStep = PipelineStep.Completed;
         run.MarkCompleted();
 
@@ -96,13 +98,15 @@ public class TestOrchestrationFactoryTests
         // Add 3 runs
         for (int i = 1; i <= 3; i++)
         {
-            var run = PipelineRun.CreateImplementation(
-                runId: Guid.NewGuid().ToString(),
-                issueIdentifier: $"owner/repo#{i}",
-                issueTitle: $"Issue {i}",
-                issueProviderConfigId: "ip-1",
-                repoProviderConfigId: "rp-1",
-                initiatedBy: "test");
+            var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            {
+                RunId = Guid.NewGuid().ToString(),
+                IssueIdentifier = $"owner/repo#{i}",
+                IssueTitle = $"Issue {i}",
+                IssueProviderConfigId = "ip-1",
+                RepoProviderConfigId = "rp-1",
+                InitiatedBy = "test"
+            });
             run.CurrentStep = PipelineStep.Completed;
             run.MarkCompleted();
             await svc.AddRunToHistoryAsync(run);

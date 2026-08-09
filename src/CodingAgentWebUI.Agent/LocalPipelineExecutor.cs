@@ -64,56 +64,10 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         var feedbackService = new FeedbackService(deps.Logger);
         var finalization = new PullRequestFinalizationService(deps.Logger);
         _contextBuilder = new PipelineExecutionContextBuilder(
-            deps.QualityGateValidator, reporterFactory, feedbackService, _agentId, deps.Logger,
-            deps.BrainUpdateService, deps.HistoryService, finalization);
+            new PipelineExecutionContextBuilderDependencies(
+                deps.QualityGateValidator, reporterFactory, feedbackService, _agentId, deps.Logger,
+                deps.BrainUpdateService, deps.HistoryService, finalization));
         _logger = deps.Logger;
-    }
-
-    // Backward-compatible constructor used by tests that pass individual parameters.
-    // Delegates all initialization to the primary constructor via BuildDepsFromParams,
-    // which preserves the original parameter names in ArgumentNullException throws.
-    public LocalPipelineExecutor(
-        IKiroCliOrchestrator orchestrator,
-        IHttpClientFactory httpClientFactory,
-        PipelineConfiguration defaultPipelineConfig,
-        IQualityGateValidator qualityGateValidator,
-        Serilog.ILogger logger,
-        IBrainUpdateService? brainUpdateService = null,
-        IPipelineRunHistoryService? historyService = null,
-        IOpenIssueContextWriter? openIssueContextWriter = null,
-        AgentId? agentIdentity = null,
-        IPipelineReporterFactory? reporterFactory = null)
-        : this(BuildDepsFromParams(orchestrator, httpClientFactory, defaultPipelineConfig,
-                                   qualityGateValidator, logger, brainUpdateService, historyService,
-                                   openIssueContextWriter, agentIdentity, reporterFactory))
-    { }
-
-    /// <summary>
-    /// Validates the individual required parameters and packages all arguments into a
-    /// <see cref="LocalPipelineExecutorDependencies"/> record for constructor chaining.
-    /// Using a static helper is the only way to perform null checks with the original
-    /// parameter names before the <c>: this(...)</c> chain executes.
-    /// </summary>
-    private static LocalPipelineExecutorDependencies BuildDepsFromParams(
-        IKiroCliOrchestrator orchestrator,
-        IHttpClientFactory httpClientFactory,
-        PipelineConfiguration defaultPipelineConfig,
-        IQualityGateValidator qualityGateValidator,
-        Serilog.ILogger logger,
-        IBrainUpdateService? brainUpdateService,
-        IPipelineRunHistoryService? historyService,
-        IOpenIssueContextWriter? openIssueContextWriter,
-        AgentId? agentIdentity,
-        IPipelineReporterFactory? reporterFactory)
-    {
-        ArgumentNullException.ThrowIfNull(orchestrator);
-        ArgumentNullException.ThrowIfNull(httpClientFactory);
-        ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
-        ArgumentNullException.ThrowIfNull(qualityGateValidator);
-        ArgumentNullException.ThrowIfNull(logger);
-        return new LocalPipelineExecutorDependencies(orchestrator, httpClientFactory, defaultPipelineConfig,
-            qualityGateValidator, logger, brainUpdateService, historyService, openIssueContextWriter,
-            agentIdentity, reporterFactory);
     }
 
     /// <summary>

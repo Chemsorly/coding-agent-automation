@@ -85,9 +85,9 @@ public static class PipelineConfigurationResolver
     private static readonly MethodInfo s_cloneMethod = typeof(PipelineConfiguration)
         .GetMethod("<Clone>$", BindingFlags.Instance | BindingFlags.Public)!;
 
-    private static readonly IReadOnlyList<OverrideMapping> s_overrideMappings = BuildOverrideMappings();
+    private static readonly List<OverrideMapping> s_overrideMappings = BuildOverrideMappings();
 
-    private static IReadOnlyList<OverrideMapping> BuildOverrideMappings()
+    private static List<OverrideMapping> BuildOverrideMappings()
     {
         var configProperties = typeof(PipelineConfiguration)
             .GetProperties(BindingFlags.Instance | BindingFlags.Public)

@@ -6,6 +6,7 @@ using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -190,13 +191,15 @@ public class ConsolidationDispatchHandlerTests
             new DispatchServiceOptions());
 
         return new ConsolidationDispatchHandler(
-            dbFactory: dbFactoryMock.Object,
-            leaderElection: leaderElectionMock.Object,
-            lifecycle: lifecycle,
-            templateProvider: JobTemplateStore.CreateEmpty(),
-            options: new DispatchServiceOptions(),
-            transitionService: transitionService,
-            consolidationRunStore: consolidationRunStore,
-            consolidationService: consolidationService);
+            new ConsolidationDispatchHandlerDependencies(
+                dbFactoryMock.Object,
+            leaderElectionMock.Object,
+            lifecycle,
+            JobTemplateStore.CreateEmpty(),
+            Mock.Of<IConfiguration>(),
+            TransitionService: transitionService,
+            ConsolidationRunStore: consolidationRunStore,
+            ConsolidationService: consolidationService),
+            new DispatchServiceOptions());
     }
 }

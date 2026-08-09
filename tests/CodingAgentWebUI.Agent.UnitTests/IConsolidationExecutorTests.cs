@@ -215,11 +215,11 @@ public class IConsolidationExecutorTests
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var mockHttpFactory = new Mock<IHttpClientFactory>();
         var mockQgValidator = new Mock<CodingAgentWebUI.Pipeline.Interfaces.IQualityGateValidator>();
-        return new LocalPipelineExecutor(
+        return new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             mockOrchestrator.Object, mockHttpFactory.Object,
             new PipelineConfiguration(), mockQgValidator.Object,
             Mock.Of<Serilog.ILogger>(),
-            agentIdentity: new AgentId("test-agent"));
+            AgentIdentity: new AgentId("test-agent")));
     }
 
     private static string GetSourceDirectory()

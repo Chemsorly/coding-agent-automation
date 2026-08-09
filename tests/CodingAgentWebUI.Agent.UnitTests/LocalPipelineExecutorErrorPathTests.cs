@@ -293,14 +293,16 @@ public class LocalPipelineExecutorErrorPathTests
 
     private static PipelineRun CreateRunAtStep(PipelineStep step)
     {
-        var run = PipelineRun.CreateImplementation(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: "org/repo#42",
-            issueTitle: "Test Issue",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            initiatedBy: "test",
-            agentId: "agent-1");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "test",
+            AgentId = "agent-1"
+        });
         run.CurrentStep = step;
         return run;
     }

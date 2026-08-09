@@ -25,44 +25,51 @@ public static class PipelineRunFactory
     {
         var run = request.RunType switch
         {
-            PipelineRunType.Review => PipelineRun.CreateReview(
-                runId: request.RunId!,
-                issueIdentifier: request.IssueIdentifier,
-                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
-                issueProviderConfigId: request.IssueProviderConfigId,
-                repoProviderConfigId: request.RepoProviderConfigId,
-                reviewPrBranchName: request.LinkedPullRequest?.BranchName ?? string.Empty,
-                reviewPrTargetBranch: request.ReviewPrTargetBranch ?? string.Empty,
-                initiatedBy: request.InitiatedBy ?? "rehydrated",
-                agentId: agentId,
-                startedAt: startedAt,
-                reviewPrUrl: request.LinkedPullRequest?.Url,
-                reviewPrDescription: request.ReviewPrDescription,
-                reviewPrAuthor: request.ReviewPrAuthor),
-            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
-                runId: request.RunId!,
-                issueIdentifier: request.IssueIdentifier,
-                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
-                issueProviderConfigId: request.IssueProviderConfigId,
-                repoProviderConfigId: request.RepoProviderConfigId,
-                phaseType: request.RunType,
-                initiatedBy: request.InitiatedBy ?? "rehydrated",
-                agentId: agentId,
-                startedAt: startedAt),
-            _ => PipelineRun.CreateImplementation(
-                runId: request.RunId!,
-                issueIdentifier: request.IssueIdentifier,
-                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
-                issueProviderConfigId: request.IssueProviderConfigId,
-                repoProviderConfigId: request.RepoProviderConfigId,
+            PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
+            {
+                RunId = request.RunId!,
+                IssueIdentifier = request.IssueIdentifier,
+                IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
+                IssueProviderConfigId = request.IssueProviderConfigId,
+                RepoProviderConfigId = request.RepoProviderConfigId,
+                RunType = PipelineRunType.Review,
+                InitiatedBy = request.InitiatedBy ?? "rehydrated",
+                AgentId = agentId,
+                StartedAt = startedAt,
+                ReviewPrBranchName = request.LinkedPullRequest?.BranchName ?? string.Empty,
+                ReviewPrTargetBranch = request.ReviewPrTargetBranch ?? string.Empty,
+                ReviewPrUrl = request.LinkedPullRequest?.Url,
+                ReviewPrDescription = request.ReviewPrDescription,
+                ReviewPrAuthor = request.ReviewPrAuthor
+            }),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+            {
+                RunId = request.RunId!,
+                IssueIdentifier = request.IssueIdentifier,
+                IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
+                IssueProviderConfigId = request.IssueProviderConfigId,
+                RepoProviderConfigId = request.RepoProviderConfigId,
+                RunType = request.RunType,
+                InitiatedBy = request.InitiatedBy ?? "rehydrated",
+                AgentId = agentId,
+                StartedAt = startedAt
+            }),
+            _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            {
+                RunId = request.RunId!,
+                IssueIdentifier = request.IssueIdentifier,
+                IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
+                IssueProviderConfigId = request.IssueProviderConfigId,
+                RepoProviderConfigId = request.RepoProviderConfigId,
                 // TODO: Behavioral change — the old PendingWorkItemDrainService inline code used "loop" as the
                 // null fallback for InitiatedBy. Now that the drain service shares this factory, a null InitiatedBy
                 // will be labeled "rehydrated" instead of "loop". In practice InitiatedBy is always set by
                 // dispatchers so this is unlikely to trigger, but consider whether the drain path should pass
                 // its own fallback or if "rehydrated" is acceptable for both callers.
-                initiatedBy: request.InitiatedBy ?? "rehydrated",
-                agentId: agentId,
-                startedAt: startedAt)
+                InitiatedBy = request.InitiatedBy ?? "rehydrated",
+                AgentId = agentId,
+                StartedAt = startedAt
+            })
         };
 
         if (initialStep.HasValue)

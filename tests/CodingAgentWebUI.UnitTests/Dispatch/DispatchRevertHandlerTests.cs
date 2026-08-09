@@ -119,7 +119,14 @@ public sealed class DispatchRevertHandlerTests : IDisposable
         var runId = workItemId.ToString();
 
         // Pre-register a run in memory
-        var existingRun = PipelineRun.CreateImplementation(runId, "org/repo#1", "title", "ip-1", "rp-1");
+        var existingRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "title",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        });
         _runService.AddRun(existingRun);
         _mockResolver.Setup(r => r.ReleaseAgent(It.IsAny<AgentId>()));
 
@@ -206,7 +213,14 @@ public sealed class DispatchRevertHandlerTests : IDisposable
     {
         var workItemId = await InsertDispatchedItem(retryCount: 0);
         var runId = workItemId.ToString();
-        var existingRun = PipelineRun.CreateImplementation(runId, "org/repo#42", "title", "ip-1", "rp-1");
+        var existingRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "title",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        });
         _runService.AddRun(existingRun);
 
         var item = await GetItem(workItemId);

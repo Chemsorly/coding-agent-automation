@@ -38,32 +38,21 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// A single constructor is required — multiple constructors cause
     /// <see cref="InvalidOperationException"/> at connection time.
     /// </summary>
-    public AgentHub(
-        IAgentHubFacade facade,
-        IChatNotifier chatNotifier,
-        IChangeNotifier changeNotifier,
-        ModelFetchService modelFetchService,
-        IConsolidationService consolidationService,
-        ConsolidationBadgeService badgeService,
-        IHubIssueOperations issueOps,
-        IAgentJobLifecycleService lifecycleService,
-        IAgentTokenRefreshService tokenRefreshService,
-        IGateCommentFormatter gateCommentFormatter,
-        ILogger logger,
-        IAgentOrphanRecoveryService orphanRecoveryService)
+    public AgentHub(AgentHubDependencies deps)
     {
-        _facade = facade;
-        _chatNotifier = chatNotifier;
-        _changeNotifier = changeNotifier;
-        _modelFetchService = modelFetchService;
-        _consolidationService = consolidationService;
-        _badgeService = badgeService;
-        _issueOps = issueOps;
-        _lifecycleService = lifecycleService;
-        _tokenRefreshService = tokenRefreshService;
-        _gateCommentFormatter = gateCommentFormatter;
-        _orphanRecoveryService = orphanRecoveryService;
-        _logger = logger;
+        ArgumentNullException.ThrowIfNull(deps);
+        _facade = deps.Facade;
+        _chatNotifier = deps.ChatNotifier;
+        _changeNotifier = deps.ChangeNotifier;
+        _modelFetchService = deps.ModelFetchService;
+        _consolidationService = deps.ConsolidationService;
+        _badgeService = deps.BadgeService;
+        _issueOps = deps.IssueOps;
+        _lifecycleService = deps.LifecycleService;
+        _tokenRefreshService = deps.TokenRefreshService;
+        _gateCommentFormatter = deps.GateCommentFormatter;
+        _orphanRecoveryService = deps.OrphanRecoveryService;
+        _logger = deps.Logger;
     }
 
     /// <summary>

@@ -935,13 +935,13 @@ public class AgentWorkerServiceTests : IDisposable
         var mockHttpClientFactory = new Mock<System.Net.Http.IHttpClientFactory>();
         var mockQualityGateValidator = new Mock<Pipeline.Interfaces.IQualityGateValidator>();
         var mockLogger = new Mock<Serilog.ILogger>();
-        return new LocalPipelineExecutor(
+        return new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             mockOrchestrator.Object,
             mockHttpClientFactory.Object,
             new Pipeline.Models.PipelineConfiguration(),
             mockQualityGateValidator.Object,
             mockLogger.Object,
-            agentIdentity: new Pipeline.Models.AgentId("test-agent"));
+            AgentIdentity: new Pipeline.Models.AgentId("test-agent")));
     }
 
     private static LocalConsolidationExecutor CreateMockConsolidationExecutor()

@@ -180,7 +180,7 @@ public class IAgentServiceTests
         var mockExecutor = new Mock<IWorkItemExecutor>();
         var mockLifecycleClient = new Mock<IWorkItemLifecycleClient>();
 
-        return new WorkItemAgentService(
+        return new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             "test-work-item-id",
             mockLifecycleClient.Object,
             Mock.Of<IAgentConnectionManager>(),
@@ -188,7 +188,7 @@ public class IAgentServiceTests
             Mock.Of<IJobCompletionReporter>(),
             new AgentId("test-agent"),
             Mock.Of<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
-            mockLogger.Object);
+            mockLogger.Object));
     }
 
     private static string GetSourceDirectory()

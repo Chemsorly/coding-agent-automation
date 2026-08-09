@@ -5,113 +5,33 @@ public sealed partial class PipelineRun
     /// <summary>
     /// Creates a new <see cref="PipelineRun"/> for an implementation (issue → code → PR) workflow.
     /// </summary>
-    public static PipelineRun CreateImplementation(
-        string runId,
-        string issueIdentifier,
-        string issueTitle,
-        string issueProviderConfigId,
-        string repoProviderConfigId,
-        DateTimeOffset? startedAt = null,
-        string initiatedBy = "manual",
-        string? agentId = null,
-        string? agentProviderConfigId = null,
-        string? brainProviderConfigId = null)
-    {
-        return CreateCore(new PipelineRunCreationParams
-        {
-            RunId = runId,
-            IssueIdentifier = issueIdentifier,
-            IssueTitle = issueTitle,
-            IssueProviderConfigId = issueProviderConfigId,
-            RepoProviderConfigId = repoProviderConfigId,
-            RunType = PipelineRunType.Implementation,
-            StartedAt = startedAt,
-            InitiatedBy = initiatedBy,
-            AgentId = agentId,
-            AgentProviderConfigId = agentProviderConfigId,
-            BrainProviderConfigId = brainProviderConfigId
-        });
-    }
+    // TODO: Consider adding a RunType guard here (if p.RunType != PipelineRunType.Implementation throw)
+    // similar to CreateDecomposition, to prevent callers from accidentally passing the wrong RunType.
+    // Pre-refactor, CreateImplementation enforced RunType = Implementation internally; now callers must
+    // set it explicitly, and an incorrect value silently produces a mistyped run.
+    public static PipelineRun CreateImplementation(PipelineRunCreationParams p) => CreateCore(p);
 
     /// <summary>
     /// Creates a new <see cref="PipelineRun"/> for a PR review (PR → code review → comment) workflow.
     /// </summary>
-    public static PipelineRun CreateReview(
-        string runId,
-        string issueIdentifier,
-        string issueTitle,
-        string issueProviderConfigId,
-        string repoProviderConfigId,
-        string reviewPrBranchName,
-        string reviewPrTargetBranch,
-        DateTimeOffset? startedAt = null,
-        string initiatedBy = "manual",
-        string? agentId = null,
-        string? agentProviderConfigId = null,
-        string? brainProviderConfigId = null,
-        string? reviewPrUrl = null,
-        string? reviewPrDescription = null,
-        string? reviewPrAuthor = null,
-        IReadOnlyList<LinkedIssueContext>? linkedIssueContexts = null)
-    {
-        return CreateCore(new PipelineRunCreationParams
-        {
-            RunId = runId,
-            IssueIdentifier = issueIdentifier,
-            IssueTitle = issueTitle,
-            IssueProviderConfigId = issueProviderConfigId,
-            RepoProviderConfigId = repoProviderConfigId,
-            RunType = PipelineRunType.Review,
-            StartedAt = startedAt,
-            InitiatedBy = initiatedBy,
-            AgentId = agentId,
-            AgentProviderConfigId = agentProviderConfigId,
-            BrainProviderConfigId = brainProviderConfigId,
-            ReviewPrBranchName = reviewPrBranchName,
-            ReviewPrTargetBranch = reviewPrTargetBranch,
-            ReviewPrUrl = reviewPrUrl,
-            ReviewPrDescription = reviewPrDescription,
-            ReviewPrAuthor = reviewPrAuthor,
-            LinkedIssueContexts = linkedIssueContexts
-        });
-    }
+    // TODO: Consider adding a RunType guard here (if p.RunType != PipelineRunType.Review throw)
+    // similar to CreateDecomposition, to prevent callers from accidentally passing the wrong RunType.
+    // Pre-refactor, CreateReview enforced RunType = Review internally; now callers must set it
+    // explicitly, and an incorrect value silently produces a mistyped run.
+    public static PipelineRun CreateReview(PipelineRunCreationParams p) => CreateCore(p);
 
     /// <summary>
     /// Creates a new <see cref="PipelineRun"/> for a decomposition (epic → sub-issues) workflow.
     /// </summary>
-    /// <param name="phaseType">Must be <see cref="PipelineRunType.DecompositionAnalysis"/> or <see cref="PipelineRunType.Decomposition"/>.</param>
-    public static PipelineRun CreateDecomposition(
-        string runId,
-        string issueIdentifier,
-        string issueTitle,
-        string issueProviderConfigId,
-        string repoProviderConfigId,
-        PipelineRunType phaseType,
-        DateTimeOffset? startedAt = null,
-        string initiatedBy = "manual",
-        string? agentId = null,
-        string? agentProviderConfigId = null,
-        string? brainProviderConfigId = null,
-        string? decompositionSource = null)
+    /// <param name="p">
+    /// Creation parameters. <see cref="PipelineRunCreationParams.RunType"/> must be
+    /// <see cref="PipelineRunType.DecompositionAnalysis"/> or <see cref="PipelineRunType.Decomposition"/>.
+    /// </param>
+    public static PipelineRun CreateDecomposition(PipelineRunCreationParams p)
     {
-        if (phaseType != PipelineRunType.DecompositionAnalysis && phaseType != PipelineRunType.Decomposition)
-            throw new ArgumentOutOfRangeException(nameof(phaseType), phaseType, "Must be DecompositionAnalysis or Decomposition.");
-
-        return CreateCore(new PipelineRunCreationParams
-        {
-            RunId = runId,
-            IssueIdentifier = issueIdentifier,
-            IssueTitle = issueTitle,
-            IssueProviderConfigId = issueProviderConfigId,
-            RepoProviderConfigId = repoProviderConfigId,
-            RunType = phaseType,
-            StartedAt = startedAt,
-            InitiatedBy = initiatedBy,
-            AgentId = agentId,
-            AgentProviderConfigId = agentProviderConfigId,
-            BrainProviderConfigId = brainProviderConfigId,
-            DecompositionSource = decompositionSource
-        });
+        if (p.RunType != PipelineRunType.DecompositionAnalysis && p.RunType != PipelineRunType.Decomposition)
+            throw new ArgumentOutOfRangeException(nameof(p.RunType), p.RunType, "Must be DecompositionAnalysis or Decomposition.");
+        return CreateCore(p);
     }
 
     /// <summary>Shared construction logic for all factory methods.</summary>

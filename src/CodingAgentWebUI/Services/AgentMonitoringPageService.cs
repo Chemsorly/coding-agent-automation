@@ -51,27 +51,6 @@ public class AgentMonitoringPageService
         _lifecycleManager = deps.LifecycleManager;
     }
 
-    // Backward-compatible constructor used by DI and existing callers
-    public AgentMonitoringPageService(
-        IActiveRunQueryService activeRunQuery,
-        IAgentRegistryService registry,
-        JobDeduplicationGuardService dispatcher,
-        IOrchestratorRunService runService,
-        PipelineRunLifecycleService lifecycle,
-        IConfigurationStore configStore,
-        IConsolidationService consolidationService,
-        IPendingWorkQuery pendingWorkQuery,
-        IWorkDistributor workDistributor,
-        IHubContext<AgentHub, IAgentHubClient> hubContext,
-        IPipelineRunHistoryService historyService,
-        IRunLifecycleManager lifecycleManager)
-        : this(new AgentMonitoringPageServiceDependencies(
-            activeRunQuery, registry, dispatcher, runService, lifecycle, configStore,
-            consolidationService, pendingWorkQuery, workDistributor, hubContext,
-            historyService, lifecycleManager))
-    {
-    }
-
     // ── State ──
 
     public IReadOnlyList<ActiveRunSummary> ActiveRuns { get; private set; } = [];
