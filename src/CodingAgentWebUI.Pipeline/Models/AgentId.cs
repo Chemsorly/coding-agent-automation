@@ -43,9 +43,9 @@ public sealed class AgentIdFormatter : IMessagePackFormatter<AgentId>
         var value = reader.ReadString();
         if (value is null)
             throw new MessagePackSerializationException("AgentId cannot be deserialized from a nil token.");
-        // TODO: Also reject empty strings to match the implicit operator's ThrowIfNullOrEmpty guard:
-        // if (string.IsNullOrEmpty(value)) throw new MessagePackSerializationException("AgentId cannot be deserialized from an empty string.");
-        // Currently an empty fixstr on the wire produces AgentId { Value = "" } which passes all null guards.
+        // TODO: Also reject empty strings to match the implicit operator's ThrowIfNullOrEmpty guard.
+        // A zero-length fixstr on the wire produces AgentId { Value = "" } which bypasses null guards
+        // but violates the invariant enforced by the implicit operator. Track as a separate issue.
         return new(value);
     }
 }
