@@ -33,14 +33,17 @@ public class LeaderElectedPollingServiceTests
         // Act: start ExecuteAsync
         var executeTask = InvokeExecuteAsync(service, cts.Token);
 
-        // Wait a bit — should NOT have called OnPollCycleAsync yet
-        await Task.Delay(200);
+        // Count is synchronously 0 — ExecuteAsync is waiting in the 2s leader-wait loop
         service.PollCycleCount.Should().Be(0, "should not poll before leadership is acquired");
 
         // Now grant leadership
         SetLeaderState(leaderElection, isLeader: true, new CancellationTokenSource());
-        // Wait long enough for: up to 2s leader-wait poll tick + poll cycle execution + CI overhead
-        await Task.Delay(5000);
+
+        // Poll until the first cycle fires. Leader-wait loop checks every 2s, so this
+        // resolves within ≤2s. Deadline of 10s is a generous safety bound for CI.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (service.PollCycleCount == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         service.PollCycleCount.Should().BeGreaterThan(0, "should poll after leadership is acquired");
 
@@ -58,9 +61,11 @@ public class LeaderElectedPollingServiceTests
         var service = new TestPollingService(leaderElection, pollIntervalSeconds: 1);
         var hostCts = new CancellationTokenSource();
 
-        // Act: start
+        // Act: start, then wait for the first poll to confirm we entered the loop
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
-        await Task.Delay(200); // Let it enter poll loop
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (service.PollCycleCount == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         var countBeforeLoss = service.PollCycleCount;
         countBeforeLoss.Should().BeGreaterThan(0);
@@ -68,15 +73,19 @@ public class LeaderElectedPollingServiceTests
         // Lose leadership
         leaderCts.Cancel();
         SetLeaderState(leaderElection, isLeader: false, new CancellationTokenSource());
-        await Task.Delay(500);
+        // Brief fixed delay — just enough for the cancellation to propagate through the loop
+        await Task.Delay(100);
 
         var countAfterLoss = service.PollCycleCount;
 
         // Grant leadership again
         var newLeaderCts = new CancellationTokenSource();
         SetLeaderState(leaderElection, isLeader: true, newLeaderCts);
-        // Wait long enough for: up to 2s leader-wait poll tick + poll cycle execution + CI overhead
-        await Task.Delay(5000);
+
+        // Poll until a new cycle fires after re-acquisition (≤2s leader-wait + 1s poll)
+        deadline = DateTime.UtcNow.AddSeconds(10);
+        while (service.PollCycleCount <= countAfterLoss && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         service.PollCycleCount.Should().BeGreaterThan(countAfterLoss,
             "should resume polling after leadership reacquired");
@@ -94,10 +103,15 @@ public class LeaderElectedPollingServiceTests
         var hostCts = new CancellationTokenSource();
 
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
-        await Task.Delay(200);
+
+        // Wait for at least one poll to confirm the service entered the loop
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (service.PollCycleCount == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         hostCts.Cancel();
 
+        // Service should exit promptly after cancellation — WhenAny is the safety bound
         var completed = await Task.WhenAny(executeTask, Task.Delay(5000));
         completed.Should().Be(executeTask, "ExecuteAsync should exit promptly on host stop");
     }
@@ -111,7 +125,9 @@ public class LeaderElectedPollingServiceTests
         var hostCts = new CancellationTokenSource();
 
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
-        await Task.Delay(500);
+
+        // Wait for RunLeadershipTermAsync to be entered — event-driven via TCS
+        await service.RunLeadershipTermEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         service.RunLeadershipTermCalled.Should().BeTrue("should call overridden RunLeadershipTermAsync");
         service.PollCycleCount.Should().Be(0, "OnPollCycleAsync should NOT be called when RunLeadershipTermAsync is overridden");
@@ -128,7 +144,12 @@ public class LeaderElectedPollingServiceTests
         var hostCts = new CancellationTokenSource();
 
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
-        await Task.Delay(3500); // Wait for a few cycles (~1s interval)
+
+        // Poll until ≥3 cycles complete. With 1s intervals, this takes ~2s.
+        // 10s deadline is a generous bound for CI.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (service.PollCycleCount < 3 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         service.PollCycleCount.Should().BeGreaterThanOrEqualTo(3,
             "should keep calling OnPollCycleAsync even after exceptions");
@@ -144,12 +165,15 @@ public class LeaderElectedPollingServiceTests
         var method = typeof(BackgroundService).GetMethod("ExecuteAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);
         var task = (Task)method!.Invoke(service, [stoppingToken])!;
-        await task;
+        // ConfigureAwait(false) prevents capturing xUnit's single-threaded AsyncTestSyncContext.
+        // Without it, continuations of the background ExecuteAsync loop get queued on xUnit's
+        // context — which is already blocked awaiting the test — causing a sync-context deadlock.
+        await task.ConfigureAwait(false);
     }
 
     private static async Task WaitForTaskCompletion(Task task)
     {
-        try { await task; }
+        try { await task.ConfigureAwait(false); }
         catch (OperationCanceledException) { /* expected */ }
     }
 
@@ -199,6 +223,10 @@ public class LeaderElectedPollingServiceTests
         public bool RunLeadershipTermCalled;
         public int PollCycleCount;
 
+        /// <summary>Fires when <see cref="RunLeadershipTermAsync"/> is entered.</summary>
+        public readonly TaskCompletionSource RunLeadershipTermEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         protected override string ServiceName => "TestOverrideService";
         protected override int PollIntervalSeconds => 1;
 
@@ -207,6 +235,7 @@ public class LeaderElectedPollingServiceTests
         protected override async Task RunLeadershipTermAsync(CancellationToken ct)
         {
             RunLeadershipTermCalled = true;
+            RunLeadershipTermEntered.TrySetResult();
             // Simulate a long-running leadership term that responds to cancellation
             try { await Task.Delay(Timeout.Infinite, ct); }
             catch (OperationCanceledException) { }
