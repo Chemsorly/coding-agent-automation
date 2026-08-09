@@ -425,15 +425,5 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         }
     }
 
-    private void DeletePersistedRun(string runId)
-    {
-        _ = _runStore.DeleteRunAsync(runId, CancellationToken.None).ContinueWith(t =>
-        {
-            if (t.IsFaulted)
-                _logger.Warning(t.Exception?.InnerException, "Failed to delete persisted consolidation run {RunId}", runId);
-        }, TaskScheduler.Default);
-        _runHistoryCache = null;
-    }
-
     private enum DispatchOutcome { Success, Queued, Failed, NoDispatcher }
 }
