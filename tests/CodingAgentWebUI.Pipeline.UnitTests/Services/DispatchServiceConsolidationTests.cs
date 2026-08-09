@@ -26,13 +26,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Validates: Issue #1086 — K8s mode creates K8s Jobs for consolidation items.
 /// </summary>
 /// <remarks>
-/// TODO: [WARNING] No test covers the <c>_consolidationJobPreparer is null</c> path in
-/// <c>ResolveProviderConfigsAsync</c>. After the extract-method refactoring, when
-/// <c>_consolidationJobPreparer</c> is null the method throws <c>InvalidOperationException</c>,
-/// which is caught by the caller's catch block and results in exactly one call to
-/// <c>FailConsolidationWorkItemAsync</c>. Without a test for this path, a future regression
-/// (e.g., accidentally re-introducing the double-fail) would go undetected.
-/// Add a test: construct <c>ConsolidationDispatchHandler</c> without a
+/// TODO: Add a test: construct <c>ConsolidationDispatchHandler</c> without a
 /// <c>IConsolidationJobPreparationService</c>, enqueue a pending consolidation item, call
 /// <c>PollAndDispatchConsolidationAsync</c>, and assert the work item transitions to Failed
 /// exactly once with the expected error message.
@@ -41,6 +35,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 public class DispatchServiceConsolidationTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
+    private readonly string _dbName;
     private readonly TestDbContextFactory _dbFactory;
     private readonly WorkItemTransitionService _transitionService;
     private readonly Mock<IKubernetesJobClient> _mockKubeClient;
@@ -59,9 +54,9 @@ public class DispatchServiceConsolidationTests : IDisposable
 
     public DispatchServiceConsolidationTests()
     {
-        var dbName = $"DispatchConsolidation-{Guid.NewGuid()}";
+        _dbName = $"DispatchConsolidation-{Guid.NewGuid()}";
         _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase(dbName)
+            .UseInMemoryDatabase(_dbName)
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
@@ -139,8 +134,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         // Assert: Payload was updated with ProviderConfigs
         var updatedPayload = JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload!, PipelineJsonOptions.Default);
         updatedPayload!.ProviderConfigs.Should().NotBeNull();
-        // TODO: Assertion too weak — test setup provides exactly 2 configs (agent + repo). Should assert
-        // .Be(2) and verify the specific config IDs to catch regressions in provider resolution logic.
         updatedPayload.ProviderConfigs!.Count.Should().BeGreaterThan(0);
         updatedPayload.RepoProviderConfigId.Should().Be(TestRepoProviderId);
     }
@@ -183,9 +176,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         await InvokePollAndDispatch(service);
 
         // Token vending should have been called
-        // TODO: Verification uses It.IsAny<IReadOnlyList<ProviderConfig>>() — doesn't validate that the
-        // correct resolved configs were passed. A bug in BuildConsolidationProviderConfigsAsync that returns
-        // wrong/empty configs would not be caught. Verify specific config contents.
         _mockTokenVending.Verify(
             t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), TestRepoProviderId, It.IsAny<CancellationToken>(), false),
             Times.Once);
@@ -431,9 +421,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("K8s Job creation failed");
-        // TODO: Add assertion that item.ClaimedPvcName is null after K8s failure in consolidation path.
-        // Currently this test does not claim a PVC (no PVC setup), so the SaveChangesAsync fix at line ~697
-        // is not regression-protected. Add a variant with PVC claiming to validate the fix.
 
         // Verify cascade fires for K8s creation failure path too (not just template resolution)
         _mockConsolidationService.Verify(
@@ -716,10 +703,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         var createCallCount = 0;
         _mockKubeClient
             .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            // TODO: async lambda in Moq .Callback creates an async void delegate (fire-and-forget).
-            // Works reliably only because the InMemory/SQLite provider completes synchronously.
-            // If the test DB is ever changed to a truly async provider, replace with .Returns(async () => { ... })
-            // or TaskCompletionSource-based synchronization to make ordering guarantees explicit.
             .Callback<V1Job, string, CancellationToken>(async (job, ns, ct) =>
             {
                 createCallCount++;
@@ -1019,11 +1002,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         // The latency metric is recorded inside DispatchLifecycleService using
         // (DispatchedAt - (OriginalEnqueuedAt ?? CreatedAt)). Verify the anchor is correct:
         // DispatchedAt should be ~now, OriginalEnqueuedAt is 60s ago, so latency >= 55s.
-        // TODO: This assertion validates entity state but not the actual metric value recorded by
-        // WorkDistributionTelemetry.DispatchLatency.Record(). Add a MeterListener-based assertion
-        // (matching the pattern in DispatchServiceMetricsTests) to verify the recorded metric uses
-        // OriginalEnqueuedAt as the latency anchor — without that, changing the production code from
-        // (OriginalEnqueuedAt ?? CreatedAt) to just CreatedAt would not be caught by this test.
         var dispatchedAt = item.DispatchedAt!.Value;
         var expectedAnchor = originalEnqueuedAt; // OriginalEnqueuedAt is set, so it's the anchor
         var latency = (dispatchedAt - expectedAnchor).TotalSeconds;
@@ -1105,9 +1083,97 @@ public class DispatchServiceConsolidationTests : IDisposable
             .ReturnsAsync((ConsolidationRun?)null);
     }
 
+    // ── DbContext Disposal on Exception ────────────────────────────────
+
+    /// <summary>
+    /// Regression test for Issue #1877: verifies that the DbContext created in
+    /// LoadConsolidationDispatchStateAsync is disposed when BuildDispatchStateAsync throws.
+    ///
+    /// Uses a spy DbContext subclass that overrides Set&lt;T&gt;() to throw OperationCanceledException
+    /// on the second WorkItems access (which occurs inside BuildDispatchStateAsync's activeCounts
+    /// query). The EF Core InMemory provider ignores cancellation tokens on ToListAsync (known
+    /// limitation: dotnet/efcore#13368), so the exception must be injected at the Set&lt;T&gt;() level.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatchConsolidationAsync_WhenBuildDispatchStateThrows_DisposesDbContext()
+    {
+        // Arrange: insert one pending Consolidation work item so the pendingItems.Count == 0
+        // early-return path is NOT taken — the exception must happen in BuildDispatchStateAsync.
+        var workItemId = Guid.NewGuid();
+        await InsertConsolidationWorkItem(workItemId, workItemId.ToString(), "kiro,dotnet");
+
+        // Build spy options backed by the same in-memory database as the test fixture,
+        // so the spy context can see the inserted work item.
+        var spyOptions = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(_dbName)
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        // The spy context:
+        // - Tracks whether DisposeAsync was called (the assertion target)
+        // - Throws OperationCanceledException on the 2nd access to Set<WorkItemEntity>()
+        //   (1st access = pendingItems query, 2nd access = activeCounts query in BuildDispatchStateAsync)
+        DisposeTrackingContext? spyContext = null;
+        var spyFactory = new DelegatingDbContextFactory(() =>
+        {
+            spyContext = new DisposeTrackingContext(spyOptions);
+            return spyContext;
+        });
+
+        var service = CreateServiceWithFactory(spyFactory);
+
+        // Act: OperationCanceledException propagates out of PollAndDispatchConsolidationAsync
+        // because LoadConsolidationDispatchStateAsync catches it, disposes db, then rethrows.
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => service.PollAndDispatchConsolidationAsync(CancellationToken.None));
+
+        // Assert: DbContext was disposed despite the exception — verifies the fix for #1877.
+        spyContext.Should().NotBeNull("factory must have been called");
+        spyContext!.WasDisposed.Should().BeTrue(
+            "DbContext must be disposed when BuildDispatchStateAsync throws OperationCanceledException");
+    }
+
     private ConsolidationDispatchHandler CreateService(ILabelService? labelService = null)
     {
         return CreateServiceWithPvcPool(new[] { "pvc-test-1", "pvc-test-2" }, labelService);
+    }
+
+    private ConsolidationDispatchHandler CreateServiceWithFactory(IDbContextFactory<PipelineDbContext> dbFactory)
+    {
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
+        };
+
+        // Use a separate WorkItemTransitionService backed by the injected factory so that
+        // any transitions made during the test flow use the spy context's database.
+        var transitionService = new WorkItemTransitionService(dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+
+        var lifecycle = new DispatchLifecycleService(
+            _mockKubeClient.Object,
+            transitionService,
+            options);
+
+        var templateProvider = BuildTemplateProvider();
+
+        return new ConsolidationDispatchHandler(
+            dbFactory, _leaderElection, lifecycle, templateProvider, options, transitionService,
+            _mockRunStore.Object,
+            _mockConsolidationService.Object,
+            new ConsolidationJobPreparationService(
+                _mockProviderConfigStore.Object,
+                _mockProjectStore.Object,
+                _mockTokenVending.Object,
+                Serilog.Log.Logger,
+                _mockAgentProfileStore.Object),
+            _mockPipelineConfigStore.Object,
+            _mockProjectStore.Object,
+            _mockAgentProfileStore.Object);
     }
 
     private ConsolidationDispatchHandler CreateServiceWithPvcPool(string[] pvcPool, ILabelService? labelService = null)
@@ -1278,5 +1344,79 @@ public class DispatchServiceConsolidationTests : IDisposable
         public TestDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
         public PipelineDbContext CreateDbContext() => new TestPipelineDbContext(_options);
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(CreateDbContext());
+    }
+
+    // ── Spy infrastructure for DbContext disposal test (#1877) ──────────
+
+    /// <summary>
+    /// A thin <see cref="IDbContextFactory{PipelineDbContext}"/> that delegates context creation
+    /// to a caller-supplied factory function, allowing the test to capture the returned instance
+    /// for disposal tracking.
+    /// </summary>
+    private sealed class DelegatingDbContextFactory : IDbContextFactory<PipelineDbContext>
+    {
+        private readonly Func<PipelineDbContext> _factory;
+        public DelegatingDbContextFactory(Func<PipelineDbContext> factory) => _factory = factory;
+        public PipelineDbContext CreateDbContext() => _factory();
+        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(CreateDbContext());
+    }
+
+    /// <summary>
+    /// A <see cref="PipelineDbContext"/> subclass that:
+    /// <list type="bullet">
+    ///   <item>Tracks whether <see cref="DisposeAsync"/> has been called.</item>
+    ///   <item>
+    ///     Throws <see cref="OperationCanceledException"/> on the second call to
+    ///     <c>Set&lt;WorkItemEntity&gt;()</c>, which happens when
+    ///     <c>BuildDispatchStateAsync</c> accesses <c>db.WorkItems</c> for the
+    ///     <c>activeCounts</c> query. The first access (for <c>pendingItems</c>) succeeds
+    ///     normally so the early-return path is not taken.
+    ///   </item>
+    /// </list>
+    /// The EF Core InMemory provider does not respect <see cref="CancellationToken"/>
+    /// in <c>ToListAsync</c> (dotnet/efcore#13368), so the exception is injected at the
+    /// <c>Set&lt;T&gt;()</c> override level, which IS dispatched virtually through the
+    /// runtime type even when the variable is typed as <see cref="PipelineDbContext"/>.
+    /// </summary>
+    private sealed class DisposeTrackingContext : PipelineDbContext
+    {
+        private int _workItemSetCallCount;
+        public bool WasDisposed { get; private set; }
+
+        public DisposeTrackingContext(DbContextOptions<PipelineDbContext> options) : base(options) { }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            foreach (var et in modelBuilder.Model.GetEntityTypes())
+            {
+                var rv = et.FindProperty("RowVersion");
+                if (rv != null)
+                {
+                    rv.IsConcurrencyToken = false;
+                    rv.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
+                }
+            }
+            foreach (var et in modelBuilder.Model.GetEntityTypes())
+                foreach (var idx in et.GetIndexes().Where(i => i.GetFilter() != null).ToList())
+                    et.RemoveIndex(idx);
+        }
+
+        public override DbSet<TEntity> Set<TEntity>() where TEntity : class
+        {
+            if (typeof(TEntity) == typeof(WorkItemEntity))
+            {
+                if (++_workItemSetCallCount >= 2)
+                    throw new OperationCanceledException(
+                        "Simulated OperationCanceledException on second WorkItems access (BuildDispatchStateAsync activeCounts query)");
+            }
+            return base.Set<TEntity>();
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            WasDisposed = true;
+            await base.DisposeAsync();
+        }
     }
 }
