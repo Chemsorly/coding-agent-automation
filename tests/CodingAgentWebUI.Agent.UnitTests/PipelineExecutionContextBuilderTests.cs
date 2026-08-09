@@ -17,6 +17,8 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// </summary>
 public class PipelineExecutionContextBuilderTests : IAsyncDisposable
 {
+    private static readonly string[] s_BugLabel = new[] { "bug" };
+
     private readonly Mock<IQualityGateValidator> _mockQualityGateValidator = new();
     private readonly Mock<IPipelineReporterFactory> _mockReporterFactory = new();
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
@@ -33,6 +35,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
         await _batcher.DisposeAsync();
         await _connection.DisposeAsync();
     }
@@ -322,7 +325,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
             job, config, mockRepo.Object, mockAgent.Object, null, null,
             proxy, _connection, _batcher, null, CancellationToken.None);
 
-        result.Run.IssueLabels.Should().BeEquivalentTo(new[] { "bug" });
+        result.Run.IssueLabels.Should().BeEquivalentTo(s_BugLabel);
     }
 
     [Fact]

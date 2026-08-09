@@ -59,6 +59,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this);
         using var db = new TestPipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
     }

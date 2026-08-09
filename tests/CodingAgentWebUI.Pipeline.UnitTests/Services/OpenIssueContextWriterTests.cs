@@ -13,6 +13,8 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// </summary>
 public class OpenIssueContextWriterTests : IDisposable
 {
+    private static readonly string[] s_AgentDoneLabel = new[] { "agent:done" };
+
     private readonly Mock<IAgentIssueOperations> _issueOps = new();
     private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
     private readonly string _workspacePath;
@@ -653,7 +655,7 @@ public class OpenIssueContextWriterTests : IDisposable
                 Identifier = "closed-1",
                 Title = "Closed Issue 1",
                 Description = "Body of closed issue",
-                Labels = new[] { "agent:done" }
+                Labels = s_AgentDoneLabel
             });
 
         var count = await _writer.WriteOpenIssueContextAsync(

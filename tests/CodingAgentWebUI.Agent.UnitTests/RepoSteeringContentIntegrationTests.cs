@@ -50,6 +50,7 @@ public class RepoSteeringContentIntegrationTests : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this);
         try
         {
             if (Directory.Exists(_tempRoot))

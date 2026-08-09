@@ -15,6 +15,8 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 /// </summary>
 public class LegacyWorkDistributorTests
 {
+    private static readonly string[] s_DotnetKiroLabels = new[] { "dotnet", "kiro" };
+
     private readonly Mock<IJobDispatcher> _mockJobDispatcher = new();
     private readonly Mock<IOrchestratorRunService> _mockRunService = new();
     private readonly JobDeduplicationGuardService _dispatcherService;
@@ -311,7 +313,7 @@ public class LegacyWorkDistributorTests
         job.IssueProviderId.Should().Be("consolidation");
         job.RepoProviderId.Should().Be("");
         job.InitiatedBy.Should().Be("consolidation");
-        job.RequiredLabels.Should().BeEquivalentTo(new[] { "dotnet", "kiro" });
+        job.RequiredLabels.Should().BeEquivalentTo(s_DotnetKiroLabels);
         job.TaskType.Should().Be(WorkItemTaskType.Consolidation);
         job.ConsolidationRunType.Should().Be(ConsolidationRunType.BrainConsolidation);
         job.ConsolidationTemplateId.Should().Be("template-1");
@@ -364,7 +366,7 @@ public class LegacyWorkDistributorTests
         // Verify the job was enqueued with correctly parsed labels
         var queuedJobs = _dispatcherService.GetQueuedJobs();
         queuedJobs.Should().HaveCount(1);
-        queuedJobs[0].RequiredLabels.Should().BeEquivalentTo(new[] { "dotnet", "kiro" });
+        queuedJobs[0].RequiredLabels.Should().BeEquivalentTo(s_DotnetKiroLabels);
     }
 
     // ── Null argument validation ────────────────────────────────────────

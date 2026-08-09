@@ -42,6 +42,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this);
         foreach (var key in _setEnvVars.ToList())
             Environment.SetEnvironmentVariable(key, null);
 

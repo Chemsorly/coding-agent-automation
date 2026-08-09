@@ -796,7 +796,9 @@ public sealed class ConsolidationServiceTests : IDisposable
         await Task.Delay(50);
 
         // Act: call TransitionToRunningAsync via IConsolidationRunTracker interface
+#pragma warning disable CA1859 // Intentional: testing IConsolidationRunTracker interface contract
         IConsolidationRunTracker tracker = sut;
+#pragma warning restore CA1859
         await tracker.TransitionToRunningAsync(run.RunId, CancellationToken.None);
 
         // Assert: in-memory tracker shows correct StartedAtUtc (updated, not original)

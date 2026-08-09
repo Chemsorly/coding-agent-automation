@@ -278,6 +278,7 @@ public class FilePipelineRunHistoryServiceContractTests : PipelineRunHistoryServ
 
     public override void Dispose()
     {
+        GC.SuppressFinalize(this);
         if (!Directory.Exists(_tempDir))
             return;
 
@@ -347,6 +348,7 @@ public class PostgresPipelineRunHistoryServiceContractTests : PipelineRunHistory
 
     public override void Dispose()
     {
+        GC.SuppressFinalize(this);
         using var db = new PipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
         base.Dispose();

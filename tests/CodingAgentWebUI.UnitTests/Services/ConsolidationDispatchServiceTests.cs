@@ -17,6 +17,9 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 {
     private static readonly string[] KiroDotnetDotnet10Labels = ["kiro", "dotnet", "dotnet10"];
     private static readonly string[] TemplateTIds = ["t1"];
+    private static readonly string[] s_DotnetDotnet10KiroLabels = new[] { "dotnet", "dotnet10", "kiro" };
+    private static readonly string[] s_DotnetKiroLabels = new[] { "dotnet", "kiro" };
+    private static readonly string[] s_TFoundTemplateIds = new[] { "t-found" };
 
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
@@ -955,7 +958,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 
         var result = await svc.ResolveAgentSelectorLabelsAsync(input, CancellationToken.None);
 
-        result.Should().BeEquivalentTo(new[] { "dotnet", "dotnet10", "kiro" },
+        result.Should().BeEquivalentTo(s_DotnetDotnet10KiroLabels,
             "matching profile should return its full MatchLabels set");
     }
 
@@ -982,7 +985,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 
         var result = await svc.ResolveAgentSelectorLabelsAsync(input, CancellationToken.None);
 
-        result.Should().BeEquivalentTo(new[] { "dotnet", "kiro" },
+        result.Should().BeEquivalentTo(s_DotnetKiroLabels,
             "should select the profile whose MatchLabels cover the input labels");
     }
 
@@ -1009,7 +1012,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>
             {
-                new() { Id = "proj-1", Name = "P1", Enabled = true, TemplateIds = new[] { "t-found" } }
+                new() { Id = "proj-1", Name = "P1", Enabled = true, TemplateIds = s_TFoundTemplateIds }
             });
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });

@@ -47,7 +47,11 @@ public class ChatDispatcherObservabilityTests : IDisposable
         ActivitySource.AddActivityListener(_activityListener);
     }
 
-    public void Dispose() => _activityListener.Dispose();
+    public void Dispose()
+    {
+        GC.SuppressFinalize(this);
+        _activityListener.Dispose();
+    }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 

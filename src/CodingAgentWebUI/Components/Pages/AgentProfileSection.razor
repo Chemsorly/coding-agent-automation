@@ -402,7 +402,10 @@
             Priority = _form.Priority,
             McpServers = _form.McpServers.Select(s =>
             {
-                var command = s.Type == "http" ? null : (string.IsNullOrWhiteSpace(s.Command) ? null : s.Command.Trim());
+                string? command;
+                if (s.Type == "http") command = null;
+                else if (string.IsNullOrWhiteSpace(s.Command)) command = null;
+                else command = s.Command.Trim();
                 return new McpServerConfig
                 {
                     Name = s.Name.Trim(),
