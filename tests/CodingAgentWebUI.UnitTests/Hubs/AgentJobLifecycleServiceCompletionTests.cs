@@ -168,12 +168,6 @@ public sealed class AgentJobLifecycleServiceCompletionTests
 
     // ── Regular path ──────────────────────────────────────────────────────────
 
-    // TODO: Add a test for the regular path where FinalStep=Failed and both run.FailureReason and
-    // payload.FailureReason are null, verifying that the fallback string "Agent reported failure"
-    // is passed to CompleteRunAsync. Currently missing: if the fallback string were changed or the
-    // wrong fallback were passed to CompletionOutcomeResolver.Resolve for this path, no test would
-    // catch it. (Flagged by TestQualityReviewer — WARNING)
-
     [Fact]
     public async Task Regular_completed_step_calls_CompleteRunAsync_with_Succeeded()
     {
@@ -313,9 +307,6 @@ public sealed class AgentJobLifecycleServiceCompletionTests
     // TODO: Add a symmetric test for the orphaned path where FinalStep=Failed and
     // payload.FailureReason is a non-null explicit string, verifying it is propagated to
     // TransitionWorkItemAsync (i.e., the explicit reason takes precedence over the fallback).
-    // Currently missing: a change that discarded payload.FailureReason in the orphaned path and
-    // always used the fallback would not be caught by the existing test suite.
-    // (Flagged by TestQualityReviewer — WARNING)
     [Fact]
     public async Task Orphaned_failed_step_transitions_WorkItem_to_Failed_with_fallback()
     {
@@ -352,5 +343,55 @@ public sealed class AgentJobLifecycleServiceCompletionTests
 
         // Label swap is only attempted on Succeeded in the orphaned path
         _facade.Verify(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Post-completion bookkeeping contract ──────────────────────────────────
+
+    [Fact]
+    public async Task Regular_completed_step_calls_PostIssueFeedbackCommentAsync()
+    {
+        var run = MakeRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(run);
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _issueOps.Verify(i => i.PostIssueFeedbackCommentAsync(run), Times.Once);
+    }
+
+    [Fact]
+    public async Task Consolidation_does_not_call_PostIssueFeedbackCommentAsync()
+    {
+        // Critical regression guard: after the strategy extraction, the bookkeeping skip
+        // depends on the inline run-type check in HandleJobCompletedAsync. Without this test,
+        // accidentally removing the guard would not be caught.
+        var run = MakeConsolidationRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _issueOps.Verify(i => i.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Consolidation_does_not_call_SwapLabelAsync()
+    {
+        var run = MakeConsolidationRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _issueOps.Verify(i => i.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>()), Times.Never);
     }
 }
