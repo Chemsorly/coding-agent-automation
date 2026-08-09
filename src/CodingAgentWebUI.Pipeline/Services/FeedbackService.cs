@@ -290,15 +290,24 @@ public sealed class FeedbackService
         return EnforceStuckReason(harness, outcome);
     }
 
-    private HarnessFeedback BuildTruncatedHarness(HarnessFeedback source) => new HarnessFeedback
+    private HarnessFeedback BuildTruncatedHarness(HarnessFeedback source)
     {
-        Category = TruncateField(source.Category, FeedbackConstraints.MaxCategoryLength, "Harness.Category"),
-        StuckReason = TruncateField(source.StuckReason, FeedbackConstraints.MaxStringLength, "Harness.StuckReason"),
-        MissingContext = TruncateList(source.MissingContext, FeedbackConstraints.MaxMissingContextItems, FeedbackConstraints.MaxStringLength, "Harness.MissingContext"),
-        MissingCapabilities = TruncateList(source.MissingCapabilities, FeedbackConstraints.MaxMissingCapabilitiesItems, FeedbackConstraints.MaxStringLength, "Harness.MissingCapabilities"),
-        PromptIssues = TruncateList(source.PromptIssues, FeedbackConstraints.MaxPromptIssuesItems, FeedbackConstraints.MaxStringLength, "Harness.PromptIssues"),
-        Suggestions = TruncateList(source.Suggestions, FeedbackConstraints.MaxSuggestionsItems, FeedbackConstraints.MaxStringLength, "Harness.Suggestions")
-    };
+        var category = TruncateField(source.Category, FeedbackConstraints.MaxCategoryLength, "Harness.Category");
+        var stuckReason = TruncateField(source.StuckReason, FeedbackConstraints.MaxStringLength, "Harness.StuckReason");
+        var missingContext = TruncateList(source.MissingContext, FeedbackConstraints.MaxMissingContextItems, FeedbackConstraints.MaxStringLength, "Harness.MissingContext");
+        var missingCapabilities = TruncateList(source.MissingCapabilities, FeedbackConstraints.MaxMissingCapabilitiesItems, FeedbackConstraints.MaxStringLength, "Harness.MissingCapabilities");
+        var promptIssues = TruncateList(source.PromptIssues, FeedbackConstraints.MaxPromptIssuesItems, FeedbackConstraints.MaxStringLength, "Harness.PromptIssues");
+        var suggestions = TruncateList(source.Suggestions, FeedbackConstraints.MaxSuggestionsItems, FeedbackConstraints.MaxStringLength, "Harness.Suggestions");
+        return new HarnessFeedback
+        {
+            Category = category,
+            StuckReason = stuckReason,
+            MissingContext = missingContext,
+            MissingCapabilities = missingCapabilities,
+            PromptIssues = promptIssues,
+            Suggestions = suggestions
+        };
+    }
 
     private static HarnessFeedback EnforceStuckReason(HarnessFeedback harness, FeedbackOutcome outcome)
     {
@@ -421,27 +430,29 @@ public sealed class FeedbackService
     /// <summary>
     /// Internal DTO for lenient deserialization of the agent's JSON feedback block.
     /// </summary>
+#pragma warning disable S3459, S1144 // Properties are set by System.Text.Json deserialization
     private sealed class FeedbackDto
     {
-        public HarnessDto? Harness { get; init; }
-        public IssueDto? Issue { get; init; }
+        public HarnessDto? Harness { get; set; }
+        public IssueDto? Issue { get; set; }
     }
 
     private sealed class HarnessDto
     {
-        public string? Category { get; init; }
-        public string? StuckReason { get; init; }
-        public List<string>? MissingContext { get; init; }
-        public List<string>? MissingCapabilities { get; init; }
-        public List<string>? PromptIssues { get; init; }
-        public List<string>? Suggestions { get; init; }
+        public string? Category { get; set; }
+        public string? StuckReason { get; set; }
+        public List<string>? MissingContext { get; set; }
+        public List<string>? MissingCapabilities { get; set; }
+        public List<string>? PromptIssues { get; set; }
+        public List<string>? Suggestions { get; set; }
     }
 
     private sealed class IssueDto
     {
-        public string? Category { get; init; }
-        public string? Description { get; init; }
-        public List<string>? AffectedFiles { get; init; }
-        public string? HumanActionNeeded { get; init; }
+        public string? Category { get; set; }
+        public string? Description { get; set; }
+        public List<string>? AffectedFiles { get; set; }
+        public string? HumanActionNeeded { get; set; }
     }
+#pragma warning restore S3459, S1144
 }

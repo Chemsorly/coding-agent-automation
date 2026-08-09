@@ -764,11 +764,13 @@
     };
 
     /// <summary>Renders the compilation and tests gate lines for the single-QGC path.</summary>
+#pragma warning disable S3776 // Razor RenderFragment lambda complexity attributed by Sonar; logic is already maximally decomposed
     private static RenderFragment RenderSingleQgcCompilationAndTests(QualityGateReport qr) => __builder =>
     {
         @RenderGateLine(qr.Compilation.Passed, "Compilation", null)
         @RenderGateLine(qr.Tests.Passed, "Tests", FormatTestsSub(qr.Tests.TestsPassed, qr.Tests.TestsFailed))
     };
+#pragma warning restore S3776
 
     private static string FormatTestsSub(int? passed, int? failed) =>
         $"{passed ?? 0} passed, {failed ?? 0} failed";
