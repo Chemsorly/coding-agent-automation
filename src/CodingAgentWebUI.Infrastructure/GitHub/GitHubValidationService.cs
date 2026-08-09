@@ -74,7 +74,7 @@ public class GitHubValidationService
     // VerifyRepositoryAccessAsync already propagates ct correctly; this asymmetry means the HTTP request
     // here cannot be cancelled on host shutdown or user navigation. Signature change:
     // VerifyInstallationTokenAsync(string apiUrl, string token, CancellationToken ct)
-    private async Task<(bool Success, string Message)> VerifyInstallationTokenAsync(string apiUrl, string token)
+    private static async Task<(bool Success, string Message)> VerifyInstallationTokenAsync(string apiUrl, string token)
     {
         try
         {

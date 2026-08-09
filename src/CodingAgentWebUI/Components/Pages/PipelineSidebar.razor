@@ -183,17 +183,8 @@
         var visible = new List<PipelineStep>(steps.Length);
         foreach (var step in steps)
         {
-            // Hide ReviewingAnalysis when skipped
-            if (step == PipelineStep.ReviewingAnalysis
-                && GetStepState(step) == StepState.Pending
-                && Run.HighWaterMark > PipelineStep.ReviewingAnalysis)
-                continue;
-
-            // Hide brain sync steps when brain provider is not configured
-            if (step is PipelineStep.SyncingBrainRepoPreRun or PipelineStep.SyncingBrainRepoPostRun
-                && Run.BrainProviderConfigId == null)
-                continue;
-
+            if (ShouldHideReviewingAnalysis(step)) continue;
+            if (ShouldHideBrainSyncStep(step)) continue;
             if (Run.RunType == PipelineRunType.Review && ShouldHideForReviewRun(step, steps)) continue;
             if (Run.RunType == PipelineRunType.Implementation && ShouldHideForImplementationRun(step, steps)) continue;
             if (ShouldHideNonDecompositionStep(step, Run.RunType)) continue;
@@ -203,6 +194,17 @@
         }
         return visible;
     }
+
+    /// <summary>Returns true if ReviewingAnalysis should be hidden because it was skipped.</summary>
+    private bool ShouldHideReviewingAnalysis(PipelineStep step) =>
+        step == PipelineStep.ReviewingAnalysis
+        && GetStepState(step) == StepState.Pending
+        && Run.HighWaterMark > PipelineStep.ReviewingAnalysis;
+
+    /// <summary>Returns true if a brain sync step should be hidden because no brain provider is configured.</summary>
+    private bool ShouldHideBrainSyncStep(PipelineStep step) =>
+        step is PipelineStep.SyncingBrainRepoPreRun or PipelineStep.SyncingBrainRepoPostRun
+        && Run.BrainProviderConfigId == null;
 
     /// <summary>Returns true if the step should be hidden for Review run type.
     /// Covers implementation-only steps and the duplicate ReviewingCode shown in Code Generation.</summary>
@@ -272,6 +274,26 @@
     /// <summary>Computes the aggregate phase state from its visible sub-steps.</summary>
     private PhaseState GetPhaseState(List<PipelineStep> visibleSteps)
     {
+        var flags = CollectStepFlags(visibleSteps);
+
+        if (flags.HasFailed) return PhaseState.Failed;
+        if (flags.HasCancelled) return PhaseState.Cancelled;
+        if (flags.HasActive) return PhaseState.Active;
+        if (flags.HasRevisited) return ResolveRevisitedState();
+
+        if (flags.AllCompleted) return PhaseState.Completed;
+        if (flags.AllPending) return PhaseState.Pending;
+
+        // Mix of completed and pending (partially done) — treat as active
+        return PhaseState.Active;
+    }
+
+    private readonly record struct StepFlags(
+        bool HasActive, bool HasFailed, bool HasCancelled, bool HasRevisited,
+        bool AllCompleted, bool AllPending);
+
+    private StepFlags CollectStepFlags(List<PipelineStep> visibleSteps)
+    {
         var hasActive = false;
         var hasFailed = false;
         var hasCancelled = false;
@@ -290,16 +312,7 @@
             if (state == StepState.Revisited) hasRevisited = true;
         }
 
-        if (hasFailed) return PhaseState.Failed;
-        if (hasCancelled) return PhaseState.Cancelled;
-        if (hasActive) return PhaseState.Active;
-        if (hasRevisited) return ResolveRevisitedState();
-
-        if (allCompleted) return PhaseState.Completed;
-        if (allPending) return PhaseState.Pending;
-
-        // Mix of completed and pending (partially done) — treat as active
-        return PhaseState.Active;
+        return new StepFlags(hasActive, hasFailed, hasCancelled, hasRevisited, allCompleted, allPending);
     }
 
     /// <summary>
@@ -709,30 +722,49 @@
     {
         @foreach (var qgcResult in qr.QgcResults)
         {
-            <div class="qgc-sub-item @(qgcResult.Passed ? "qgc-pass" : "qgc-fail")">
-                <div class="qgc-sub-header">
-                    @if (qgcResult.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} @qgcResult.DisplayName
-                </div>
-                <div class="qgc-sub-details">
-                    @if (qgcResult.Compilation is { } comp)
-                    {
-                        <span class="@(comp.Passed ? "qg-pass" : "qg-fail")">Build: @(comp.Passed ? "OK" : "FAIL")</span>
-                    }
-                    @if (qgcResult.Tests is { } tests)
-                    {
-                        <span class="@(tests.Passed ? "qg-pass" : "qg-fail")">Tests: @(tests.TestsPassed ?? 0)/@((tests.TestsPassed ?? 0) + (tests.TestsFailed ?? 0))</span>
-                    }
-                    @if (qgcResult.Coverage is { } cov)
-                    {
-                        <span class="@(cov.Passed ? "qg-pass" : "qg-fail")">Cov: @(cov.CoveragePercent?.ToString("F1") ?? "N/A")%</span>
-                    }
-                </div>
+            @RenderQgcSubItem(qgcResult)
+        }
+    };
+
+    /// <summary>Renders one QGC sub-item row with header and detail spans.</summary>
+    private static RenderFragment RenderQgcSubItem(QgcExecutionResult qgcResult) => __builder =>
+    {
+        <div class="qgc-sub-item @(qgcResult.Passed ? "qgc-pass" : "qgc-fail")">
+            <div class="qgc-sub-header">
+                @if (qgcResult.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} @qgcResult.DisplayName
             </div>
+            <div class="qgc-sub-details">
+                @RenderQgcSubItemDetails(qgcResult)
+            </div>
+        </div>
+    };
+
+    /// <summary>Renders the build/tests/coverage detail spans inside a QGC sub-item.</summary>
+    private static RenderFragment RenderQgcSubItemDetails(QgcExecutionResult qgcResult) => __builder =>
+    {
+        @if (qgcResult.Compilation is { } comp)
+        {
+            <span class="@(comp.Passed ? "qg-pass" : "qg-fail")">Build: @(comp.Passed ? "OK" : "FAIL")</span>
+        }
+        @if (qgcResult.Tests is { } tests)
+        {
+            <span class="@(tests.Passed ? "qg-pass" : "qg-fail")">Tests: @(tests.TestsPassed ?? 0)/@((tests.TestsPassed ?? 0) + (tests.TestsFailed ?? 0))</span>
+        }
+        @if (qgcResult.Coverage is { } cov)
+        {
+            <span class="@(cov.Passed ? "qg-pass" : "qg-fail")">Cov: @(cov.CoveragePercent?.ToString("F1") ?? "N/A")%</span>
         }
     };
 
     /// <summary>Renders detailed per-gate lines for the single-QGC path (compilation, tests, coverage, security).</summary>
-    private RenderFragment RenderSingleQgcResults(QualityGateReport qr) => __builder =>
+    private static RenderFragment RenderSingleQgcResults(QualityGateReport qr) => __builder =>
+    {
+        @RenderSingleQgcCompilationAndTests(qr)
+        @RenderSingleQgcCoverageAndSecurity(qr)
+    };
+
+    /// <summary>Renders the compilation and tests gate lines for the single-QGC path.</summary>
+    private static RenderFragment RenderSingleQgcCompilationAndTests(QualityGateReport qr) => __builder =>
     {
         <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
             @if (qr.Compilation.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Compilation
@@ -741,6 +773,11 @@
             @if (qr.Tests.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Tests
             <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
         </div>
+    };
+
+    /// <summary>Renders the coverage and security gate lines for the single-QGC path.</summary>
+    private static RenderFragment RenderSingleQgcCoverageAndSecurity(QualityGateReport qr) => __builder =>
+    {
         @if (qr.Coverage is { } cov)
         {
             <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">

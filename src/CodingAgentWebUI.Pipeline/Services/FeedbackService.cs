@@ -272,14 +272,28 @@ public sealed class FeedbackService
     /// </summary>
     internal RunFeedback ApplyTruncation(RunFeedback feedback, FeedbackOutcome outcome)
     {
+        var harness = TruncateHarness(feedback.Harness, outcome);
+        var issue = TruncateIssue(feedback.Issue);
+
+        return new RunFeedback
+        {
+            Outcome = outcome,
+            CollectedAtUtc = feedback.CollectedAtUtc,
+            Harness = harness,
+            Issue = issue
+        };
+    }
+
+    private HarnessFeedback TruncateHarness(HarnessFeedback source, FeedbackOutcome outcome)
+    {
         var harness = new HarnessFeedback
         {
-            Category = TruncateField(feedback.Harness.Category, FeedbackConstraints.MaxCategoryLength, "Harness.Category"),
-            StuckReason = TruncateField(feedback.Harness.StuckReason, FeedbackConstraints.MaxStringLength, "Harness.StuckReason"),
-            MissingContext = TruncateList(feedback.Harness.MissingContext, FeedbackConstraints.MaxMissingContextItems, FeedbackConstraints.MaxStringLength, "Harness.MissingContext"),
-            MissingCapabilities = TruncateList(feedback.Harness.MissingCapabilities, FeedbackConstraints.MaxMissingCapabilitiesItems, FeedbackConstraints.MaxStringLength, "Harness.MissingCapabilities"),
-            PromptIssues = TruncateList(feedback.Harness.PromptIssues, FeedbackConstraints.MaxPromptIssuesItems, FeedbackConstraints.MaxStringLength, "Harness.PromptIssues"),
-            Suggestions = TruncateList(feedback.Harness.Suggestions, FeedbackConstraints.MaxSuggestionsItems, FeedbackConstraints.MaxStringLength, "Harness.Suggestions")
+            Category = TruncateField(source.Category, FeedbackConstraints.MaxCategoryLength, "Harness.Category"),
+            StuckReason = TruncateField(source.StuckReason, FeedbackConstraints.MaxStringLength, "Harness.StuckReason"),
+            MissingContext = TruncateList(source.MissingContext, FeedbackConstraints.MaxMissingContextItems, FeedbackConstraints.MaxStringLength, "Harness.MissingContext"),
+            MissingCapabilities = TruncateList(source.MissingCapabilities, FeedbackConstraints.MaxMissingCapabilitiesItems, FeedbackConstraints.MaxStringLength, "Harness.MissingCapabilities"),
+            PromptIssues = TruncateList(source.PromptIssues, FeedbackConstraints.MaxPromptIssuesItems, FeedbackConstraints.MaxStringLength, "Harness.PromptIssues"),
+            Suggestions = TruncateList(source.Suggestions, FeedbackConstraints.MaxSuggestionsItems, FeedbackConstraints.MaxStringLength, "Harness.Suggestions")
         };
 
         // Enforce StuckReason for Failure outcome
@@ -296,24 +310,20 @@ public sealed class FeedbackService
             };
         }
 
-        IssueFeedback? issue = null;
-        if (feedback.Issue is not null)
-        {
-            issue = new IssueFeedback
-            {
-                Category = TruncateField(feedback.Issue.Category, FeedbackConstraints.MaxCategoryLength, "Issue.Category"),
-                Description = TruncateField(feedback.Issue.Description, FeedbackConstraints.MaxStringLength, "Issue.Description"),
-                AffectedFiles = TruncateList(feedback.Issue.AffectedFiles, FeedbackConstraints.MaxAffectedFilesItems, FeedbackConstraints.MaxStringLength, "Issue.AffectedFiles"),
-                HumanActionNeeded = TruncateField(feedback.Issue.HumanActionNeeded, FeedbackConstraints.MaxStringLength, "Issue.HumanActionNeeded")
-            };
-        }
+        return harness;
+    }
 
-        return new RunFeedback
+    private IssueFeedback? TruncateIssue(IssueFeedback? source)
+    {
+        if (source is null)
+            return null;
+
+        return new IssueFeedback
         {
-            Outcome = outcome,
-            CollectedAtUtc = feedback.CollectedAtUtc,
-            Harness = harness,
-            Issue = issue
+            Category = TruncateField(source.Category, FeedbackConstraints.MaxCategoryLength, "Issue.Category"),
+            Description = TruncateField(source.Description, FeedbackConstraints.MaxStringLength, "Issue.Description"),
+            AffectedFiles = TruncateList(source.AffectedFiles, FeedbackConstraints.MaxAffectedFilesItems, FeedbackConstraints.MaxStringLength, "Issue.AffectedFiles"),
+            HumanActionNeeded = TruncateField(source.HumanActionNeeded, FeedbackConstraints.MaxStringLength, "Issue.HumanActionNeeded")
         };
     }
 
