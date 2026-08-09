@@ -2,7 +2,6 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Moq;
-using Polly;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
 
