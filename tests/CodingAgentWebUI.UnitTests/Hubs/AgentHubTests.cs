@@ -27,7 +27,12 @@ public class AgentHubTests
             Labels = new[] { "dotnet", "linux" }
         };
 
-        message.AgentId.Should().Be("agent-1");
+        // TODO: This test only validates the implicit string→AgentId conversion on the record, not any
+        // AgentHub rejection logic. The hub's query-param mismatch and authenticated-identity mismatch
+        // checks (AgentHub.RegisterAgent) are not covered here. A regression that misreads message.AgentId.Value
+        // in those guards would not be caught by this test. Consider adding hub-level tests once the hub's
+        // dependencies become mockable.
+        message.AgentId.Value.Should().Be("agent-1");
         message.Hostname.Should().Be("host-1");
         message.Labels.Should().HaveCount(2);
     }
@@ -44,7 +49,11 @@ public class AgentHubTests
             Timestamp = timestamp
         };
 
-        message.AgentId.Should().Be("agent-1");
+        // TODO: This test only validates the implicit string→AgentId conversion on the record, not the
+        // hub-level heartbeat spoofing check in AgentHub.Heartbeat (comparing callerAgent.AgentId to
+        // message.AgentId.Value). A null-deref bug in that comparison would not be caught here. Consider
+        // adding hub-level tests for the spoofing guard once AgentHub's dependencies are mockable.
+        message.AgentId.Value.Should().Be("agent-1");
         message.Timestamp.Should().Be(timestamp);
     }
 
