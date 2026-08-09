@@ -36,14 +36,20 @@ public sealed class FetchIssueStep : IPipelineStep
         {
             context.Logger.Error(ex, "Pipeline {RunId} failed to fetch issue {IssueIdentifier}",
                 context.Run.RunId, context.Run.IssueIdentifier);
-            await context.FailRunAsync($"Failed to fetch issue: {ex.Message}");
+            await context.FailRunAsync($"Failed to fetch issue: {ex.Message}", ct);
+            // TODO: No test currently passes a live CancellationToken and verifies that ct is forwarded
+            // into FailRunAsync — reverting the ct argument would leave all existing tests green.
+            // Consider adding a test that uses a pre-cancelled token and asserts the propagation.
             return StepResult.Stop;
         }
 
         if (string.IsNullOrWhiteSpace(issue.Title) || string.IsNullOrWhiteSpace(issue.Description))
         {
             context.Logger.Warning("Pipeline {RunId} issue has insufficient information", context.Run.RunId);
-            await context.FailRunAsync("insufficient issue information");
+            await context.FailRunAsync("insufficient issue information", ct);
+            // TODO: No test currently verifies that ct is forwarded into FailRunAsync at this site.
+            // Reverting the ct argument would leave all existing tests green. Consider a test that
+            // passes a live CancellationToken and asserts cancellation is propagated.
             return StepResult.Stop;
         }
 

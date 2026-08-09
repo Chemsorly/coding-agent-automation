@@ -32,7 +32,11 @@ public static class GracefulShutdownHelper
 
         try
         {
-            await task.WaitAsync(timeout);
+            await task.WaitAsync(timeout, CancellationToken.None); // intentional: cts already cancelled above; timeout guards the wait
+            // TODO: No test verifies that passing CancellationToken.None here (rather than cts.Token)
+            // prevents an OperationCanceledException from surfacing when the CTS is already cancelled.
+            // Consider a regression test that asserts CancelAndWaitAsync completes via timeout
+            // (not via OperationCanceledException) when the CTS is cancelled before the task finishes.
         }
         catch (TimeoutException)
         {
