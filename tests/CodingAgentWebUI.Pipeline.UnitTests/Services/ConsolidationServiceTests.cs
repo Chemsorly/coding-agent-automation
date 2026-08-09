@@ -818,9 +818,6 @@ public sealed class ConsolidationServiceTests : IDisposable
     /// Also confirms the implicit string → RunId conversion works transparently at call sites.
     /// Regression guard for issue #1874.
     /// </summary>
-    // TODO: the sut.IsRunActive(runIdStr) assertion below tests compiler implicit-conversion behavior,
-    // not runtime logic. If the implicit operator is deleted this will be a compile error, not a test
-    // failure. The runtime path is already covered by ConsolidationServiceStoreDelegationTests.
     [Fact]
     public async Task IsRunActive_AcceptsRunId_AndImplicitStringConversion()
     {
@@ -859,9 +856,6 @@ public sealed class ConsolidationServiceTests : IDisposable
         var store = new FileSystemConsolidationRunStore(_runsDir);
         await store.SaveRunAsync(run, CancellationToken.None);
 
-        // TODO: this test bypasses the workspace manager (no CleanupWorkspaceIfSucceeded call),
-        // so directory-cleanup failures are silently swallowed. Consider using CreateSut() and
-        // adding assertions on CompletedAtUtc/Summary to verify the full update path.
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             _logger, _config, _mockProjectStore.Object, _mockRunHistory.Object,
             store, new FileSystemHarnessSuggestionStore(_suggestionsPath)));
