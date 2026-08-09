@@ -168,7 +168,9 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 
         // Create service WITHOUT consolidation dependencies
         var service = new PendingWorkItemDrainService(
-            MakeDeps());
+            MakeDeps(),
+            MakeLabelSwapService(),
+            MakeDispatchRevertHandler());
 
         // Act
         await InvokeDrainAsync(service);
@@ -253,6 +255,8 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     {
         return new PendingWorkItemDrainService(
             MakeDeps(),
+            MakeLabelSwapService(),
+            MakeDispatchRevertHandler(),
             null, // IProjectStore
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -260,8 +264,14 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 
     private DrainServiceDependencies MakeDeps() =>
         new(_dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-            _runService, _transitionService, _mockPendingWork.Object,
-            _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance);
+            _transitionService, _mockPendingWork.Object,
+            NullLogger<PendingWorkItemDrainService>.Instance);
+
+    private LabelSwapService MakeLabelSwapService() =>
+        new(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance);
+
+    private DispatchRevertHandler MakeDispatchRevertHandler() =>
+        new(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance);
 
     private async Task InsertConsolidationWorkItem(
         Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath,
@@ -433,18 +443,18 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
                 throw new OperationCanceledException(cts.Token);
             });
 
+        var cancellationAwareFactory = new CancellationAwareDbContextFactory(_dbOptions);
+        var cancellingTransitionService = new WorkItemTransitionService(cancellationAwareFactory, NullLogger<WorkItemTransitionService>.Instance);
         var service = new PendingWorkItemDrainService(
             new DrainServiceDependencies(
                 _dbFactory,
                 _mockResolver.Object,
                 _mockAgentComm.Object,
-                _runService,
-                new WorkItemTransitionService(
-                    new CancellationAwareDbContextFactory(_dbOptions),
-                    NullLogger<WorkItemTransitionService>.Instance),
+                cancellingTransitionService,
                 _mockPendingWork.Object,
-                _mockLabelService.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance),
+            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
+            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, cancellingTransitionService, NullLogger<DispatchRevertHandler>.Instance),
             null, // IProjectStore
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -476,6 +486,8 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
     {
         return new PendingWorkItemDrainService(
             MakeDeps(),
+            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
+            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance),
             null, // IProjectStore
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -483,8 +495,8 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
 
     private DrainServiceDependencies MakeDeps() =>
         new(_dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-            _runService, _transitionService, _mockPendingWork.Object,
-            _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance);
+            _transitionService, _mockPendingWork.Object,
+            NullLogger<PendingWorkItemDrainService>.Instance);
 
     private async Task InsertConsolidationWorkItem(
         Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath)
@@ -780,8 +792,10 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         var service = new PendingWorkItemDrainService(
             new DrainServiceDependencies(
                 _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-                _runService, cancellingTransitionService, _mockPendingWork.Object,
-                _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance),
+                cancellingTransitionService, _mockPendingWork.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance),
+            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
+            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, cancellingTransitionService, NullLogger<DispatchRevertHandler>.Instance),
             null,
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -808,8 +822,10 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
     private PendingWorkItemDrainService CreateService() =>
         new(new DrainServiceDependencies(
                 _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-                _runService, _transitionService, _mockPendingWork.Object,
-                _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance),
+                _transitionService, _mockPendingWork.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance),
+            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
+            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance),
             null,
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -929,10 +945,10 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
     {
         // Arrange: item is in Dispatched state (revert is from Dispatched → Pending)
         var workItemId = await InsertDispatchedWorkItem(initialRetryCount: 2);
-        var service = CreateService();
+        var handler = CreateHandler();
 
         // Act
-        await InvokeTryRevertToPendingAsync(service, workItemId, incrementRetryCount: false);
+        await handler.TryRevertToPendingAsync(workItemId, incrementRetryCount: false);
 
         // Assert: status reverted, RetryCount unchanged
         await using var db = await _dbFactory.CreateDbContextAsync();
@@ -947,10 +963,10 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
     public async Task TryRevertToPending_IncrementRetryCountTrue_IncrementsRetryCount()
     {
         var workItemId = await InsertDispatchedWorkItem(initialRetryCount: 3);
-        var service = CreateService();
+        var handler = CreateHandler();
 
         // Act
-        await InvokeTryRevertToPendingAsync(service, workItemId, incrementRetryCount: true);
+        await handler.TryRevertToPendingAsync(workItemId, incrementRetryCount: true);
 
         // Assert: status reverted, RetryCount incremented
         await using var db = await _dbFactory.CreateDbContextAsync();
@@ -966,10 +982,10 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
         var workItemId = await InsertDispatchedWorkItem(initialRetryCount: 0);
         var throwingFactory = new AlwaysThrowingDbContextFactory();
         var failingTransition = new WorkItemTransitionService(throwingFactory, NullLogger<WorkItemTransitionService>.Instance);
-        var service = CreateServiceWithTransition(failingTransition);
+        var handler = CreateHandlerWithTransition(failingTransition);
 
         // Act: must not throw
-        var act = async () => await InvokeTryRevertToPendingAsync(service, workItemId, incrementRetryCount: true);
+        var act = async () => await handler.TryRevertToPendingAsync(workItemId, incrementRetryCount: true);
 
         // Assert: exception is swallowed (stuck-item detector will handle)
         await act.Should().NotThrowAsync("TryRevertToPendingAsync must swallow transition exceptions");
@@ -988,11 +1004,10 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
 
         var cancellationAwareFactory = new CancellationAwareDbContextFactory(_dbOptions);
         var transitionService = new WorkItemTransitionService(cancellationAwareFactory, NullLogger<WorkItemTransitionService>.Instance);
-        var service = CreateServiceWithTransition(transitionService);
+        var handler = CreateHandlerWithTransition(transitionService);
 
         // Negative case: a cancelled token causes the revert to fail → item stays Dispatched.
-        // Uses the shared InvokeTryRevertToPendingAsync helper so that signature changes are caught at compile time.
-        var act = async () => await InvokeTryRevertToPendingAsync(service, workItemId, false, cts.Token);
+        var act = async () => await handler.TryRevertToPendingAsync(workItemId, false, cts.Token);
         await act.Should().NotThrowAsync("TryRevertToPendingAsync must swallow the OperationCanceledException from a cancelled token");
 
         await using var db = await _dbFactory.CreateDbContextAsync();
@@ -1002,13 +1017,22 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
 
         // Positive case: an uncancelled token allows the revert to succeed → item transitions to Pending.
         // This distinguishes "ct was forwarded and respected" from "transition always fails regardless of ct".
-        await InvokeTryRevertToPendingAsync(service, workItemId, false, CancellationToken.None);
+        await handler.TryRevertToPendingAsync(workItemId, false, CancellationToken.None);
 
         await using var db2 = await _dbFactory.CreateDbContextAsync();
         var itemAfter = await db2.WorkItems.FindAsync(workItemId);
         itemAfter!.Status.Should().Be(WorkItemStatus.Pending,
             "an uncancelled token must allow the revert to succeed — confirming ct forwarding is the cause of the difference");
     }
+
+    private DispatchRevertHandler CreateHandler()
+    {
+        var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        return CreateHandlerWithTransition(transitionService);
+    }
+
+    private DispatchRevertHandler CreateHandlerWithTransition(WorkItemTransitionService transitionService) =>
+        new(_dbFactory, _mockResolver.Object, _runService, transitionService, NullLogger<DispatchRevertHandler>.Instance);
 
     private PendingWorkItemDrainService CreateService()
     {
@@ -1019,8 +1043,10 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
     private PendingWorkItemDrainService CreateServiceWithTransition(WorkItemTransitionService transitionService) =>
         new(new DrainServiceDependencies(
             _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-            _runService, transitionService, _mockPendingWork.Object,
-            _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance));
+            transitionService, _mockPendingWork.Object,
+            NullLogger<PendingWorkItemDrainService>.Instance),
+            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
+            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, transitionService, NullLogger<DispatchRevertHandler>.Instance));
 
     private async Task<Guid> InsertDispatchedWorkItem(int initialRetryCount)
     {
@@ -1043,17 +1069,6 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
         });
         await db.SaveChangesAsync();
         return id;
-    }
-
-    private static async Task InvokeTryRevertToPendingAsync(
-        PendingWorkItemDrainService service, Guid workItemId, bool incrementRetryCount,
-        CancellationToken ct = default)
-    {
-        var method = typeof(PendingWorkItemDrainService).GetMethod("TryRevertToPendingAsync",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-            ?? throw new InvalidOperationException("TryRevertToPendingAsync not found");
-        var task = (Task)method.Invoke(service, [workItemId, incrementRetryCount, ct])!;
-        await task;
     }
 
     public void Dispose()
