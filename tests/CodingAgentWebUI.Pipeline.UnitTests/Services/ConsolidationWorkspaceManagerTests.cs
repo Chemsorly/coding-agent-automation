@@ -132,21 +132,34 @@ public sealed class ConsolidationWorkspaceManagerTests : IDisposable
     [Fact]
     public void CleanupWorkspaceIfSucceeded_WhenDeleteFails_LogsAndDoesNotThrow()
     {
-        // Create a workspace directory, then nest a subdirectory with a read-only file
-        // to force Directory.Delete to fail on some systems. On Linux we can achieve
-        // this by creating the workspace, deleting it ourselves, and then creating a file
-        // at that path so the directory delete fails.
+        // Create the workspace directory with a permission-protected subdirectory so
+        // Directory.Delete(recursive:true) throws an UnauthorizedAccessException.
         var runId = Guid.NewGuid().ToString();
-        var workspacePath = _sut.GetWorkspacePath(runId);
-        Directory.CreateDirectory(Path.GetDirectoryName(workspacePath)!);
-        // Place a file at the workspace path (not a directory) so Directory.Delete(path, recursive) throws
-        File.WriteAllText(workspacePath, "block");
+        var workspacePath = _sut.CreateWorkspace(runId);
+        Directory.Exists(workspacePath).Should().BeTrue();
 
-        // Should not throw — the catch block swallows the exception
+        // Create a nested subdirectory and set it to mode 000 so recursive delete fails
+        var nested = Path.Combine(workspacePath, "protected");
+        Directory.CreateDirectory(nested);
+        File.WriteAllText(Path.Combine(nested, "file.txt"), "data");
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "chmod",
+            Arguments = $"000 \"{nested}\"",
+            UseShellExecute = false
+        })?.WaitForExit();
+
+        // Should not throw — the catch block swallows the exception and logs a warning
         var act = () => _sut.CleanupWorkspaceIfSucceeded(runId, ConsolidationRunStatus.Succeeded);
         act.Should().NotThrow();
 
-        // Cleanup the blocking file
-        File.Delete(workspacePath);
+        // Restore permissions so the temp directory can be cleaned up by Dispose()
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "chmod",
+            Arguments = $"-R 755 \"{workspacePath}\"",
+            UseShellExecute = false
+        })?.WaitForExit();
+        try { Directory.Delete(workspacePath, true); } catch { /* best effort */ }
     }
 }

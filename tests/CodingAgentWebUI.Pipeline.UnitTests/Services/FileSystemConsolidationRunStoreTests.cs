@@ -165,4 +165,12 @@ public sealed class FileSystemConsolidationRunStoreTests : IDisposable
 
         result.Should().BeNull();
     }
+
+    [Fact]
+    public async Task DeleteRunAsync_InvalidGuid_ReturnsWithoutDeletingAnything()
+    {
+        // Covers the early-return branch when runId is not a valid GUID
+        var act = () => _sut.DeleteRunAsync("not-a-guid", CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
 }
