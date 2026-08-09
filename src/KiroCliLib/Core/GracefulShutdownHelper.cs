@@ -32,7 +32,7 @@ public static class GracefulShutdownHelper
 
         try
         {
-            await task.WaitAsync(timeout);
+            await task.WaitAsync(timeout, CancellationToken.None); // intentional: cts already cancelled above; timeout guards the wait
         }
         catch (TimeoutException)
         {

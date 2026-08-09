@@ -134,7 +134,7 @@ public sealed class OutputBatcher : IAsyncDisposable
     {
         _trigger = trigger;
         _flushTimeout = flushTimeout ?? DefaultFlushTimeout;
-        _flushLoop = Task.Run(FlushLoopAsync);
+        _flushLoop = Task.Run(FlushLoopAsync, _cts.Token);
     }
 
     /// <summary>
@@ -248,7 +248,7 @@ public sealed class OutputBatcher : IAsyncDisposable
 
         // Final flush of remaining lines
         List<string>? batch = null;
-        await _lock.WaitAsync();
+        await _lock.WaitAsync(CancellationToken.None); // intentional: final flush after _cts is cancelled
         try
         {
             if (_buffer.Count > 0)

@@ -36,14 +36,14 @@ public sealed class FetchIssueStep : IPipelineStep
         {
             context.Logger.Error(ex, "Pipeline {RunId} failed to fetch issue {IssueIdentifier}",
                 context.Run.RunId, context.Run.IssueIdentifier);
-            await context.FailRunAsync($"Failed to fetch issue: {ex.Message}");
+            await context.FailRunAsync($"Failed to fetch issue: {ex.Message}", ct);
             return StepResult.Stop;
         }
 
         if (string.IsNullOrWhiteSpace(issue.Title) || string.IsNullOrWhiteSpace(issue.Description))
         {
             context.Logger.Warning("Pipeline {RunId} issue has insufficient information", context.Run.RunId);
-            await context.FailRunAsync("insufficient issue information");
+            await context.FailRunAsync("insufficient issue information", ct);
             return StepResult.Stop;
         }
 
