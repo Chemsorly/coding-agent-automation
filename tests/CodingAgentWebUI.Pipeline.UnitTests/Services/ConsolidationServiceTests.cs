@@ -791,8 +791,9 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         var originalStartedAt = run.StartedAtUtc;
 
-        // Small delay to ensure new StartedAtUtc is distinct
-        await Task.Delay(10);
+        // Wait long enough for the system clock to tick past originalStartedAt.
+        // Windows clock resolution is ~15 ms, so 50 ms guarantees a distinct value.
+        await Task.Delay(50);
 
         // Act: call TransitionToRunningAsync via IConsolidationRunTracker interface
         IConsolidationRunTracker tracker = sut;

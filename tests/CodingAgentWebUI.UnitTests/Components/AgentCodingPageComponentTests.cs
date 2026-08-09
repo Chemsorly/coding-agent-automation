@@ -793,7 +793,9 @@ public class AgentCodingPageComponentTests : BunitContext
             method?.Invoke(component.Instance, null);
         });
 
-        await Task.Delay(50); // give async void time to complete
+        // Drain the renderer sync context: HandleGlobalEscape's continuation posts
+        // StateHasChanged back via InvokeAsync, so a second no-op InvokeAsync flushes it.
+        await component.InvokeAsync(() => { });
         Assert.NotNull(component.Markup);
     }
 
@@ -1332,7 +1334,9 @@ public class AgentCodingPageComponentTests : BunitContext
             method?.Invoke(component.Instance, null);
         });
 
-        await Task.Delay(50); // give async void a moment
+        // Drain the renderer sync context: HandleStateChanged's continuation posts
+        // StateHasChanged back via InvokeAsync, so a second no-op InvokeAsync flushes it.
+        await component.InvokeAsync(() => { });
         Assert.NotNull(component.Markup);
     }
 }
