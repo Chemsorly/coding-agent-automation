@@ -46,9 +46,6 @@ public sealed class VerifyBaselineStep : IPipelineStep
         {
             context.Run.BaselineHealthPassed = false;
             await context.FailRunAsync($"Agent environment unhealthy: {ex.Message}", ct);
-            // TODO: No test currently verifies that ct is forwarded into FailRunAsync at this site.
-            // Reverting the ct argument would leave all existing VerifyBaselineStep tests green.
-            // Consider a test that passes a live CancellationToken and asserts propagation.
             return false;
         }
     }

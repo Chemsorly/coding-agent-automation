@@ -134,10 +134,6 @@ public sealed class OutputBatcher : IAsyncDisposable
     {
         _trigger = trigger;
         _flushTimeout = flushTimeout ?? DefaultFlushTimeout;
-        // TODO: The CancellationToken passed to Task.Run only prevents scheduling if already cancelled at
-        // construction time — it does not propagate into FlushLoopAsync's body. Cancellation inside the loop
-        // works because FlushLoopAsync reads _cts.Token directly. Consider whether a dedicated test should
-        // assert that the loop terminates promptly when _cts is cancelled.
         _flushLoop = Task.Run(FlushLoopAsync, _cts.Token);
     }
 
