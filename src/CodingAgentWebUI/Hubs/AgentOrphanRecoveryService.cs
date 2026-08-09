@@ -57,8 +57,6 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         }
     }
 
-    // TODO: No tests exercise HandleOrphanedAgentAsync → RestoreRunFromAgentStateAsync / LinkAgentToExistingRun
-    // after the `message` parameter removal. Add tests to verify the orphan recovery path compiles and behaves correctly.
     private async Task RestoreActiveJobAsync(AgentRegistrationMessage message, AgentId agentId)
     {
         var activeJob = message.ActiveJob!;

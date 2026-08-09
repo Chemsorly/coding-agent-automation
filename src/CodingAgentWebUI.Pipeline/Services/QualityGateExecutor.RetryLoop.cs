@@ -79,9 +79,6 @@ public partial class QualityGateExecutor
     /// Runs the pre-PR cleanup agent, then the final quality gate pass, and finalizes the PR.
     /// Called after the initial retry loop passes all quality gates.
     /// </summary>
-    // TODO: No tests cover the "all passed" branch that calls this method. The `report` parameter
-    // was removed and is now obtained locally from RunQualityGateValidationAsync; add a test to
-    // verify that re-validation is triggered (not a pre-existing report) when all gates pass.
     private async Task RunPostRetryCleanupAndFinalizeAsync(QualityGateContext context, CancellationToken linkedCt)
     {
         var run = context.Run;

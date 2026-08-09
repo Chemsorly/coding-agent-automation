@@ -663,7 +663,7 @@ internal sealed class DispatchScheduler
             var candidate = TryDequeueValidProjectLevelEpic(kvp.Value, ctx);
             if (candidate is null) continue;
 
-            var (dispatched, epicFailed) = await TryDispatchProjectLevelCandidateAsync(candidate.Value, ctx, stoppingToken, ct);
+            var (dispatched, epicFailed) = await TryDispatchProjectLevelCandidateAsync(candidate.Value, ctx, stoppingToken);
             if (dispatched || epicFailed)
             {
                 consumed++;
@@ -685,13 +685,10 @@ internal sealed class DispatchScheduler
     /// Reports status, notifies change, and dispatches a single project-level epic candidate.
     /// Returns (dispatched, epicFailed).
     /// </summary>
-    // TODO: S1172 — `ct` parameter is no longer used here after removing it from DispatchProjectLevelEpicAsync.
-    // Consider removing `ct` from this method's signature and updating its callers.
     private async Task<(bool dispatched, bool epicFailed)> TryDispatchProjectLevelCandidateAsync(
         (IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template) candidate,
         RoundDispatchContext ctx,
-        CancellationToken stoppingToken,
-        CancellationToken ct)
+        CancellationToken stoppingToken)
     {
         var phaseLabel = candidate.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
         ctx.TrackingReportIssue(candidate.Issue.Identifier);
