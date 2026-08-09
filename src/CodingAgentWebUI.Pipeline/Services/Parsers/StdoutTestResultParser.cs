@@ -42,9 +42,9 @@ public static class StdoutTestResultParser
             @"Test summary:.*?failed:\s*(\d+).*?succeeded:\s*(\d+).*?skipped:\s*(\d+)",
             RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2));
         if (!match.Success) return null;
-        int.TryParse(match.Groups[2].Value, out var passed);
-        int.TryParse(match.Groups[1].Value, out var failed);
-        int.TryParse(match.Groups[3].Value, out var skipped);
+        var passed  = int.Parse(match.Groups[2].Value);
+        var failed  = int.Parse(match.Groups[1].Value);
+        var skipped = int.Parse(match.Groups[3].Value);
         return (passed, failed, skipped);
     }
 

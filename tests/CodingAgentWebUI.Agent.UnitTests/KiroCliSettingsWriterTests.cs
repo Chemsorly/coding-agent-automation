@@ -23,6 +23,7 @@ public class KiroCliSettingsWriterTests : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this);
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* best-effort */ }
     }
 

@@ -183,6 +183,7 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
         await _service.DisposeAsync();
     }
 }

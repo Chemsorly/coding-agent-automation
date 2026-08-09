@@ -10,6 +10,12 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// </summary>
 public class LocalPipelineExecutorPayloadTests
 {
+    private static readonly string[] s_SecretsJsonEnv = new[] { "secrets.json", ".env" };
+    private static readonly string[] s_ConcernAB = new[] { "concern-a", "concern-b" };
+    private static readonly string[] s_BlockerAB = new[] { "blocker-1" };
+    private static readonly string[] s_FailConcern = new[] { "fail-concern" };
+    private static readonly string[] s_BlockAB = new[] { "block-a", "block-b" };
+
     // ── BuildCompletionPayload ────────────────────────────────────────────────
 
     [Fact]
@@ -192,7 +198,7 @@ public class LocalPipelineExecutorPayloadTests
 
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "Error");
 
-        payload.BlacklistedFilesDetected.Should().BeEquivalentTo(new[] { "secrets.json", ".env" });
+        payload.BlacklistedFilesDetected.Should().BeEquivalentTo(s_SecretsJsonEnv);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -427,7 +433,7 @@ public class LocalPipelineExecutorPayloadTests
 
         var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
 
-        payload.AnalysisConcerns.Should().BeEquivalentTo(new[] { "concern-a", "concern-b" });
+        payload.AnalysisConcerns.Should().BeEquivalentTo(s_ConcernAB);
     }
 
     [Fact]
@@ -438,7 +444,7 @@ public class LocalPipelineExecutorPayloadTests
 
         var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
 
-        payload.AnalysisBlockingIssues.Should().BeEquivalentTo(new[] { "blocker-1" });
+        payload.AnalysisBlockingIssues.Should().BeEquivalentTo(s_BlockerAB);
     }
 
     [Fact]
@@ -449,7 +455,7 @@ public class LocalPipelineExecutorPayloadTests
 
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
 
-        payload.AnalysisConcerns.Should().BeEquivalentTo(new[] { "fail-concern" });
+        payload.AnalysisConcerns.Should().BeEquivalentTo(s_FailConcern);
     }
 
     [Fact]
@@ -460,6 +466,6 @@ public class LocalPipelineExecutorPayloadTests
 
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
 
-        payload.AnalysisBlockingIssues.Should().BeEquivalentTo(new[] { "block-a", "block-b" });
+        payload.AnalysisBlockingIssues.Should().BeEquivalentTo(s_BlockAB);
     }
 }

@@ -28,6 +28,7 @@ public class PipelineCleanupTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
         await _batcher.DisposeAsync();
         await _connection.DisposeAsync();
     }

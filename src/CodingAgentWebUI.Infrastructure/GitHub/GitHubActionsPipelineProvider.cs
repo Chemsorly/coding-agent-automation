@@ -257,7 +257,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     /// Produces a new job list with log content injected for jobs whose IDs appear in
     /// <paramref name="logsByJobId"/>. Jobs not in the dictionary are returned unchanged.
     /// </summary>
-    private static IReadOnlyList<PipelineJobResult> BuildEnrichedJobList(
+    private static List<PipelineJobResult> BuildEnrichedJobList(
         IReadOnlyList<PipelineJobResult> originalJobs,
         Dictionary<long, string> logsByJobId)
     {

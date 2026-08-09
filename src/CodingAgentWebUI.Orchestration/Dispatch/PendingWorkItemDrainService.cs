@@ -151,8 +151,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         if (!await DispatchPipelineItemAsync(item, request!, agentId, connectionId!, ct)) return true;
 
         await _labelSwapService.SwapLabelWithRetryAsync(item.Id, request!, ct); // Swap label to agent:in-progress (#997, retries #1579)
-        _logger.LogInformation("PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
-            item.Id, item.IssueIdentifier, agentId);
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
+                item.Id, item.IssueIdentifier, agentId);
         return true;
     }
 

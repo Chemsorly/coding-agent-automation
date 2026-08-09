@@ -12,6 +12,9 @@ namespace CodingAgentWebUI.UnitTests.Hubs;
 /// </summary>
 public class AgentJobLifecycleServiceApplyMetadataTests
 {
+    private static readonly string[] s_AgentABC = new[] { "agent-a", "agent-b", "agent-c" };
+    private static readonly string[] s_SoloAgent = new[] { "solo-agent" };
+
     // ── BranchName ────────────────────────────────────────────────────────────
 
     [Fact]
@@ -255,7 +258,7 @@ public class AgentJobLifecycleServiceApplyMetadataTests
         // Use char(31) - ASCII Unit Separator - explicitly to avoid encoding issues
         var separator = new string(new[] { (char)31 });
         Apply(run, new() { ["CodeReviewAgentsRun"] = "agent-a" + separator + "agent-b" + separator + "agent-c" });
-        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "agent-a", "agent-b", "agent-c" });
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(s_AgentABC);
     }
 
     [Fact]
@@ -263,7 +266,7 @@ public class AgentJobLifecycleServiceApplyMetadataTests
     {
         var run = MakeRun();
         Apply(run, new() { ["CodeReviewAgentsRun"] = "solo-agent" });
-        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "solo-agent" });
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(s_SoloAgent);
     }
 
     [Fact]

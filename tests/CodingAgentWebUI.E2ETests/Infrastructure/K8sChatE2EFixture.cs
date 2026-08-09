@@ -12,7 +12,9 @@ public sealed class K8sChatE2EFixture : IAsyncLifetime
     public K8sChatE2EWebApplicationFactory Factory { get; } = new();
 
     public string ServerAddress => Factory.ServerAddress;
+#pragma warning disable CA1822 // API key property accessed via instance throughout the test suite; making it static would break all callers
     public string ApiKey => K8sChatE2EWebApplicationFactory.TestApiKey;
+#pragma warning restore CA1822
 
     // Convenience accessors
     public InMemoryConfigurationStore ConfigStore => Factory.ConfigStore;
