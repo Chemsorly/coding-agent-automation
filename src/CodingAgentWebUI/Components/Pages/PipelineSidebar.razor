@@ -194,57 +194,79 @@
                 && Run.BrainProviderConfigId == null)
                 continue;
 
-            // Hide implementation-only steps for review runs
-            if (Run.RunType == PipelineRunType.Review
-                && step is PipelineStep.VerifyingBaseline or PipelineStep.AnalyzingCode
-                    or PipelineStep.ReviewingAnalysis or PipelineStep.PostingAnalysis
-                    or PipelineStep.GeneratingCode or PipelineStep.RunningQualityGates
-                    or PipelineStep.PreparingForPullRequest or PipelineStep.CreatingPullRequest
-                    or PipelineStep.ReflectingOnRun or PipelineStep.SyncingBrainRepoPostRun)
-                continue;
-
-            // Hide review-only steps for implementation runs
-            if (Run.RunType == PipelineRunType.Implementation
-                && step is PipelineStep.ExtractingLinkedIssues or PipelineStep.PostingFindings)
-                continue;
-
-            // Hide duplicate ReviewingCode in the "Review" phase for implementation runs
-            // (it's already shown in "Code Generation" phase)
-            if (Run.RunType == PipelineRunType.Implementation
-                && step == PipelineStep.ReviewingCode
-                && steps.Contains(PipelineStep.ExtractingLinkedIssues))
-                continue;
-
-            // Hide duplicate ReviewingCode in the "Code Generation" phase for review runs
-            // (it's already shown in "Review" phase)
-            if (Run.RunType == PipelineRunType.Review
-                && step == PipelineStep.ReviewingCode
-                && steps.Contains(PipelineStep.GeneratingCode))
-                continue;
-
-            // Hide decomposition-only phases for non-decomposition runs
-            if (Run.RunType is not PipelineRunType.DecompositionAnalysis
-                && step is PipelineStep.DownloadingOpenIssues or PipelineStep.ExploringCodebase
-                    or PipelineStep.GeneratingPlan or PipelineStep.ReviewingPlan or PipelineStep.PostingPlan)
-                continue;
-
-            if (Run.RunType is not PipelineRunType.Decomposition
-                && step is PipelineStep.GeneratingSubIssues or PipelineStep.CreatingIssues or PipelineStep.PostingSummary)
-                continue;
-
-            // Hide non-decomposition phases for decomposition runs
-            if (Run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
-                && step is PipelineStep.CreatingBranch or PipelineStep.VerifyingBaseline
-                    or PipelineStep.AnalyzingCode or PipelineStep.ReviewingAnalysis or PipelineStep.PostingAnalysis
-                    or PipelineStep.GeneratingCode or PipelineStep.ReviewingCode or PipelineStep.RunningQualityGates
-                    or PipelineStep.ExtractingLinkedIssues or PipelineStep.PostingFindings
-                    or PipelineStep.PreparingForPullRequest or PipelineStep.CreatingPullRequest
-                    or PipelineStep.ReflectingOnRun or PipelineStep.SyncingBrainRepoPostRun)
-                continue;
+            if (Run.RunType == PipelineRunType.Review && ShouldHideForReviewRun(step, steps)) continue;
+            if (Run.RunType == PipelineRunType.Implementation && ShouldHideForImplementationRun(step, steps)) continue;
+            if (ShouldHideNonDecompositionStep(step, Run.RunType)) continue;
+            if (ShouldHideForDecompositionRun(step, Run.RunType)) continue;
 
             visible.Add(step);
         }
         return visible;
+    }
+
+    /// <summary>Returns true if the step should be hidden for Review run type.
+    /// Covers implementation-only steps and the duplicate ReviewingCode shown in Code Generation.</summary>
+    private static bool ShouldHideForReviewRun(PipelineStep step, PipelineStep[] steps)
+    {
+        // Hide implementation-only steps for review runs
+        if (step is PipelineStep.VerifyingBaseline or PipelineStep.AnalyzingCode
+                or PipelineStep.ReviewingAnalysis or PipelineStep.PostingAnalysis
+                or PipelineStep.GeneratingCode or PipelineStep.RunningQualityGates
+                or PipelineStep.PreparingForPullRequest or PipelineStep.CreatingPullRequest
+                or PipelineStep.ReflectingOnRun or PipelineStep.SyncingBrainRepoPostRun)
+            return true;
+
+        // Hide duplicate ReviewingCode in the "Code Generation" phase for review runs
+        // (it's already shown in "Review" phase)
+        if (step == PipelineStep.ReviewingCode && steps.Contains(PipelineStep.GeneratingCode))
+            return true;
+
+        return false;
+    }
+
+    /// <summary>Returns true if the step should be hidden for Implementation run type.
+    /// Covers review-only steps and the duplicate ReviewingCode shown in the Review phase.</summary>
+    private static bool ShouldHideForImplementationRun(PipelineStep step, PipelineStep[] steps)
+    {
+        // Hide review-only steps for implementation runs
+        if (step is PipelineStep.ExtractingLinkedIssues or PipelineStep.PostingFindings)
+            return true;
+
+        // Hide duplicate ReviewingCode in the "Review" phase for implementation runs
+        // (it's already shown in "Code Generation" phase)
+        if (step == PipelineStep.ReviewingCode && steps.Contains(PipelineStep.ExtractingLinkedIssues))
+            return true;
+
+        return false;
+    }
+
+    /// <summary>Returns true if the step is decomposition-only and the current run is not a decomposition run.</summary>
+    private static bool ShouldHideNonDecompositionStep(PipelineStep step, PipelineRunType runType)
+    {
+        if (runType is not PipelineRunType.DecompositionAnalysis
+            && step is PipelineStep.DownloadingOpenIssues or PipelineStep.ExploringCodebase
+                or PipelineStep.GeneratingPlan or PipelineStep.ReviewingPlan or PipelineStep.PostingPlan)
+            return true;
+
+        if (runType is not PipelineRunType.Decomposition
+            && step is PipelineStep.GeneratingSubIssues or PipelineStep.CreatingIssues or PipelineStep.PostingSummary)
+            return true;
+
+        return false;
+    }
+
+    /// <summary>Returns true if the step should be hidden because it is not relevant for decomposition runs.</summary>
+    private static bool ShouldHideForDecompositionRun(PipelineStep step, PipelineRunType runType)
+    {
+        if (runType is not (PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition))
+            return false;
+
+        return step is PipelineStep.CreatingBranch or PipelineStep.VerifyingBaseline
+                or PipelineStep.AnalyzingCode or PipelineStep.ReviewingAnalysis or PipelineStep.PostingAnalysis
+                or PipelineStep.GeneratingCode or PipelineStep.ReviewingCode or PipelineStep.RunningQualityGates
+                or PipelineStep.ExtractingLinkedIssues or PipelineStep.PostingFindings
+                or PipelineStep.PreparingForPullRequest or PipelineStep.CreatingPullRequest
+                or PipelineStep.ReflectingOnRun or PipelineStep.SyncingBrainRepoPostRun;
     }
 
     /// <summary>Computes the aggregate phase state from its visible sub-steps.</summary>
@@ -271,27 +293,31 @@
         if (hasFailed) return PhaseState.Failed;
         if (hasCancelled) return PhaseState.Cancelled;
         if (hasActive) return PhaseState.Active;
-
-        if (hasRevisited)
-        {
-            // Distinguish genuine retries from sub-operations:
-            // A genuine retry means the pipeline went back to fix something (RetryCount > 0
-            // or quality gates failed). A sub-operation means the current step is running
-            // a child operation (e.g., PreparingForPullRequest runs final quality gates,
-            // temporarily setting CurrentStep back to RunningQualityGates).
-            // Show as Retry only when there's evidence of an actual retry attempt.
-            if (Run.RetryCount > 0) return PhaseState.Retry;
-
-            // If the first visible step in this phase was already reached (is Revisited)
-            // and the current step is in a preceding phase, this is likely a sub-operation.
-            // Show as Active (in progress) rather than Retry.
-            return PhaseState.Active;
-        }
+        if (hasRevisited) return ResolveRevisitedState();
 
         if (allCompleted) return PhaseState.Completed;
         if (allPending) return PhaseState.Pending;
 
         // Mix of completed and pending (partially done) — treat as active
+        return PhaseState.Active;
+    }
+
+    /// <summary>
+    /// Resolves the phase state when one or more steps are in the Revisited state.
+    /// Distinguishes genuine retries from sub-operations:
+    /// A genuine retry means the pipeline went back to fix something (RetryCount > 0
+    /// or quality gates failed). A sub-operation means the current step is running
+    /// a child operation (e.g., PreparingForPullRequest runs final quality gates,
+    /// temporarily setting CurrentStep back to RunningQualityGates).
+    /// Show as Retry only when there's evidence of an actual retry attempt.
+    /// </summary>
+    private PhaseState ResolveRevisitedState()
+    {
+        if (Run.RetryCount > 0) return PhaseState.Retry;
+
+        // If the first visible step in this phase was already reached (is Revisited)
+        // and the current step is in a preceding phase, this is likely a sub-operation.
+        // Show as Active (in progress) rather than Retry.
         return PhaseState.Active;
     }
 
@@ -433,13 +459,7 @@
         var current = Run.CurrentStep;
 
         if (current is PipelineStep.Failed or PipelineStep.Cancelled)
-        {
-            var last = GetLastReachedStep();
-            if (LogicalOrder(step) < LogicalOrder(last)) return StepState.Completed;
-            if (step == last)
-                return current == PipelineStep.Failed ? StepState.Failed : StepState.Cancelled;
-            return StepState.Pending;
-        }
+            return GetStepStateWhenTerminated(step, GetLastReachedStep(), current);
 
         if (current == PipelineStep.Completed)
             return step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
@@ -452,6 +472,19 @@
             return StepState.Revisited;
 
         return LogicalOrder(step) < LogicalOrder(current) ? StepState.Completed : StepState.Pending;
+    }
+
+    /// <summary>
+    /// Determines the step state when the pipeline has terminated (Failed or Cancelled).
+    /// Steps before the last-reached step are Completed; the last-reached step is
+    /// Failed or Cancelled; all others are Pending.
+    /// </summary>
+    private static StepState GetStepStateWhenTerminated(PipelineStep step, PipelineStep last, PipelineStep current)
+    {
+        if (LogicalOrder(step) < LogicalOrder(last)) return StepState.Completed;
+        if (step == last)
+            return current == PipelineStep.Failed ? StepState.Failed : StepState.Cancelled;
+        return StepState.Pending;
     }
 
     private PipelineStep GetLastReachedStep() => Run.GetLastReachedStep();
@@ -643,94 +676,122 @@
         if (Run.LatestQualityReport is { } qr)
         {
             <div class="step-detail-box">
-                @if (qr.AllPassed)
-                {
-                    <div class="qg-header-pass">All gates passed <Icon Name="check-circle" /></div>
-                }
-                else
-                {
-                    <div class="qg-header-fail">Attempt @(Run.QualityGateHistory.Count)/@(MaxRetries + 1)</div>
-                }
-
+                @RenderQgHeader(qr)
                 @if (qr.QgcResults.Count > 1)
                 {
-                    @foreach (var qgcResult in qr.QgcResults)
-                    {
-                        <div class="qgc-sub-item @(qgcResult.Passed ? "qgc-pass" : "qgc-fail")">
-                            <div class="qgc-sub-header">
-                                @if (qgcResult.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} @qgcResult.DisplayName
-                            </div>
-                            <div class="qgc-sub-details">
-                                @if (qgcResult.Compilation is { } comp)
-                                {
-                                    <span class="@(comp.Passed ? "qg-pass" : "qg-fail")">Build: @(comp.Passed ? "OK" : "FAIL")</span>
-                                }
-                                @if (qgcResult.Tests is { } tests)
-                                {
-                                    <span class="@(tests.Passed ? "qg-pass" : "qg-fail")">Tests: @(tests.TestsPassed ?? 0)/@((tests.TestsPassed ?? 0) + (tests.TestsFailed ?? 0))</span>
-                                }
-                                @if (qgcResult.Coverage is { } cov)
-                                {
-                                    <span class="@(cov.Passed ? "qg-pass" : "qg-fail")">Cov: @(cov.CoveragePercent?.ToString("F1") ?? "N/A")%</span>
-                                }
-                            </div>
-                        </div>
-                    }
+                    @RenderMultiQgcResults(qr)
                 }
                 else
                 {
-                    <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
-                        @if (qr.Compilation.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Compilation
-                    </div>
-                    <div class="qg-line @(qr.Tests.Passed ? "qg-pass" : "qg-fail")">
-                        @if (qr.Tests.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Tests
-                        <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
-                    </div>
-                    @if (qr.Coverage is { } cov)
-                    {
-                        <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
-                            @if (cov.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Coverage
-                            <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
-                        </div>
-                    }
-                    @if (qr.SecurityScan is { } sec)
-                    {
-                        <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
-                            @if (sec.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Security
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="qg-line qg-skip">— Security</div>
-                    }
+                    @RenderSingleQgcResults(qr)
                 }
+                @RenderExternalCi(qr)
+                @RenderQgHistory(qr)
+            </div>
+        }
+    };
 
-                @if (qr.ExternalCi is { } ci)
-                {
-                    <div class="qg-line @(ci.Passed ? "qg-pass" : "qg-fail")">
-                        @if (ci.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} External CI
-                        @if (!ci.Passed && !string.IsNullOrEmpty(ci.Details))
-                        {
-                            <span class="qg-sub">@Truncate(ci.Details, 60)</span>
-                        }
-                    </div>
-                }
+    /// <summary>Renders the quality gate pass/fail header line ("All gates passed" or "Attempt N/M").</summary>
+    private RenderFragment RenderQgHeader(QualityGateReport qr) => __builder =>
+    {
+        @if (qr.AllPassed)
+        {
+            <div class="qg-header-pass">All gates passed <Icon Name="check-circle" /></div>
+        }
+        else
+        {
+            <div class="qg-header-fail">Attempt @(Run.QualityGateHistory.Count)/@(MaxRetries + 1)</div>
+        }
+    };
 
-                @{
-                    var history = Run.QualityGateHistory.ToArray();
-                }
-                @if (history.Length > 1)
+    /// <summary>Renders one summary row per QGC when there are multiple QGC results (multi-config scenario).</summary>
+    private RenderFragment RenderMultiQgcResults(QualityGateReport qr) => __builder =>
+    {
+        @foreach (var qgcResult in qr.QgcResults)
+        {
+            <div class="qgc-sub-item @(qgcResult.Passed ? "qgc-pass" : "qgc-fail")">
+                <div class="qgc-sub-header">
+                    @if (qgcResult.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} @qgcResult.DisplayName
+                </div>
+                <div class="qgc-sub-details">
+                    @if (qgcResult.Compilation is { } comp)
+                    {
+                        <span class="@(comp.Passed ? "qg-pass" : "qg-fail")">Build: @(comp.Passed ? "OK" : "FAIL")</span>
+                    }
+                    @if (qgcResult.Tests is { } tests)
+                    {
+                        <span class="@(tests.Passed ? "qg-pass" : "qg-fail")">Tests: @(tests.TestsPassed ?? 0)/@((tests.TestsPassed ?? 0) + (tests.TestsFailed ?? 0))</span>
+                    }
+                    @if (qgcResult.Coverage is { } cov)
+                    {
+                        <span class="@(cov.Passed ? "qg-pass" : "qg-fail")">Cov: @(cov.CoveragePercent?.ToString("F1") ?? "N/A")%</span>
+                    }
+                </div>
+            </div>
+        }
+    };
+
+    /// <summary>Renders detailed per-gate lines for the single-QGC path (compilation, tests, coverage, security).</summary>
+    private RenderFragment RenderSingleQgcResults(QualityGateReport qr) => __builder =>
+    {
+        <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
+            @if (qr.Compilation.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Compilation
+        </div>
+        <div class="qg-line @(qr.Tests.Passed ? "qg-pass" : "qg-fail")">
+            @if (qr.Tests.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Tests
+            <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
+        </div>
+        @if (qr.Coverage is { } cov)
+        {
+            <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
+                @if (cov.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Coverage
+                <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
+            </div>
+        }
+        @if (qr.SecurityScan is { } sec)
+        {
+            <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
+                @if (sec.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Security
+            </div>
+        }
+        else
+        {
+            <div class="qg-line qg-skip">— Security</div>
+        }
+    };
+
+    /// <summary>
+    /// Renders the External CI gate line. Rendered outside the multi/single-QGC branches so it
+    /// appears for both multi-QGC and single-QGC scenarios.
+    /// </summary>
+    private RenderFragment RenderExternalCi(QualityGateReport qr) => __builder =>
+    {
+        @if (qr.ExternalCi is { } ci)
+        {
+            <div class="qg-line @(ci.Passed ? "qg-pass" : "qg-fail")">
+                @if (ci.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} External CI
+                @if (!ci.Passed && !string.IsNullOrEmpty(ci.Details))
                 {
-                    <div class="qg-history">
-                        <div class="qg-history-title">Previous attempts:</div>
-                        @for (var i = 0; i < history.Length - 1; i++)
-                        {
-                            var h = history[i];
-                            var covPct = h.Coverage?.CoveragePercent;
-                            <div class="qg-history-item">
-                                #@(i + 1): @if (h.AllPassed) {<text>Passed </text><Icon Name="check-circle" />} else if (covPct.HasValue) {<text>Coverage @(covPct.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture))% </text><Icon Name="x-circle" />} else {<text>Failed </text><Icon Name="x-circle" />}
-                            </div>
-                        }
+                    <span class="qg-sub">@Truncate(ci.Details, 60)</span>
+                }
+            </div>
+        }
+    };
+
+    /// <summary>Renders the "Previous attempts" history list when there is more than one quality gate run.</summary>
+    private RenderFragment RenderQgHistory(QualityGateReport qr) => __builder =>
+    {
+        var history = Run.QualityGateHistory.ToArray();
+        @if (history.Length > 1)
+        {
+            <div class="qg-history">
+                <div class="qg-history-title">Previous attempts:</div>
+                @for (var i = 0; i < history.Length - 1; i++)
+                {
+                    var h = history[i];
+                    var covPct = h.Coverage?.CoveragePercent;
+                    <div class="qg-history-item">
+                        #@(i + 1): @if (h.AllPassed) {<text>Passed </text><Icon Name="check-circle" />} else if (covPct.HasValue) {<text>Coverage @(covPct.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture))% </text><Icon Name="x-circle" />} else {<text>Failed </text><Icon Name="x-circle" />}
                     </div>
                 }
             </div>

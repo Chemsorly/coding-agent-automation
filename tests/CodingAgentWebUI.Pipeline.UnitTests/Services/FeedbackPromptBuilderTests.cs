@@ -1,5 +1,14 @@
 // Feature: 020-agent-feedback-loops, Property 6: Success feedback section includes retry context and categories
 // Unit tests for FeedbackPromptBuilder content verification
+
+// TODO: [WARNING] Add tests for the AppendTestResults and AppendCoverageResults helpers extracted from
+// AppendQualityGateReport. Specifically:
+// - Assert that the "Passed: N, Failed: M, Skipped: K" line appears when TestsPassed or TestsFailed
+//   is non-null (the || condition). A regression changing || to && would silently drop the counts
+//   line when only one of the two is set.
+// - Assert that the "Coverage: X.X%" line appears with the correct formatted value.
+// The existing tests only check high-level keyword presence and do not assert on quality gate
+// report output, so regressions in AppendTestResults/AppendCoverageResults are currently undetected.
 using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;

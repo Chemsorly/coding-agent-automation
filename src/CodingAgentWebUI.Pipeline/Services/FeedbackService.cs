@@ -179,52 +179,10 @@ public sealed class FeedbackService
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            string? category = null;
-            string? stuckReason = null;
-            List<string> missingContext = [];
-            List<string> missingCapabilities = [];
-            List<string> promptIssues = [];
-            List<string> suggestions = [];
-
-            string? issueCategory = null;
-            string? issueDescription = null;
-            List<string> affectedFiles = [];
-            string? humanActionNeeded = null;
-            var hasIssue = false;
-
-            // Try to extract harness fields
-            if (root.TryGetProperty("harness", out var harnessElement) ||
-                root.TryGetProperty("Harness", out harnessElement))
-            {
-                category = TryGetString(harnessElement, "category", "Category");
-                stuckReason = TryGetString(harnessElement, "stuckReason", "StuckReason", "stuck_reason");
-                missingContext = TryGetStringList(harnessElement, "missingContext", "MissingContext", "missing_context");
-                missingCapabilities = TryGetStringList(harnessElement, "missingCapabilities", "MissingCapabilities", "missing_capabilities");
-                promptIssues = TryGetStringList(harnessElement, "promptIssues", "PromptIssues", "prompt_issues");
-                suggestions = TryGetStringList(harnessElement, "suggestions", "Suggestions");
-            }
-            else
-            {
-                // Fields might be at root level
-                category = TryGetString(root, "category", "Category");
-                stuckReason = TryGetString(root, "stuckReason", "StuckReason", "stuck_reason");
-                missingContext = TryGetStringList(root, "missingContext", "MissingContext", "missing_context");
-                missingCapabilities = TryGetStringList(root, "missingCapabilities", "MissingCapabilities", "missing_capabilities");
-                promptIssues = TryGetStringList(root, "promptIssues", "PromptIssues", "prompt_issues");
-                suggestions = TryGetStringList(root, "suggestions", "Suggestions");
-            }
-
-            // Try to extract issue fields
-            if (root.TryGetProperty("issue", out var issueElement) ||
-                root.TryGetProperty("Issue", out issueElement))
-            {
-                issueCategory = TryGetString(issueElement, "category", "Category");
-                issueDescription = TryGetString(issueElement, "description", "Description");
-                affectedFiles = TryGetStringList(issueElement, "affectedFiles", "AffectedFiles", "affected_files");
-                humanActionNeeded = TryGetString(issueElement, "humanActionNeeded", "HumanActionNeeded", "human_action_needed");
-                hasIssue = issueCategory is not null || issueDescription is not null ||
-                           affectedFiles.Count > 0 || humanActionNeeded is not null;
-            }
+            var (category, stuckReason, missingContext, missingCapabilities, promptIssues, suggestions)
+                = ExtractHarnessFields(root);
+            var (hasIssue, issueCategory, issueDescription, affectedFiles, humanActionNeeded)
+                = ExtractIssueFields(root);
 
             var harness = new HarnessFeedback
             {
@@ -261,6 +219,51 @@ public sealed class FeedbackService
             _logger.Warning(ex, "Partial JSON parse also failed, returning fallback");
             return CreateFallbackForMissingJson(outcome, collectedAtUtc);
         }
+    }
+
+    /// <summary>
+    /// Extracts harness fields from the JSON root element, falling back to the root if
+    /// no "harness"/"Harness" property is found (lenient root-level extraction).
+    /// </summary>
+    private static (string? category, string? stuckReason, List<string> missingContext,
+        List<string> missingCapabilities, List<string> promptIssues, List<string> suggestions)
+        ExtractHarnessFields(JsonElement root)
+    {
+        var source = (root.TryGetProperty("harness", out var harnessElement)
+                      || root.TryGetProperty("Harness", out harnessElement))
+            ? harnessElement
+            : root;
+
+        return (
+            TryGetString(source, "category", "Category"),
+            TryGetString(source, "stuckReason", "StuckReason", "stuck_reason"),
+            TryGetStringList(source, "missingContext", "MissingContext", "missing_context"),
+            TryGetStringList(source, "missingCapabilities", "MissingCapabilities", "missing_capabilities"),
+            TryGetStringList(source, "promptIssues", "PromptIssues", "prompt_issues"),
+            TryGetStringList(source, "suggestions", "Suggestions")
+        );
+    }
+
+    /// <summary>
+    /// Extracts issue feedback fields from the JSON root element.
+    /// Returns hasIssue=false if no "issue"/"Issue" property is found.
+    /// </summary>
+    private static (bool hasIssue, string? issueCategory, string? issueDescription,
+        List<string> affectedFiles, string? humanActionNeeded)
+        ExtractIssueFields(JsonElement root)
+    {
+        if (!root.TryGetProperty("issue", out var issueElement) &&
+            !root.TryGetProperty("Issue", out issueElement))
+            return (false, null, null, [], null);
+
+        var issueCategory = TryGetString(issueElement, "category", "Category");
+        var issueDescription = TryGetString(issueElement, "description", "Description");
+        var affectedFiles = TryGetStringList(issueElement, "affectedFiles", "AffectedFiles", "affected_files");
+        var humanActionNeeded = TryGetString(issueElement, "humanActionNeeded", "HumanActionNeeded", "human_action_needed");
+        var hasIssue = issueCategory is not null || issueDescription is not null ||
+                       affectedFiles.Count > 0 || humanActionNeeded is not null;
+
+        return (hasIssue, issueCategory, issueDescription, affectedFiles, humanActionNeeded);
     }
 
     /// <summary>

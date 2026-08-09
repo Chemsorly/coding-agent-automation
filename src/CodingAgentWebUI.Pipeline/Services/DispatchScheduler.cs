@@ -646,11 +646,10 @@ internal sealed class DispatchScheduler
 
         foreach (var kvp in projectLevelDecompositionQueues.ToList())
         {
-            bool limitReached = ctx.RemainingBudget - consumed <= 0
-                || ct.IsCancellationRequested
-                || stoppingToken.IsCancellationRequested
-                || activeDecompositionCount + additionalDecompDispatches >= config.MaxConcurrentDecompositions;
-            if (limitReached) break;
+            if (IsProjectDispatchLimitReached(ctx.RemainingBudget, consumed,
+                    activeDecompositionCount, additionalDecompDispatches,
+                    config.MaxConcurrentDecompositions, ct, stoppingToken))
+                break;
 
             // Fair alternation: TryDequeueValidProjectLevelEpic may drain multiple already-processing items
             // before returning the first valid candidate (or null). Combined with the snapshot ToList() above,
@@ -680,6 +679,20 @@ internal sealed class DispatchScheduler
 
         return (madeProgress, consumed, processed, failed, additionalDecompDispatches);
     }
+
+    /// <summary>
+    /// Returns true when project-level decomposition dispatching should stop for this round.
+    /// Checks budget exhaustion, cancellation, and the decomposition concurrency cap.
+    /// </summary>
+    private static bool IsProjectDispatchLimitReached(
+        int remainingBudget, int consumed,
+        int activeDecompositionCount, int additionalDecompDispatches,
+        int maxConcurrentDecompositions,
+        CancellationToken ct, CancellationToken stoppingToken) =>
+        remainingBudget - consumed <= 0
+        || ct.IsCancellationRequested
+        || stoppingToken.IsCancellationRequested
+        || activeDecompositionCount + additionalDecompDispatches >= maxConcurrentDecompositions;
 
     /// <summary>
     /// Reports status, notifies change, and dispatches a single project-level epic candidate.

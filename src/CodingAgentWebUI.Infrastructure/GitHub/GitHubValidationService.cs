@@ -59,25 +59,51 @@ public class GitHubValidationService
         // If owner/repo are provided, go straight to repo validation (Step 3).
         // Otherwise, list installation repos to confirm the token is accepted.
         if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
-        {
-            try
-            {
-                var client = CreateClient(apiUrl, token);
-                var response = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
-                return (true, $"✅ GitHub App credentials validated — {response.TotalCount} repository(ies) accessible");
-            }
-            catch (AuthorizationException)
-            {
-                return (false, "Authentication failed: installation token was rejected");
-            }
-            catch (Exception ex)
-            {
-                return (false, $"Connection failed: {ex.Message}");
-            }
-        }
+            return await VerifyInstallationTokenAsync(apiUrl, token);
 
         // Step 3: owner/repo provided — verify repository access and permissions
-        // NOTE: [GH-06] Provider delegation (below) already validates credentials + repo access via provider.ValidateAsync. The subsequent Repository.Get call is redundant for access validation — only the permission extraction (read/write/admin) is needed. Refactor to skip the redundant API call.
+        return await VerifyRepositoryAccessAsync(apiUrl, clientId, installationId, privateKeyBase64, token, owner, repo, ct);
+    }
+
+    /// <summary>
+    /// Step 2: Verifies the installation token by listing accessible repositories.
+    /// Returns success with a count of accessible repos, or an error on auth/connection failure.
+    /// </summary>
+    // TODO: [WARNING] Thread the CancellationToken from ValidateAppCredentialsAsync into this method and pass it
+    // to GetAllRepositoriesForCurrent() (which accepts a CancellationToken overload). The counterpart
+    // VerifyRepositoryAccessAsync already propagates ct correctly; this asymmetry means the HTTP request
+    // here cannot be cancelled on host shutdown or user navigation. Signature change:
+    // VerifyInstallationTokenAsync(string apiUrl, string token, CancellationToken ct)
+    private async Task<(bool Success, string Message)> VerifyInstallationTokenAsync(string apiUrl, string token)
+    {
+        try
+        {
+            var client = CreateClient(apiUrl, token);
+            var response = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
+            return (true, $"✅ GitHub App credentials validated — {response.TotalCount} repository(ies) accessible");
+        }
+        catch (AuthorizationException)
+        {
+            return (false, "Authentication failed: installation token was rejected");
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Connection failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Step 3: Verifies repository access and extracts permissions.
+    /// When a provider factory is available, first delegates to the provider's ValidateAsync.
+    /// Then calls Repository.Get directly to obtain permission level (read/write/admin).
+    /// NOTE: [GH-06] Provider delegation already validates credentials + repo access via provider.ValidateAsync.
+    /// The subsequent Repository.Get call is redundant for access validation — only the permission extraction
+    /// (read/write/admin) is needed. Refactor to skip the redundant API call.
+    /// </summary>
+    private async Task<(bool Success, string Message)> VerifyRepositoryAccessAsync(
+        string apiUrl, string clientId, long installationId, string privateKeyBase64,
+        string token, string owner, string repo, CancellationToken ct)
+    {
         // Delegate basic credential + repo access check to the provider's ValidateAsync when available
         if (_providerFactory is not null)
         {

@@ -2,6 +2,15 @@ using Bunit;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Models;
 
+// TODO: [WARNING] No tests exercise ShouldHideForReviewRun, ShouldHideForImplementationRun,
+// ShouldHideNonDecompositionStep, or ShouldHideForDecompositionRun with non-Implementation run types.
+// All tests in this file use the default PipelineRunType.Implementation. Add tests for:
+// - PipelineRunType.Review: assert implementation-only steps (e.g. GeneratingCode) are hidden and
+//   review-only steps (e.g. ExtractingLinkedIssues) are visible.
+// - PipelineRunType.Decomposition / PipelineRunType.DecompositionAnalysis: assert standard pipeline
+//   steps (e.g. CreatingBranch, GeneratingCode) are hidden and decomposition steps are visible.
+// Without these, a regression in the hide-list for Review or Decomposition runs would go undetected.
+
 namespace CodingAgentWebUI.UnitTests.Components;
 
 /// <summary>

@@ -234,13 +234,13 @@ public sealed class ImageDownloadService : IDisposable
 
             var redirectUri = location.IsAbsoluteUri ? location : new Uri(currentUrl, location);
 
-            if (!string.Equals(redirectUri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+            if (IsNonHttpsRedirect(redirectUri))
             {
                 _logger?.LogDebug("Redirect to non-HTTPS blocked: {Url}", redirectUri);
                 return (null, null);
             }
 
-            if (!IsSameOrigin(currentUrl, redirectUri))
+            if (IsCrossOriginRedirect(currentUrl, redirectUri))
                 stripAuth = true;
 
             currentUrl = redirectUri;
@@ -248,6 +248,13 @@ public sealed class ImageDownloadService : IDisposable
 
         return (null, null);
     }
+
+    /// <summary>Returns true when the redirect target scheme is not HTTPS, which should be blocked.</summary>
+    private static bool IsNonHttpsRedirect(Uri redirectUri) =>
+        !string.Equals(redirectUri.Scheme, "https", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Returns true when the redirect crosses origins (different host/port), requiring auth stripping.</summary>
+    private static bool IsCrossOriginRedirect(Uri from, Uri to) => !IsSameOrigin(from, to);
 
     /// <summary>
     /// Validates Content-Type and extension consistency, returns the final extension to use,

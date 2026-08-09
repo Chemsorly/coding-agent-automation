@@ -5,6 +5,12 @@ using CodingAgentWebUI.Pipeline.Services;
 using Moq;
 using Serilog;
 
+// TODO: [WARNING] Add a test for the ExtractHarnessFields root-fallback path: provide a JSON object
+// where category/stuckReason/etc. appear at the true root level with NO wrapping "harness"/"Harness"
+// key, and assert the fields are extracted correctly. This exercises the ternary fallback
+// `source = root` branch in ExtractHarnessFields. A regression that broke the fallback (e.g.
+// always throwing when no harness key is present) would not be caught by current tests.
+
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
