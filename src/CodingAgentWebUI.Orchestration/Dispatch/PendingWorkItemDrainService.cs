@@ -118,7 +118,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             if (!await ProcessPendingItemAsync(item, ct)) break;
         }
 
-        WorkDistributionTelemetry.DispatcherPollCount.Add(1); // TODO: placed at end — see comment in original for metric inconsistency risk
+        WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
 
     /// <summary>
@@ -146,12 +146,6 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         }
 
         // --- Pipeline items ---
-        // TODO: connectionId is out string? (nullable) from TryResolveAgentForItem but is passed here with
-        // null-forgiving operator (!). If resolveResult.ConnectionId is ever null (e.g. agent registered
-        // without a connection ID), the null-forgiving silently passes null to DispatchPipelineItemAsync
-        // which then forwards it to _agentComm.AssignJobAsync, causing a NullReferenceException at point
-        // of use. Add a null-check on connectionId before this call and treat null as a resolution failure.
-        // See review finding: Correctness WARNING PendingWorkItemDrainService.cs:150
         if (!await DispatchPipelineItemAsync(item, request!, agentId, connectionId!, ct)) return true;
 
         await SwapLabelWithRetryAsync(item.Id, request!, ct); // Swap label to agent:in-progress (#997, retries #1579)

@@ -187,7 +187,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             {
                 _logger.Warning("Consolidation run {RunId} dispatch failed for {Type}/{TemplateName}", run.RunId, type, templateName);
                 _runningRuns.TryRemove(key, out _);
-                DeletePersistedRun(run.RunId);
+                await DeletePersistedRunAsync(run.RunId);
                 _feedbackCache.ClearFeedbackDataForRun(run.RunId);
                 return DispatchOutcome.Failed;
             }
@@ -200,7 +200,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             // Exception is propagated to the caller (TriggerAsync); logging here would cause
             // duplicate log entries. Cleanup is done before rethrowing.
             _runningRuns.TryRemove(key, out _);
-            DeletePersistedRun(run.RunId);
+            await DeletePersistedRunAsync(run.RunId);
             _feedbackCache.ClearFeedbackDataForRun(run.RunId);
             throw;
         }
