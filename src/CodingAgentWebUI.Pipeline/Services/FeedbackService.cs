@@ -430,29 +430,27 @@ public sealed class FeedbackService
     /// <summary>
     /// Internal DTO for lenient deserialization of the agent's JSON feedback block.
     /// </summary>
-#pragma warning disable S3459, S1144 // Properties are set by System.Text.Json deserialization
     private sealed class FeedbackDto
     {
-        public HarnessDto? Harness { get; set; }
-        public IssueDto? Issue { get; set; }
+        public HarnessDto? Harness { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
+        public IssueDto? Issue { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
     }
 
     private sealed class HarnessDto
     {
-        public string? Category { get; set; }
-        public string? StuckReason { get; set; }
-        public List<string>? MissingContext { get; set; }
-        public List<string>? MissingCapabilities { get; set; }
-        public List<string>? PromptIssues { get; set; }
-        public List<string>? Suggestions { get; set; }
+        public string? Category { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
+        public string? StuckReason { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
+        public List<string>? MissingContext { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
+        public List<string>? MissingCapabilities { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
+        public List<string>? PromptIssues { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
+        public List<string>? Suggestions { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
     }
 
     private sealed class IssueDto
     {
-        public string? Category { get; set; }
-        public string? Description { get; set; }
-        public List<string>? AffectedFiles { get; set; }
-        public string? HumanActionNeeded { get; set; }
+        public string? Category { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
+        public string? Description { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
+        public List<string>? AffectedFiles { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
+        public string? HumanActionNeeded { get; set; } // NOSONAR S3459,S1144 — set by System.Text.Json deserialization
     }
-#pragma warning restore S3459, S1144
 }
