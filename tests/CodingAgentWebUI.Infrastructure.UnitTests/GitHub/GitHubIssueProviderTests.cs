@@ -285,7 +285,8 @@ public class GitHubIssueProviderTests
             .ThrowsAsync(new NotFoundException("Not found", System.Net.HttpStatusCode.NotFound));
         _mockIssues.Setup(i => i.Labels).Returns(mockLabels.Object);
 
-        await _provider.RemoveLabelAsync("42", "agent:next", CancellationToken.None);
+        var act = () => _provider.RemoveLabelAsync("42", "agent:next", CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]

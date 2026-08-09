@@ -363,12 +363,18 @@ public class AgentAuthorizationFilterInvokeTests
     {
         var ctx = MakeInvocationContext(_hub, "conn-nobody", "Heartbeat", []);
 
-        try { await _filter.InvokeMethodAsync(ctx, _ => ValueTask.FromResult((object?)null)); } catch { }
+        var exceptionThrown = false;
+        try { await _filter.InvokeMethodAsync(ctx, _ => ValueTask.FromResult((object?)null)); }
+        catch (HubException) { exceptionThrown = true; }
 
-        // Serilog uses generic Warning<T1,T2,...> overloads — just verify IsLeader was called at all
-        // by checking that a HubException was (would have been) thrown — the throw itself proves
-        // the warning path was entered. Nothing to additionally verify here.
-        // (Serilog mock generic overloads cannot be verified with object[] signature)
+        // TODO: This assertion duplicates the HubException throw already verified (with stricter message check) by the
+        // adjacent test InvokeMethodAsync_UnregisteredConnection_ThrowsHubException. The *logging* behaviour advertised
+        // by this test's name cannot currently be verified because Serilog's generic Warning<T1,T2,...> overloads are not
+        // matchable via object[] mock signatures. If Serilog mocking support improves, replace this assertion with a
+        // direct log-call verification (e.g. _logger.Verify(...)) so the test covers its stated intent.
+        // Serilog mock generic overloads cannot be verified with object[] signature, so we assert
+        // the HubException was thrown — the throw proves the unregistered-connection warning path was entered.
+        exceptionThrown.Should().BeTrue("unregistered connection should throw HubException (which also triggers the warning log)");
     }
 
     // ── Registered connection without [RequiresActiveJob] → pass through ─
