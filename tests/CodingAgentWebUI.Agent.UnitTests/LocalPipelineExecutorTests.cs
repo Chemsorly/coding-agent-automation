@@ -53,22 +53,67 @@ public class LocalPipelineExecutorTests : IDisposable
     }
 
     [Fact]
-    // TODO: This test body is identical to Constructor_ValidParameters_DoesNotThrow — both construct
-    // LocalPipelineExecutor with the same arguments and neither explicitly passes a null
-    // BrainUpdateService (it just relies on the record default of null). The intent was to verify
-    // that omitting BrainUpdateService does not throw, but the test does not distinguish that from
-    // the happy-path test. One of these tests should be removed or the null-BrainUpdateService case
-    // should explicitly set BrainUpdateService: null in the deps record to make the intent clear.
-    // TODO: The deleted LocalPipelineExecutorConstructorTests.cs contained null-guard tests for each
-    // required parameter of LocalPipelineExecutor (Orchestrator, HttpClientFactory, PipelineConfiguration,
-    // QualityGateValidator, Logger). These have no replacement. Add null-guard tests for LocalPipelineExecutorDependencies
-    // required positional parameters to restore coverage.
     public void Constructor_NullBrainUpdateService_DoesNotThrow()
     {
+        // BrainUpdateService is optional — passing null explicitly must not throw.
         var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object,
+            BrainUpdateService: null, AgentIdentity: new AgentId("test-agent")));
 
         act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Constructor_NullDeps_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps");
+    }
+
+    [Fact]
+    public void Constructor_NullOrchestrator_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            null!, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Orchestrator");
+    }
+
+    [Fact]
+    public void Constructor_NullHttpClientFactory_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, null!, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.HttpClientFactory");
+    }
+
+    [Fact]
+    public void Constructor_NullDefaultPipelineConfig_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, null!, _mockQualityGateValidator.Object, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.DefaultPipelineConfig");
+    }
+
+    [Fact]
+    public void Constructor_NullQualityGateValidator_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, null!, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.QualityGateValidator");
+    }
+
+    [Fact]
+    public void Constructor_NullLogger_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, null!));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
     }
 
     // ── WriteMcpConfigToWorkspace ────────────────────────────────────────
