@@ -62,7 +62,7 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            transitionService,
+            WorkItemTransition: transitionService,
             DbFactory: _dbFactory));
     }
 

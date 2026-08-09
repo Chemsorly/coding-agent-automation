@@ -49,14 +49,14 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object));
 
-        _facade = new AgentHubFacade(
+        _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
             registry, runService, dispatcher, drainService,
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            workItemTransition: _transitionService,
-            dbFactory: _dbFactory);
+            WorkItemTransition: _transitionService,
+            DbFactory: _dbFactory));
     }
 
     public void Dispose() { }
@@ -99,10 +99,10 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object));
 
-        var facadeWithout = new AgentHubFacade(
+        var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
             registry, runService, dispatcher, drainService,
             Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
-            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance);
+            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
 
         var result = await facadeWithout.GetWorkItemRetryCountAsync(
             new JobId(Guid.NewGuid().ToString()), CancellationToken.None);
@@ -161,10 +161,10 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object));
 
-        var facadeWithout = new AgentHubFacade(
+        var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
             registry, runService, dispatcher, drainService,
             Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
-            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance);
+            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
 
         var act = () => facadeWithout.RequeueWorkItemAsync(
             new JobId(Guid.NewGuid().ToString()), CancellationToken.None);
@@ -204,10 +204,10 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object));
 
-        var facadeWithout = new AgentHubFacade(
+        var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
             registry, runService, dispatcher, drainService,
             Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
-            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance);
+            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
 
         var result = await facadeWithout.GetWorkItemProviderConfigIdsAsync(
             new JobId(Guid.NewGuid().ToString()), CancellationToken.None);
@@ -268,10 +268,10 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object));
 
-        var facadeWithout = new AgentHubFacade(
+        var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
             registry, runService, dispatcher, drainService,
             Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
-            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance);
+            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
 
         var act = () => facadeWithout.TouchLastProgressAsync(
             new JobId(Guid.NewGuid().ToString()), DateTimeOffset.UtcNow, CancellationToken.None);
@@ -341,10 +341,10 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object));
 
-        var facadeWithout = new AgentHubFacade(
+        var facadeWithout = new AgentHubFacade(new AgentHubFacadeDependencies(
             registry, runService, dispatcher, drainService,
             Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
-            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance);
+            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance));
 
         var result = await facadeWithout.GetWorkItemIssueMetadataAsync(
             new JobId(Guid.NewGuid().ToString()), CancellationToken.None);

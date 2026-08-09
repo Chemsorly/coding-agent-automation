@@ -26,7 +26,7 @@ public sealed class AgentHubPipelineReportingTests
 
     private AgentHub CreateHub(string connectionId = "conn-1")
     {
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
@@ -38,7 +38,7 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -353,7 +353,7 @@ public sealed class AgentHubPipelineReportingTests
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
 
         var mockLifecycle = new Mock<IAgentJobLifecycleService>();
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
@@ -365,7 +365,7 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
@@ -387,7 +387,7 @@ public sealed class AgentHubPipelineReportingTests
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
 
         var mockLifecycle = new Mock<IAgentJobLifecycleService>();
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
@@ -399,7 +399,7 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
@@ -418,7 +418,7 @@ public sealed class AgentHubPipelineReportingTests
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
 
         var mockLifecycle = new Mock<IAgentJobLifecycleService>();
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
@@ -430,7 +430,7 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
@@ -449,7 +449,7 @@ public sealed class AgentHubPipelineReportingTests
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var mockIssueOps = new Mock<IHubIssueOperations>();
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
@@ -461,7 +461,7 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
@@ -481,7 +481,7 @@ public sealed class AgentHubPipelineReportingTests
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var mockIssueOps = new Mock<IHubIssueOperations>();
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
@@ -493,7 +493,7 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");

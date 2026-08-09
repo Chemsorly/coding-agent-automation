@@ -59,7 +59,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            transitionService));
+            WorkItemTransition: transitionService));
     }
 
     public void Dispose()

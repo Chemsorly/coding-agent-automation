@@ -25,7 +25,7 @@ public sealed class AgentHubIssueProxyTests
 
     private AgentHub CreateHub(string connectionId = "conn-1")
     {
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             Mock.Of<IChangeNotifier>(),
@@ -37,7 +37,7 @@ public sealed class AgentHubIssueProxyTests
             Mock.Of<IAgentTokenRefreshService>(),
             _mockGateFormatter.Object,
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
