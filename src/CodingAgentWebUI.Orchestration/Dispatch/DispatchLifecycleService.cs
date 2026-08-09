@@ -214,7 +214,7 @@ internal sealed class DispatchLifecycleService
     /// Saves the Dispatched status transition, records metrics, updates concurrency tracking,
     /// and invokes the variant-specific post-dispatch success callback.
     /// </summary>
-    private async Task FinalizeDispatchAsync(
+    private static async Task FinalizeDispatchAsync(
         PipelineDbContext db,
         WorkItemEntity workItem,
         PendingWorkItemProjection item,

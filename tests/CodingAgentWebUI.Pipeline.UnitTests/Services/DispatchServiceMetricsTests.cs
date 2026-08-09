@@ -80,6 +80,7 @@ public class DispatchServiceMetricsTests : IDisposable
     // TODO: Dispose _leaderElection — LeaderElectionService holds a CancellationTokenSource that won't be cleaned up.
     public void Dispose()
     {
+        GC.SuppressFinalize(this);
         _listener.Dispose();
         using var db = new TestPipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();

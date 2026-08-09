@@ -23,6 +23,9 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 [Trait("Feature", "DbMode")]
 public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<DbModeE2EFixture>
 {
+    private static readonly string[] s_EnhancementAgentNextLabels = new[] { "enhancement", "agent:next" };
+    private static readonly string[] s_IntegrityE2eMatchLabels = new[] { "integrity-e2e" };
+
     public DbModeDataIntegrityTests(DbModeE2EFixture fixture) : base(fixture) { }
 
     [Fact]
@@ -34,7 +37,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
             Identifier = "42",
             Title = "Data integrity test issue",
             Description = "## Requirements\nVerify field population\n\n## Acceptance Criteria\n- [ ] Done",
-            Labels = new[] { "enhancement", "agent:next" }
+            Labels = s_EnhancementAgentNextLabels
         });
 
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
@@ -50,7 +53,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
         {
             Id = "profile-integrity-e2e",
             DisplayName = "Integrity E2E Agent Profile",
-            MatchLabels = new[] { "integrity-e2e" },
+            MatchLabels = s_IntegrityE2eMatchLabels,
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
@@ -168,7 +171,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
             Identifier = "43",
             Title = "Failed step integrity test",
             Description = "## Requirements\nTest failure path\n\n## Acceptance Criteria\n- [ ] Done",
-            Labels = new[] { "enhancement", "agent:next" }
+            Labels = s_EnhancementAgentNextLabels
         });
 
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
@@ -184,7 +187,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
         {
             Id = "profile-integrity-failed-e2e",
             DisplayName = "Integrity Failed E2E Agent Profile",
-            MatchLabels = new[] { "integrity-e2e" },
+            MatchLabels = s_IntegrityE2eMatchLabels,
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);

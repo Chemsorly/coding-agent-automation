@@ -22,6 +22,7 @@ public class SetupCommandRunnerTests : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this);
         try { Directory.Delete(_tempDir, recursive: true); } catch { }
     }
 
@@ -209,7 +210,7 @@ public class SetupCommandRunnerTests : IDisposable
     {
         var result = await SetupCommandRunner.RunAsync(
             SleepForever(), "Slow Step", _tempDir, new Dictionary<string, string>(),
-            _ => { }, CancellationToken.None, timeout: TimeSpan.FromSeconds(2));
+            _ => { }, timeout: TimeSpan.FromSeconds(2), ct: CancellationToken.None);
 
         result.Success.Should().BeFalse();
         result.FailureMessage.Should().Contain("timed out");
@@ -233,7 +234,7 @@ public class SetupCommandRunnerTests : IDisposable
             var result = await SetupCommandRunner.RunAsync(
                 EchoThenSleep("stdout data"), "Hang Step", _tempDir,
                 new Dictionary<string, string>(),
-                _ => { }, CancellationToken.None, timeout: TimeSpan.FromSeconds(2));
+                _ => { }, timeout: TimeSpan.FromSeconds(2), ct: CancellationToken.None);
 
             result.Success.Should().BeFalse();
 

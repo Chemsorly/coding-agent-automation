@@ -39,8 +39,8 @@ public static class SetupCommandRunner
         IReadOnlyDictionary<string, string> environmentSecrets,
         Action<string> emitOutput,
         CancellationToken ct)
-        => RunAsync(command, stepName, workingDirectory, environmentSecrets, emitOutput, ct,
-            timeout: TimeSpan.FromSeconds(120));
+        => RunAsync(command, stepName, workingDirectory, environmentSecrets, emitOutput,
+            timeout: TimeSpan.FromSeconds(120), ct: ct);
 
     /// <summary>
     /// Internal overload with configurable timeout for testing.
@@ -51,8 +51,8 @@ public static class SetupCommandRunner
         string workingDirectory,
         IReadOnlyDictionary<string, string> environmentSecrets,
         Action<string> emitOutput,
-        CancellationToken ct,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(stepName);

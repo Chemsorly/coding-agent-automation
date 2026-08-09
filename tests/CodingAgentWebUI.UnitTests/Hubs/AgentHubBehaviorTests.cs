@@ -14,6 +14,8 @@ namespace CodingAgentWebUI.UnitTests.Hubs;
 /// <summary>Unit tests for <see cref="AgentHub"/> behavior (method logic, not models).</summary>
 public sealed class AgentHubBehaviorTests : IDisposable
 {
+    private static readonly string[] s_SecurityStyleAgents = new[] { "security-agent", "style-agent" };
+
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
     private readonly Mock<IConsolidationService> _mockConsolidation = new();
@@ -1036,7 +1038,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         public Microsoft.AspNetCore.Http.HttpContext? HttpContext { get; set; }
     }
 
-    private IAgentJobLifecycleService CreateRealLifecycleService(IChangeNotifier changeNotifier)
+    private AgentJobLifecycleService CreateRealLifecycleService(IChangeNotifier changeNotifier)
     {
         var issueOps = new AgentIssueOperations(
             _mockFacade.Object,
@@ -1340,7 +1342,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.CodeReviewCriticalCount.Should().Be(3);
         run.CodeReviewWarningCount.Should().Be(5);
         run.CodeReviewSuggestionCount.Should().Be(7);
-        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "security-agent", "style-agent" });
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(s_SecurityStyleAgents);
     }
 
     [Fact]
@@ -1472,7 +1474,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var encoded = "security-agent\x1Fstyle-agent";
         await hub.ReportStepTransition("job-1", PipelineStep.ReviewingCode, DateTimeOffset.UtcNow,
             new Dictionary<string, string> { ["CodeReviewAgentsRun"] = encoded });
-        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "security-agent", "style-agent" });
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(s_SecurityStyleAgents);
     }
 
     [Fact]

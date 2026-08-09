@@ -625,7 +625,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         string agentId, string jobName, ChatSession session)
     {
         // Cancel watcher first so it exits without running its own cleanup
+#pragma warning disable S108 // Intentional: CTS may already be in cancelled state; cancellation is the goal and the exception is harmless.
         try { await session.WatcherCts.CancelAsync(); } catch (OperationCanceledException) { }
+#pragma warning restore S108
 
         _logger.Warning(
             "ChatJobDispatcher: grace period expired for {JobName} — force deleting job",

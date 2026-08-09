@@ -27,6 +27,8 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// </remarks>
 public sealed class AgentMonitoringPageServiceTests
 {
+    private static readonly string[] s_KiroLabels = new[] { "kiro" };
+
     private readonly Mock<IActiveRunQueryService> _mockActiveRunQuery = new();
     private readonly AgentRegistryService _registry;
     private readonly Mock<ILogger> _mockLogger = new();
@@ -107,7 +109,7 @@ public sealed class AgentMonitoringPageServiceTests
         {
             AgentId = agentId,
             Hostname = "test-host",
-            Labels = new[] { "kiro" }
+            Labels = s_KiroLabels
         }, connectionId);
     }
 

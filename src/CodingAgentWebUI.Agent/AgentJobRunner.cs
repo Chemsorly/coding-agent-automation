@@ -77,8 +77,8 @@ public static class AgentJobRunner
         HubConnection connection,
         OutputBatcher outputBatcher,
         Action<PipelineStep?> onStepChanged,
-        CancellationToken rethrowOnSigterm = default,
         string? cancelledLabel = null,
+        CancellationToken rethrowOnSigterm = default,
         CancellationToken ct = default)
         => ExecuteAsync(new AgentJobExecutionRequest(execute, assignment, connection, outputBatcher, onStepChanged, cancelledLabel, ct, rethrowOnSigterm));
 
@@ -89,10 +89,10 @@ public static class AgentJobRunner
         HubConnection connection,
         OutputBatcher outputBatcher,
         Action<PipelineStep?> onStepChanged,
-        CancellationToken rethrowOnSigterm = default,
         string? cancelledLabel = null,
+        CancellationToken rethrowOnSigterm = default,
         CancellationToken ct = default)
-        => ExecuteAsync(executor.ExecuteAsync, assignment, connection, outputBatcher, onStepChanged, rethrowOnSigterm, cancelledLabel, ct);
+        => ExecuteAsync(executor.ExecuteAsync, assignment, connection, outputBatcher, onStepChanged, cancelledLabel, rethrowOnSigterm, ct);
 
     /// <summary>Convenience overload accepting <see cref="IWorkItemExecutor"/> directly.</summary>
     public static Task<JobCompletionPayload> ExecuteAsync(
@@ -101,10 +101,10 @@ public static class AgentJobRunner
         HubConnection connection,
         OutputBatcher outputBatcher,
         Action<PipelineStep?> onStepChanged,
-        CancellationToken rethrowOnSigterm = default,
         string? cancelledLabel = null,
+        CancellationToken rethrowOnSigterm = default,
         CancellationToken ct = default)
-        => ExecuteAsync(executor.ExecuteAsync, assignment, connection, outputBatcher, onStepChanged, rethrowOnSigterm, cancelledLabel, ct);
+        => ExecuteAsync(executor.ExecuteAsync, assignment, connection, outputBatcher, onStepChanged, cancelledLabel, rethrowOnSigterm, ct);
 
     // ── Backward-compatible overload (used by tests without OutputBatcher) ──
 
@@ -121,7 +121,7 @@ public static class AgentJobRunner
         CancellationToken ct = default)
     {
         await using var outputBatcher = new OutputBatcher();
-        return await ExecuteAsync(executor, assignment, connection, outputBatcher, onStepChanged, rethrowOnSigterm, ct: ct);
+        return await ExecuteAsync(executor, assignment, connection, outputBatcher, onStepChanged, rethrowOnSigterm: rethrowOnSigterm, ct: ct);
     }
 }
 
