@@ -71,8 +71,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     }
 
     /// <inheritdoc />
-    // TODO: CancellationToken should be the last parameter per .NET convention. Changing this
-    // signature is a breaking change across all callers — defer to a separate cleanup pass.
     public async Task<ConsolidationRun?> TriggerAsync(
         ConsolidationRunType type,
         TemplateId? templateId,
@@ -139,9 +137,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             return null;
         }
 
-        // TODO: DispatchRunAsync re-throws exceptions, giving TriggerAsync two failure semantics:
-        // returning null (concurrency/persistence/dispatch failure) vs throwing (dispatch exception).
-        // Callers that only check null will get an unhandled exception on dispatch errors.
         var outcome = await DispatchRunAsync(run, key, type, templateName, ct);
         if (outcome == DispatchOutcome.Queued)
             return run;
@@ -248,9 +243,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
         try
         {
-            // TODO: pass runId directly instead of runId.Value — the store now accepts RunId,
-            // so this is a redundant unwrap-rewrap (RunId → string → RunId) via implicit conversion.
-            var run = await _runStore.GetByIdAsync(runId.Value, ct);
+            var run = await _runStore.GetByIdAsync(runId, ct);
             if (run is null)
             {
                 _logger.Warning("Cannot update consolidation run {RunId}: not found", runId.Value);
@@ -299,8 +292,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
         try
         {
-            // TODO: pass runId directly instead of runId.Value — redundant unwrap-rewrap via implicit conversion.
-            var run = await _runStore.GetByIdAsync(runId.Value, ct);
+            var run = await _runStore.GetByIdAsync(runId, ct);
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return false;
 
@@ -335,8 +327,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
         try
         {
-            // TODO: pass runId directly instead of runId.Value — redundant unwrap-rewrap via implicit conversion.
-            var run = await _runStore.GetByIdAsync(runId.Value, ct);
+            var run = await _runStore.GetByIdAsync(runId, ct);
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return;
 
@@ -410,8 +401,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     {
         try
         {
-            // TODO: pass runId directly instead of runId.Value — redundant unwrap-rewrap via implicit conversion.
-            await _runStore.DeleteRunAsync(runId.Value, ct);
+            await _runStore.DeleteRunAsync(runId, ct);
             _runHistoryCache = null;
         }
         catch (Exception ex)
@@ -426,8 +416,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         ArgumentNullException.ThrowIfNull(runId);
         try
         {
-            // TODO: DeletePersistedRunAsync/DeletePersistedRun still accept string, bypassing the RunId
-            // boundary. If RunId validation is ever tightened these call sites will silently diverge.
             await _runStore.DeleteRunAsync(runId, CancellationToken.None);
             _runHistoryCache = null;
         }
@@ -439,7 +427,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
     private void DeletePersistedRun(string runId)
     {
-        // TODO: same as DeletePersistedRunAsync — accepts string, bypasses RunId boundary via implicit conversion.
         _ = _runStore.DeleteRunAsync(runId, CancellationToken.None).ContinueWith(t =>
         {
             if (t.IsFaulted)

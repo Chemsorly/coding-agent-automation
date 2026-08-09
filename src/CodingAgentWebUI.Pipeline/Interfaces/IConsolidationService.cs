@@ -17,8 +17,6 @@ public interface IConsolidationService
     /// <param name="ct">Cancellation token.</param>
     /// <param name="autoDispatch">When true, created refactoring issues will also receive the <c>agent:next</c> label.</param>
     /// <returns>The created <see cref="ConsolidationRun"/>, or <c>null</c> if the trigger was rejected.</returns>
-    // TODO: CancellationToken should be the last parameter per .NET convention. Changing this
-    // signature is a breaking change across all callers — defer to a separate cleanup pass.
     Task<ConsolidationRun?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false);
 
     /// <summary>

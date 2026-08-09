@@ -13,7 +13,6 @@ public interface IConsolidationWorkspaceManager
     /// Returns the workspace directory path for a consolidation run.
     /// </summary>
     /// <param name="runId">A valid GUID identifying the run.</param>
-    // TODO: stale doc — ArgumentNullException can never be thrown since RunId is a value type (struct).
     /// <exception cref="ArgumentException">Thrown if <paramref name="runId"/> is not a valid GUID.</exception>
     string GetWorkspacePath(RunId runId);
 
