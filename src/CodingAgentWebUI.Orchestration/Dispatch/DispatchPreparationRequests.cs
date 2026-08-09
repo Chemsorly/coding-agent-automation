@@ -75,15 +75,16 @@ public sealed record StalenessEvaluationRequest(
 /// <summary>
 /// Groups the mandatory constructor dependencies of <see cref="PendingWorkItemDrainService"/>
 /// to reduce constructor parameter count (S107).
+/// <see cref="IOrchestratorRunService"/> and <see cref="ILabelService"/> are no longer included
+/// here — they moved to <see cref="DispatchRevertHandler"/> and <see cref="LabelSwapService"/>
+/// respectively (#1871).
 /// </summary>
 public sealed record DrainServiceDependencies(
     Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext> DbFactory,
     ISignalRWorkDistributorAgentResolver AgentResolver,
     IAgentCommunication AgentComm,
-    IOrchestratorRunService RunService,
     WorkItemTransitionService TransitionService,
     IPendingWorkQuery PendingWorkQuery,
-    ILabelService LabelService,
     Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService> Logger);
 
 /// <summary>

@@ -301,6 +301,14 @@ public class ImageDownloadServiceTests : IDisposable
         result.Should().BeEmpty();
     }
 
+    // TODO: [WARNING] No test covers the null-finalUrl guard added in DownloadSingleAsync (issue #1865).
+    // The guard fires when FollowRedirectsAsync returns (non-null response, null finalUrl). This
+    // combination is currently unreachable via the public API because FollowRedirectsAsync always
+    // returns a non-null currentUrl alongside a non-null response. To cover this path a test would
+    // need FollowRedirectsAsync to be injectable (e.g. made virtual/internal) or its return type
+    // changed to guarantee non-null finalUrl when response is non-null. Without a test, reverting
+    // the null guard would not cause any test failure.
+
     // ─── SSRF blocked ───────────────────────────────────────────────────────────
 
     [Fact]

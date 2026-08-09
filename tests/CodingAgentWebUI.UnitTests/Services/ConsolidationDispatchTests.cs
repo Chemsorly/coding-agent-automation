@@ -49,7 +49,7 @@ public sealed class ConsolidationDispatchTests
             result.JobId, status, summary, CancellationToken.None);
 
         _mockConsolidationService.Verify(
-            s => s.UpdateRunAsync("run-001", ConsolidationRunStatus.Succeeded,
+            s => s.UpdateRunAsync((RunId)"run-001", ConsolidationRunStatus.Succeeded,
                 "Consolidated 5 files, merged 3 entries", CancellationToken.None),
             Times.Once);
     }
@@ -76,7 +76,7 @@ public sealed class ConsolidationDispatchTests
             result.JobId, status, summary, CancellationToken.None);
 
         _mockConsolidationService.Verify(
-            s => s.UpdateRunAsync("run-002", ConsolidationRunStatus.Failed,
+            s => s.UpdateRunAsync((RunId)"run-002", ConsolidationRunStatus.Failed,
                 "Agent call timed out after 00:30:00", CancellationToken.None),
             Times.Once);
     }

@@ -56,17 +56,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     private readonly bool _isOpenCodeProvider;
     private readonly bool _isChatMode;
 
-    /// <summary>
-    /// Keys of env vars injected from <see cref="ChatPromptMessage.ProjectSecrets"/> on the first
-    /// chat prompt. Cleared in <see cref="RunChatTaskAsync"/>'s finally block.
-    /// </summary>
-    // TODO: Instance field on a singleton BackgroundService. The slot manager prevents concurrent
-    // chat sessions today, so there is no active race. However, there is no memory-model guarantee
-    // between the finally-block clear on one thread and a subsequent injection on a new thread
-    // post-slot-release. A safer design is to pass the keys list through the method chain as a
-    // local variable (captured in the Task.Run closure) rather than storing it as instance state.
-    private List<string> _injectedChatSecretKeys = [];
-
     public AgentWorkerService(AgentWorkerServiceDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
@@ -308,6 +297,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
     private async Task RunChatTaskAsync(ChatPromptMessage message, CancellationToken chatToken)
     {
+        var injectedChatSecretKeys = new List<string>();
         int exitCode = ExitCodes.GeneralFailure;
         string? error = null;
 
@@ -334,7 +324,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                     }
                 };
 
-                (exitCode, error) = await ExecuteChatWithOutputAsync(message, outputBatcher, chatToken);
+                (exitCode, error) = await ExecuteChatWithOutputAsync(message, outputBatcher, chatToken, injectedChatSecretKeys);
             }
         }
         finally
@@ -342,7 +332,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             // Always clean up injected secrets — runs even on unexpected exceptions.
             // In SignalR mode the agent is long-lived: leaked env vars from one session
             // would bleed into subsequent sessions without this guarantee.
-            CleanupChatSecrets();
+            CleanupChatSecrets(injectedChatSecretKeys);
         }
 
         try
@@ -362,7 +352,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     }
 
     private async Task<(int exitCode, string? error)> ExecuteChatWithOutputAsync(
-        ChatPromptMessage message, OutputBatcher outputBatcher, CancellationToken chatToken)
+        ChatPromptMessage message, OutputBatcher outputBatcher, CancellationToken chatToken,
+        List<string> injectedChatSecretKeys)
     {
         try
         {
@@ -401,7 +392,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 // secrets via a different mechanism (e.g., per-process launch env for child processes).
                 foreach (var (key, value) in message.ProjectSecrets)
                     Environment.SetEnvironmentVariable(key, value);
-                _injectedChatSecretKeys = message.ProjectSecrets.Keys.ToList();
+                injectedChatSecretKeys.AddRange(message.ProjectSecrets.Keys);
                 await outputBatcher.AddLineAsync($"🔐 Injected {message.ProjectSecrets.Count} project secret(s)", chatToken);
             }
 
@@ -708,13 +699,12 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     /// unexpected exceptions. In SignalR mode the agent process is long-lived, so leaked env vars
     /// from one session would otherwise bleed into subsequent sessions.
     /// </summary>
-    private void CleanupChatSecrets()
+    private void CleanupChatSecrets(List<string> injectedChatSecretKeys)
     {
-        if (_injectedChatSecretKeys.Count == 0) return;
-        foreach (var key in _injectedChatSecretKeys)
+        if (injectedChatSecretKeys.Count == 0) return;
+        foreach (var key in injectedChatSecretKeys)
             Environment.SetEnvironmentVariable(key, null);
-        _logger.Debug("Cleaned up {Count} injected chat secret key(s)", _injectedChatSecretKeys.Count);
-        _injectedChatSecretKeys.Clear();
+        _logger.Debug("Cleaned up {Count} injected chat secret key(s)", injectedChatSecretKeys.Count);
     }
 
     private async Task SignalAgentReadyAsync()

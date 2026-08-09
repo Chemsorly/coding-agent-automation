@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
@@ -15,5 +17,5 @@ public interface IConsolidationRunTracker
     /// (_runningRuns), invalidates the run history cache, and fires OnChange.
     /// No-op if the run is not found or not in Queued status.
     /// </summary>
-    Task TransitionToRunningAsync(string runId, CancellationToken ct);
+    Task TransitionToRunningAsync(RunId runId, CancellationToken ct);
 }
