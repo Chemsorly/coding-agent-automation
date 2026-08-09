@@ -46,10 +46,9 @@ public partial class BrainUpdateService : IBrainUpdateService
     /// Validates brain updates: checks for session log, log.md update,
     /// and proper entry format. Returns validation result with warnings.
     /// </summary>
-    public BrainValidationResult Validate(string brainPath, string runId, IReadOnlyList<string> changedFiles)
+    public BrainValidationResult Validate(string brainPath, RunId runId, IReadOnlyList<string> changedFiles)
     {
         ArgumentNullException.ThrowIfNull(brainPath);
-        ArgumentNullException.ThrowIfNull(runId);
         ArgumentNullException.ThrowIfNull(changedFiles);
 
         var warnings = new List<string>();
@@ -58,12 +57,12 @@ public partial class BrainUpdateService : IBrainUpdateService
         // Check for session log file at sessions/{date}_{runId}.md
         var sessionLogCreated = changedFiles.Any(f =>
             f.Replace('\\', '/').Contains($"sessions/", StringComparison.OrdinalIgnoreCase) &&
-            f.Contains(runId, StringComparison.OrdinalIgnoreCase));
+            f.Contains(runId.Value, StringComparison.OrdinalIgnoreCase));
 
         if (!sessionLogCreated)
         {
             warnings.Add("session log");
-            _logger.Warning("Brain update validation: session log not created for run {RunId}", runId);
+            _logger.Warning("Brain update validation: session log not created for run {RunId}", runId.Value);
         }
 
         // Check whether log.md was modified
@@ -74,7 +73,7 @@ public partial class BrainUpdateService : IBrainUpdateService
         if (!operationLogUpdated)
         {
             warnings.Add("log.md entry");
-            _logger.Warning("Brain update validation: log.md not updated for run {RunId}", runId);
+            _logger.Warning("Brain update validation: log.md not updated for run {RunId}", runId.Value);
         }
 
         // Check whether new entries in knowledge files contain ### YYYY-MM-DD header format
@@ -104,7 +103,7 @@ public partial class BrainUpdateService : IBrainUpdateService
         if (!entryFormatValid)
         {
             warnings.Add("proper entry format");
-            _logger.Warning("Brain update validation: entry format invalid for run {RunId}", runId);
+            _logger.Warning("Brain update validation: entry format invalid for run {RunId}", runId.Value);
         }
 
         return new BrainValidationResult
@@ -121,20 +120,19 @@ public partial class BrainUpdateService : IBrainUpdateService
     /// Contains run ID and list of modified files.
     /// </summary>
     public async Task AppendFallbackLogEntryAsync(
-        string brainPath, string runId,
+        string brainPath, RunId runId,
         IReadOnlyList<string> modifiedFiles, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(brainPath);
-        ArgumentNullException.ThrowIfNull(runId);
         ArgumentNullException.ThrowIfNull(modifiedFiles);
 
         var logPath = Path.Combine(brainPath, "log.md");
         var today = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-        var entry = BuildFallbackLogEntry(runId, today, modifiedFiles);
+        var entry = BuildFallbackLogEntry(runId.Value, today, modifiedFiles);
 
         await File.AppendAllTextAsync(logPath, entry, ct);
-        _logger.Information("Appended fallback log entry for run {RunId} to {LogPath}", runId, logPath);
+        _logger.Information("Appended fallback log entry for run {RunId} to {LogPath}", runId.Value, logPath);
     }
 
     /// <summary>
@@ -194,11 +192,10 @@ public partial class BrainUpdateService : IBrainUpdateService
     /// by a centralized semaphore managed by the orchestrator via SignalR (acquire-push-release protocol).
     /// </summary>
     public async Task<BrainSyncResult> CommitAndPushAsync(
-        string brainPath, string runId, string issueIdentifier,
+        string brainPath, RunId runId, string issueIdentifier,
         IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
     {
         ArgumentNullException.ThrowIfNull(brainPath);
-        ArgumentNullException.ThrowIfNull(runId);
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(brainProvider);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxPushRetries, 0);
@@ -207,7 +204,7 @@ public partial class BrainUpdateService : IBrainUpdateService
         {
             // Commit local changes first — no initial pull.
             // PushWithRetryRebaseAsync handles remote synchronization via fetch-rebase-push.
-            var commitMessage = BuildCommitMessage(runId, issueIdentifier);
+            var commitMessage = BuildCommitMessage(runId.Value, issueIdentifier);
             try
             {
                 await ResolveConflictsAndCommitAsync(brainPath, commitMessage, ct);
@@ -215,7 +212,7 @@ public partial class BrainUpdateService : IBrainUpdateService
             catch (EmptyCommitException)
             {
                 _logger.Warning(
-                    "Brain repo has no changes to commit for run {RunId}, skipping push", runId);
+                    "Brain repo has no changes to commit for run {RunId}, skipping push", runId.Value);
                 return new BrainSyncResult
                 {
                     Success = true,
@@ -230,7 +227,7 @@ public partial class BrainUpdateService : IBrainUpdateService
             var filesCommitted = await Task.Run(() => _git.GetHeadCommitFileCount(brainPath), ct);
 
             _logger.Information("Brain repo committed and pushed {FileCount} files for run {RunId}",
-                filesCommitted, runId);
+                filesCommitted, runId.Value);
 
             return new BrainSyncResult
             {
@@ -240,7 +237,7 @@ public partial class BrainUpdateService : IBrainUpdateService
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Brain repo commit/push failed for run {RunId}", runId);
+            _logger.Warning(ex, "Brain repo commit/push failed for run {RunId}", runId.Value);
             return new BrainSyncResult
             {
                 Success = false,

@@ -58,13 +58,12 @@ public sealed class FileSystemConsolidationRunStore : IConsolidationRunStore
         return runs;
     }
 
-    public async Task<ConsolidationRun?> GetByIdAsync(string runId, CancellationToken ct)
+    public async Task<ConsolidationRun?> GetByIdAsync(RunId runId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-        if (!Guid.TryParse(runId, out _))
+        if (!Guid.TryParse(runId.Value, out _))
             return null;
 
-        var filePath = GetFilePath(runId);
+        var filePath = GetFilePath(runId.Value);
         if (!File.Exists(filePath))
             return null;
 
@@ -79,13 +78,12 @@ public sealed class FileSystemConsolidationRunStore : IConsolidationRunStore
         }
     }
 
-    public Task DeleteRunAsync(string runId, CancellationToken ct)
+    public Task DeleteRunAsync(RunId runId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-        if (!Guid.TryParse(runId, out _))
+        if (!Guid.TryParse(runId.Value, out _))
             return Task.CompletedTask;
 
-        var filePath = GetFilePath(runId);
+        var filePath = GetFilePath(runId.Value);
         if (File.Exists(filePath))
             File.Delete(filePath);
 

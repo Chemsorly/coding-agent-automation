@@ -158,12 +158,11 @@ public sealed class ImageDownloadService : IDisposable
             if (!response.IsSuccessStatusCode)
                 return null;
 
+            if (finalUrl is null)
+                return null;
+
             var contentType = response.Content.Headers.ContentType?.MediaType;
-            // TODO: [WARNING] finalUrl! uses a null-forgiving operator. FollowRedirectsAsync currently
-            // always returns null finalUrl alongside null response, but the return type (Uri?) allows
-            // (non-null response, null finalUrl). Consider changing the return type to guarantee
-            // finalUrl is non-null when response is non-null, or add an explicit null guard here.
-            var finalExtension = ValidateAndResolveExtension(contentType, finalUrl!, imageRef);
+            var finalExtension = ValidateAndResolveExtension(contentType, finalUrl, imageRef);
             if (finalExtension is null)
                 return null;
 

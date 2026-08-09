@@ -9,9 +9,9 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 public interface IBrainUpdateService
 {
     Task<IReadOnlyList<string>> DetectChangesAsync(string brainPath, CancellationToken ct);
-    BrainValidationResult Validate(string brainPath, string runId, IReadOnlyList<string> changedFiles);
-    Task AppendFallbackLogEntryAsync(string brainPath, string runId, IReadOnlyList<string> modifiedFiles, CancellationToken ct);
-    Task<BrainSyncResult> CommitAndPushAsync(string brainPath, string runId, string issueIdentifier, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
+    BrainValidationResult Validate(string brainPath, RunId runId, IReadOnlyList<string> changedFiles);
+    Task AppendFallbackLogEntryAsync(string brainPath, RunId runId, IReadOnlyList<string> modifiedFiles, CancellationToken ct);
+    Task<BrainSyncResult> CommitAndPushAsync(string brainPath, RunId runId, string issueIdentifier, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
 
     /// <summary>
     /// Ensures a .gitignore entry exists in the given content. Pure string manipulation.

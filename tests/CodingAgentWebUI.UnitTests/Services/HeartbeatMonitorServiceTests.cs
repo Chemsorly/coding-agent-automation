@@ -1070,19 +1070,19 @@ public class HeartbeatMonitorServiceTests : IDisposable
 
         // IsRunActive returns true — this is a consolidation run
         mockConsolidationService
-            .Setup(c => c.IsRunActive("consol-run-1"))
+            .Setup(c => c.IsRunActive((RunId)"consol-run-1"))
             .Returns(true);
 
         // GetActiveRunStartedAt returns a time well past the progress timeout
         mockConsolidationService
-            .Setup(c => c.GetActiveRunStartedAt("consol-run-1"))
+            .Setup(c => c.GetActiveRunStartedAt((RunId)"consol-run-1"))
             .Returns(DateTimeOffset.UtcNow.AddHours(-2)); // 2 hours ago, timeout is 1 hour
 
         await monitorWithConsolidation.SweepAsync(CancellationToken.None);
 
         // Assert: consolidation run should be failed via UpdateRunAsync
         mockConsolidationService.Verify(c => c.UpdateRunAsync(
-            "consol-run-1",
+            (RunId)"consol-run-1",
             ConsolidationRunStatus.Failed,
             It.Is<string>(s => s.Contains("timeout")),
             It.IsAny<CancellationToken>(),
@@ -1125,19 +1125,19 @@ public class HeartbeatMonitorServiceTests : IDisposable
 
         // IsRunActive returns true — this is a consolidation run
         mockConsolidationService
-            .Setup(c => c.IsRunActive("consol-run-2"))
+            .Setup(c => c.IsRunActive((RunId)"consol-run-2"))
             .Returns(true);
 
         // Started 10 minutes ago — well within 60-minute timeout
         mockConsolidationService
-            .Setup(c => c.GetActiveRunStartedAt("consol-run-2"))
+            .Setup(c => c.GetActiveRunStartedAt((RunId)"consol-run-2"))
             .Returns(DateTimeOffset.UtcNow.AddMinutes(-10));
 
         await monitorWithConsolidation.SweepAsync(CancellationToken.None);
 
         // Assert: consolidation run should NOT be failed
         mockConsolidationService.Verify(c => c.UpdateRunAsync(
-            It.IsAny<string>(),
+            It.IsAny<RunId>(),
             It.IsAny<ConsolidationRunStatus>(),
             It.IsAny<string?>(),
             It.IsAny<CancellationToken>(),

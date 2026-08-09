@@ -385,8 +385,8 @@ public class DrawerStateServiceTests
         var error = await drawer.OpenAsync(template, null);
 
         Assert.Equal("Failed to load items", error);
-        // postLoadAsync should NOT be called when items fail to load
-        await Task.Delay(100);
+        // postLoadAsync is never started when loadItems returns an error — OpenAsync returns
+        // before reaching the fire-and-forget line, so no delay is needed to check this.
         Assert.False(postLoadCalled, "postLoadAsync should not be invoked when items fail to load");
     }
 

@@ -24,7 +24,7 @@ public class ConsolidationDispatchHandlerTests
         var mockService = new Mock<IConsolidationService>();
         mockService
             .Setup(s => s.UpdateRunAsync(
-                It.IsAny<string>(), ConsolidationRunStatus.Failed, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<RunId>(), ConsolidationRunStatus.Failed, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var handler = CreateHandler(consolidationService: mockService.Object);
@@ -32,7 +32,7 @@ public class ConsolidationDispatchHandlerTests
         await handler.CascadeFailureAsync("run-001", "K8s job creation failed", CancellationToken.None);
 
         mockService.Verify(s => s.UpdateRunAsync(
-            "run-001",
+            (RunId)"run-001",
             ConsolidationRunStatus.Failed,
             It.Is<string?>(msg => msg != null && msg.Contains("K8s job creation failed")),
             CancellationToken.None), Times.Once);
@@ -44,7 +44,7 @@ public class ConsolidationDispatchHandlerTests
         var mockService = new Mock<IConsolidationService>();
         mockService
             .Setup(s => s.UpdateRunAsync(
-                It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("DB connection lost"));
 
         var handler = CreateHandler(consolidationService: mockService.Object);
@@ -68,7 +68,7 @@ public class ConsolidationDispatchHandlerTests
 
         var mockStore = new Mock<IConsolidationRunStore>();
         mockStore
-            .Setup(s => s.GetByIdAsync("run-002", It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetByIdAsync((RunId)"run-002", It.IsAny<CancellationToken>()))
             .ReturnsAsync(existingRun);
         mockStore
             .Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
@@ -100,7 +100,7 @@ public class ConsolidationDispatchHandlerTests
 
         var mockStore = new Mock<IConsolidationRunStore>();
         mockStore
-            .Setup(s => s.GetByIdAsync("run-003", It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetByIdAsync((RunId)"run-003", It.IsAny<CancellationToken>()))
             .ReturnsAsync(existingRun);
 
         var handler = CreateHandler(consolidationRunStore: mockStore.Object);
@@ -126,7 +126,7 @@ public class ConsolidationDispatchHandlerTests
     {
         var mockStore = new Mock<IConsolidationRunStore>();
         mockStore
-            .Setup(s => s.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ConsolidationRun?)null); // run not found in store
 
         var handler = CreateHandler(consolidationRunStore: mockStore.Object);
@@ -152,7 +152,7 @@ public class ConsolidationDispatchHandlerTests
 
         var mockStore = new Mock<IConsolidationRunStore>();
         mockStore
-            .Setup(s => s.GetByIdAsync("run-005", It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetByIdAsync((RunId)"run-005", It.IsAny<CancellationToken>()))
             .ReturnsAsync(existingRun);
 
         ConsolidationRun? savedRun = null;

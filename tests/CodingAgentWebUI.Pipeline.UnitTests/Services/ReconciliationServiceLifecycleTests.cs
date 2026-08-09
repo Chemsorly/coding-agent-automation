@@ -389,7 +389,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
 
         // Assert: consolidation run should be marked failed
         mockConsolidation.Verify(c => c.UpdateRunAsync(
-            runId,
+            (RunId)runId,
             ConsolidationRunStatus.Failed,
             It.Is<string>(s => s.Contains("timeout")),
             It.IsAny<CancellationToken>(),
@@ -437,7 +437,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
 
         // Assert: UpdateRunAsync should NOT be called — the run has only been executing for 2 min
         mockConsolidation.Verify(c => c.UpdateRunAsync(
-            It.IsAny<string>(),
+            It.IsAny<RunId>(),
             It.IsAny<ConsolidationRunStatus>(),
             It.IsAny<string?>(),
             It.IsAny<CancellationToken>(),

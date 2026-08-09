@@ -71,9 +71,11 @@ public class BrainSyncUnitTests
     public void BrainUpdateService_Validate_NoChanges_ReturnsWarnings()
     {
         var mockService = new Mock<IBrainUpdateService>();
-        mockService.Setup(s => s.Validate(It.IsAny<string>(), It.IsAny<string>(), It.Is<IReadOnlyList<string>>(l => l.Count == 0)))
+        mockService.Setup(s => s.Validate(It.IsAny<string>(), It.IsAny<RunId>(), It.Is<IReadOnlyList<string>>(l => l.Count == 0)))
             .Returns(new BrainValidationResult { SessionLogCreated = false, OperationLogUpdated = false, Warnings = new[] { "session log", "log.md entry" } });
 
+        // TODO: "run-1" is not a valid GUID. This exercises the mock (not the real implementation),
+        // so it works, but it's misleading — the real Validate would reject it. Use Guid.NewGuid().ToString().
         var result = mockService.Object.Validate("/fake", "run-1", Array.Empty<string>());
 
         result.SessionLogCreated.Should().BeFalse();
