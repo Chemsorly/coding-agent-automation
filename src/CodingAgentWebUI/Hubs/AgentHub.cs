@@ -112,7 +112,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         ArgumentNullException.ThrowIfNull(message);
 
         var queryAgentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
-        if (!string.Equals(message.AgentId, queryAgentId, StringComparison.Ordinal))
+        if (!string.Equals(message.AgentId.Value, queryAgentId, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "RegisterAgent rejected — message agentId '{MessageAgentId}' does not match query param '{QueryAgentId}'",
@@ -123,7 +123,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         // Defense-in-depth: validate authenticated identity matches registration
         var authenticatedAgentId = Context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (!string.IsNullOrEmpty(authenticatedAgentId) && authenticatedAgentId != "agent" &&
-            !string.Equals(message.AgentId, authenticatedAgentId, StringComparison.Ordinal))
+            !string.Equals(message.AgentId.Value, authenticatedAgentId, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "RegisterAgent rejected — authenticated as '{AuthenticatedAgentId}' but registering as '{MessageAgentId}'",
@@ -195,7 +195,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         // Security: verify caller owns this agentId (prevents heartbeat spoofing)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, message.AgentId, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, message.AgentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "Heartbeat rejected — caller connection {ConnectionId} does not own agent {AgentId}",

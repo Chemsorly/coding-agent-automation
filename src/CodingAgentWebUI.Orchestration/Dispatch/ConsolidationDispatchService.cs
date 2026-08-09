@@ -168,12 +168,17 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         ConsolidationRunType type,
         TemplateId? templateId,
         string workspacePath,
-        string agentId,
+        AgentId agentId,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(runId);
         ArgumentNullException.ThrowIfNull(workspacePath);
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: AgentId is a readonly record struct so it cannot be null, but AgentId.Value can be null
+        // if constructed via `new AgentId(null!)` or `default(AgentId)`. ThrowIfNullOrEmpty covers both
+        // the null-Value and empty-Value cases, but throws NullReferenceException internally when Value is
+        // null rather than a descriptive ArgumentException. Consider adding `ArgumentNullException.ThrowIfNull(agentId.Value, nameof(agentId))`
+        // before this line once AgentId's primary constructor is hardened (see TODO in AgentId.cs).
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
 
         // Cancel-during-dispatch race check via run store
         var existingRun = await _runStore.GetByIdAsync(runId, ct);

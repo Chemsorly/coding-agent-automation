@@ -34,8 +34,13 @@ public sealed class AgentRegistryService : IAgentRegistryService
 
         var now = DateTimeOffset.UtcNow;
 
+        // TODO: If AgentId.Value is null (e.g., from a malformed MessagePack payload producing default(AgentId)),
+        // AddOrUpdate will throw NullReferenceException instead of a descriptive ArgumentNullException.
+        // Once AgentId's primary constructor validates its input (see TODO in AgentId.cs), this will be safe
+        // by construction. Until then, consider adding ArgumentNullException.ThrowIfNull(message.AgentId.Value)
+        // here for a cleaner error message.
         var entry = _agents.AddOrUpdate(
-            message.AgentId,
+            message.AgentId.Value,
             // Add factory — brand new registration
             _ =>
             {
@@ -45,7 +50,7 @@ public sealed class AgentRegistryService : IAgentRegistryService
 
                 return new AgentEntry
                 {
-                    AgentId = message.AgentId,
+                    AgentId = message.AgentId.Value,
                     ConnectionId = connectionId,
                     Hostname = message.Hostname,
                     Labels = message.Labels,

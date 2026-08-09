@@ -274,7 +274,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
                 string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
                 request.ConsolidationWorkspacePath ?? "",
-                agentId.Value,
+                agentId,
                 ct);
 
             if (dispatched)

@@ -271,7 +271,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
 
         var registration = new AgentRegistrationMessage
         {
-            AgentId = _agentId.Value,
+            AgentId = _agentId,
             Hostname = Environment.MachineName,
             Labels = labels,
             ActiveJob = ActiveJobStateFactory.Create(
