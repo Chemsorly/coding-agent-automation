@@ -179,10 +179,7 @@ public sealed partial class AgentJobDispatcher
     /// <param name="ct">Cancellation token.</param>
     /// <param name="revertTargetKind">Optional label target kind (e.g., PullRequest for review path).</param>
     /// <returns><c>true</c> if the job was dispatched successfully; <c>false</c> on failure or abort.</returns>
-    // TODO: The <summary> for DispatchRoutingParams below was accidentally placed inside the
-    // ExecuteDispatchPipelineAsync XML doc block (after </returns>), producing duplicate <summary>
-    // elements that cause XML doc warnings and garbled output. Move the record's <summary> above
-    // the record declaration and outside this method's doc comment.
+
     /// <summary>
     /// Groups the routing and revert parameters for <see cref="ExecuteDispatchPipelineAsync"/>
     /// to reduce its parameter count (S107).

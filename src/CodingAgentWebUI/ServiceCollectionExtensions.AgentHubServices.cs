@@ -19,10 +19,6 @@ namespace CodingAgentWebUI;
 public static partial class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the AgentHub facade and hub-dependent services:
-    /// hub facade, issue operations, orphan recovery, and job lifecycle.
-    /// </summary>
-    /// <summary>
     /// Registers the scoped <see cref="AgentMonitoringPageServiceDependencies"/> record needed
     /// by <see cref="AgentMonitoringPageService"/> (which is registered as scoped via AddScoped&lt;T&gt;
     /// auto-construction in Program.cs).
@@ -45,6 +41,10 @@ public static partial class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Registers the AgentHub facade and hub-dependent services:
+    /// hub facade, issue operations, orphan recovery, and job lifecycle.
+    /// </summary>
     private static void RegisterAgentHubServices(IServiceCollection services)
     {
         services.AddSingleton<AgentHubFacadeDependencies>(sp => new AgentHubFacadeDependencies(

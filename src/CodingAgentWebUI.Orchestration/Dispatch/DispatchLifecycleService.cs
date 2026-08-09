@@ -307,15 +307,6 @@ internal sealed class DispatchLifecycleService
     // ── K8s Job Creation ────────────────────────────────────────────────
 
     /// <summary>
-    /// Creates a K8s Job via JobSpecBuilder. Handles 409 Conflict (idempotent) and general failures
-    /// (releases PVC, fails WorkItem). Returns true if job creation succeeded (or 409), false if the
-    /// caller should return early due to an error.
-    /// </summary>
-    // TODO: The <summary> for K8sJobCreationContext below was accidentally placed immediately after
-    // the CreateK8sJobAsync <summary>, producing two consecutive <summary> elements at the same level.
-    // The record's <summary> should be separated from the method's doc comment (move the record
-    // declaration above CreateK8sJobAsync, or ensure the doc comments are on distinct symbols).
-    /// <summary>
     /// Groups the parameters of <see cref="CreateK8sJobAsync"/> related to the job being created,
     /// reducing its parameter count (S107).
     /// </summary>
@@ -330,6 +321,11 @@ internal sealed class DispatchLifecycleService
         string LogPrefix,
         Func<Guid, string, Task>? OnFailure);
 
+    /// <summary>
+    /// Creates a K8s Job via JobSpecBuilder. Handles 409 Conflict (idempotent) and general failures
+    /// (releases PVC, fails WorkItem). Returns true if job creation succeeded (or 409), false if the
+    /// caller should return early due to an error.
+    /// </summary>
     private async Task<bool> CreateK8sJobAsync(
         PipelineDbContext db,
         K8sJobCreationContext ctx,
