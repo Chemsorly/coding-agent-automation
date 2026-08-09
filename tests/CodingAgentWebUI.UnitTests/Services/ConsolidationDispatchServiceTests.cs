@@ -17,9 +17,6 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 {
     private static readonly string[] KiroDotnetDotnet10Labels = ["kiro", "dotnet", "dotnet10"];
     private static readonly string[] TemplateTIds = ["t1"];
-    // TODO: s_DotnetDotnet10KiroLabels is semantically equivalent to KiroDotnetDotnet10Labels above (same three labels,
-    // different order). Both are used with BeEquivalentTo (order-insensitive), so they are interchangeable.
-    // Consider removing s_DotnetDotnet10KiroLabels and reusing KiroDotnetDotnet10Labels to eliminate the duplication.
     private static readonly string[] s_DotnetDotnet10KiroLabels = new[] { "dotnet", "dotnet10", "kiro" };
     private static readonly string[] s_DotnetKiroLabels = new[] { "dotnet", "kiro" };
     private static readonly string[] s_TFoundTemplateIds = new[] { "t-found" };

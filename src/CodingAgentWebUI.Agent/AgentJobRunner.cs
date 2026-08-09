@@ -112,8 +112,6 @@ public static class AgentJobRunner
     /// Simplified overload that creates an internal <see cref="OutputBatcher"/> (without OnFlush wiring).
     /// Useful for testing or when output streaming is not needed.
     /// </summary>
-    // TODO: CA1068 — CancellationToken parameters are not in the standard last position (rethrowOnSigterm precedes ct).
-    // Reordering requires updating all call sites that use positional arguments for these parameters.
     public static async Task<JobCompletionPayload> ExecuteAsync(
         IPipelineExecutor executor,
         JobAssignmentMessage assignment,
