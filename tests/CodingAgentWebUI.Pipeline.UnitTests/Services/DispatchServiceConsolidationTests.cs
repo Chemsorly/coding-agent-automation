@@ -26,13 +26,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Validates: Issue #1086 — K8s mode creates K8s Jobs for consolidation items.
 /// </summary>
 /// <remarks>
-/// TODO: [WARNING] No test covers the <c>_consolidationJobPreparer is null</c> path in
-/// <c>ResolveProviderConfigsAsync</c>. After the extract-method refactoring, when
-/// <c>_consolidationJobPreparer</c> is null the method throws <c>InvalidOperationException</c>,
-/// which is caught by the caller's catch block and results in exactly one call to
-/// <c>FailConsolidationWorkItemAsync</c>. Without a test for this path, a future regression
-/// (e.g., accidentally re-introducing the double-fail) would go undetected.
-/// Add a test: construct <c>ConsolidationDispatchHandler</c> without a
+/// TODO: Add a test: construct <c>ConsolidationDispatchHandler</c> without a
 /// <c>IConsolidationJobPreparationService</c>, enqueue a pending consolidation item, call
 /// <c>PollAndDispatchConsolidationAsync</c>, and assert the work item transitions to Failed
 /// exactly once with the expected error message.
@@ -140,8 +134,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         // Assert: Payload was updated with ProviderConfigs
         var updatedPayload = JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload!, PipelineJsonOptions.Default);
         updatedPayload!.ProviderConfigs.Should().NotBeNull();
-        // TODO: Assertion too weak — test setup provides exactly 2 configs (agent + repo). Should assert
-        // .Be(2) and verify the specific config IDs to catch regressions in provider resolution logic.
         updatedPayload.ProviderConfigs!.Count.Should().BeGreaterThan(0);
         updatedPayload.RepoProviderConfigId.Should().Be(TestRepoProviderId);
     }
@@ -184,9 +176,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         await InvokePollAndDispatch(service);
 
         // Token vending should have been called
-        // TODO: Verification uses It.IsAny<IReadOnlyList<ProviderConfig>>() — doesn't validate that the
-        // correct resolved configs were passed. A bug in BuildConsolidationProviderConfigsAsync that returns
-        // wrong/empty configs would not be caught. Verify specific config contents.
         _mockTokenVending.Verify(
             t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), TestRepoProviderId, It.IsAny<CancellationToken>(), false),
             Times.Once);
@@ -432,9 +421,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("K8s Job creation failed");
-        // TODO: Add assertion that item.ClaimedPvcName is null after K8s failure in consolidation path.
-        // Currently this test does not claim a PVC (no PVC setup), so the SaveChangesAsync fix at line ~697
-        // is not regression-protected. Add a variant with PVC claiming to validate the fix.
 
         // Verify cascade fires for K8s creation failure path too (not just template resolution)
         _mockConsolidationService.Verify(
@@ -717,10 +703,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         var createCallCount = 0;
         _mockKubeClient
             .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            // TODO: async lambda in Moq .Callback creates an async void delegate (fire-and-forget).
-            // Works reliably only because the InMemory/SQLite provider completes synchronously.
-            // If the test DB is ever changed to a truly async provider, replace with .Returns(async () => { ... })
-            // or TaskCompletionSource-based synchronization to make ordering guarantees explicit.
             .Callback<V1Job, string, CancellationToken>(async (job, ns, ct) =>
             {
                 createCallCount++;
@@ -1020,11 +1002,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         // The latency metric is recorded inside DispatchLifecycleService using
         // (DispatchedAt - (OriginalEnqueuedAt ?? CreatedAt)). Verify the anchor is correct:
         // DispatchedAt should be ~now, OriginalEnqueuedAt is 60s ago, so latency >= 55s.
-        // TODO: This assertion validates entity state but not the actual metric value recorded by
-        // WorkDistributionTelemetry.DispatchLatency.Record(). Add a MeterListener-based assertion
-        // (matching the pattern in DispatchServiceMetricsTests) to verify the recorded metric uses
-        // OriginalEnqueuedAt as the latency anchor — without that, changing the production code from
-        // (OriginalEnqueuedAt ?? CreatedAt) to just CreatedAt would not be caught by this test.
         var dispatchedAt = item.DispatchedAt!.Value;
         var expectedAnchor = originalEnqueuedAt; // OriginalEnqueuedAt is set, so it's the anchor
         var latency = (dispatchedAt - expectedAnchor).TotalSeconds;
@@ -1117,11 +1094,6 @@ public class DispatchServiceConsolidationTests : IDisposable
     /// query). The EF Core InMemory provider ignores cancellation tokens on ToListAsync (known
     /// limitation: dotnet/efcore#13368), so the exception must be injected at the Set&lt;T&gt;() level.
     /// </summary>
-    // TODO: [WARNING] This test only covers the activeCounts failure path inside BuildDispatchStateAsync.
-    // BuildDispatchStateAsync also accesses WorkItems a third time via QueryAvailablePvcsAsync (the
-    // claimedPvcs query). The fix (try/catch) covers all paths, but the case where QueryAvailablePvcsAsync
-    // is the one that throws is not exercised. A second variant of this test (throwing on the 3rd access)
-    // would close that coverage gap.
     [Fact]
     public async Task PollAndDispatchConsolidationAsync_WhenBuildDispatchStateThrows_DisposesDbContext()
     {
@@ -1144,11 +1116,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         DisposeTrackingContext? spyContext = null;
         var spyFactory = new DelegatingDbContextFactory(() =>
         {
-            // TODO: [WARNING] If PollAndDispatchConsolidationAsync ever calls CreateDbContextAsync a
-            // second time before the exception is thrown (e.g. via WorkItemTransitionService), this
-            // lambda will overwrite spyContext with a new instance, and the assertion below will test
-            // the wrong (second) instance — the first spy's disposal will go unverified. Review if
-            // the code path changes to call CreateDbContextAsync more than once per poll cycle.
             spyContext = new DisposeTrackingContext(spyOptions);
             return spyContext;
         });
@@ -1439,14 +1406,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         {
             if (typeof(TEntity) == typeof(WorkItemEntity))
             {
-                // TODO: [WARNING] Fragile call-count assumption: assumes EF Core calls Set<WorkItemEntity>()
-                // exactly once for the pendingItems query before BuildDispatchStateAsync. If EF Core
-                // internally accesses WorkItems more than once during query compilation or materialisation,
-                // the threshold of 2 becomes wrong and the exception fires inside
-                // LoadConsolidationDispatchStateAsync before BuildDispatchStateAsync is ever called —
-                // making the test pass for the wrong reason. The robust fix is to inject the fault at the
-                // BuildDispatchStateAsync boundary (e.g. mock BuildDispatchStateAsync directly, or assert
-                // that pendingItems was successfully populated before the exception was thrown).
                 if (++_workItemSetCallCount >= 2)
                     throw new OperationCanceledException(
                         "Simulated OperationCanceledException on second WorkItems access (BuildDispatchStateAsync activeCounts query)");
@@ -1456,12 +1415,6 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         public override async ValueTask DisposeAsync()
         {
-            // TODO: [WARNING] Not guarded against a second call. If the production runtime or test
-            // teardown invokes DisposeAsync again (e.g. via an outer `await using` block after the
-            // catch path has already disposed the context), base.DisposeAsync() will be called on an
-            // already-disposed EF Core context, which throws ObjectDisposedException and surfaces as a
-            // misleading test failure. Add `if (WasDisposed) return;` before the base call to make
-            // this spy robust to double-dispose.
             WasDisposed = true;
             await base.DisposeAsync();
         }

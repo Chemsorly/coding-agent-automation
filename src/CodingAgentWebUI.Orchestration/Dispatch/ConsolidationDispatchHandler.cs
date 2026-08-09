@@ -216,13 +216,6 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
             if (pendingItems.Count == 0)
             {
-                // TODO: [WARNING] Potential double-dispose if db.DisposeAsync() throws here: the catch
-                // block below would call db.DisposeAsync() a second time. EF Core's DbContext sets its
-                // internal _disposed flag synchronously before the async portion, so this is safe in
-                // practice, but the pattern is fragile. Consider removing the explicit DisposeAsync here
-                // and using a `bool disposeDb` flag (set to false before the successful return) combined
-                // with a finally block, or restructure using `await using var db = ...` with the caller
-                // owning the context from creation — the idiomatic .NET pattern.
                 await db.DisposeAsync();
                 return null;
             }
@@ -457,17 +450,11 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
             // Throw without calling FailConsolidationWorkItemAsync here: the caller's catch (Exception ex) block
             // will call FailConsolidationWorkItemAsync exactly once. Calling it here AND throwing would cause a
             // double-fail — the same work item would be transitioned to Failed twice with two different messages.
-            // TODO: [WARNING] The caller's catch block passes `ct` to FailConsolidationWorkItemAsync, which means the
-            // failure-recording DB write respects graceful shutdown cancellation — this matches the original behaviour.
             throw new InvalidOperationException("IConsolidationJobPreparationService not registered");
         }
 
         var preparation = await _consolidationJobPreparer.PrepareAsync(
             request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-            // TODO: This string→TemplateId? conversion pattern is repeated across ConsolidationDispatchHandler,
-            // JobQueueDrainService, PendingWorkItemDrainService, and ConsolidationService. Consider adding a
-            // TemplateId.FromNullable(string?) factory method to encapsulate this in one place so that any
-            // future validation changes only need updating once.
             string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
             agentLabels,
             ct);
