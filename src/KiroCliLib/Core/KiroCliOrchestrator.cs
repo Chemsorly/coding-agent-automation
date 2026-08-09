@@ -9,7 +9,6 @@ namespace KiroCliLib.Core;
 /// </summary>
 public class KiroCliOrchestrator : IKiroCliOrchestrator
 {
-    private readonly Configuration.Configuration _config;
     private readonly ILogger _logger;
     private readonly Func<IProcessWrapper> _processWrapperFactory;
     private readonly Func<IOutputParser> _outputParserFactory;
@@ -60,6 +59,10 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     /// <param name="outputParserFactory">Factory to create <see cref="IOutputParser"/> instances.</param>
     /// <param name="fileSystemMonitorFactory">Factory to create <see cref="IFileSystemMonitor"/> instances.</param>
     public KiroCliOrchestrator(
+        // TODO: Remove `config` parameter and its ArgumentNullException.ThrowIfNull guard from this 5-arg primary constructor
+        // — `config` is not used within this constructor body (the 2-arg convenience constructor captures it in a ProcessWrapper
+        // factory lambda, but that path never reaches here). This is a dead parameter flagged by the .NET specialist review.
+        // Removing it requires updating all direct callers of this overload and their test setup.
         Configuration.Configuration config,
         ILogger logger,
         Func<IProcessWrapper> processWrapperFactory,
@@ -71,7 +74,6 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         ArgumentNullException.ThrowIfNull(processWrapperFactory);
         ArgumentNullException.ThrowIfNull(outputParserFactory);
         ArgumentNullException.ThrowIfNull(fileSystemMonitorFactory);
-        _config = config;
         _logger = logger;
         _processWrapperFactory = processWrapperFactory;
         _outputParserFactory = outputParserFactory;

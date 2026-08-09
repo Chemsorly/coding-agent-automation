@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 public sealed record AgentRegistrationMessage
 {
     [Key(0)]
-    public required string AgentId { get; init; }
+    public required AgentId AgentId { get; init; }
 
     [Key(1)]
     public required string Hostname { get; init; }
@@ -62,7 +62,7 @@ public sealed record ActiveJobState
 public sealed record HeartbeatMessage
 {
     [Key(0)]
-    public required string AgentId { get; init; }
+    public required AgentId AgentId { get; init; }
 
     [Key(1)]
     public required DateTimeOffset Timestamp { get; init; }

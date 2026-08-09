@@ -309,7 +309,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
                     var stepValue = Volatile.Read(ref _currentStep);
                     var heartbeat = new HeartbeatMessage
                     {
-                        AgentId = _agentId.Value,
+                        AgentId = _agentId,
                         Timestamp = DateTimeOffset.UtcNow,
                         CurrentStep = stepValue == NullStep ? null : (PipelineStep)stepValue,
                         MemoryUsageMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)

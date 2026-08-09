@@ -26,7 +26,6 @@ public static class TestOrchestrationFactory
         return new PipelineOrchestrationService(
             store,
             o.ProviderFactory ?? throw new ArgumentNullException(nameof(options), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
-            o.IssueParser ?? new IssueDescriptionParser(),
             o.CancellationFacade ?? new PipelineCancellationFacade(null, null),
             o.Lifecycle ?? new PipelineRunLifecycleService(historyService, o.RunService, logger),
             o.LabelService ?? NoOpLabelService.Instance,
@@ -40,7 +39,6 @@ public static class TestOrchestrationFactory
     public static PipelineOrchestrationService CreateMinimal(
         IConfigurationStore? configStore = null,
         IProviderFactory? providerFactory = null,
-        IssueDescriptionParser? issueParser = null,
         IPipelineCancellationFacade? cancellationFacade = null,
         PipelineRunLifecycleService? lifecycle = null,
         ILabelService? labelService = null,
@@ -51,7 +49,6 @@ public static class TestOrchestrationFactory
         {
             ConfigStore = configStore,
             ProviderFactory = providerFactory,
-            IssueParser = issueParser,
             CancellationFacade = cancellationFacade,
             Lifecycle = lifecycle,
             LabelService = labelService,

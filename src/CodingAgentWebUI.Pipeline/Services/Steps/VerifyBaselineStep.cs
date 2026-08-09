@@ -45,7 +45,7 @@ public sealed class VerifyBaselineStep : IPipelineStep
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             context.Run.BaselineHealthPassed = false;
-            await context.FailRunAsync($"Agent environment unhealthy: {ex.Message}");
+            await context.FailRunAsync($"Agent environment unhealthy: {ex.Message}", ct);
             return false;
         }
     }
