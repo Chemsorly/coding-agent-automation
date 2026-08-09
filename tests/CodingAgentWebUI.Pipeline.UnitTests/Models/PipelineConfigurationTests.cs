@@ -17,6 +17,8 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 /// </summary>
 public class PipelineConfigurationTests
 {
+    private static readonly string[] s_AgentBrainPaths = new[] { ".agent", ".brain" };
+
     private static readonly JsonSerializerOptions JsonOptions = PipelineJsonOptions.Default;
 
     // ── Serialization ──────────────────────────────────────────────────────────
@@ -183,7 +185,7 @@ public class PipelineConfigurationTests
         config.FailedWorkspaceRetentionDays.Should().Be(7);
 
         // Commit sub-config defaults
-        config.BlacklistedPaths.Should().BeEquivalentTo(new[] { ".agent", ".brain" });
+        config.BlacklistedPaths.Should().BeEquivalentTo(s_AgentBrainPaths);
 
         // Direct properties with defaults
         config.IssuePageSize.Should().Be(25);

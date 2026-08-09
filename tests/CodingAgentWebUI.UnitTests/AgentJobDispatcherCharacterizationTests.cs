@@ -21,6 +21,8 @@ namespace CodingAgentWebUI.UnitTests;
 [Collection("ActivityListenerTests")]
 public class AgentJobDispatcherCharacterizationTests : IDisposable
 {
+    private static readonly string[] s_DotnetLabels = new[] { "dotnet" };
+
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
     private readonly JobDeduplicationGuardService _dispatcher;
@@ -182,7 +184,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
         {
             AgentId = "agent-char",
             Hostname = "host",
-            Labels = new[] { "dotnet" }
+            Labels = s_DotnetLabels
         }, "conn-char");
 
         var project = new PipelineProject
@@ -259,7 +261,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
         {
             AgentId = "agent-review-char",
             Hostname = "host",
-            Labels = new[] { "dotnet" }
+            Labels = s_DotnetLabels
         }, "conn-review-char");
 
         var project = new PipelineProject
@@ -359,7 +361,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
         {
             AgentId = "agent-decomp-char",
             Hostname = "host",
-            Labels = new[] { "dotnet" }
+            Labels = s_DotnetLabels
         }, "conn-decomp-char");
 
         var project = new PipelineProject
@@ -438,7 +440,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
         {
             AgentId = "agent-decomp-p2",
             Hostname = "host",
-            Labels = new[] { "dotnet" }
+            Labels = s_DotnetLabels
         }, "conn-decomp-p2");
 
         var project = new PipelineProject
@@ -530,6 +532,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this);
         _httpClient.Dispose();
     }
 }

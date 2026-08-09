@@ -399,6 +399,7 @@ public class AgentJobDispatcherStalenessTests : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this);
         _httpClient.Dispose();
     }
 }

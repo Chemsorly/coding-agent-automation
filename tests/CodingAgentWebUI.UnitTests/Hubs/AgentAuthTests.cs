@@ -514,7 +514,7 @@ public class AgentAuthorizationFilterInvokeTests
         return mock.Object;
     }
 
-    private HubInvocationContext MakeInvocationContext(Hub hub, string connectionId, string methodName, IReadOnlyList<object> args)
+    private static HubInvocationContext MakeInvocationContext(Hub hub, string connectionId, string methodName, IReadOnlyList<object> args)
     {
         // For methods that don't exist on AgentHub (e.g. on DummyHub), search on the actual hub type.
         var method = hub.GetType().GetMethod(methodName)

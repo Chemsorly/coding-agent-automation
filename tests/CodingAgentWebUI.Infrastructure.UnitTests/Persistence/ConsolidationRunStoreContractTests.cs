@@ -19,6 +19,8 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 /// </summary>
 public abstract class ConsolidationRunStoreContractTests : IDisposable
 {
+    private static readonly string[] s_DotnetDotnet10UacLabels = new[] { "dotnet", "dotnet10", "uac" };
+
     /// <summary>Create a fresh store instance for isolation between tests.</summary>
     protected abstract IConsolidationRunStore CreateStore();
 
@@ -235,7 +237,7 @@ public abstract class ConsolidationRunStoreContractTests : IDisposable
 
         loaded.Should().NotBeNull();
         loaded!.QueuedRequiredLabels.Should().NotBeNull();
-        loaded.QueuedRequiredLabels.Should().BeEquivalentTo(new[] { "dotnet", "dotnet10", "uac" });
+        loaded.QueuedRequiredLabels.Should().BeEquivalentTo(s_DotnetDotnet10UacLabels);
     }
 
     [Fact]

@@ -141,7 +141,7 @@ internal static class RepositoryGitOperations
     /// Stages all changed, new, deleted, renamed, type-changed, and conflicted files from
     /// <paramref name="preStatus"/> into the repository index.
     /// </summary>
-    private static void StageAllChangedFiles(IRepository repo, RepositoryStatus preStatus)
+    private static void StageAllChangedFiles(Repository repo, RepositoryStatus preStatus)
     {
         var stagedAny = false;
         foreach (var entry in preStatus)
@@ -178,7 +178,7 @@ internal static class RepositoryGitOperations
     /// paths that were unstaged (used to skip already-unstaged entries in the configurable pass).
     /// </summary>
     private static HashSet<string> UnstageBlacklistedPaths(
-        IRepository repo,
+        Repository repo,
         IReadOnlyList<string> hardcodedBlacklist,
         IReadOnlyList<string>? configurableBlacklist)
     {
@@ -220,7 +220,7 @@ internal static class RepositoryGitOperations
     /// of unstaged (blacklisted) paths.
     /// </summary>
     private static IReadOnlyList<string> ValidateStagedCountAndCommit(
-        IRepository repo,
+        Repository repo,
         WorkspacePath workspacePath,
         string message,
         bool allowEmpty,

@@ -257,7 +257,10 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     /// Produces a new job list with log content injected for jobs whose IDs appear in
     /// <paramref name="logsByJobId"/>. Jobs not in the dictionary are returned unchanged.
     /// </summary>
-    private static IReadOnlyList<PipelineJobResult> BuildEnrichedJobList(
+    // TODO: Return type widened from IReadOnlyList<PipelineJobResult> to List<PipelineJobResult> to fix CA1859.
+    // The returned list is mutable; callers should not add/remove elements. If a future caller mutates the result,
+    // consider changing back to IReadOnlyList<T> and suppressing CA1859 with a comment instead.
+    private static List<PipelineJobResult> BuildEnrichedJobList(
         IReadOnlyList<PipelineJobResult> originalJobs,
         Dictionary<long, string> logsByJobId)
     {
