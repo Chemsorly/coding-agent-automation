@@ -145,6 +145,12 @@ public class SignalRCompletionReporterTests
     [Fact]
     public async Task ReportCompletionAsync_CompletedJob_TagsSuccessTrue()
     {
+        // TODO: [WARNING] This test has no observable assertions — it only verifies no exception is thrown.
+        // The test name implies the success telemetry tag is set, but that cannot be verified here
+        // without an ActivityListener. Either rename to ReportCompletionAsync_WhenCompleted_DoesNotThrow
+        // to match actual behavior, or add an ActivityListener to assert activity?.GetTagItem("success")
+        // equals true. As-is, any code path that doesn't throw passes this test regardless of tag behavior.
+        // See: review-findings.md [WARNING] SignalRCompletionReporterTests.cs:152
         // Success tag is set when FinalStep is not Failed/Cancelled.
         // We can't directly inspect the Activity in unit tests without a listener,
         // but we verify the reporter doesn't throw and doesn't buffer on tag setting.
@@ -167,6 +173,11 @@ public class SignalRCompletionReporterTests
         await reporter.ReportCompletionAsync("job-ts", payload, CancellationToken.None);
 
         var messages = buffer.DrainAll();
+        // TODO: [WARNING] The conditional `if (messages.Count > 0)` allows this test to pass trivially
+        // if no message is buffered (e.g., if the buffering logic regresses). Since the hub is never
+        // connected in this test context, a message is always buffered — the assertion should be
+        // unconditional: messages.Count.Should().Be(1), then assert on messages[0] directly.
+        // See: review-findings.md [WARNING] SignalRCompletionReporterTests.cs:133
         if (messages.Count > 0)
         {
             var buffered = (BufferedJobCompleted)messages[0];

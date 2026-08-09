@@ -78,6 +78,13 @@ public sealed class AgentHubIssueProxyTests
 
     // ── RequestPostComment — GateRejection and GateWontDo paths ──────────
 
+    // TODO: [WARNING] These tests and others in this file call _mockFacade.Setup(f => f.GetRun("job-1"))
+    // using raw string literals, relying on the implicit string→JobId conversion for Moq matching.
+    // Since JobId is a record struct with value equality on .Value, Moq matches correctly — but if
+    // GetRun's parameter type reverted to string, these tests would still compile and pass, making
+    // the type constraint non-load-bearing. Consider using _mockFacade.Setup(f => f.GetRun(new JobId("job-1")))
+    // to enforce the type boundary at the test level.
+    // See: review-findings.md [WARNING] AgentHubIssueProxyTests.cs:130
     [Fact]
     public async Task RequestPostComment_GateRejection_FormatsAndPosts()
     {

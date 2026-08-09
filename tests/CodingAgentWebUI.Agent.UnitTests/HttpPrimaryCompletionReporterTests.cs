@@ -33,6 +33,11 @@ public class HttpPrimaryCompletionReporterTests
 
     // ── Constructor guards ────────────────────────────────────────────────
 
+    // TODO: [WARNING] InlineData(3) for AgentId (index 3) is intentionally omitted because AgentId is a
+    // struct — ThrowIfNull on a struct is a no-op. If a null-guard for agentId.Value was later added
+    // to the constructor (for consistency with the default(AgentId) gap), index 3 should be re-added
+    // here using a different approach (e.g., passing default(AgentId) and asserting ArgumentException).
+    // See: review-findings.md [WARNING] HttpPrimaryCompletionReporterTests.cs:57
     [Theory]
     [InlineData(0)] // workItemId
     [InlineData(1)] // lifecycleClient
@@ -246,6 +251,11 @@ public class HttpPrimaryCompletionReporterTests
         await act.Should().NotThrowAsync();
 
         // Warning must be logged for observability
+        // TODO: [WARNING] This Verify matches only the two-argument Warning(Exception, string) overload.
+        // If the implementation is changed to use Warning(Exception, string, object) (e.g., to log jobId),
+        // this assertion would silently pass while matching zero calls on the new overload. Tighten to
+        // match the exact overload and message template used in the implementation.
+        // See: review-findings.md [WARNING] HttpPrimaryCompletionReporterTests.cs:220
         _logger.Verify(l => l.Warning(
             It.IsAny<Exception>(),
             It.IsAny<string>()),

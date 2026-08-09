@@ -129,6 +129,12 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
             await db.SaveChangesAsync();
         }
 
+        // TODO: [WARNING] Pass new JobId(id.ToString()) instead of id.ToString() (raw string via implicit
+        // conversion) to make the JobId type constraint load-bearing. If GetWorkItemRetryCountAsync
+        // reverted to string, this test would still compile and pass. The same applies to similar
+        // DB-path tests in this file (RequeueWorkItemAsync_ValidItem_TransitionsToPending,
+        // TouchLastProgressAsync_FirstTouch_UpdatesLastProgressAt, etc.).
+        // See: review-findings.md [WARNING] AgentHubFacadeJobIdMethodsTests.cs:2039
         var result = await _facade.GetWorkItemRetryCountAsync(id.ToString(), CancellationToken.None);
         result.Should().Be(2);
     }

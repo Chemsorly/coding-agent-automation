@@ -250,9 +250,15 @@ public class OutputBatcherManualTriggerTests
         var trigger = new ManualFlushTrigger();
         var secondFlushLines = new List<string>();
 
-        // Short flush timeout — 50ms (enough to be well below the 500ms handler hang,
-        // but large enough to avoid false timeouts under CI scheduler jitter)
-        await using var batcher = new OutputBatcher(trigger, flushTimeout: TimeSpan.FromMilliseconds(50));
+        // Very short flush timeout — 20ms
+        await using var batcher = new OutputBatcher(trigger, flushTimeout: TimeSpan.FromMilliseconds(20));
+
+        // firstHandlerStarted: signals that the first flush handler has been entered,
+        // so we know the timeout window has begun.
+        // secondFlushCompleted: signals that the second flush handler has finished,
+        // so the assertion doesn't need a polling loop.
+        var firstHandlerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondFlushCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var callCount = 0;
         batcher.OnFlush += async batch =>
@@ -263,28 +269,34 @@ public class OutputBatcherManualTriggerTests
             var myCount = Interlocked.Increment(ref callCount);
             if (myCount == 1)
             {
-                // Hang longer than the timeout
-                await Task.Delay(500);
+                // Signal that we have entered the first handler, then hang well past
+                // the 20ms timeout — simulating a truly hung handler (e.g., a blocked
+                // SignalR call).  The batcher must abandon us via the timeout and
+                // continue delivering subsequent batches independently.
+                firstHandlerStarted.TrySetResult();
+                await Task.Delay(TimeSpan.FromSeconds(30)); // outlives the test
             }
             else
             {
                 secondFlushLines.AddRange(batch);
+                secondFlushCompleted.TrySetResult();
             }
         };
 
         await batcher.AddLineAsync("timeout-line");
-        trigger.Tick(); // First tick — flush will time out after 50ms
+        trigger.Tick(); // First tick — flush will time out after 20ms
 
-        // Wait for the timeout to abandon the first flush and the flushGate to be released.
-        // Use 500ms: must exceed flushTimeout (50ms) plus CI task-scheduler resume latency.
-        await Task.Delay(500);
+        // Wait until the first handler is definitely running before proceeding.
+        // Event-driven: no fixed delay needed.
+        await firstHandlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        // The batcher's 20ms timeout will fire and abandon the first flush.
+        // Queue "post-timeout" and fire the second tick — the gate must be free.
         await batcher.AddLineAsync("post-timeout");
         trigger.Tick(); // Second tick — should proceed even though first was abandoned
 
-        var deadline = DateTime.UtcNow.AddSeconds(2);
-        while (secondFlushLines.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(10);
+        // Wait for the second flush handler to complete. Event-driven, no polling loop.
+        await secondFlushCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         secondFlushLines.Should().Contain("post-timeout",
             "batcher should continue delivering after a timed-out flush is abandoned");
