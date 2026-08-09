@@ -195,38 +195,39 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private async Task<(PipelineDbContext Db, List<PendingWorkItemProjection> PendingItems, Dictionary<string, int> ConcurrencyBySelector, List<string> AvailablePvcs)?>
         LoadConsolidationDispatchStateAsync(CancellationToken ct)
     {
-        // TODO: DbContext leak risk — if BuildDispatchStateAsync throws (e.g. OperationCanceledException
-        // or a transient DB error) after the db is created but before the tuple is returned, `db` is never
-        // disposed. The explicit DisposeAsync on the empty-items path and the caller's await using block
-        // do not cover this path. Wrap the BuildDispatchStateAsync call in a try/finally that disposes db
-        // on exception, or restructure so db is always owned by the caller from the outset.
-        // See review finding: DotNetSpecialist WARNING ConsolidationDispatchHandler.cs:213
         var db = await _dbFactory.CreateDbContextAsync(ct);
+        try
+        {
+            var pendingItems = await db.WorkItems
+                .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType == WorkItemTaskType.Consolidation)
+                .OrderBy(w => w.CreatedAt)
+                .Select(w => new PendingWorkItemProjection
+                {
+                    Id = w.Id,
+                    AgentSelector = w.AgentSelector,
+                    CreatedAt = w.CreatedAt,
+                    TimeoutSeconds = w.TimeoutSeconds,
+                    ProjectId = w.ProjectId,
+                    IssueIdentifier = w.IssueIdentifier,
+                    IssueProviderConfigId = w.IssueProviderConfigId,
+                    TaskType = w.TaskType
+                })
+                .ToListAsync(ct);
 
-        var pendingItems = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType == WorkItemTaskType.Consolidation)
-            .OrderBy(w => w.CreatedAt)
-            .Select(w => new PendingWorkItemProjection
+            if (pendingItems.Count == 0)
             {
-                Id = w.Id,
-                AgentSelector = w.AgentSelector,
-                CreatedAt = w.CreatedAt,
-                TimeoutSeconds = w.TimeoutSeconds,
-                ProjectId = w.ProjectId,
-                IssueIdentifier = w.IssueIdentifier,
-                IssueProviderConfigId = w.IssueProviderConfigId,
-                TaskType = w.TaskType
-            })
-            .ToListAsync(ct);
+                await db.DisposeAsync();
+                return null;
+            }
 
-        if (pendingItems.Count == 0)
+            var (concurrencyBySelector, availablePvcs) = await BuildDispatchStateAsync(db, ct);
+            return (db, pendingItems, concurrencyBySelector, availablePvcs);
+        }
+        catch
         {
             await db.DisposeAsync();
-            return null;
+            throw;
         }
-
-        var (concurrencyBySelector, availablePvcs) = await BuildDispatchStateAsync(db, ct);
-        return (db, pendingItems, concurrencyBySelector, availablePvcs);
     }
 
     /// <summary>
@@ -449,17 +450,11 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
             // Throw without calling FailConsolidationWorkItemAsync here: the caller's catch (Exception ex) block
             // will call FailConsolidationWorkItemAsync exactly once. Calling it here AND throwing would cause a
             // double-fail — the same work item would be transitioned to Failed twice with two different messages.
-            // TODO: [WARNING] The caller's catch block passes `ct` to FailConsolidationWorkItemAsync, which means the
-            // failure-recording DB write respects graceful shutdown cancellation — this matches the original behaviour.
             throw new InvalidOperationException("IConsolidationJobPreparationService not registered");
         }
 
         var preparation = await _consolidationJobPreparer.PrepareAsync(
             request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-            // TODO: This string→TemplateId? conversion pattern is repeated across ConsolidationDispatchHandler,
-            // JobQueueDrainService, PendingWorkItemDrainService, and ConsolidationService. Consider adding a
-            // TemplateId.FromNullable(string?) factory method to encapsulate this in one place so that any
-            // future validation changes only need updating once.
             string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
             agentLabels,
             ct);

@@ -21,13 +21,13 @@ public interface IConsolidationFeedbackCache
     /// </summary>
     /// <param name="runId">The run ID to look up.</param>
     /// <returns>The serialized feedback JSON, or null if not cached.</returns>
-    string? GetFeedbackDataForRun(string runId);
+    string? GetFeedbackDataForRun(RunId runId);
 
     /// <summary>
     /// Removes cached feedback data after dispatch (cleanup).
     /// </summary>
     /// <param name="runId">The run ID to clear.</param>
-    void ClearFeedbackDataForRun(string runId);
+    void ClearFeedbackDataForRun(RunId runId);
 
     /// <summary>
     /// Determines the timestamp of the last successful harness suggestion run.

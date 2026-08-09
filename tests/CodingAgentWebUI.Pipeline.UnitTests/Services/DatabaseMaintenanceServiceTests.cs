@@ -89,7 +89,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 
         // Assert
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync("old-run-1", It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync((RunId)"old-run-1", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -117,7 +117,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 
         // Assert
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -144,7 +144,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 
         // Assert: Running runs are never deleted regardless of age
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -171,7 +171,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 
         // Assert
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -199,7 +199,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 
         // Assert
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync("failed-run-1", It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync((RunId)"failed-run-1", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -227,7 +227,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 
         // Assert: Should be deleted because StartedAtUtc (100 days ago) > 90 day retention
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync("cancelled-run-1", It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync((RunId)"cancelled-run-1", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -281,16 +281,16 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 
         // Assert: only "old-success" and "old-failed" should be deleted
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync("old-success", It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync((RunId)"old-success", It.IsAny<CancellationToken>()),
             Times.Once);
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync("old-failed", It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync((RunId)"old-failed", It.IsAny<CancellationToken>()),
             Times.Once);
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync("recent-success", It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync((RunId)"recent-success", It.IsAny<CancellationToken>()),
             Times.Never);
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync("old-running", It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync((RunId)"old-running", It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -326,7 +326,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
             s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()),
             Times.Never);
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -370,7 +370,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 
         // Assert: should be deleted with 30d retention
         _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync("medium-old-run", It.IsAny<CancellationToken>()),
+            s => s.DeleteRunAsync((RunId)"medium-old-run", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 

@@ -62,7 +62,7 @@ public class ProgressTimeoutSweepPhaseTests : IDisposable
             });
 
         // Default: consolidation service says no active runs
-        _mockConsolidationService.Setup(c => c.IsRunActive(It.IsAny<string>())).Returns(false);
+        _mockConsolidationService.Setup(c => c.IsRunActive(It.IsAny<RunId>())).Returns(false);
 
         _phase = new ProgressTimeoutSweepPhase(
             _registry,
@@ -239,13 +239,13 @@ public class ProgressTimeoutSweepPhaseTests : IDisposable
         var now = DateTimeOffset.UtcNow;
         var entry = RegisterBusyAgent("agent-1", "consol-1");
         // No run in runService — consolidation service says it's active
-        _mockConsolidationService.Setup(c => c.IsRunActive("consol-1")).Returns(true);
-        _mockConsolidationService.Setup(c => c.GetActiveRunStartedAt("consol-1"))
+        _mockConsolidationService.Setup(c => c.IsRunActive((RunId)"consol-1")).Returns(true);
+        _mockConsolidationService.Setup(c => c.GetActiveRunStartedAt((RunId)"consol-1"))
             .Returns(now.AddMinutes(-10)); // within 30min timeout
 
         await _phase.ExecuteAsync(entry, now, MakeConfig(TimeSpan.FromMinutes(30)), CancellationToken.None);
 
-        _mockConsolidationService.Verify(c => c.UpdateRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never);
+        _mockConsolidationService.Verify(c => c.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never);
     }
 
     [Fact]
@@ -253,11 +253,11 @@ public class ProgressTimeoutSweepPhaseTests : IDisposable
     {
         var now = DateTimeOffset.UtcNow;
         var entry = RegisterBusyAgent("agent-1", "consol-1");
-        _mockConsolidationService.Setup(c => c.IsRunActive("consol-1")).Returns(true);
-        _mockConsolidationService.Setup(c => c.GetActiveRunStartedAt("consol-1"))
+        _mockConsolidationService.Setup(c => c.IsRunActive((RunId)"consol-1")).Returns(true);
+        _mockConsolidationService.Setup(c => c.GetActiveRunStartedAt((RunId)"consol-1"))
             .Returns(now.AddMinutes(-45)); // exceeds 30min timeout
         _mockConsolidationService
-            .Setup(c => c.UpdateRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+            .Setup(c => c.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
             .Returns(Task.CompletedTask);
 
         await _phase.ExecuteAsync(entry, now, MakeConfig(TimeSpan.FromMinutes(30)), CancellationToken.None);

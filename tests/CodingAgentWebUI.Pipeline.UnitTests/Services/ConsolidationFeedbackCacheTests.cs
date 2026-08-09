@@ -198,6 +198,21 @@ public sealed class ConsolidationFeedbackCacheTests : IDisposable
         WriteIndented = true
     };
 
+    [Fact]
+    public async Task PrepareFeedbackDataAsync_WhenRunHistoryThrows_LogsAndDoesNotThrow()
+    {
+        // Force the catch path in PrepareFeedbackDataAsync by making the history service throw
+        _mockRunHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("simulated history failure"));
+
+        var sut = CreateSut();
+        var run = CreateConsolidationRun();
+
+        // Must not throw — the method swallows the exception and logs a warning
+        var act = () => sut.PrepareFeedbackDataAsync(run, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
     private void WriteRunFile(string runId, ConsolidationRunType type, ConsolidationRunStatus status, DateTimeOffset? completedAtUtc)
     {
         Directory.CreateDirectory(_runsDir);

@@ -495,7 +495,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         await hub.ReportConsolidationComplete(result);
 
-        _mockConsolidation.Verify(s => s.UpdateRunAsync("crun-1", ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None), Times.Once);
+        _mockConsolidation.Verify(s => s.UpdateRunAsync((RunId)"crun-1", ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None), Times.Once);
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         _mockFacade.Verify(f => f.Signal(), Times.Once);
         agent.ActiveJobId.Should().BeNull();
@@ -512,7 +512,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         await hub.ReportConsolidationComplete(result);
 
-        _mockConsolidation.Verify(s => s.UpdateRunAsync("crun-1", ConsolidationRunStatus.Failed, "Timeout", CancellationToken.None), Times.Once);
+        _mockConsolidation.Verify(s => s.UpdateRunAsync((RunId)"crun-1", ConsolidationRunStatus.Failed, "Timeout", CancellationToken.None), Times.Once);
     }
 
     [Fact]
