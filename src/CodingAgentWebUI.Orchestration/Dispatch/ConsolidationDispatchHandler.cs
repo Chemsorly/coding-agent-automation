@@ -195,38 +195,46 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private async Task<(PipelineDbContext Db, List<PendingWorkItemProjection> PendingItems, Dictionary<string, int> ConcurrencyBySelector, List<string> AvailablePvcs)?>
         LoadConsolidationDispatchStateAsync(CancellationToken ct)
     {
-        // TODO: DbContext leak risk — if BuildDispatchStateAsync throws (e.g. OperationCanceledException
-        // or a transient DB error) after the db is created but before the tuple is returned, `db` is never
-        // disposed. The explicit DisposeAsync on the empty-items path and the caller's await using block
-        // do not cover this path. Wrap the BuildDispatchStateAsync call in a try/finally that disposes db
-        // on exception, or restructure so db is always owned by the caller from the outset.
-        // See review finding: DotNetSpecialist WARNING ConsolidationDispatchHandler.cs:213
         var db = await _dbFactory.CreateDbContextAsync(ct);
+        try
+        {
+            var pendingItems = await db.WorkItems
+                .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType == WorkItemTaskType.Consolidation)
+                .OrderBy(w => w.CreatedAt)
+                .Select(w => new PendingWorkItemProjection
+                {
+                    Id = w.Id,
+                    AgentSelector = w.AgentSelector,
+                    CreatedAt = w.CreatedAt,
+                    TimeoutSeconds = w.TimeoutSeconds,
+                    ProjectId = w.ProjectId,
+                    IssueIdentifier = w.IssueIdentifier,
+                    IssueProviderConfigId = w.IssueProviderConfigId,
+                    TaskType = w.TaskType
+                })
+                .ToListAsync(ct);
 
-        var pendingItems = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType == WorkItemTaskType.Consolidation)
-            .OrderBy(w => w.CreatedAt)
-            .Select(w => new PendingWorkItemProjection
+            if (pendingItems.Count == 0)
             {
-                Id = w.Id,
-                AgentSelector = w.AgentSelector,
-                CreatedAt = w.CreatedAt,
-                TimeoutSeconds = w.TimeoutSeconds,
-                ProjectId = w.ProjectId,
-                IssueIdentifier = w.IssueIdentifier,
-                IssueProviderConfigId = w.IssueProviderConfigId,
-                TaskType = w.TaskType
-            })
-            .ToListAsync(ct);
+                // TODO: [WARNING] Potential double-dispose if db.DisposeAsync() throws here: the catch
+                // block below would call db.DisposeAsync() a second time. EF Core's DbContext sets its
+                // internal _disposed flag synchronously before the async portion, so this is safe in
+                // practice, but the pattern is fragile. Consider removing the explicit DisposeAsync here
+                // and using a `bool disposeDb` flag (set to false before the successful return) combined
+                // with a finally block, or restructure using `await using var db = ...` with the caller
+                // owning the context from creation — the idiomatic .NET pattern.
+                await db.DisposeAsync();
+                return null;
+            }
 
-        if (pendingItems.Count == 0)
+            var (concurrencyBySelector, availablePvcs) = await BuildDispatchStateAsync(db, ct);
+            return (db, pendingItems, concurrencyBySelector, availablePvcs);
+        }
+        catch
         {
             await db.DisposeAsync();
-            return null;
+            throw;
         }
-
-        var (concurrencyBySelector, availablePvcs) = await BuildDispatchStateAsync(db, ct);
-        return (db, pendingItems, concurrencyBySelector, availablePvcs);
     }
 
     /// <summary>
