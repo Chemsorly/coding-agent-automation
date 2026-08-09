@@ -242,7 +242,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         }
 
         // Cancel-during-dispatch race guard: check if run was cancelled while queued
-        var runId = request.IssueIdentifier; // RunId stored as IssueIdentifier for consolidation
+        var runId = request.IssueIdentifier.Value; // RunId stored as IssueIdentifier for consolidation
         var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
         if (consolidationRun is null ||
             consolidationRun.Status == ConsolidationRunStatus.Cancelled ||

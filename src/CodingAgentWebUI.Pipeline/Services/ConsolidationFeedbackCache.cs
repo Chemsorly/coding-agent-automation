@@ -81,17 +81,18 @@ public sealed class ConsolidationFeedbackCache : IConsolidationFeedbackCache
     }
 
     /// <inheritdoc />
-    public string? GetFeedbackDataForRun(string runId)
+    public string? GetFeedbackDataForRun(RunId runId)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-        _feedbackDataCache.TryGetValue(runId, out var data);
+        // TODO: if a default(RunId) (Value == null) is ever passed, TryGetValue will throw
+        // ArgumentNullException. Consider adding a null guard: if (runId.Value is null) return null.
+        _feedbackDataCache.TryGetValue(runId.Value, out var data);
         return data;
     }
 
     /// <inheritdoc />
-    public void ClearFeedbackDataForRun(string runId)
+    public void ClearFeedbackDataForRun(RunId runId)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-        _feedbackDataCache.TryRemove(runId, out _);
+        // TODO: same null-Value risk as GetFeedbackDataForRun — default(RunId).Value is null.
+        _feedbackDataCache.TryRemove(runId.Value, out _);
     }
 }

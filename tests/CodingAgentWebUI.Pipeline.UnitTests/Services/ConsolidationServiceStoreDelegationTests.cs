@@ -55,13 +55,13 @@ public sealed class ConsolidationServiceStoreDelegationTests
             StartedAtUtc = DateTimeOffset.UtcNow,
             Status = ConsolidationRunStatus.Running
         };
-        _mockRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+        _mockRunStore.Setup(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
 
         var sut = CreateSut();
         await sut.UpdateRunAsync(runId, ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None);
 
-        _mockRunStore.Verify(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()), Times.Once);
+        _mockRunStore.Verify(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()), Times.Once);
         _mockRunStore.Verify(s => s.SaveRunAsync(It.Is<ConsolidationRun>(r =>
             r.RunId == runId && r.Status == ConsolidationRunStatus.Succeeded), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -77,14 +77,14 @@ public sealed class ConsolidationServiceStoreDelegationTests
             StartedAtUtc = DateTimeOffset.UtcNow,
             Status = ConsolidationRunStatus.Queued
         };
-        _mockRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+        _mockRunStore.Setup(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
 
         var sut = CreateSut();
         var result = await sut.CancelQueuedRunAsync(runId, CancellationToken.None);
 
         result.Should().BeTrue();
-        _mockRunStore.Verify(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()), Times.Once);
+        _mockRunStore.Verify(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()), Times.Once);
         _mockRunStore.Verify(s => s.SaveRunAsync(It.Is<ConsolidationRun>(r =>
             r.Status == ConsolidationRunStatus.Cancelled), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -100,13 +100,13 @@ public sealed class ConsolidationServiceStoreDelegationTests
             StartedAtUtc = DateTimeOffset.UtcNow,
             Status = ConsolidationRunStatus.Queued
         };
-        _mockRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+        _mockRunStore.Setup(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
 
         var sut = CreateSut();
         await sut.TransitionToRunningAsync(runId, CancellationToken.None);
 
-        _mockRunStore.Verify(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()), Times.Once);
+        _mockRunStore.Verify(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()), Times.Once);
         _mockRunStore.Verify(s => s.SaveRunAsync(It.Is<ConsolidationRun>(r =>
             r.Status == ConsolidationRunStatus.Running), It.IsAny<CancellationToken>()), Times.Once);
     }

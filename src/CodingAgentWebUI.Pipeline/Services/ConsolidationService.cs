@@ -26,12 +26,12 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     public event Action? OnChange;
 
     /// <inheritdoc />
-    public bool IsRunActive(string runId) => _runningRuns.Values.Any(r => r.RunId == runId);
+    public bool IsRunActive(RunId runId) => _runningRuns.Values.Any(r => r.RunId == runId.Value);
 
     /// <inheritdoc />
-    public DateTimeOffset? GetActiveRunStartedAt(string runId)
+    public DateTimeOffset? GetActiveRunStartedAt(RunId runId)
     {
-        var run = _runningRuns.Values.FirstOrDefault(r => r.RunId == runId);
+        var run = _runningRuns.Values.FirstOrDefault(r => r.RunId == runId.Value);
         return run?.StartedAtUtc;
     }
 
@@ -237,23 +237,23 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
     /// <inheritdoc />
     public async Task UpdateRunAsync(
-        string runId, ConsolidationRunStatus status, string? summary,
+        RunId runId, ConsolidationRunStatus status, string? summary,
         CancellationToken ct, long totalTokens = 0)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-
-        if (!Guid.TryParse(runId, out _))
+        if (!Guid.TryParse(runId.Value, out _))
         {
-            _logger.Warning("Invalid runId format: {RunId}", runId);
+            _logger.Warning("Invalid runId format: {RunId}", runId.Value);
             return;
         }
 
         try
         {
-            var run = await _runStore.GetByIdAsync(runId, ct);
+            // TODO: pass runId directly instead of runId.Value — the store now accepts RunId,
+            // so this is a redundant unwrap-rewrap (RunId → string → RunId) via implicit conversion.
+            var run = await _runStore.GetByIdAsync(runId.Value, ct);
             if (run is null)
             {
-                _logger.Warning("Cannot update consolidation run {RunId}: not found", runId);
+                _logger.Warning("Cannot update consolidation run {RunId}: not found", runId.Value);
                 return;
             }
 
@@ -263,7 +263,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             {
                 _logger.Debug(
                     "Skipping update for consolidation run {RunId}: already in terminal status {CurrentStatus} (requested: {RequestedStatus})",
-                    runId, run.Status, status);
+                    runId.Value, run.Status, status);
                 return;
             }
 
@@ -282,26 +282,25 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             }
 
             _workspaceManager.CleanupWorkspaceIfSucceeded(runId, status);
-            _logger.Information("Consolidation run {RunId} updated: {Status} — {Summary}", runId, status, summary ?? "(no summary)");
+            _logger.Information("Consolidation run {RunId} updated: {Status} — {Summary}", runId.Value, status, summary ?? "(no summary)");
             OnChange?.Invoke();
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to update consolidation run {RunId}", runId);
+            _logger.Error(ex, "Failed to update consolidation run {RunId}", runId.Value);
         }
     }
 
     /// <inheritdoc />
-    public async Task<bool> CancelQueuedRunAsync(string runId, CancellationToken ct)
+    public async Task<bool> CancelQueuedRunAsync(RunId runId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-
-        if (!Guid.TryParse(runId, out _))
+        if (!Guid.TryParse(runId.Value, out _))
             return false;
 
         try
         {
-            var run = await _runStore.GetByIdAsync(runId, ct);
+            // TODO: pass runId directly instead of runId.Value — redundant unwrap-rewrap via implicit conversion.
+            var run = await _runStore.GetByIdAsync(runId.Value, ct);
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return false;
 
@@ -315,30 +314,29 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             _runningRuns.TryRemove(key, out _);
 
             if (_dispatcher is not null)
-                await _dispatcher.NotifyRunCancelledAsync(runId, ct);
+                await _dispatcher.NotifyRunCancelledAsync(runId.Value, ct);
 
-            _logger.Information("Consolidation run {RunId} cancelled", runId);
+            _logger.Information("Consolidation run {RunId} cancelled", runId.Value);
             OnChange?.Invoke();
             return true;
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to cancel consolidation run {RunId}", runId);
+            _logger.Error(ex, "Failed to cancel consolidation run {RunId}", runId.Value);
             return false;
         }
     }
 
     /// <inheritdoc />
-    public async Task TransitionToRunningAsync(string runId, CancellationToken ct)
+    public async Task TransitionToRunningAsync(RunId runId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-
-        if (!Guid.TryParse(runId, out _))
+        if (!Guid.TryParse(runId.Value, out _))
             return;
 
         try
         {
-            var run = await _runStore.GetByIdAsync(runId, ct);
+            // TODO: pass runId directly instead of runId.Value — redundant unwrap-rewrap via implicit conversion.
+            var run = await _runStore.GetByIdAsync(runId.Value, ct);
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return;
 
@@ -349,12 +347,12 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             var key = (run.Type, run.TemplateId);
             _runningRuns.AddOrUpdate(key, run, (_, _) => run);
 
-            _logger.Information("Consolidation run {RunId} transitioned from Queued to Running (StartedAtUtc reset)", runId);
+            _logger.Information("Consolidation run {RunId} transitioned from Queued to Running (StartedAtUtc reset)", runId.Value);
             OnChange?.Invoke();
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to transition consolidation run {RunId} to Running", runId);
+            _logger.Error(ex, "Failed to transition consolidation run {RunId} to Running", runId.Value);
         }
     }
 
@@ -408,17 +406,17 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     }
 
     /// <inheritdoc />
-    public async Task DeleteRunAsync(string runId, CancellationToken ct)
+    public async Task DeleteRunAsync(RunId runId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
         try
         {
-            await _runStore.DeleteRunAsync(runId, ct);
+            // TODO: pass runId directly instead of runId.Value — redundant unwrap-rewrap via implicit conversion.
+            await _runStore.DeleteRunAsync(runId.Value, ct);
             _runHistoryCache = null;
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to delete consolidation run {RunId}", runId);
+            _logger.Warning(ex, "Failed to delete consolidation run {RunId}", runId.Value);
         }
     }
 
@@ -428,6 +426,8 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         ArgumentNullException.ThrowIfNull(runId);
         try
         {
+            // TODO: DeletePersistedRunAsync/DeletePersistedRun still accept string, bypassing the RunId
+            // boundary. If RunId validation is ever tightened these call sites will silently diverge.
             await _runStore.DeleteRunAsync(runId, CancellationToken.None);
             _runHistoryCache = null;
         }
@@ -439,6 +439,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
     private void DeletePersistedRun(string runId)
     {
+        // TODO: same as DeletePersistedRunAsync — accepts string, bypasses RunId boundary via implicit conversion.
         _ = _runStore.DeleteRunAsync(runId, CancellationToken.None).ContinueWith(t =>
         {
             if (t.IsFaulted)
