@@ -167,4 +167,43 @@ public sealed class ConsolidationServiceStoreDelegationTests
         result.Should().BeSameAs(expected);
         _mockHarnessStore.Verify(s => s.GetAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task DeleteRunAsync_Calls_DeleteRunAsync_OnStore()
+    {
+        var runId = new RunId(Guid.NewGuid().ToString());
+        _mockRunStore.Setup(s => s.DeleteRunAsync(runId, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = CreateSut();
+        await sut.DeleteRunAsync(runId, CancellationToken.None);
+
+        _mockRunStore.Verify(s => s.DeleteRunAsync(runId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteRunAsync_WhenStoreThrows_LogsAndSwallowsException()
+    {
+        var runId = new RunId(Guid.NewGuid().ToString());
+        _mockRunStore.Setup(s => s.DeleteRunAsync(runId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("disk error"));
+
+        var sut = CreateSut();
+        // Must not throw — the method swallows the exception and logs a warning
+        var act = () => sut.DeleteRunAsync(runId, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task DeletePersistedRunAsync_WhenStoreThrows_LogsAndSwallowsException()
+    {
+        var runId = Guid.NewGuid().ToString();
+        _mockRunStore.Setup(s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("disk error"));
+
+        var sut = CreateSut();
+        // Must not throw — the method swallows the exception and logs a warning
+        var act = () => sut.DeletePersistedRunAsync(runId);
+        await act.Should().NotThrowAsync();
+    }
 }
