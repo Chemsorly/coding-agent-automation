@@ -35,7 +35,7 @@ internal sealed class OrphanedRunSweepPhase
         _logger = logger;
     }
 
-    public async Task ExecuteAsync(DateTimeOffset now, CancellationToken ct)
+    public async Task ExecuteAsync(CancellationToken ct)
     {
         var activeRuns = _runService.GetActiveRuns();
         foreach (var run in activeRuns)

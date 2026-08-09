@@ -124,6 +124,6 @@ public sealed class HeartbeatMonitorService : BackgroundService
             }
         }
 
-        await _orphanedRunPhase.ExecuteAsync(now, ct);
+        await _orphanedRunPhase.ExecuteAsync(ct);
     }
 }

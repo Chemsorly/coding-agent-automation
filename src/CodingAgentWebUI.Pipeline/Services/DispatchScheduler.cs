@@ -663,7 +663,7 @@ internal sealed class DispatchScheduler
             var candidate = TryDequeueValidProjectLevelEpic(kvp.Value, ctx);
             if (candidate is null) continue;
 
-            var (dispatched, epicFailed) = await TryDispatchProjectLevelCandidateAsync(candidate.Value, ctx, stoppingToken, ct);
+            var (dispatched, epicFailed) = await TryDispatchProjectLevelCandidateAsync(candidate.Value, ctx, stoppingToken);
             if (dispatched || epicFailed)
             {
                 consumed++;
@@ -688,15 +688,14 @@ internal sealed class DispatchScheduler
     private async Task<(bool dispatched, bool epicFailed)> TryDispatchProjectLevelCandidateAsync(
         (IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template) candidate,
         RoundDispatchContext ctx,
-        CancellationToken stoppingToken,
-        CancellationToken ct)
+        CancellationToken stoppingToken)
     {
         var phaseLabel = candidate.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
         ctx.TrackingReportIssue(candidate.Issue.Identifier);
         ctx.ReportStatus($"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'");
         ctx.NotifyChange();
 
-        return await DispatchProjectLevelEpicAsync(candidate, ctx, stoppingToken, ct);
+        return await DispatchProjectLevelEpicAsync(candidate, ctx, stoppingToken);
     }
 
     /// <summary>
@@ -736,8 +735,7 @@ internal sealed class DispatchScheduler
     private async Task<(bool dispatched, bool failed)> DispatchProjectLevelEpicAsync(
         (IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template) candidate,
         RoundDispatchContext ctx,
-        CancellationToken stoppingToken,
-        CancellationToken ct)
+        CancellationToken stoppingToken)
     {
         try
         {

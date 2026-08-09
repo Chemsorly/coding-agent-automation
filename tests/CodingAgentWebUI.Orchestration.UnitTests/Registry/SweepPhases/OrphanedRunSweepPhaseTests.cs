@@ -55,7 +55,7 @@ public class OrphanedRunSweepPhaseTests : IDisposable
     [Fact]
     public async Task Execute_NoActiveRuns_NoFailRunCalled()
     {
-        await _phase.ExecuteAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+        await _phase.ExecuteAsync(CancellationToken.None);
 
         _mockLifecycleManager.Verify(
             l => l.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()),
@@ -67,7 +67,7 @@ public class OrphanedRunSweepPhaseTests : IDisposable
     {
         _runService.AddRun(MakeRun("run-1", agentId: null));
 
-        await _phase.ExecuteAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+        await _phase.ExecuteAsync(CancellationToken.None);
 
         _mockLifecycleManager.Verify(
             l => l.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()),
@@ -84,7 +84,7 @@ public class OrphanedRunSweepPhaseTests : IDisposable
         }, "conn-1");
         _runService.AddRun(MakeRun("run-1", agentId: "agent-alive"));
 
-        await _phase.ExecuteAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+        await _phase.ExecuteAsync(CancellationToken.None);
 
         _mockLifecycleManager.Verify(
             l => l.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()),
@@ -98,7 +98,7 @@ public class OrphanedRunSweepPhaseTests : IDisposable
         // Agent not in registry — orphaned run
         _runService.AddRun(MakeRun("run-1", agentId: "agent-gone"));
 
-        await _phase.ExecuteAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+        await _phase.ExecuteAsync(CancellationToken.None);
 
         _mockLifecycleManager.Verify(
             l => l.FailRunAsync("run-1", "Agent deregistered (orphaned run)", It.IsAny<CancellationToken>(), FailureReason.InfrastructureFailure),
@@ -118,7 +118,7 @@ public class OrphanedRunSweepPhaseTests : IDisposable
             RepoProviderConfigId = "rp-1",
         });
 
-        await _phase.ExecuteAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+        await _phase.ExecuteAsync(CancellationToken.None);
 
         // The warning template contains {RunId}, {IssueIdentifier}, {AgentId}.
         // IssueIdentifier is a struct, not string — use It.IsAny<IssueIdentifier>().
