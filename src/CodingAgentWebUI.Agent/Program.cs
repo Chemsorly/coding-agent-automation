@@ -112,15 +112,16 @@ try
     builder.Services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
     builder.Services.AddSingleton<IPipelineReporterFactory>(sp => new PipelineReporterFactory(Log.Logger));
     builder.Services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
-        sp.GetRequiredService<IKiroCliOrchestrator>(),
-        sp.GetRequiredService<IHttpClientFactory>(),
-        sp.GetRequiredService<PipelineConfiguration>(),
-        sp.GetRequiredService<IQualityGateValidator>(),
-        Log.Logger,
-        sp.GetRequiredService<IBrainUpdateService>(),
-        openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
-        agentIdentity: sp.GetRequiredService<AgentId>(),
-        reporterFactory: sp.GetRequiredService<IPipelineReporterFactory>()));
+        new LocalPipelineExecutorDependencies(
+            sp.GetRequiredService<IKiroCliOrchestrator>(),
+            sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<PipelineConfiguration>(),
+            sp.GetRequiredService<IQualityGateValidator>(),
+            Log.Logger,
+            sp.GetRequiredService<IBrainUpdateService>(),
+            OpenIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
+            AgentIdentity: sp.GetRequiredService<AgentId>(),
+            ReporterFactory: sp.GetRequiredService<IPipelineReporterFactory>())));
 
     // ── Consolidation executor ──
     builder.Services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(

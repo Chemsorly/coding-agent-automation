@@ -160,13 +160,15 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     {
         var service = CreateService();
 
-        var consolidationRun = PipelineRun.CreateImplementation(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: "consolidation-issue",
-            issueTitle: "Consolidation run",
-            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
-            repoProviderConfigId: "rp-1",
-            initiatedBy: ConsolidationConstants.InitiatedBy);
+        var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "consolidation-issue",
+            IssueTitle = "Consolidation run",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = ConsolidationConstants.InitiatedBy
+        });
         consolidationRun.CurrentStep = PipelineStep.Completed;
         consolidationRun.MarkCompleted();
 
@@ -185,13 +187,15 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         var runId = Guid.NewGuid().ToString();
         var startedAt = new DateTimeOffset(2026, 6, 15, 10, 30, 0, TimeSpan.Zero);
 
-        var run = PipelineRun.CreateImplementation(
-            runId: runId,
-            issueIdentifier: "org/repo#99",
-            issueTitle: "Preserve all fields",
-            issueProviderConfigId: "ip-fidelity",
-            repoProviderConfigId: "rp-fidelity",
-            startedAt: startedAt);
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#99",
+            IssueTitle = "Preserve all fields",
+            IssueProviderConfigId = "ip-fidelity",
+            RepoProviderConfigId = "rp-fidelity",
+            StartedAt = startedAt
+        });
         run.CurrentStep = PipelineStep.Completed;
         run.RetryCount = 3;
         run.MarkCompleted(new DateTimeOffset(2026, 6, 15, 11, 0, 0, TimeSpan.Zero));
@@ -246,13 +250,15 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         string issueTitle,
         DateTimeOffset? startedAt = null)
     {
-        var run = PipelineRun.CreateImplementation(
-            runId,
-            issueIdentifier,
-            issueTitle,
-            "ip-contract",
-            "rp-contract",
-            startedAt: startedAt ?? DateTimeOffset.UtcNow);
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = issueIdentifier,
+            IssueTitle = issueTitle,
+            IssueProviderConfigId = "ip-contract",
+            RepoProviderConfigId = "rp-contract",
+            StartedAt = startedAt ?? DateTimeOffset.UtcNow
+        });
         run.CurrentStep = PipelineStep.Completed;
         run.MarkCompleted();
         return run;

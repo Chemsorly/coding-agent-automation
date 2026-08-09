@@ -75,19 +75,21 @@ internal sealed class DecompositionDispatchPreparation : IDispatchPreparationHan
         var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
 
         // Construct the fully-populated decomposition run using reserved metadata
-        var run = PipelineRun.CreateDecomposition(
-            runId: runId,
-            issueIdentifier: _epicIdentifier,
-            issueTitle: _epicTitle,
-            issueProviderConfigId: _issueProviderId,
-            repoProviderConfigId: _repoProviderId,
-            phaseType: _phaseType,
-            startedAt: reservation.StartedAt,
-            initiatedBy: _initiatedBy,
-            agentId: _agent.AgentId,
-            agentProviderConfigId: agentProviderId,
-            brainProviderConfigId: _brainProviderId,
-            decompositionSource: _decompositionSource);
+        var run = PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = _epicIdentifier,
+            IssueTitle = _epicTitle,
+            IssueProviderConfigId = _issueProviderId,
+            RepoProviderConfigId = _repoProviderId,
+            RunType = _phaseType,
+            StartedAt = reservation.StartedAt,
+            InitiatedBy = _initiatedBy,
+            AgentId = _agent.AgentId,
+            AgentProviderConfigId = agentProviderId,
+            BrainProviderConfigId = _brainProviderId,
+            DecompositionSource = _decompositionSource
+        });
         run.RepositoryName = reservation.RepositoryName;
         run.ModelName = reservation.ModelName;
         run.WorkspacePath = workspacePath;

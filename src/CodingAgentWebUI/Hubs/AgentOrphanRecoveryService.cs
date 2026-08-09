@@ -165,42 +165,49 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
     {
         return activeJob.RunType switch
         {
-            PipelineRunType.Review => PipelineRun.CreateReview(
-                runId: activeJob.RunId,
-                issueIdentifier: activeJob.IssueIdentifier,
-                issueTitle: activeJob.IssueTitle,
-                issueProviderConfigId: activeJob.IssueProviderConfigId,
-                repoProviderConfigId: activeJob.RepoProviderConfigId,
-                reviewPrBranchName: string.Empty,
-                reviewPrTargetBranch: string.Empty,
-                startedAt: activeJob.StartedAt,
-                initiatedBy: activeJob.InitiatedBy,
-                agentId: agentId,
-                agentProviderConfigId: activeJob.AgentProviderConfigId,
-                brainProviderConfigId: activeJob.BrainProviderConfigId),
-            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
-                runId: activeJob.RunId,
-                issueIdentifier: activeJob.IssueIdentifier,
-                issueTitle: activeJob.IssueTitle,
-                issueProviderConfigId: activeJob.IssueProviderConfigId,
-                repoProviderConfigId: activeJob.RepoProviderConfigId,
-                phaseType: activeJob.RunType,
-                startedAt: activeJob.StartedAt,
-                initiatedBy: activeJob.InitiatedBy,
-                agentId: agentId,
-                agentProviderConfigId: activeJob.AgentProviderConfigId,
-                brainProviderConfigId: activeJob.BrainProviderConfigId),
-            _ => PipelineRun.CreateImplementation(
-                runId: activeJob.RunId,
-                issueIdentifier: activeJob.IssueIdentifier,
-                issueTitle: activeJob.IssueTitle,
-                issueProviderConfigId: activeJob.IssueProviderConfigId,
-                repoProviderConfigId: activeJob.RepoProviderConfigId,
-                startedAt: activeJob.StartedAt,
-                initiatedBy: activeJob.InitiatedBy,
-                agentId: agentId,
-                agentProviderConfigId: activeJob.AgentProviderConfigId,
-                brainProviderConfigId: activeJob.BrainProviderConfigId)
+            PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
+            {
+                RunId = activeJob.RunId,
+                IssueIdentifier = activeJob.IssueIdentifier,
+                IssueTitle = activeJob.IssueTitle,
+                IssueProviderConfigId = activeJob.IssueProviderConfigId,
+                RepoProviderConfigId = activeJob.RepoProviderConfigId,
+                RunType = PipelineRunType.Review,
+                StartedAt = activeJob.StartedAt,
+                InitiatedBy = activeJob.InitiatedBy,
+                AgentId = agentId,
+                AgentProviderConfigId = activeJob.AgentProviderConfigId,
+                BrainProviderConfigId = activeJob.BrainProviderConfigId,
+                ReviewPrBranchName = string.Empty,
+                ReviewPrTargetBranch = string.Empty
+            }),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+            {
+                RunId = activeJob.RunId,
+                IssueIdentifier = activeJob.IssueIdentifier,
+                IssueTitle = activeJob.IssueTitle,
+                IssueProviderConfigId = activeJob.IssueProviderConfigId,
+                RepoProviderConfigId = activeJob.RepoProviderConfigId,
+                RunType = activeJob.RunType,
+                StartedAt = activeJob.StartedAt,
+                InitiatedBy = activeJob.InitiatedBy,
+                AgentId = agentId,
+                AgentProviderConfigId = activeJob.AgentProviderConfigId,
+                BrainProviderConfigId = activeJob.BrainProviderConfigId
+            }),
+            _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            {
+                RunId = activeJob.RunId,
+                IssueIdentifier = activeJob.IssueIdentifier,
+                IssueTitle = activeJob.IssueTitle,
+                IssueProviderConfigId = activeJob.IssueProviderConfigId,
+                RepoProviderConfigId = activeJob.RepoProviderConfigId,
+                StartedAt = activeJob.StartedAt,
+                InitiatedBy = activeJob.InitiatedBy,
+                AgentId = agentId,
+                AgentProviderConfigId = activeJob.AgentProviderConfigId,
+                BrainProviderConfigId = activeJob.BrainProviderConfigId
+            })
         };
     }
 

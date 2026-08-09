@@ -69,23 +69,26 @@ internal sealed class ReviewDispatchPreparation : IDispatchPreparationHandler
             _request.PrIdentifier, _request.IssueProviderId, _request.RepoProviderId, ct);
 
         // Construct the fully-populated review run using reserved metadata
-        var run = PipelineRun.CreateReview(
-            runId: reservation.RunId,
-            issueIdentifier: _request.PrIdentifier,
-            issueTitle: _request.PrTitle,
-            issueProviderConfigId: _request.IssueProviderId,
-            repoProviderConfigId: _request.RepoProviderId,
-            reviewPrBranchName: _request.PrBranchName,
-            reviewPrTargetBranch: _request.PrTargetBranch,
-            startedAt: reservation.StartedAt,
-            initiatedBy: _request.InitiatedBy,
-            agentId: _agent.AgentId,
-            agentProviderConfigId: agentProviderId,
-            brainProviderConfigId: _request.BrainProviderId,
-            reviewPrUrl: _request.PrUrl,
-            reviewPrDescription: _request.PrDescription,
-            reviewPrAuthor: _request.PrAuthor,
-            linkedIssueContexts: linkedIssueContexts.Count > 0 ? linkedIssueContexts : null);
+        var run = PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunId = reservation.RunId,
+            IssueIdentifier = _request.PrIdentifier,
+            IssueTitle = _request.PrTitle,
+            IssueProviderConfigId = _request.IssueProviderId,
+            RepoProviderConfigId = _request.RepoProviderId,
+            RunType = PipelineRunType.Review,
+            StartedAt = reservation.StartedAt,
+            InitiatedBy = _request.InitiatedBy,
+            AgentId = _agent.AgentId,
+            AgentProviderConfigId = agentProviderId,
+            BrainProviderConfigId = _request.BrainProviderId,
+            ReviewPrBranchName = _request.PrBranchName,
+            ReviewPrTargetBranch = _request.PrTargetBranch,
+            ReviewPrUrl = _request.PrUrl,
+            ReviewPrDescription = _request.PrDescription,
+            ReviewPrAuthor = _request.PrAuthor,
+            LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null
+        });
         run.RepositoryName = reservation.RepositoryName;
         run.ModelName = reservation.ModelName;
         run.LinkedPullRequest = new LinkedPullRequest

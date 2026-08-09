@@ -38,7 +38,7 @@ public class AgentHubFacadeConcurrencyTests
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object));
 
-        _facade = new AgentHubFacade(
+        _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
             _registry,
             _runService,
             dispatcher,
@@ -46,7 +46,7 @@ public class AgentHubFacadeConcurrencyTests
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
-            NullLogger<AgentHubFacadeDependencies>.Instance);
+            NullLogger<AgentHubFacadeDependencies>.Instance));
     }
 
     /// <summary>
@@ -86,14 +86,16 @@ public class AgentHubFacadeConcurrencyTests
     public async Task ConcurrentAddAndGetRun_NoCorruption()
     {
         const int runCount = 30;
-        var runs = Enumerable.Range(0, runCount).Select(i => PipelineRun.CreateImplementation(
-            runId: $"run-{i}",
-            issueIdentifier: $"org/repo#{i}",
-            issueTitle: $"Issue {i}",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            initiatedBy: "test",
-            agentId: $"agent-{i % 5}")).ToArray();
+        var runs = Enumerable.Range(0, runCount).Select(i => PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = $"run-{i}",
+            IssueIdentifier = $"org/repo#{i}",
+            IssueTitle = $"Issue {i}",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "test",
+            AgentId = $"agent-{i % 5}"
+        })).ToArray();
 
         // Add runs concurrently
         var addTasks = runs.Select(r => Task.Run(() => _facade.AddRun(r)));
@@ -166,14 +168,16 @@ public class AgentHubFacadeConcurrencyTests
             try
             {
                 var runId = $"run-{i % 10}"; // Contention on same IDs
-                var run = PipelineRun.CreateImplementation(
-                    runId: runId,
-                    issueIdentifier: $"org/repo#{i}",
-                    issueTitle: $"Issue {i}",
-                    issueProviderConfigId: "ip-1",
-                    repoProviderConfigId: "rp-1",
-                    initiatedBy: "test",
-                    agentId: $"agent-{i % 5}");
+                var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+                {
+                    RunId = runId,
+                    IssueIdentifier = $"org/repo#{i}",
+                    IssueTitle = $"Issue {i}",
+                    IssueProviderConfigId = "ip-1",
+                    RepoProviderConfigId = "rp-1",
+                    InitiatedBy = "test",
+                    AgentId = $"agent-{i % 5}"
+                });
 
                 _facade.AddRun(run);
 
@@ -272,14 +276,16 @@ public class AgentHubFacadeConcurrencyTests
                 var runId = $"mixed-run-{i}";
 
                 // Simulate lifecycle: add run, heartbeat, complete run, remove
-                var run = PipelineRun.CreateImplementation(
-                    runId: runId,
-                    issueIdentifier: $"org/repo#{i}",
-                    issueTitle: $"Issue {i}",
-                    issueProviderConfigId: "ip-1",
-                    repoProviderConfigId: "rp-1",
-                    initiatedBy: "test",
-                    agentId: agentId);
+                var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+                {
+                    RunId = runId,
+                    IssueIdentifier = $"org/repo#{i}",
+                    IssueTitle = $"Issue {i}",
+                    IssueProviderConfigId = "ip-1",
+                    RepoProviderConfigId = "rp-1",
+                    InitiatedBy = "test",
+                    AgentId = agentId
+                });
 
                 _facade.AddRun(run);
                 _facade.UpdateHeartbeat(agentId, DateTimeOffset.UtcNow);

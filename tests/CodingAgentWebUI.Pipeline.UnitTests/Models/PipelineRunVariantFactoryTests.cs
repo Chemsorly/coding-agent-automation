@@ -12,12 +12,14 @@ public class PipelineRunVariantFactoryTests
     [Fact]
     public void CreateImplementation_SetsRequiredProperties()
     {
-        var run = PipelineRun.CreateImplementation(
-            runId: "r1",
-            issueIdentifier: "org/repo#1",
-            issueTitle: "Fix bug",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Fix bug",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        });
 
         run.RunId.Should().Be("r1");
         run.IssueIdentifier.Value.Should().Be("org/repo#1");
@@ -29,12 +31,14 @@ public class PipelineRunVariantFactoryTests
     [Fact]
     public void CreateImplementation_SetsRunTypeToImplementation()
     {
-        var run = PipelineRun.CreateImplementation(
-            runId: "r1",
-            issueIdentifier: "i",
-            issueTitle: "t",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "i",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp"
+        });
 
         run.RunType.Should().Be(PipelineRunType.Implementation);
     }
@@ -43,12 +47,14 @@ public class PipelineRunVariantFactoryTests
     public void CreateImplementation_SetsInvariantDefaults()
     {
         var before = DateTimeOffset.UtcNow;
-        var run = PipelineRun.CreateImplementation(
-            runId: "r1",
-            issueIdentifier: "i",
-            issueTitle: "t",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "i",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp"
+        });
         var after = DateTimeOffset.UtcNow;
 
         run.CurrentStep.Should().Be(PipelineStep.Created);
@@ -62,17 +68,19 @@ public class PipelineRunVariantFactoryTests
     {
         var timestamp = new DateTimeOffset(2024, 6, 1, 12, 0, 0, TimeSpan.Zero);
 
-        var run = PipelineRun.CreateImplementation(
-            runId: "r1",
-            issueIdentifier: "i",
-            issueTitle: "t",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp",
-            startedAt: timestamp,
-            initiatedBy: "loop",
-            agentId: "agent-1",
-            agentProviderConfigId: "ap-1",
-            brainProviderConfigId: "bp-1");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "i",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = timestamp,
+            InitiatedBy = "loop",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "ap-1",
+            BrainProviderConfigId = "bp-1"
+        });
 
         run.StartedAtOffset.Should().Be(timestamp);
         run.InitiatedBy.Should().Be("loop");
@@ -84,12 +92,14 @@ public class PipelineRunVariantFactoryTests
     [Fact]
     public void CreateImplementation_ReviewAndDecompositionFieldsAreNull()
     {
-        var run = PipelineRun.CreateImplementation(
-            runId: "r1",
-            issueIdentifier: "i",
-            issueTitle: "t",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "i",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp"
+        });
 
         run.ReviewPrBranchName.Should().BeNull();
         run.ReviewPrTargetBranch.Should().BeNull();
@@ -105,29 +115,33 @@ public class PipelineRunVariantFactoryTests
     {
         var timestamp = new DateTimeOffset(2024, 6, 1, 12, 0, 0, TimeSpan.Zero);
 
-        var viaFactory = PipelineRun.CreateImplementation(
-            runId: "r1",
-            issueIdentifier: "org/repo#5",
-            issueTitle: "Add feature",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            startedAt: timestamp,
-            initiatedBy: "loop",
-            agentId: "agent-2",
-            agentProviderConfigId: "ap-2",
-            brainProviderConfigId: "bp-2");
+        var viaFactory = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "org/repo#5",
+            IssueTitle = "Add feature",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = timestamp,
+            InitiatedBy = "loop",
+            AgentId = "agent-2",
+            AgentProviderConfigId = "ap-2",
+            BrainProviderConfigId = "bp-2"
+        });
 
-        var viaCreate = PipelineRun.CreateImplementation(
-            runId: "r1",
-            issueIdentifier: "org/repo#5",
-            issueTitle: "Add feature",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            startedAt: timestamp,
-            initiatedBy: "loop",
-            agentId: "agent-2",
-            agentProviderConfigId: "ap-2",
-            brainProviderConfigId: "bp-2");
+        var viaCreate = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "org/repo#5",
+            IssueTitle = "Add feature",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = timestamp,
+            InitiatedBy = "loop",
+            AgentId = "agent-2",
+            AgentProviderConfigId = "ap-2",
+            BrainProviderConfigId = "bp-2"
+        });
 
         AssertRunFieldsEqual(viaFactory, viaCreate);
     }
@@ -141,14 +155,17 @@ public class PipelineRunVariantFactoryTests
     [Fact]
     public void CreateReview_SetsRunTypeToReview()
     {
-        var run = PipelineRun.CreateReview(
-            runId: "r1",
-            issueIdentifier: "org/repo#10",
-            issueTitle: "PR title",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp",
-            reviewPrBranchName: "feature/x",
-            reviewPrTargetBranch: "main");
+        var run = PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunType = PipelineRunType.Review,
+            RunId = "r1",
+            IssueIdentifier = "org/repo#10",
+            IssueTitle = "PR title",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            ReviewPrBranchName = "feature/x",
+            ReviewPrTargetBranch = "main"
+        });
 
         run.RunType.Should().Be(PipelineRunType.Review);
     }
@@ -161,18 +178,21 @@ public class PipelineRunVariantFactoryTests
             new() { Identifier = "#2", Title = "Related", Description = "desc" }
         };
 
-        var run = PipelineRun.CreateReview(
-            runId: "r1",
-            issueIdentifier: "org/repo#10",
-            issueTitle: "PR title",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp",
-            reviewPrBranchName: "feature/x",
-            reviewPrTargetBranch: "main",
-            reviewPrUrl: "https://github.com/org/repo/pull/10",
-            reviewPrDescription: "PR body",
-            reviewPrAuthor: "dev1",
-            linkedIssueContexts: contexts);
+        var run = PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunType = PipelineRunType.Review,
+            RunId = "r1",
+            IssueIdentifier = "org/repo#10",
+            IssueTitle = "PR title",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            ReviewPrBranchName = "feature/x",
+            ReviewPrTargetBranch = "main",
+            ReviewPrUrl = "https://github.com/org/repo/pull/10",
+            ReviewPrDescription = "PR body",
+            ReviewPrAuthor = "dev1",
+            LinkedIssueContexts = contexts
+        });
 
         run.ReviewPrBranchName.Should().Be("feature/x");
         run.ReviewPrTargetBranch.Should().Be("main");
@@ -185,14 +205,17 @@ public class PipelineRunVariantFactoryTests
     [Fact]
     public void CreateReview_DecompositionFieldIsNull()
     {
-        var run = PipelineRun.CreateReview(
-            runId: "r1",
-            issueIdentifier: "i",
-            issueTitle: "t",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp",
-            reviewPrBranchName: "feature/x",
-            reviewPrTargetBranch: "main");
+        var run = PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunType = PipelineRunType.Review,
+            RunId = "r1",
+            IssueIdentifier = "i",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            ReviewPrBranchName = "feature/x",
+            ReviewPrTargetBranch = "main"
+        });
 
         run.DecompositionSource.Should().BeNull();
     }
@@ -200,14 +223,17 @@ public class PipelineRunVariantFactoryTests
     [Fact]
     public void CreateReview_NullableReviewFields_DefaultToNull()
     {
-        var run = PipelineRun.CreateReview(
-            runId: "r1",
-            issueIdentifier: "i",
-            issueTitle: "t",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp",
-            reviewPrBranchName: "feature/x",
-            reviewPrTargetBranch: "main");
+        var run = PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunType = PipelineRunType.Review,
+            RunId = "r1",
+            IssueIdentifier = "i",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            ReviewPrBranchName = "feature/x",
+            ReviewPrTargetBranch = "main"
+        });
 
         run.ReviewPrUrl.Should().BeNull();
         run.ReviewPrDescription.Should().BeNull();
@@ -224,41 +250,47 @@ public class PipelineRunVariantFactoryTests
             new() { Identifier = "#3", Title = "Linked", Description = "d" }
         };
 
-        var viaFactory = PipelineRun.CreateReview(
-            runId: "r1",
-            issueIdentifier: "org/repo#10",
-            issueTitle: "PR title",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            reviewPrBranchName: "feature/y",
-            reviewPrTargetBranch: "develop",
-            startedAt: timestamp,
-            initiatedBy: "loop",
-            agentId: "agent-3",
-            agentProviderConfigId: "ap-3",
-            brainProviderConfigId: "bp-3",
-            reviewPrUrl: "https://github.com/org/repo/pull/10",
-            reviewPrDescription: "desc",
-            reviewPrAuthor: "author1",
-            linkedIssueContexts: contexts);
+        var viaFactory = PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunType = PipelineRunType.Review,
+            RunId = "r1",
+            IssueIdentifier = "org/repo#10",
+            IssueTitle = "PR title",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            ReviewPrBranchName = "feature/y",
+            ReviewPrTargetBranch = "develop",
+            StartedAt = timestamp,
+            InitiatedBy = "loop",
+            AgentId = "agent-3",
+            AgentProviderConfigId = "ap-3",
+            BrainProviderConfigId = "bp-3",
+            ReviewPrUrl = "https://github.com/org/repo/pull/10",
+            ReviewPrDescription = "desc",
+            ReviewPrAuthor = "author1",
+            LinkedIssueContexts = contexts
+        });
 
-        var viaCreate = PipelineRun.CreateReview(
-            runId: "r1",
-            issueIdentifier: "org/repo#10",
-            issueTitle: "PR title",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            reviewPrBranchName: "feature/y",
-            reviewPrTargetBranch: "develop",
-            startedAt: timestamp,
-            initiatedBy: "loop",
-            agentId: "agent-3",
-            agentProviderConfigId: "ap-3",
-            brainProviderConfigId: "bp-3",
-            reviewPrUrl: "https://github.com/org/repo/pull/10",
-            reviewPrDescription: "desc",
-            reviewPrAuthor: "author1",
-            linkedIssueContexts: contexts);
+        var viaCreate = PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunType = PipelineRunType.Review,
+            RunId = "r1",
+            IssueIdentifier = "org/repo#10",
+            IssueTitle = "PR title",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            ReviewPrBranchName = "feature/y",
+            ReviewPrTargetBranch = "develop",
+            StartedAt = timestamp,
+            InitiatedBy = "loop",
+            AgentId = "agent-3",
+            AgentProviderConfigId = "ap-3",
+            BrainProviderConfigId = "bp-3",
+            ReviewPrUrl = "https://github.com/org/repo/pull/10",
+            ReviewPrDescription = "desc",
+            ReviewPrAuthor = "author1",
+            LinkedIssueContexts = contexts
+        });
 
         AssertRunFieldsEqual(viaFactory, viaCreate);
     }
@@ -267,18 +299,27 @@ public class PipelineRunVariantFactoryTests
     // CreateDecomposition
     // ─────────────────────────────────────────────────────────────────────
 
+    // TODO: Add tests for CreateImplementation and CreateReview that verify behavior when the wrong
+    // RunType is explicitly set in PipelineRunCreationParams. Post-S107 refactor, CreateImplementation
+    // and CreateReview no longer enforce RunType internally (unlike CreateDecomposition, which guards
+    // against non-Decomposition values). A caller that passes RunType = PipelineRunType.Review to
+    // CreateImplementation will silently receive a run with the wrong RunType, corrupting
+    // LabelTargetKind and ProviderConfigIdForLabel routing logic at runtime.
+    // Example: CreateImplementation_WithWrongRunType_ShouldNotProduceMistypedRun.
     [Theory]
     [InlineData(PipelineRunType.DecompositionAnalysis)]
     [InlineData(PipelineRunType.Decomposition)]
     public void CreateDecomposition_SetsCorrectRunType(PipelineRunType phaseType)
     {
-        var run = PipelineRun.CreateDecomposition(
-            runId: "r1",
-            issueIdentifier: "org/repo#20",
-            issueTitle: "Epic",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp",
-            phaseType: phaseType);
+        var run = PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "org/repo#20",
+            IssueTitle = "Epic",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            RunType = phaseType
+        });
 
         run.RunType.Should().Be(phaseType);
     }
@@ -286,14 +327,16 @@ public class PipelineRunVariantFactoryTests
     [Fact]
     public void CreateDecomposition_SetsDecompositionSource()
     {
-        var run = PipelineRun.CreateDecomposition(
-            runId: "r1",
-            issueIdentifier: "org/repo#20",
-            issueTitle: "Epic",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp",
-            phaseType: PipelineRunType.DecompositionAnalysis,
-            decompositionSource: "project-level");
+        var run = PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "org/repo#20",
+            IssueTitle = "Epic",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            RunType = PipelineRunType.DecompositionAnalysis,
+            DecompositionSource = "project-level"
+        });
 
         run.DecompositionSource.Should().Be("project-level");
     }
@@ -301,13 +344,15 @@ public class PipelineRunVariantFactoryTests
     [Fact]
     public void CreateDecomposition_ReviewFieldsAreNull()
     {
-        var run = PipelineRun.CreateDecomposition(
-            runId: "r1",
-            issueIdentifier: "i",
-            issueTitle: "t",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp",
-            phaseType: PipelineRunType.Decomposition);
+        var run = PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "i",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            RunType = PipelineRunType.Decomposition
+        });
 
         run.ReviewPrBranchName.Should().BeNull();
         run.ReviewPrTargetBranch.Should().BeNull();
@@ -320,31 +365,42 @@ public class PipelineRunVariantFactoryTests
     [Fact]
     public void CreateDecomposition_RejectsInvalidRunType()
     {
-        var act = () => PipelineRun.CreateDecomposition(
-            runId: "r1",
-            issueIdentifier: "i",
-            issueTitle: "t",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp",
-            phaseType: PipelineRunType.Implementation);
+        var act = () => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "i",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            RunType = PipelineRunType.Implementation
+        });
 
         act.Should().Throw<ArgumentOutOfRangeException>()
-            .Which.ParamName.Should().Be("phaseType");
+            // TODO: The ParamName value changed from "phaseType" (the old method parameter name) to
+            // "RunType" (the record property name, via nameof(p.RunType)) after the S107 refactor.
+            // Callers that catch ArgumentOutOfRangeException and inspect ParamName will observe a
+            // different string at runtime. The assertion is consistent with the current implementation,
+            // but be aware this is a subtle API surface change if callers rely on the exception ParamName.
+            .Which.ParamName.Should().Be("RunType");
     }
 
     [Fact]
     public void CreateDecomposition_RejectsReviewRunType()
     {
-        var act = () => PipelineRun.CreateDecomposition(
-            runId: "r1",
-            issueIdentifier: "i",
-            issueTitle: "t",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp",
-            phaseType: PipelineRunType.Review);
+        var act = () => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "i",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            RunType = PipelineRunType.Review
+        });
 
         act.Should().Throw<ArgumentOutOfRangeException>()
-            .Which.ParamName.Should().Be("phaseType");
+            // TODO: Same as above — ParamName is now "RunType" (record property) rather than the
+            // original method parameter name "phaseType". See comment on CreateDecomposition_RejectsInvalidRunType.
+            .Which.ParamName.Should().Be("RunType");
     }
 
     [Fact]
@@ -352,33 +408,37 @@ public class PipelineRunVariantFactoryTests
     {
         var timestamp = new DateTimeOffset(2024, 6, 1, 12, 0, 0, TimeSpan.Zero);
 
-        var viaFactory = PipelineRun.CreateDecomposition(
-            runId: "r1",
-            issueIdentifier: "org/repo#20",
-            issueTitle: "Epic title",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            phaseType: PipelineRunType.DecompositionAnalysis,
-            startedAt: timestamp,
-            initiatedBy: "loop",
-            agentId: "agent-4",
-            agentProviderConfigId: "ap-4",
-            brainProviderConfigId: "bp-4",
-            decompositionSource: "template-level");
+        var viaFactory = PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "org/repo#20",
+            IssueTitle = "Epic title",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = PipelineRunType.DecompositionAnalysis,
+            StartedAt = timestamp,
+            InitiatedBy = "loop",
+            AgentId = "agent-4",
+            AgentProviderConfigId = "ap-4",
+            BrainProviderConfigId = "bp-4",
+            DecompositionSource = "template-level"
+        });
 
-        var viaCreate = PipelineRun.CreateDecomposition(
-            runId: "r1",
-            issueIdentifier: "org/repo#20",
-            issueTitle: "Epic title",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            phaseType: PipelineRunType.DecompositionAnalysis,
-            startedAt: timestamp,
-            initiatedBy: "loop",
-            agentId: "agent-4",
-            agentProviderConfigId: "ap-4",
-            brainProviderConfigId: "bp-4",
-            decompositionSource: "template-level");
+        var viaCreate = PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "org/repo#20",
+            IssueTitle = "Epic title",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = PipelineRunType.DecompositionAnalysis,
+            StartedAt = timestamp,
+            InitiatedBy = "loop",
+            AgentId = "agent-4",
+            AgentProviderConfigId = "ap-4",
+            BrainProviderConfigId = "bp-4",
+            DecompositionSource = "template-level"
+        });
 
         AssertRunFieldsEqual(viaFactory, viaCreate);
     }

@@ -173,13 +173,15 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
         // Since the mocked TryDispatchAsync doesn't actually enqueue, we provide the state via GetActiveRuns.
         _mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun>
         {
-            PipelineRun.CreateImplementation(
-                runId: Guid.NewGuid().ToString(),
-                issueIdentifier: request.IssueIdentifier,
-                issueTitle: "Contract test issue",
-                issueProviderConfigId: request.IssueProviderConfigId,
-                repoProviderConfigId: request.RepoProviderConfigId,
-                initiatedBy: request.InitiatedBy)
+            PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            {
+                RunId = Guid.NewGuid().ToString(),
+                IssueIdentifier = request.IssueIdentifier,
+                IssueTitle = "Contract test issue",
+                IssueProviderConfigId = request.IssueProviderConfigId,
+                RepoProviderConfigId = request.RepoProviderConfigId,
+                InitiatedBy = request.InitiatedBy
+            })
         });
     }
 }

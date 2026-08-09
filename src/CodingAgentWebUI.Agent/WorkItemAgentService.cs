@@ -68,46 +68,6 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         _connectionManager.OnForceDisconnect += HandleForceDisconnectAsync;
     }
 
-    // Backward-compatible constructor used by tests and existing DI registrations
-    public WorkItemAgentService(
-        string workItemId,
-        IWorkItemLifecycleClient workItemClient,
-        IAgentConnectionManager connectionManager,
-        IWorkItemExecutor workItemExecutor,
-        IJobCompletionReporter completionReporter,
-        AgentId agentId,
-        IHostApplicationLifetime lifetime,
-        Serilog.ILogger logger,
-        // TODO: Consider making serviceProvider required (non-nullable) — it's always available in DI factory
-        // lambdas, and leaving it optional means a future caller could omit it and silently lose ForceFlush behavior.
-        IServiceProvider? serviceProvider = null)
-    {
-        ArgumentNullException.ThrowIfNull(workItemId);
-        ArgumentNullException.ThrowIfNull(workItemClient);
-        ArgumentNullException.ThrowIfNull(connectionManager);
-        ArgumentNullException.ThrowIfNull(workItemExecutor);
-        ArgumentNullException.ThrowIfNull(completionReporter);
-        ArgumentNullException.ThrowIfNull(lifetime);
-        ArgumentNullException.ThrowIfNull(logger);
-
-        _workItemId = workItemId;
-        _workItemClient = workItemClient;
-        _workItemExecutor = workItemExecutor;
-        _completionReporter = completionReporter;
-        // TODO: Validate agentId.Value is not null/empty — default(AgentId) would propagate null.
-        _agentId = agentId;
-        _lifetime = lifetime;
-        _serviceProvider = serviceProvider;
-        _logger = logger;
-
-        // Use the injected connection manager
-        _connectionManager = connectionManager;
-
-        // Wire CancelJob to cancel the pipeline
-        _connectionManager.OnCancelJobReceived += HandleCancelJobAsync;
-        _connectionManager.OnForceDisconnect += HandleForceDisconnectAsync;
-    }
-
     /// <inheritdoc/>
     public bool IsBusy => _pipelineCts is not null && !_pipelineCts.IsCancellationRequested;
 

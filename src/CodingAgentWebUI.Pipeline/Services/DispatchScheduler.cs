@@ -167,8 +167,8 @@ internal sealed class DispatchScheduler
 
             var turnResult = await ExecuteTurnAsync(
                 currentTurn, request, roundCtx, cycleStateCache,
-                hasIssues, hasPrs, hasDecomp,
-                activeDecompositionCount, stoppingToken, ct);
+                new TurnEligibility(hasIssues, hasPrs, hasDecomp, activeDecompositionCount),
+                stoppingToken, ct);
 
             remaining -= turnResult.Consumed;
             processedCount += turnResult.Processed;
@@ -194,6 +194,16 @@ internal sealed class DispatchScheduler
     }
 
     /// <summary>
+    /// Groups the queue eligibility flags for <see cref="ExecuteTurnAsync"/> to reduce its
+    /// parameter count (S107).
+    /// </summary>
+    private readonly record struct TurnEligibility(
+        bool HasIssues,
+        bool HasPrs,
+        bool HasDecomp,
+        int ActiveDecompositionCount);
+
+    /// <summary>
     /// Executes the dispatch logic for the selected turn (Issues, PullRequests, or Decomposition).
     /// Also handles the project-level decomposition fallback when the regular decomposition queue
     /// makes no progress.
@@ -203,32 +213,31 @@ internal sealed class DispatchScheduler
         DispatchRoundRobinRequest request,
         RoundDispatchContext roundCtx,
         Dictionary<int, bool> cycleStateCache,
-        bool hasIssues, bool hasPrs, bool hasDecomp,
-        int activeDecompositionCount,
+        TurnEligibility eligibility,
         CancellationToken stoppingToken,
         CancellationToken ct)
     {
         bool issueMadeProgress = false, prMadeProgress = false, decompMadeProgress = false;
         int consumed = 0, processed = 0, failed = 0, additionalDecomp = 0;
 
-        if (currentTurn == DispatchTurn.Issues && hasIssues)
+        if (currentTurn == DispatchTurn.Issues && eligibility.HasIssues)
         {
             var (progress, count, p, f) = await DispatchIssueRoundAsync(
                 roundCtx, request.IssueQueues, cycleStateCache, stoppingToken, ct);
             issueMadeProgress = progress; consumed += count; processed += p; failed += f;
         }
 
-        if (currentTurn == DispatchTurn.PullRequests && hasPrs)
+        if (currentTurn == DispatchTurn.PullRequests && eligibility.HasPrs)
         {
             var (progress, count, p, f) = await DispatchPrRoundAsync(
                 roundCtx, request.PrQueues, stoppingToken, ct);
             prMadeProgress = progress; consumed += count; processed += p; failed += f;
         }
 
-        if (currentTurn == DispatchTurn.Decomposition && hasDecomp)
+        if (currentTurn == DispatchTurn.Decomposition && eligibility.HasDecomp)
         {
             var (progress, count, p, f, addl) = await DispatchDecompositionRoundAsync(
-                roundCtx, request.DecompositionQueues, request.Config, activeDecompositionCount, stoppingToken, ct);
+                roundCtx, request.DecompositionQueues, request.Config, eligibility.ActiveDecompositionCount, stoppingToken, ct);
             decompMadeProgress = progress; consumed += count; processed += p; failed += f; additionalDecomp += addl;
         }
 
@@ -236,13 +245,13 @@ internal sealed class DispatchScheduler
         bool canDispatchProjectLevel = currentTurn == DispatchTurn.Decomposition
             && !decompMadeProgress
             && request.ProjectLevelDecompositionQueues.Count > 0
-            && (activeDecompositionCount + additionalDecomp) < request.Config.MaxConcurrentDecompositions;
+            && (eligibility.ActiveDecompositionCount + additionalDecomp) < request.Config.MaxConcurrentDecompositions;
 
         if (canDispatchProjectLevel)
         {
             var (progress, count, p, f, addl) = await DispatchProjectLevelDecompositionRoundAsync(
                 roundCtx, request.ProjectLevelDecompositionQueues, request.Config,
-                activeDecompositionCount + additionalDecomp, stoppingToken, ct);
+                eligibility.ActiveDecompositionCount + additionalDecomp, stoppingToken, ct);
             decompMadeProgress = progress; consumed += count; processed += p; failed += f; additionalDecomp += addl;
         }
 

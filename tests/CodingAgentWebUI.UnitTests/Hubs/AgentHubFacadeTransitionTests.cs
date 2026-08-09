@@ -52,14 +52,14 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object));
 
-        _facade = new AgentHubFacade(
+        _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
             registry, runService, dispatcher, drainService,
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            workItemTransition: _transitionService,
-            dbFactory: _dbFactory);
+            WorkItemTransition: _transitionService,
+            DbFactory: _dbFactory));
     }
 
     public void Dispose()
@@ -110,12 +110,12 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object));
 
-        var facadeWithoutTransition = new AgentHubFacade(
+        var facadeWithoutTransition = new AgentHubFacade(new AgentHubFacadeDependencies(
             registry, runService, dispatcher, drainService,
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
-            NullLogger<AgentHubFacadeDependencies>.Instance);
+            NullLogger<AgentHubFacadeDependencies>.Instance));
 
         var id = Guid.NewGuid();
         var exception = await Record.ExceptionAsync(() =>

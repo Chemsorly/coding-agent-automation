@@ -709,12 +709,18 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        var pipelineRun = PipelineRun.CreateReview(
-            runId.ToString(), "55", "Review PR 55",
-            "ip-13", "rp-13",
-            reviewPrBranchName: "feature/review",
-            reviewPrTargetBranch: "main",
-            agentId: "agent-rev-13");
+        var pipelineRun = PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunType = PipelineRunType.Review,
+            RunId = runId.ToString(),
+            IssueIdentifier = "55",
+            IssueTitle = "Review PR 55",
+            IssueProviderConfigId = "ip-13",
+            RepoProviderConfigId = "rp-13",
+            ReviewPrBranchName = "feature/review",
+            ReviewPrTargetBranch = "main",
+            AgentId = "agent-rev-13"
+        });
         _runService.AddRun(pipelineRun);
 
         // Act

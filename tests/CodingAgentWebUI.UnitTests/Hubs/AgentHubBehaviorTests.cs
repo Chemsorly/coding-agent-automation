@@ -26,7 +26,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     private AgentHub CreateHub(string connectionId = "conn-1")
     {
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             Mock.Of<IChangeNotifier>(),
@@ -38,7 +38,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -971,7 +971,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var changeNotifier = Mock.Of<IChangeNotifier>();
         var chatNotifier = Mock.Of<IChatNotifier>();
 
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             chatNotifier,
             changeNotifier,
@@ -983,7 +983,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -997,7 +997,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var changeNotifier = Mock.Of<IChangeNotifier>();
         var chatNotifier = Mock.Of<IChatNotifier>();
 
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             _mockFacade.Object,
             chatNotifier,
             changeNotifier,
@@ -1009,7 +1009,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            new AgentOrphanRecoveryService(_mockFacade.Object, changeNotifier, _mockLogger.Object));
+            new AgentOrphanRecoveryService(_mockFacade.Object, changeNotifier, _mockLogger.Object)));
 
         // Build a real HttpContext with the agentId query param
         var httpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();

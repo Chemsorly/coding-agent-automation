@@ -76,15 +76,15 @@ public class DiResolutionSmokeTests
 
         // ── Pipeline executor ──
         services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
-        services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
+        services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<PipelineConfiguration>(),
             sp.GetRequiredService<IQualityGateValidator>(),
             Log.Logger,
             sp.GetRequiredService<IBrainUpdateService>(),
-            openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
-            agentIdentity: sp.GetRequiredService<AgentId>()));
+            OpenIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
+            AgentIdentity: sp.GetRequiredService<AgentId>())));
 
         // ── Consolidation executor ──
         services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
@@ -135,7 +135,7 @@ public class DiResolutionSmokeTests
         });
         services.AddSingleton<IJobCompletionReporter>(sp =>
             Mock.Of<IJobCompletionReporter>());
-        services.AddSingleton(sp => new WorkItemAgentService(
+        services.AddSingleton(sp => new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             "smoke-test-work-item-id",
             sp.GetRequiredService<IWorkItemLifecycleClient>(),
             sp.GetRequiredService<IAgentConnectionManager>(),
@@ -144,7 +144,7 @@ public class DiResolutionSmokeTests
             sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger,
-            serviceProvider: sp));
+            ServiceProvider: sp)));
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -309,15 +309,15 @@ public class DiResolutionSmokeTests
 
         // ── Pipeline executor ──
         services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
-        services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
+        services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<PipelineConfiguration>(),
             sp.GetRequiredService<IQualityGateValidator>(),
             Log.Logger,
             sp.GetRequiredService<IBrainUpdateService>(),
-            openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
-            agentIdentity: sp.GetRequiredService<AgentId>()));
+            OpenIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
+            AgentIdentity: sp.GetRequiredService<AgentId>())));
 
         // ── Consolidation executor ──
         services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(

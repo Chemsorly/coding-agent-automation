@@ -43,7 +43,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null)
     {
-        return new PipelineExecutionContextBuilder(
+        return new PipelineExecutionContextBuilder(new PipelineExecutionContextBuilderDependencies(
             _mockQualityGateValidator.Object,
             _mockReporterFactory.Object,
             _feedbackService,
@@ -51,7 +51,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
             _mockLogger.Object,
             brainUpdateService,
             historyService,
-            new PullRequestFinalizationService(_mockLogger.Object));
+            new PullRequestFinalizationService(_mockLogger.Object)));
     }
 
     private static JobAssignmentMessage CreateTestJob(PipelineRunType runType = PipelineRunType.Implementation)
@@ -824,15 +824,15 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         // Build without a PullRequestFinalizationService — _finalization is null.
         // Invoking the CreatePullRequest callback through the step context's Callbacks
         // must throw InvalidOperationException.
-        var builderWithoutFinalization = new PipelineExecutionContextBuilder(
+        var builderWithoutFinalization = new PipelineExecutionContextBuilder(new PipelineExecutionContextBuilderDependencies(
             _mockQualityGateValidator.Object,
             _mockReporterFactory.Object,
             _feedbackService,
             _agentId,
             _mockLogger.Object,
-            brainUpdateService: null,
-            historyService: null,
-            finalization: null);
+            BrainUpdateService: null,
+            HistoryService: null,
+            Finalization: null));
 
         SetupReporterFactory();
         var mockRepo = new Mock<IRepositoryProvider>();

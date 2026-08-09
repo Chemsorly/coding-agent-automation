@@ -16,12 +16,14 @@ public class PipelineRunConcurrencyTests
     public void StartedAtOffset_ConcurrentReadWrite_NeverProducesTornRead()
     {
         // Arrange: create a PipelineRun and define a set of known-good timestamps
-        var run = PipelineRun.CreateImplementation(
-            runId: "concurrency-test",
-            issueIdentifier: "org/repo#1",
-            issueTitle: "Concurrency test",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "concurrency-test",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Concurrency test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp"
+        });
 
         var writtenValues = new DateTimeOffset[1000];
         for (int i = 0; i < writtenValues.Length; i++)
@@ -106,12 +108,14 @@ public class PipelineRunConcurrencyTests
     public void StartedAtOffset_AfterResetStartedAt_MatchesExpectedValue()
     {
         // Verify basic correctness of the Interlocked-backed property
-        var run = PipelineRun.CreateImplementation(
-            runId: "r1",
-            issueIdentifier: "i",
-            issueTitle: "t",
-            issueProviderConfigId: "ip",
-            repoProviderConfigId: "rp");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "r1",
+            IssueIdentifier = "i",
+            IssueTitle = "t",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp"
+        });
 
         var timestamps = Enumerable.Range(1, 100)
             .Select(i => new DateTimeOffset(2026, 6, 15, i % 24, i % 60, 0, TimeSpan.Zero))

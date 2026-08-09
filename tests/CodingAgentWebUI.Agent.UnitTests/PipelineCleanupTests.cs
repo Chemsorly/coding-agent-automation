@@ -40,14 +40,16 @@ public class PipelineCleanupTests : IAsyncDisposable
 
     private static PipelineRun CreateRun(PipelineStep currentStep = PipelineStep.Created)
     {
-        var run = PipelineRun.CreateImplementation(
-            runId: "test-run",
-            issueIdentifier: "test/repo#1",
-            issueTitle: "Test",
-            issueProviderConfigId: "",
-            repoProviderConfigId: "repo-1",
-            initiatedBy: "test",
-            agentId: "test-agent");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "test-run",
+            IssueIdentifier = "test/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            AgentId = "test-agent"
+        });
         run.CurrentStep = currentStep;
         return run;
     }

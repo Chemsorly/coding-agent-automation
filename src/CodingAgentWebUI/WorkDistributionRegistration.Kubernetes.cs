@@ -75,18 +75,19 @@ public static partial class WorkDistributionRegistration
 
         // ConsolidationDispatchHandler — handles consolidation work items
         services.AddHostedService(sp => new ConsolidationDispatchHandler(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<ILeaderElectionService>(),
-            sp.GetRequiredService<DispatchLifecycleService>(),
-            sp.GetRequiredService<JobTemplateStore>(),
-            sp.GetRequiredService<IConfiguration>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetService<IConsolidationRunStore>(),
-            sp.GetService<IConsolidationService>(),
-            sp.GetService<IConsolidationJobPreparationService>(),
-            sp.GetService<IPipelineConfigStore>(),
-            sp.GetService<IProjectStore>(),
-            sp.GetService<IAgentProfileStore>()));
+            new ConsolidationDispatchHandlerDependencies(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<ILeaderElectionService>(),
+                sp.GetRequiredService<DispatchLifecycleService>(),
+                sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetService<IConsolidationRunStore>(),
+                sp.GetService<IConsolidationService>(),
+                sp.GetService<IConsolidationJobPreparationService>(),
+                sp.GetService<IPipelineConfigStore>(),
+                sp.GetService<IProjectStore>(),
+                sp.GetService<IAgentProfileStore>())));
 
         services.AddHostedService(sp => new ReconciliationService(
             new ReconciliationServiceDependencies(

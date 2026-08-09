@@ -71,7 +71,7 @@ public sealed class AgentMonitoringPageServiceTests
             _runService,
             _mockLogger.Object);
 
-        _sut = new AgentMonitoringPageService(
+        _sut = new AgentMonitoringPageService(new AgentMonitoringPageServiceDependencies(
             _mockActiveRunQuery.Object,
             _registry,
             _dispatcher,
@@ -83,7 +83,7 @@ public sealed class AgentMonitoringPageServiceTests
             _mockWorkDistributor.Object,
             _mockHubContext.Object,
             _mockHistoryService.Object,
-            _mockLifecycleManager.Object);
+            _mockLifecycleManager.Object));
     }
 
     private static PipelineRun CreateRun(string runId, string agentId = "agent-1")

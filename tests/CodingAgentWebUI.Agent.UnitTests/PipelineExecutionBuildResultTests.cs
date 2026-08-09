@@ -40,14 +40,16 @@ public class PipelineExecutionBuildResultTests : IAsyncDisposable
 
     private static PipelineRun CreateRun()
     {
-        return PipelineRun.CreateImplementation(
-            runId: "test-run",
-            issueIdentifier: "test/repo#1",
-            issueTitle: "Test",
-            issueProviderConfigId: "",
-            repoProviderConfigId: "repo-1",
-            initiatedBy: "test",
-            agentId: "test-agent");
+        return PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "test-run",
+            IssueIdentifier = "test/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            AgentId = "test-agent"
+        });
     }
 
     private PipelineExecutionBuildResult CreateBuildResult(PipelineRun run, CancellationTokenSource cts, PipelineSignalRReporter reporter)

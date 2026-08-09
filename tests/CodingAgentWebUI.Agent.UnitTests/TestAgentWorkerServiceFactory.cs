@@ -90,13 +90,13 @@ internal static class TestAgentWorkerServiceFactory
         var mockHttpClientFactory = new Mock<IHttpClientFactory>();
         var mockQualityGateValidator = new Mock<IQualityGateValidator>();
         var mockLogger = new Mock<Serilog.ILogger>();
-        return new LocalPipelineExecutor(
+        return new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             orchestrator,
             mockHttpClientFactory.Object,
             new PipelineConfiguration(),
             mockQualityGateValidator.Object,
             mockLogger.Object,
-            agentIdentity: new AgentId("test-agent"));
+            AgentIdentity: new AgentId("test-agent")));
     }
 
     private static LocalConsolidationExecutor CreateMockConsolidationExecutor(KiroCliLib.Core.IKiroCliOrchestrator orchestrator)

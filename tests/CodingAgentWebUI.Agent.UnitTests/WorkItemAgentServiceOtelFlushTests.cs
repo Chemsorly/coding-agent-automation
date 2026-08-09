@@ -69,16 +69,16 @@ public class WorkItemAgentServiceOtelFlushTests
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
-        var service = new WorkItemAgentService(
-            workItemId: "wi-flush-test",
-            workItemClient: workItemClient,
-            connectionManager: Mock.Of<IAgentConnectionManager>(),
-            workItemExecutor: Mock.Of<IWorkItemExecutor>(),
-            completionReporter: Mock.Of<IJobCompletionReporter>(),
-            agentId: new AgentId("test-agent"),
-            lifetime: _mockLifetime.Object,
-            logger: _mockLogger.Object,
-            serviceProvider: serviceProvider);
+        var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
+            "wi-flush-test",
+            workItemClient,
+            Mock.Of<IAgentConnectionManager>(),
+            Mock.Of<IWorkItemExecutor>(),
+            Mock.Of<IJobCompletionReporter>(),
+            new AgentId("test-agent"),
+            _mockLifetime.Object,
+            _mockLogger.Object,
+            ServiceProvider: serviceProvider));
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -125,16 +125,16 @@ public class WorkItemAgentServiceOtelFlushTests
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
-        var service = new WorkItemAgentService(
-            workItemId: "wi-no-meter",
-            workItemClient: workItemClient,
-            connectionManager: Mock.Of<IAgentConnectionManager>(),
-            workItemExecutor: Mock.Of<IWorkItemExecutor>(),
-            completionReporter: Mock.Of<IJobCompletionReporter>(),
-            agentId: new AgentId("test-agent"),
-            lifetime: _mockLifetime.Object,
-            logger: _mockLogger.Object,
-            serviceProvider: serviceProvider);
+        var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
+            "wi-no-meter",
+            workItemClient,
+            Mock.Of<IAgentConnectionManager>(),
+            Mock.Of<IWorkItemExecutor>(),
+            Mock.Of<IJobCompletionReporter>(),
+            new AgentId("test-agent"),
+            _mockLifetime.Object,
+            _mockLogger.Object,
+            ServiceProvider: serviceProvider));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var act = async () =>
@@ -173,8 +173,8 @@ public class WorkItemAgentServiceOtelFlushTests
         // IServiceProvider is actually passed to WorkItemAgentService at construction time.
         // The DI factory lambda for WorkItemAgentService must pass sp (serviceProvider) to the constructor.
         // This ensures the ForceFlush path in ExecuteAsync can resolve MeterProvider and TracerProvider.
-        sourceCode.Should().Contain("serviceProvider: sp",
-            "The WorkItemAgentService DI factory in AgentK8sModeRegistration.cs must pass 'serviceProvider: sp' so that " +
+        sourceCode.Should().Contain("ServiceProvider: sp",
+            "The WorkItemAgentService DI factory in AgentK8sModeRegistration.cs must pass 'ServiceProvider: sp' so that " +
             "WorkItemAgentService can call MeterProvider.ForceFlush before exit. Without this, " +
             "quality_gate.* metrics emitted during the QG phase are lost when the pod terminates.");
     }

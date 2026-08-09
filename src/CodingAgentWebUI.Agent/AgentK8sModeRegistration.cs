@@ -56,15 +56,16 @@ internal static class AgentK8SModeRegistration
             logger));
 
         services.AddSingleton(sp => new WorkItemAgentService(
-            config.WorkItemId!,
-            sp.GetRequiredService<IWorkItemLifecycleClient>(),
-            sp.GetRequiredService<IAgentConnectionManager>(),
-            sp.GetRequiredService<IWorkItemExecutor>(),
-            sp.GetRequiredService<IJobCompletionReporter>(),
-            sp.GetRequiredService<AgentId>(),
-            sp.GetRequiredService<IHostApplicationLifetime>(),
-            logger,
-            serviceProvider: sp));
+            new WorkItemAgentServiceDependencies(
+                WorkItemId: config.WorkItemId!,
+                WorkItemClient: sp.GetRequiredService<IWorkItemLifecycleClient>(),
+                ConnectionManager: sp.GetRequiredService<IAgentConnectionManager>(),
+                WorkItemExecutor: sp.GetRequiredService<IWorkItemExecutor>(),
+                CompletionReporter: sp.GetRequiredService<IJobCompletionReporter>(),
+                AgentId: sp.GetRequiredService<AgentId>(),
+                Lifetime: sp.GetRequiredService<IHostApplicationLifetime>(),
+                Logger: logger,
+                ServiceProvider: sp)));
         services.AddHostedService(sp => sp.GetRequiredService<WorkItemAgentService>());
         services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<WorkItemAgentService>());
 
