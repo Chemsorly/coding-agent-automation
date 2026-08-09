@@ -152,4 +152,17 @@ public sealed class FileSystemConsolidationRunStoreTests : IDisposable
         StartedAtUtc = DateTimeOffset.UtcNow,
         Status = ConsolidationRunStatus.Running
     };
+
+    [Fact]
+    public async Task GetByIdAsync_CorruptJsonFile_ReturnsNull()
+    {
+        // Write a file with invalid JSON to the runs directory to trigger the catch path
+        var runId = Guid.NewGuid().ToString();
+        var filePath = Path.Combine(_tempDir, $"{runId}.json");
+        await File.WriteAllTextAsync(filePath, "{ this is not valid json !!!");
+
+        var result = await _sut.GetByIdAsync((RunId)runId, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
 }

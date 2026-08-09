@@ -128,4 +128,25 @@ public sealed class ConsolidationWorkspaceManagerTests : IDisposable
 
         act.Should().NotThrow();
     }
+
+    [Fact]
+    public void CleanupWorkspaceIfSucceeded_WhenDeleteFails_LogsAndDoesNotThrow()
+    {
+        // Create a workspace directory, then nest a subdirectory with a read-only file
+        // to force Directory.Delete to fail on some systems. On Linux we can achieve
+        // this by creating the workspace, deleting it ourselves, and then creating a file
+        // at that path so the directory delete fails.
+        var runId = Guid.NewGuid().ToString();
+        var workspacePath = _sut.GetWorkspacePath(runId);
+        Directory.CreateDirectory(Path.GetDirectoryName(workspacePath)!);
+        // Place a file at the workspace path (not a directory) so Directory.Delete(path, recursive) throws
+        File.WriteAllText(workspacePath, "block");
+
+        // Should not throw — the catch block swallows the exception
+        var act = () => _sut.CleanupWorkspaceIfSucceeded(runId, ConsolidationRunStatus.Succeeded);
+        act.Should().NotThrow();
+
+        // Cleanup the blocking file
+        File.Delete(workspacePath);
+    }
 }
