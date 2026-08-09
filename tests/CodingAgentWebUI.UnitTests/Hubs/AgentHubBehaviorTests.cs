@@ -1724,6 +1724,137 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Verify(f => f.GetRun(It.IsAny<string>()), Times.Never);
     }
 
+    [Fact]
+    public async Task Heartbeat_AgentIdMismatch_RejectsAndDoesNotUpdateHeartbeat()
+    {
+        // Reproduction: a caller whose connection owns "agent-1" sends a heartbeat
+        // claiming to be "agent-2". The hub must reject based on message.AgentId.Value,
+        // preventing heartbeat spoofing across agents.
+        var callerAgent = CreateAgent(agentId: "agent-1", connectionId: "conn-1");
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(callerAgent);
+
+        var hub = CreateHub("conn-1");
+        var heartbeat = new HeartbeatMessage
+        {
+            AgentId = "agent-2", // Mismatch: caller owns agent-1
+            Timestamp = DateTimeOffset.UtcNow,
+            CurrentStep = null,
+            MemoryUsageMb = 100
+        };
+
+        await hub.Heartbeat(heartbeat);
+
+        // No heartbeat update should be recorded — request was rejected
+        _mockFacade.Verify(f => f.UpdateHeartbeat(It.IsAny<AgentId>(), It.IsAny<DateTimeOffset>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Heartbeat_NullCallerEntry_RejectsAndDoesNotUpdateHeartbeat()
+    {
+        // The hub must also reject when the caller has no registry entry at all
+        // (e.g., connection not registered yet).
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
+
+        var hub = CreateHub("conn-1");
+        var heartbeat = new HeartbeatMessage
+        {
+            AgentId = "agent-1",
+            Timestamp = DateTimeOffset.UtcNow,
+            CurrentStep = null,
+            MemoryUsageMb = 100
+        };
+
+        await hub.Heartbeat(heartbeat);
+
+        _mockFacade.Verify(f => f.UpdateHeartbeat(It.IsAny<AgentId>(), It.IsAny<DateTimeOffset>()), Times.Never);
+    }
+
+    #endregion
+
+    #region DeregisterAgent — Ownership enforcement
+
+    [Fact]
+    public Task DeregisterAgent_CallerOwnsAgent_Deregisters()
+    {
+        var agent = CreateAgent(agentId: "agent-1", connectionId: "conn-1");
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        var hub = CreateHub("conn-1");
+        var result = hub.DeregisterAgent((AgentId)"agent-1");
+
+        _mockFacade.Verify(f => f.Deregister((AgentId)"agent-1"), Times.Once);
+        return result;
+    }
+
+    [Fact]
+    public Task DeregisterAgent_AgentIdMismatch_RejectsWithoutDeregistering()
+    {
+        // Caller owns agent-1 but tries to deregister agent-2 — must be rejected.
+        var callerAgent = CreateAgent(agentId: "agent-1", connectionId: "conn-1");
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(callerAgent);
+
+        var hub = CreateHub("conn-1");
+        var result = hub.DeregisterAgent((AgentId)"agent-2");
+
+        _mockFacade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
+        return result;
+    }
+
+    [Fact]
+    public Task DeregisterAgent_NullCallerEntry_RejectsWithoutDeregistering()
+    {
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
+
+        var hub = CreateHub("conn-1");
+        var result = hub.DeregisterAgent((AgentId)"agent-1");
+
+        _mockFacade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
+        return result;
+    }
+
+    #endregion
+
+    #region AgentReady — Ownership enforcement
+
+    [Fact]
+    public Task AgentReady_CallerOwnsAgent_SignalsDrain()
+    {
+        var agent = CreateAgent(agentId: "agent-1", connectionId: "conn-1");
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        var hub = CreateHub("conn-1");
+        var result = hub.AgentReady((AgentId)"agent-1");
+
+        _mockFacade.Verify(f => f.Signal(), Times.Once);
+        return result;
+    }
+
+    [Fact]
+    public Task AgentReady_AgentIdMismatch_RejectsWithoutSignaling()
+    {
+        // Caller owns agent-1 but sends AgentReady claiming to be agent-2 — must be rejected.
+        var callerAgent = CreateAgent(agentId: "agent-1", connectionId: "conn-1");
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(callerAgent);
+
+        var hub = CreateHub("conn-1");
+        var result = hub.AgentReady((AgentId)"agent-2");
+
+        _mockFacade.Verify(f => f.Signal(), Times.Never);
+        return result;
+    }
+
+    [Fact]
+    public Task AgentReady_NullCallerEntry_RejectsWithoutSignaling()
+    {
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
+
+        var hub = CreateHub("conn-1");
+        var result = hub.AgentReady((AgentId)"agent-1");
+
+        _mockFacade.Verify(f => f.Signal(), Times.Never);
+        return result;
+    }
+
     #endregion
 
     #region PostIssueFeedbackComment — Feedback link in PR body
