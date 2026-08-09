@@ -251,8 +251,13 @@ public class LoopStatePersistenceServiceTests : IDisposable
         // Arrange: use a stub loop service that exposes FireOnChange for testing
         var mockStore = new Mock<ILoopStateStore>();
         LoopState? writtenState = null;
+        var writeCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         mockStore.Setup(s => s.WriteAsync(It.IsAny<LoopState>(), It.IsAny<CancellationToken>()))
-            .Callback<LoopState, CancellationToken>((s, _) => writtenState = s)
+            .Callback<LoopState, CancellationToken>((s, _) =>
+            {
+                writtenState = s;
+                writeCompleted.TrySetResult();
+            })
             .Returns(Task.CompletedTask);
         mockStore.Setup(s => s.ReadAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((LoopState?)null);
@@ -264,10 +269,8 @@ public class LoopStatePersistenceServiceTests : IDisposable
         // Trigger the OnChange event
         stubLoop.FireOnChange();
 
-        // Wait for fire-and-forget write to complete
-        var deadline = DateTime.UtcNow.AddSeconds(3);
-        while (writtenState is null && DateTime.UtcNow < deadline)
-            await Task.Delay(20);
+        // Wait for fire-and-forget write to complete — event-driven, no polling loop
+        await writeCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         writtenState.Should().NotBeNull("PersistCurrentStateAsync should write state on change");
 
@@ -278,7 +281,9 @@ public class LoopStatePersistenceServiceTests : IDisposable
     public async Task PersistCurrentStateAsync_WhenStoreThrows_DoesNotPropagate()
     {
         var mockStore = new Mock<ILoopStateStore>();
+        var writeCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         mockStore.Setup(s => s.WriteAsync(It.IsAny<LoopState>(), It.IsAny<CancellationToken>()))
+            .Callback(() => writeCalled.TrySetResult())
             .ThrowsAsync(new IOException("Disk full"));
         mockStore.Setup(s => s.ReadAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((LoopState?)null);
@@ -289,7 +294,9 @@ public class LoopStatePersistenceServiceTests : IDisposable
 
         // Exception from store must be swallowed — should not propagate
         stubLoop.FireOnChange();
-        await Task.Delay(150);
+
+        // Wait for the fire-and-forget write to be attempted — event-driven, no fixed delay
+        await writeCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         await sut.StopAsync(CancellationToken.None);
         // Verify the store was called (write was attempted) and exception was swallowed
