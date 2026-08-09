@@ -767,8 +767,7 @@
     private static RenderFragment RenderSingleQgcCompilationAndTests(QualityGateReport qr) => __builder =>
     {
         @RenderGateLine(qr.Compilation.Passed, "Compilation", null)
-        @RenderGateLine(qr.Tests.Passed, "Tests",
-            FormatTestsSub(qr.Tests.TestsPassed, qr.Tests.TestsFailed))
+        @RenderGateLine(qr.Tests.Passed, "Tests", FormatTestsSub(qr.Tests.TestsPassed, qr.Tests.TestsFailed))
     };
 
     private static string FormatTestsSub(int? passed, int? failed) =>
@@ -779,20 +778,24 @@
     {
         @if (qr.Coverage is { } cov)
         {
-            var covText = cov.CoveragePercent.HasValue
-                ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%"
-                : "N/A";
+            var covText = FormatCoverageSub(cov.CoveragePercent);
             @RenderGateLineWithSub(cov.Passed, "Coverage", covText)
         }
         @RenderSecurityGateLine(qr.SecurityScan)
     };
 
+    private static string FormatCoverageSub(double? coveragePercent) =>
+        coveragePercent.HasValue
+            ? $"{coveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%"
+            : "N/A";
+
     /// <summary>Renders a single gate line with an icon and optional sub-text.</summary>
     private static RenderFragment RenderGateLine(bool passed, string label, string? sub) => __builder =>
     {
         var cssClass = passed ? "qg-pass" : "qg-fail";
+        var iconName = passed ? "check-circle" : "x-circle";
         <div class="qg-line @cssClass">
-            @if (passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} @label
+            <Icon Name="@iconName" /> @label
             @if (sub is not null) {<span class="qg-sub">@sub</span>}
         </div>
     };
@@ -801,8 +804,9 @@
     private static RenderFragment RenderGateLineWithSub(bool passed, string label, string sub) => __builder =>
     {
         var cssClass = passed ? "qg-pass" : "qg-fail";
+        var iconName = passed ? "check-circle" : "x-circle";
         <div class="qg-line @cssClass">
-            @if (passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} @label
+            <Icon Name="@iconName" /> @label
             <span class="qg-sub">@sub</span>
         </div>
     };

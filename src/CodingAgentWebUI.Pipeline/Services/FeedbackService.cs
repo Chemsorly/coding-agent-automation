@@ -423,25 +423,25 @@ public sealed class FeedbackService
     /// </summary>
     private sealed class FeedbackDto
     {
-        public HarnessDto? Harness { get; set; }
-        public IssueDto? Issue { get; set; }
+        public HarnessDto? Harness { get; init; }
+        public IssueDto? Issue { get; init; }
     }
 
     private sealed class HarnessDto
     {
-        public string? Category { get; set; }
-        public string? StuckReason { get; set; }
-        public List<string>? MissingContext { get; set; }
-        public List<string>? MissingCapabilities { get; set; }
-        public List<string>? PromptIssues { get; set; }
-        public List<string>? Suggestions { get; set; }
+        public string? Category { get; init; }
+        public string? StuckReason { get; init; }
+        public List<string>? MissingContext { get; init; }
+        public List<string>? MissingCapabilities { get; init; }
+        public List<string>? PromptIssues { get; init; }
+        public List<string>? Suggestions { get; init; }
     }
 
     private sealed class IssueDto
     {
-        public string? Category { get; set; }
-        public string? Description { get; set; }
-        public List<string>? AffectedFiles { get; set; }
-        public string? HumanActionNeeded { get; set; }
+        public string? Category { get; init; }
+        public string? Description { get; init; }
+        public List<string>? AffectedFiles { get; init; }
+        public string? HumanActionNeeded { get; init; }
     }
 }
