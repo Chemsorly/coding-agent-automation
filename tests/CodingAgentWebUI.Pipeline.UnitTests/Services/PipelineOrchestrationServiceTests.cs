@@ -3500,7 +3500,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
             // TODO: Use separate typed mocks for IPipelineConfigStore and IProviderConfigStore to detect parameter wiring errors.
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new IssueDescriptionParser(),
             new PipelineCancellationFacade(null, mockCancellation.Object),
             lifecycle,
             new TestOrchestrationFactory.NoOpLabelService(),
@@ -3548,7 +3547,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new IssueDescriptionParser(),
             new PipelineCancellationFacade(null, mockCancellation.Object),
             lifecycle,
             new TestOrchestrationFactory.NoOpLabelService(),
@@ -3589,7 +3587,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new IssueDescriptionParser(),
             new PipelineCancellationFacade(null, null),
             lifecycle,
             new Orchestration.LabelService(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),

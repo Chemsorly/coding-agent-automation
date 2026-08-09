@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog.Context;
@@ -23,7 +22,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 {
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly ILabelService _labelSwapper;
-    private readonly IssueDescriptionParser _issueParser;
     private readonly IPipelineCancellationFacade _cancellationFacade;
     private readonly Serilog.ILogger _logger;
 
@@ -32,7 +30,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     public PipelineOrchestrationService(
         IConfigurationStore configurationStore,
         IProviderFactory providerFactory,
-        IssueDescriptionParser issueParser,
         IPipelineCancellationFacade cancellationFacade,
         PipelineRunLifecycleService lifecycle,
         ILabelService labelSwapper,
@@ -40,14 +37,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     {
         ArgumentNullException.ThrowIfNull(configurationStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
-        ArgumentNullException.ThrowIfNull(issueParser);
         ArgumentNullException.ThrowIfNull(cancellationFacade);
         ArgumentNullException.ThrowIfNull(lifecycle);
         ArgumentNullException.ThrowIfNull(labelSwapper);
         ArgumentNullException.ThrowIfNull(logger);
 
         _labelSwapper = labelSwapper;
-        _issueParser = issueParser;
         _logger = logger;
         _cancellationFacade = cancellationFacade;
         _providerManager = new PipelineProviderManager(configurationStore, providerFactory, logger);

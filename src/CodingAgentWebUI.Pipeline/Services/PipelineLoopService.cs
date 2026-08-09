@@ -13,7 +13,6 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 public sealed partial class PipelineLoopService : BackgroundService, IPipelineLoopService
 {
-    private readonly IProviderFactory _providerFactory;
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProjectStore _projectStore;
@@ -90,7 +89,6 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
         ArgumentNullException.ThrowIfNull(deps.ProjectStore);
         ArgumentNullException.ThrowIfNull(deps.Logger);
 
-        _providerFactory = deps.ProviderFactory;
         _pipelineConfigStore = deps.PipelineConfigStore;
         _providerConfigStore = deps.ProviderConfigStore;
         _projectStore = deps.ProjectStore;
