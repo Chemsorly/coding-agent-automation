@@ -132,7 +132,8 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
             new { message = "Not Found" });
 
         await using var provider = CreateProvider();
-        await provider.RemoveLabelAsync("42", "nonexistent", CancellationToken.None);
+        var act = () => provider.RemoveLabelAsync("42", "nonexistent", CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]

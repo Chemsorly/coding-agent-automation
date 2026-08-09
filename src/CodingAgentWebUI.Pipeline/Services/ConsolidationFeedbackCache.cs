@@ -34,8 +34,6 @@ public sealed class ConsolidationFeedbackCache : IConsolidationFeedbackCache
     /// <inheritdoc />
     public async Task PrepareFeedbackDataAsync(ConsolidationRun run, CancellationToken ct)
     {
-        // TODO: Add ArgumentNullException.ThrowIfNull(run) — currently a null run would cause
-        // NullReferenceException at run.RunId that gets silently swallowed by the catch block.
         try
         {
             var sinceUtc = await GetLastSuccessfulHarnessRunTimestampAsync(ct);
@@ -81,17 +79,15 @@ public sealed class ConsolidationFeedbackCache : IConsolidationFeedbackCache
     }
 
     /// <inheritdoc />
-    public string? GetFeedbackDataForRun(string runId)
+    public string? GetFeedbackDataForRun(RunId runId)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-        _feedbackDataCache.TryGetValue(runId, out var data);
+        _feedbackDataCache.TryGetValue(runId.Value, out var data);
         return data;
     }
 
     /// <inheritdoc />
-    public void ClearFeedbackDataForRun(string runId)
+    public void ClearFeedbackDataForRun(RunId runId)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-        _feedbackDataCache.TryRemove(runId, out _);
+        _feedbackDataCache.TryRemove(runId.Value, out _);
     }
 }

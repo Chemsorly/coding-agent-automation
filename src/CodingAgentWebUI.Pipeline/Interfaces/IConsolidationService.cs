@@ -17,8 +17,6 @@ public interface IConsolidationService
     /// <param name="ct">Cancellation token.</param>
     /// <param name="autoDispatch">When true, created refactoring issues will also receive the <c>agent:next</c> label.</param>
     /// <returns>The created <see cref="ConsolidationRun"/>, or <c>null</c> if the trigger was rejected.</returns>
-    // TODO: CancellationToken should be the last parameter per .NET convention. Changing this
-    // signature is a breaking change across all callers — defer to a separate cleanup pass.
     Task<ConsolidationRun?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false);
 
     /// <summary>
@@ -43,7 +41,7 @@ public interface IConsolidationService
     /// <param name="summary">Optional summary text describing the outcome.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <param name="totalTokens">Total token count from review/refinement/diff summary calls.</param>
-    Task UpdateRunAsync(string runId, ConsolidationRunStatus status, string? summary, CancellationToken ct, long totalTokens = 0);
+    Task UpdateRunAsync(RunId runId, ConsolidationRunStatus status, string? summary, CancellationToken ct, long totalTokens = 0);
 
     /// <summary>
     /// Returns the current harness suggestions from the persisted file
@@ -73,7 +71,7 @@ public interface IConsolidationService
     /// <param name="runId">The run ID to cancel.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if the run was found and cancelled; <c>false</c> otherwise.</returns>
-    Task<bool> CancelQueuedRunAsync(string runId, CancellationToken ct);
+    Task<bool> CancelQueuedRunAsync(RunId runId, CancellationToken ct);
 
     /// <summary>
     /// Transitions a queued run to Running status. Called by the drain service when
@@ -81,7 +79,7 @@ public interface IConsolidationService
     /// </summary>
     /// <param name="runId">The run ID to transition.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task TransitionToRunningAsync(string runId, CancellationToken ct);
+    Task TransitionToRunningAsync(RunId runId, CancellationToken ct);
 
     /// <summary>
     /// Rehydrates queued consolidation runs from persisted files on startup.
@@ -100,14 +98,14 @@ public interface IConsolidationService
     /// Returns true if the specified run ID is currently tracked as an active (Running or Queued) consolidation run.
     /// Used by HeartbeatMonitor to avoid resetting agents working on consolidation jobs.
     /// </summary>
-    bool IsRunActive(string runId);
+    bool IsRunActive(RunId runId);
 
     /// <summary>
     /// Returns the <see cref="ConsolidationRun.StartedAtUtc"/> for the specified active run,
     /// or <c>null</c> if the run is not tracked as active.
     /// Used by HeartbeatMonitor to detect stuck consolidation runs that exceed the progress timeout.
     /// </summary>
-    DateTimeOffset? GetActiveRunStartedAt(string runId);
+    DateTimeOffset? GetActiveRunStartedAt(RunId runId);
 
     /// <summary>
     /// Deletes a consolidation run by ID. Invalidates the run history cache.
@@ -115,5 +113,5 @@ public interface IConsolidationService
     /// </summary>
     /// <param name="runId">The run ID to delete.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task DeleteRunAsync(string runId, CancellationToken ct);
+    Task DeleteRunAsync(RunId runId, CancellationToken ct);
 }

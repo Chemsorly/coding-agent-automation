@@ -19,7 +19,6 @@ public static partial class ServiceCollectionExtensions
         services.AddSingleton(sp => new PipelineOrchestrationService(
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<IssueDescriptionParser>(),
             sp.GetRequiredService<IPipelineCancellationFacade>(),
             sp.GetRequiredService<PipelineRunLifecycleService>(),
             sp.GetRequiredService<ILabelService>(),

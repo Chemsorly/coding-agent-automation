@@ -11,7 +11,6 @@ public sealed record CreateMinimalOptions
 {
     public IConfigurationStore? ConfigStore { get; init; }
     public IProviderFactory? ProviderFactory { get; init; }
-    public IssueDescriptionParser? IssueParser { get; init; }
     public IPipelineCancellationFacade? CancellationFacade { get; init; }
     public PipelineRunLifecycleService? Lifecycle { get; init; }
     public ILabelService? LabelService { get; init; }

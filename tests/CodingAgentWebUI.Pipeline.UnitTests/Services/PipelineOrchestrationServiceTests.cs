@@ -1617,9 +1617,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
         // IBrainUpdateService: DetectChangesAsync returns changed files, Validate returns success, CommitAndPushAsync succeeds
         mockBrainUpdateService.Setup(b => b.DetectChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<string> { "sessions/session-1.md" } as IReadOnlyList<string>);
-        mockBrainUpdateService.Setup(b => b.Validate(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
+        mockBrainUpdateService.Setup(b => b.Validate(It.IsAny<string>(), It.IsAny<RunId>(), It.IsAny<IReadOnlyList<string>>()))
             .Returns(new BrainValidationResult { SessionLogCreated = true, OperationLogUpdated = true, EntryFormatValid = true });
-        mockBrainUpdateService.Setup(b => b.CommitAndPushAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>()))
+        mockBrainUpdateService.Setup(b => b.CommitAndPushAsync(It.IsAny<string>(), It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BrainSyncResult { Success = true, FilesCommitted = 1 });
 
         // History service
@@ -2513,7 +2513,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         // REQ-9: Brain post-run sync failure — override CommitAndPushAsync to throw
         var ctx = CreateBrainTestService();
-        ctx.MockBrainUpdateService.Setup(b => b.CommitAndPushAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>()))
+        ctx.MockBrainUpdateService.Setup(b => b.CommitAndPushAsync(It.IsAny<string>(), It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Push rejected"));
 
         var transitions = new List<PipelineStep>();
@@ -3500,7 +3500,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
             // TODO: Use separate typed mocks for IPipelineConfigStore and IProviderConfigStore to detect parameter wiring errors.
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new IssueDescriptionParser(),
             new PipelineCancellationFacade(null, mockCancellation.Object),
             lifecycle,
             new TestOrchestrationFactory.NoOpLabelService(),
@@ -3548,7 +3547,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new IssueDescriptionParser(),
             new PipelineCancellationFacade(null, mockCancellation.Object),
             lifecycle,
             new TestOrchestrationFactory.NoOpLabelService(),
@@ -3589,7 +3587,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new IssueDescriptionParser(),
             new PipelineCancellationFacade(null, null),
             lifecycle,
             new Orchestration.LabelService(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),

@@ -142,7 +142,6 @@ public class TestOrchestrationFactoryTests
         var opts = new CreateMinimalOptions();
         opts.ConfigStore.Should().BeNull();
         opts.ProviderFactory.Should().BeNull();
-        opts.IssueParser.Should().BeNull();
         opts.CancellationFacade.Should().BeNull();
         opts.Lifecycle.Should().BeNull();
         opts.LabelService.Should().BeNull();
