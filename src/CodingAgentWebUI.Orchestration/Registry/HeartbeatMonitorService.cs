@@ -124,6 +124,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
             }
         }
 
-        await _orphanedRunPhase.ExecuteAsync(now, ct);
+        // TODO: No unit tests cover HeartbeatMonitorService invoking _orphanedRunPhase.ExecuteAsync.
+        // If the call site or sweep phase signature changes, add tests at the HeartbeatMonitorService layer to catch regressions.
+        await _orphanedRunPhase.ExecuteAsync(ct);
     }
 }

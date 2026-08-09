@@ -685,6 +685,8 @@ internal sealed class DispatchScheduler
     /// Reports status, notifies change, and dispatches a single project-level epic candidate.
     /// Returns (dispatched, epicFailed).
     /// </summary>
+    // TODO: S1172 — `ct` parameter is no longer used here after removing it from DispatchProjectLevelEpicAsync.
+    // Consider removing `ct` from this method's signature and updating its callers.
     private async Task<(bool dispatched, bool epicFailed)> TryDispatchProjectLevelCandidateAsync(
         (IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template) candidate,
         RoundDispatchContext ctx,
@@ -696,7 +698,7 @@ internal sealed class DispatchScheduler
         ctx.ReportStatus($"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'");
         ctx.NotifyChange();
 
-        return await DispatchProjectLevelEpicAsync(candidate, ctx, stoppingToken, ct);
+        return await DispatchProjectLevelEpicAsync(candidate, ctx, stoppingToken);
     }
 
     /// <summary>
@@ -736,8 +738,7 @@ internal sealed class DispatchScheduler
     private async Task<(bool dispatched, bool failed)> DispatchProjectLevelEpicAsync(
         (IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template) candidate,
         RoundDispatchContext ctx,
-        CancellationToken stoppingToken,
-        CancellationToken ct)
+        CancellationToken stoppingToken)
     {
         try
         {

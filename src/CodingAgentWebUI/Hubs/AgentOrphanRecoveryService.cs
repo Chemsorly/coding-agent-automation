@@ -57,6 +57,8 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         }
     }
 
+    // TODO: No tests exercise HandleOrphanedAgentAsync → RestoreRunFromAgentStateAsync / LinkAgentToExistingRun
+    // after the `message` parameter removal. Add tests to verify the orphan recovery path compiles and behaves correctly.
     private async Task RestoreActiveJobAsync(AgentRegistrationMessage message, AgentId agentId)
     {
         var activeJob = message.ActiveJob!;
@@ -64,16 +66,16 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
 
         if (existingRun is null)
         {
-            await RestoreRunFromAgentStateAsync(message, agentId, activeJob);
+            await RestoreRunFromAgentStateAsync(agentId, activeJob);
         }
         else
         {
-            LinkAgentToExistingRun(existingRun, message, agentId, activeJob);
+            LinkAgentToExistingRun(existingRun, agentId, activeJob);
         }
     }
 
     private async Task RestoreRunFromAgentStateAsync(
-        AgentRegistrationMessage message, AgentId agentId, ActiveJobState activeJob)
+        AgentId agentId, ActiveJobState activeJob)
     {
         // Check history — don't re-register a completed run.
         // Only treat runs with successful terminal states as stale.
@@ -205,7 +207,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
     }
 
     private void LinkAgentToExistingRun(
-        PipelineRun existingRun, AgentRegistrationMessage message, AgentId agentId, ActiveJobState activeJob)
+        PipelineRun existingRun, AgentId agentId, ActiveJobState activeJob)
     {
         // Run already exists in-memory (e.g., created by K8s DispatchService with AgentId=null).
         // Ensure the agent is linked to it and transitioned to Busy.

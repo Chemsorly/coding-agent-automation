@@ -39,7 +39,7 @@ public partial class QualityGateExecutor
             if (run.CurrentStep == PipelineStep.Failed) return;
 
             if (report.AllPassed)
-                await RunPostRetryCleanupAndFinalizeAsync(context, report, linkedCt);
+                await RunPostRetryCleanupAndFinalizeAsync(context, linkedCt);
             else
                 await FinalizeDraftPrAsync(context, run, report, "exhausted", linkedCt);
         }
@@ -79,7 +79,10 @@ public partial class QualityGateExecutor
     /// Runs the pre-PR cleanup agent, then the final quality gate pass, and finalizes the PR.
     /// Called after the initial retry loop passes all quality gates.
     /// </summary>
-    private async Task RunPostRetryCleanupAndFinalizeAsync(QualityGateContext context, QualityGateReport report, CancellationToken linkedCt)
+    // TODO: No tests cover the "all passed" branch that calls this method. The `report` parameter
+    // was removed and is now obtained locally from RunQualityGateValidationAsync; add a test to
+    // verify that re-validation is triggered (not a pre-existing report) when all gates pass.
+    private async Task RunPostRetryCleanupAndFinalizeAsync(QualityGateContext context, CancellationToken linkedCt)
     {
         var run = context.Run;
         var config = context.Config;
@@ -120,7 +123,7 @@ public partial class QualityGateExecutor
         callbacks.EmitOutputLine("🏗️ Running final quality gates after cleanup...");
         _logger.Information("Pipeline {RunId} running final quality gates after cleanup", run.RunId);
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
-        report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
+        var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
         report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
         if (run.CurrentStep == PipelineStep.Failed) return;
 
