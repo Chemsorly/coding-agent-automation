@@ -208,7 +208,7 @@ public sealed class ImageDownloadService : IDisposable
             }
 
             var (result, nextUrl, newStripAuth) = await ProcessRedirectIterationAsync(
-                imageRef, currentUrl, authToken, isGitLabRelative, stripAuth, ct).ConfigureAwait(false);
+                currentUrl, authToken, isGitLabRelative, stripAuth, ct).ConfigureAwait(false);
 
             if (result.IsFinal)
                 return (result.Response, result.Response is null ? null : currentUrl);
@@ -224,7 +224,7 @@ public sealed class ImageDownloadService : IDisposable
 
     /// <summary>Processes one redirect iteration: sends the request and resolves the next URL or final response.</summary>
     private async Task<(RedirectIterationResult result, Uri? nextUrl, bool stripAuth)> ProcessRedirectIterationAsync(
-        ImageReference imageRef, Uri currentUrl, string authToken, bool isGitLabRelative, bool stripAuth, CancellationToken ct)
+        Uri currentUrl, string authToken, bool isGitLabRelative, bool stripAuth, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, currentUrl);
         if (!stripAuth)

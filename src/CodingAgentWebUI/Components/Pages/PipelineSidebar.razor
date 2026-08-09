@@ -766,13 +766,9 @@
     /// <summary>Renders the compilation and tests gate lines for the single-QGC path.</summary>
     private static RenderFragment RenderSingleQgcCompilationAndTests(QualityGateReport qr) => __builder =>
     {
-        <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
-            @if (qr.Compilation.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Compilation
-        </div>
-        <div class="qg-line @(qr.Tests.Passed ? "qg-pass" : "qg-fail")">
-            @if (qr.Tests.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Tests
-            <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
-        </div>
+        @RenderGateLine(qr.Compilation.Passed, "Compilation", null)
+        @RenderGateLineWithSub(qr.Tests.Passed, "Tests",
+            $"{qr.Tests.TestsPassed ?? 0} passed, {qr.Tests.TestsFailed ?? 0} failed")
     };
 
     /// <summary>Renders the coverage and security gate lines for the single-QGC path.</summary>
@@ -780,16 +776,40 @@
     {
         @if (qr.Coverage is { } cov)
         {
-            <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
-                @if (cov.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Coverage
-                <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
-            </div>
+            var covText = cov.CoveragePercent.HasValue
+                ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%"
+                : "N/A";
+            @RenderGateLineWithSub(cov.Passed, "Coverage", covText)
         }
-        @if (qr.SecurityScan is { } sec)
+        @RenderSecurityGateLine(qr.SecurityScan)
+    };
+
+    /// <summary>Renders a single gate line with an icon and optional sub-text.</summary>
+    private static RenderFragment RenderGateLine(bool passed, string label, string? sub) => __builder =>
+    {
+        var cssClass = passed ? "qg-pass" : "qg-fail";
+        <div class="qg-line @cssClass">
+            @if (passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} @label
+            @if (sub is not null) {<span class="qg-sub">@sub</span>}
+        </div>
+    };
+
+    /// <summary>Renders a single gate line with a required sub-text span.</summary>
+    private static RenderFragment RenderGateLineWithSub(bool passed, string label, string sub) => __builder =>
+    {
+        var cssClass = passed ? "qg-pass" : "qg-fail";
+        <div class="qg-line @cssClass">
+            @if (passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} @label
+            <span class="qg-sub">@sub</span>
+        </div>
+    };
+
+    /// <summary>Renders the security gate line, or a skip line if no security scan result is present.</summary>
+    private static RenderFragment RenderSecurityGateLine(GateResult? sec) => __builder =>
+    {
+        @if (sec is not null)
         {
-            <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
-                @if (sec.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Security
-            </div>
+            @RenderGateLine(sec.Passed, "Security", null)
         }
         else
         {
