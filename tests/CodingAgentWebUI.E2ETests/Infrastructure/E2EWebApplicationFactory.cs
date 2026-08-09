@@ -103,7 +103,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
         _orchestration = new ResettablePipelineOrchestrationService(
             ConfigStore,
             FakeProviders,
-            new IssueDescriptionParser(),
             new PipelineCancellationFacade(null, null),
             lifecycle,
             TestOrchestrationFactory.NoOpLabelService.Instance,
