@@ -124,8 +124,6 @@ await app.InitializeDatabaseAsync();
 await app.RehydrateActiveRunsAsync();
 app.ValidateDiWiring();
 app.RegisterObservableGauges();
-// Note: MapApplicationEndpoints takes dbConnectionString as a parameter (existing API);
-// other methods resolve it internally via DatabaseConnectionResolver.Resolve().
 app.MapApplicationEndpoints(dbConnectionString);
 await app.RunConsolidationStartupAsync(pipelineConfig);
 await app.AutoStartPipelineLoopAsync(pipelineConfig);
