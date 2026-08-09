@@ -702,7 +702,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         await runStore.SaveRunAsync(run, CancellationToken.None);
 
         var mockTracker = new Mock<IConsolidationRunTracker>();
-        mockTracker.Setup(t => t.TransitionToRunningAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockTracker.Setup(t => t.TransitionToRunningAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var svc = CreateServiceWithTracker(runStore, mockTracker.Object);
@@ -712,7 +712,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 
         // Assert: tracker was called with correct runId
         mockTracker.Verify(
-            t => t.TransitionToRunningAsync("tracker-test-1", It.IsAny<CancellationToken>()),
+            t => t.TransitionToRunningAsync((RunId)"tracker-test-1", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -731,7 +731,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         await runStore.SaveRunAsync(run, CancellationToken.None);
 
         var mockTracker = new Mock<IConsolidationRunTracker>();
-        mockTracker.Setup(t => t.TransitionToRunningAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockTracker.Setup(t => t.TransitionToRunningAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Simulated tracker failure"));
 
         var svc = CreateServiceWithTracker(runStore, mockTracker.Object);

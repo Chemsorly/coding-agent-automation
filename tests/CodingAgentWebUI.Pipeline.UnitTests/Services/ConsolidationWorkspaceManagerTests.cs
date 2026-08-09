@@ -128,4 +128,38 @@ public sealed class ConsolidationWorkspaceManagerTests : IDisposable
 
         act.Should().NotThrow();
     }
+
+    [Fact]
+    public void CleanupWorkspaceIfSucceeded_WhenDeleteFails_LogsAndDoesNotThrow()
+    {
+        // Create the workspace directory with a permission-protected subdirectory so
+        // Directory.Delete(recursive:true) throws an UnauthorizedAccessException.
+        var runId = Guid.NewGuid().ToString();
+        var workspacePath = _sut.CreateWorkspace(runId);
+        Directory.Exists(workspacePath).Should().BeTrue();
+
+        // Create a nested subdirectory and set it to mode 000 so recursive delete fails
+        var nested = Path.Combine(workspacePath, "protected");
+        Directory.CreateDirectory(nested);
+        File.WriteAllText(Path.Combine(nested, "file.txt"), "data");
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "chmod",
+            Arguments = $"000 \"{nested}\"",
+            UseShellExecute = false
+        })?.WaitForExit();
+
+        // Should not throw — the catch block swallows the exception and logs a warning
+        var act = () => _sut.CleanupWorkspaceIfSucceeded(runId, ConsolidationRunStatus.Succeeded);
+        act.Should().NotThrow();
+
+        // Restore permissions so the temp directory can be cleaned up by Dispose()
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "chmod",
+            Arguments = $"-R 755 \"{workspacePath}\"",
+            UseShellExecute = false
+        })?.WaitForExit();
+        try { Directory.Delete(workspacePath, true); } catch { /* best effort */ }
+    }
 }

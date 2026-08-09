@@ -123,7 +123,7 @@ public class BrainSyncPropertyTests
     public void BrainValidationDetectsMissingSessionLog()
     {
         var mockService = new Mock<IBrainUpdateService>();
-        mockService.Setup(s => s.Validate(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
+        mockService.Setup(s => s.Validate(It.IsAny<string>(), It.IsAny<RunId>(), It.IsAny<IReadOnlyList<string>>()))
             .Returns(new BrainValidationResult
             {
                 SessionLogCreated = false,
@@ -145,7 +145,7 @@ public class BrainSyncPropertyTests
     public void BrainValidationDetectsPresenceOfSessionLogAndLogMd()
     {
         var mockService = new Mock<IBrainUpdateService>();
-        mockService.Setup(s => s.Validate(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
+        mockService.Setup(s => s.Validate(It.IsAny<string>(), It.IsAny<RunId>(), It.IsAny<IReadOnlyList<string>>()))
             .Returns(new BrainValidationResult
             {
                 SessionLogCreated = true,

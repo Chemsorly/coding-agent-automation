@@ -128,7 +128,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         // Assert: ConsolidationRun transitioned to Running (via IConsolidationService.TransitionToRunningAsync
         // for StartedAtUtc reset, _runningRuns update, cache invalidation, and OnChange)
         _mockConsolidationService.Verify(
-            s => s.TransitionToRunningAsync(runId, It.IsAny<CancellationToken>()),
+            s => s.TransitionToRunningAsync((RunId)runId, It.IsAny<CancellationToken>()),
             Times.Once);
 
         // Assert: Payload was updated with ProviderConfigs
@@ -215,7 +215,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             .Returns(Task.CompletedTask);
 
         _mockRunStore
-            .Setup(s => s.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ConsolidationRun?)null);
 
         var service = CreateService();
@@ -304,7 +304,7 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         // Assert: No cascade to ConsolidationService (run is already terminal)
         _mockConsolidationService.Verify(
-            s => s.UpdateRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<int>()),
+            s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<int>()),
             Times.Never);
     }
 
@@ -342,7 +342,7 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         // Assert: No cascade to ConsolidationService (run is already terminal)
         _mockConsolidationService.Verify(
-            s => s.UpdateRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<int>()),
+            s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<int>()),
             Times.Never);
     }
 
@@ -383,7 +383,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         // (which resets StartedAtUtc, updates _runningRuns, invalidates the in-memory cache,
         // and fires OnChange), NOT directly through IConsolidationRunStore.SaveRunAsync
         _mockConsolidationService.Verify(
-            s => s.TransitionToRunningAsync(runId, It.IsAny<CancellationToken>()),
+            s => s.TransitionToRunningAsync((RunId)runId, It.IsAny<CancellationToken>()),
             Times.Once,
             "TransitionConsolidationRunToRunningAsync must use IConsolidationService.TransitionToRunningAsync to reset StartedAtUtc and invalidate the history cache");
 
@@ -425,7 +425,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         // Verify cascade fires for K8s creation failure path too (not just template resolution)
         _mockConsolidationService.Verify(
             s => s.UpdateRunAsync(
-                workItemId.ToString(),
+                (RunId)workItemId.ToString(),
                 ConsolidationRunStatus.Failed,
                 It.Is<string>(summary => summary.Contains("K8s Job creation failed")),
                 It.IsAny<CancellationToken>()),
@@ -467,7 +467,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         // Verify cascade fires for invalid payload path (IssueIdentifier = workItemId.ToString())
         _mockConsolidationService.Verify(
             s => s.UpdateRunAsync(
-                workItemId.ToString(),
+                (RunId)workItemId.ToString(),
                 ConsolidationRunStatus.Failed,
                 It.Is<string>(summary => summary.Contains("payload")),
                 It.IsAny<CancellationToken>()),
@@ -594,7 +594,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         // Assert: ConsolidationRun should ALSO be transitioned to Failed via IConsolidationService
         _mockConsolidationService.Verify(
             s => s.UpdateRunAsync(
-                runId,
+                (RunId)runId,
                 ConsolidationRunStatus.Failed,
                 It.Is<string>(summary => summary.Contains("No job template for selector")),
                 It.IsAny<CancellationToken>()),
@@ -1079,7 +1079,7 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         // Consolidation run store: default no-op
         _mockRunStore
-            .Setup(s => s.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ConsolidationRun?)null);
     }
 

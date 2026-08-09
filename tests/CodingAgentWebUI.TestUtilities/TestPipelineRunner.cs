@@ -513,11 +513,11 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             => Task.FromResult(false);
         public Task<IReadOnlyList<string>> DetectChangesAsync(string brainPath, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
-        public BrainValidationResult Validate(string brainPath, string runId, IReadOnlyList<string> changedFiles)
+        public BrainValidationResult Validate(string brainPath, RunId runId, IReadOnlyList<string> changedFiles)
             => new() { SessionLogCreated = true, OperationLogUpdated = true, EntryFormatValid = true };
-        public Task AppendFallbackLogEntryAsync(string brainPath, string runId, IReadOnlyList<string> modifiedFiles, CancellationToken ct)
+        public Task AppendFallbackLogEntryAsync(string brainPath, RunId runId, IReadOnlyList<string> modifiedFiles, CancellationToken ct)
             => Task.CompletedTask;
-        public Task<BrainSyncResult> CommitAndPushAsync(string brainPath, string runId, string issueIdentifier, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
+        public Task<BrainSyncResult> CommitAndPushAsync(string brainPath, RunId runId, string issueIdentifier, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3)
             => Task.FromResult(new BrainSyncResult());
     }
 }

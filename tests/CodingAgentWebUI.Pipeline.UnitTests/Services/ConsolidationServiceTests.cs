@@ -749,7 +749,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         // that exact ID was passed here — this would catch a regression where the wrong ID
         // (e.g. "" or a hardcoded value) is passed to ClearFeedbackDataForRun.
         mockFeedbackCache.Verify(
-            c => c.ClearFeedbackDataForRun(It.IsAny<string>()),
+            c => c.ClearFeedbackDataForRun(It.IsAny<RunId>()),
             Times.Once);
     }
 
@@ -809,6 +809,67 @@ public sealed class ConsolidationServiceTests : IDisposable
     // TODO: Add negative test for TransitionToRunningAsync with a non-Queued run (e.g., already Running).
     // Should verify the guard at ConsolidationService.cs (Status != Queued → return) prevents double-transition.
     // The dispatcher-level test uses a mock tracker and does not exercise this actual guard.
+
+    #endregion
+
+    #region RunId strong type — interface boundary verification
+
+    /// <summary>
+    /// Verifies that IsRunActive and GetActiveRunStartedAt accept RunId at the interface boundary.
+    /// Also confirms the implicit string → RunId conversion works transparently at call sites.
+    /// Regression guard for issue #1874.
+    /// </summary>
+    [Fact]
+    public async Task IsRunActive_AcceptsRunId_AndImplicitStringConversion()
+    {
+        // Arrange: trigger a run so it's tracked in-memory
+        var sut = CreateSut();
+        var run = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+        run.Should().NotBeNull();
+
+        var runIdStr = run!.RunId; // string
+        RunId runIdTyped = runIdStr; // explicit RunId from string via implicit conversion
+
+        // Act + Assert: both ways of calling IsRunActive should work
+        sut.IsRunActive(runIdTyped).Should().BeTrue("RunId-typed call must work");
+        sut.IsRunActive(runIdStr).Should().BeTrue("string literal implicit conversion must also work");
+
+        // Act + Assert: GetActiveRunStartedAt accepts RunId
+        var startedAt = sut.GetActiveRunStartedAt(runIdTyped);
+        startedAt.Should().NotBeNull("active run has a StartedAtUtc");
+
+        var startedAtFromString = sut.GetActiveRunStartedAt(runIdStr);
+        startedAtFromString.Should().Be(startedAt, "implicit conversion produces equivalent RunId");
+    }
+
+    [Fact]
+    public async Task UpdateRunAsync_AcceptsRunId_AtInterfaceBoundary()
+    {
+        // Arrange: create a run and store it
+        var runId = Guid.NewGuid().ToString();
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Running
+        };
+        var store = new FileSystemConsolidationRunStore(_runsDir);
+        await store.SaveRunAsync(run, CancellationToken.None);
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger, _config, _mockProjectStore.Object, _mockRunHistory.Object,
+            store, new FileSystemHarnessSuggestionStore(_suggestionsPath)));
+
+        // Act: call via RunId (not string)
+        RunId typedRunId = runId;
+        await sut.UpdateRunAsync(typedRunId, ConsolidationRunStatus.Succeeded, "done", CancellationToken.None);
+
+        // Assert: update persisted
+        var updated = await store.GetByIdAsync(runId, CancellationToken.None);
+        updated.Should().NotBeNull();
+        updated!.Status.Should().Be(ConsolidationRunStatus.Succeeded);
+    }
 
     #endregion
 }
