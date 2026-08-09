@@ -144,6 +144,13 @@ public sealed class LabelSwapServiceTests : IDisposable
         // Note: CancellationToken.None is passed so ct.IsCancellationRequested is always false,
         // meaning the finally-block reconciliation guard never fires. This correctly reflects
         // the test scenario: OCE thrown by the swap itself (not by backoff) must not set the flag.
+        // TODO: These OCE tests (MaxAttempts3 and MaxAttemptsOne variants) do not cover the scenario
+        // where the caller's token is cancelled before/during the swap call — i.e., where the OCE
+        // thrown by SwapLabelStrictAsync is caused by a live cancelled CancellationToken rather than
+        // by the swap implementation throwing unconditionally. In that case ct.IsCancellationRequested
+        // is true and the finally block WOULD flag for reconciliation. This "shutdown during swap"
+        // path (distinct from "shutdown during backoff delay") has no test coverage. Add a test:
+        //   use a pre-cancelled CancellationToken, verify OCE propagates AND NeedsLabelReconciliation=true.
         await InsertWorkItemAsync();
 
         _mockLabelService

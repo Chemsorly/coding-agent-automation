@@ -374,6 +374,14 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         // After the extract-class refactor (#1868), reconciliation flagging lives in LabelSwapService.
         // The drain service calls SwapLabelWithRetryAsync exactly once and does not set
         // NeedsLabelReconciliation itself — that is ILabelSwapService's responsibility.
+        // TODO: This test sets up _mockLabelSwapper to return Task.CompletedTask (success), which
+        // contradicts the test name "LabelSwapFails". The test correctly verifies delegation (the
+        // drain service calls ILabelSwapService exactly once and the item ends up Dispatched), but
+        // it no longer covers the end-to-end path where SwapLabelWithRetryAsync internally fails and
+        // sets NeedsLabelReconciliation=true. The old test asserted NeedsLabelReconciliation=true
+        // (end-to-end signal for acceptance criterion #3); no test in this file now exercises the
+        // full drain-service → real LabelSwapService → DB flag path. Consider adding an integration-
+        // level test using a real LabelSwapService (not a mock) to cover that scenario.
         var workItemId = Guid.NewGuid();
         var request = new JobDistributionRequest
         {

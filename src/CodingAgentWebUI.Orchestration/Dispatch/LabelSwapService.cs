@@ -48,6 +48,11 @@ internal sealed class LabelSwapService : ILabelSwapService
         ILogger<LabelSwapService> logger,
         int maxAttempts = 3)
     {
+        // TODO: Add ArgumentNullException.ThrowIfNull for labelService, dbFactory, and logger to match
+        // the constructor guard pattern used throughout the Dispatch folder (e.g. DispatchLifecycleService,
+        // WorkItemTransitionService). A null dependency here produces an NRE inside the retry/reconciliation
+        // hot path rather than at construction time. The previous code had an explicit TODO for this (#1871)
+        // which was removed without being addressed.
         _labelService = labelService;
         _dbFactory = dbFactory;
         _logger = logger;
@@ -83,6 +88,14 @@ internal sealed class LabelSwapService : ILabelSwapService
             // in TrySwapLabelOnceAsync already called FlagForLabelReconciliationAsync. A concurrent
             // cancellation arriving before this finally runs would trigger a second call, which is
             // idempotent (NeedsLabelReconciliation=true again) but adds a redundant DB write.
+            // TODO: The ct.IsCancellationRequested check here also fires when SwapLabelStrictAsync
+            // is interrupted by a token that was already cancelled before the call (not just during
+            // backoff delay). In that edge case the server-side swap may have already completed
+            // (TCP response lost), so the reconciliation flag could be spurious. The ILabelSwapService
+            // contract doc acknowledges OCE-delayed writes but not this converse scenario. If K8s-mode
+            // PR review label swap correctness becomes a concern, revisit whether ct.IsCancellationRequested
+            // alone is the right guard here vs. tracking whether the OCE originated from the swap call
+            // itself or from Task.Delay.
             if (!labelSwapCompleted && ct.IsCancellationRequested)
             {
                 await FlagForLabelReconciliationAsync(workItemId);

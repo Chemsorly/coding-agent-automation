@@ -127,6 +127,13 @@ public class DispatchServiceLabelSwapTests : IDisposable
         // Sets internal fields via reflection to simulate leader state. If _isLeader or _leaderCts
         // are renamed, the null-conditional SetValue silently no-ops, causing PollAndDispatchAsync to
         // exit early (not leader) and producing a misleading assertion failure.
+        // TODO: The null-conditional ?. on SetValue silently no-ops if the private field is renamed or
+        // removed. If that happens, PollAndDispatchAsync exits as a non-leader and the mock label swapper
+        // is never triggered — but the test still passes (Times.Once succeeds on a mock that was never
+        // called because Verify only checks calls made, not whether the path was actually reached).
+        // Replace the null-conditional with an explicit null-check + throw so reflection failures surface
+        // as a test infrastructure error at run time rather than a silent false-green:
+        //   if (isLeaderField is null) throw new InvalidOperationException("LeaderElectionService._isLeader field not found — update reflection binding");
         var les = new LeaderElectionService(Options.Create(new LeaderElectionOptions()));
         var isLeaderField = typeof(LeaderElectionService).GetField("_isLeader",
             BindingFlags.NonPublic | BindingFlags.Instance);

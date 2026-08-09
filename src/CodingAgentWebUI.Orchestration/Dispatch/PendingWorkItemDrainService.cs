@@ -41,6 +41,13 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         IConsolidationDispatchService? consolidationDispatcher = null,
         IConsolidationRunStore? consolidationRunStore = null)
     {
+        // TODO: Add ArgumentNullException.ThrowIfNull (or null-checks) for the mandatory
+        // DrainServiceDependencies fields now stored in fields used unconditionally on the hot path:
+        //   - deps.RunService  → _runService  (used in EnsureInMemoryRunRegistered and HandlePipelineDispatchFailureAsync)
+        //   - deps.TransitionService → _transitionService (used in TryRevertToPendingAsync)
+        //   - deps.LabelSwapper → _labelSwapper (used in ProcessPendingItemAsync)
+        // A null _labelSwapper (e.g. DrainServiceDependencies constructed with default null) produces
+        // an NRE at ~line 170 on the first drain cycle rather than at construction time.
         _dbFactory = deps.DbFactory;
         _agentResolver = deps.AgentResolver;
         _agentComm = deps.AgentComm;
@@ -251,8 +258,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         }
 
         // Cancel-during-dispatch race guard: check if run was cancelled while queued
-        var runId = request.IssueIdentifier; // RunId stored as IssueIdentifier for consolidation
-        var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
+        var runId = request.IssueIdentifier.Value; // RunId stored as IssueIdentifier for consolidation
+        var consolidationRun = await _consolidationRunStore.GetByIdAsync((RunId)runId, ct);
         if (consolidationRun is null ||
             consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
             consolidationRun.Status == ConsolidationRunStatus.Failed)

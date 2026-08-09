@@ -303,6 +303,14 @@ public sealed class DispatchService : BackgroundService
                     !string.IsNullOrEmpty(item.IssueIdentifier) &&
                     !string.IsNullOrEmpty(item.IssueProviderConfigId))
                 {
+                    // TODO: LabelTargetKind.Issue is hardcoded here, but Review (PR) work items
+                    // dispatched in K8s mode should use LabelTargetKind.PullRequest with
+                    // item.RepoProviderConfigId (matching PendingWorkItemDrainService's run-type
+                    // branching logic). This is NOT a regression — the old code also defaulted to
+                    // LabelTargetKind.Issue unconditionally — but if K8s mode is intended to handle
+                    // PR review work items, this should branch on item.TaskType == WorkItemTaskType.Review
+                    // (or a serialized RunType from the payload) and select RepoProviderConfigId +
+                    // LabelTargetKind.PullRequest accordingly. Track as follow-up to #1868.
                     await _labelSwapper.SwapLabelWithRetryAsync(
                         item.Id,
                         item.IssueProviderConfigId,
