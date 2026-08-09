@@ -467,9 +467,10 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         var lifetime = Mock.Of<IHostApplicationLifetime>();
         var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
             new AgentId("test"), lifetime, logger);
-        var pipelineExecutor = new LocalPipelineExecutor(
+        var pipelineExecutor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             mockOrchestrator.Object, Mock.Of<System.Net.Http.IHttpClientFactory>(),
-            new PipelineConfiguration(), Mock.Of<IQualityGateValidator>(), logger);
+            new PipelineConfiguration(), Mock.Of<IQualityGateValidator>(), logger,
+            AgentIdentity: new AgentId("test")));
 
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager, new AgentId("test"),

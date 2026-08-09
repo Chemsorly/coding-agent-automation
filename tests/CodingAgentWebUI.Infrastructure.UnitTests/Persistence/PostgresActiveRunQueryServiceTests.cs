@@ -35,15 +35,17 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
     public async Task GetActiveRunsAsync_InMemoryRunWithoutWorkItem_IncludedInResults()
     {
         // Arrange — a run exists in-memory but has no matching WorkItem in DB
-        var restoredRun = PipelineRun.CreateImplementation(
-            runId: "ae3d6ae3-b243-4e45-ba90-788a88737134",
-            issueIdentifier: "992",
-            issueTitle: "Extract duplicated JobDistributionRequest",
-            issueProviderConfigId: "issue-cfg-1",
-            repoProviderConfigId: "repo-cfg-1",
-            startedAt: DateTimeOffset.UtcNow.AddMinutes(-10),
-            initiatedBy: "loop",
-            agentId: "agent-dotnet-2");
+        var restoredRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "ae3d6ae3-b243-4e45-ba90-788a88737134",
+            IssueIdentifier = "992",
+            IssueTitle = "Extract duplicated JobDistributionRequest",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+            InitiatedBy = "loop",
+            AgentId = "agent-dotnet-2"
+        });
         restoredRun.CurrentStep = PipelineStep.GeneratingCode;
 
         _mockRunService.Setup(r => r.GetActiveRuns())
@@ -87,26 +89,30 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        var dbRun = PipelineRun.CreateImplementation(
-            runId: workItemId.ToString(),
-            issueIdentifier: "988",
-            issueTitle: "Apply Facade Service pattern",
-            issueProviderConfigId: "issue-cfg-1",
-            repoProviderConfigId: "repo-cfg-1",
-            startedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
-            initiatedBy: "loop",
-            agentId: "agent-dotnet-1");
+        var dbRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = workItemId.ToString(),
+            IssueIdentifier = "988",
+            IssueTitle = "Apply Facade Service pattern",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            InitiatedBy = "loop",
+            AgentId = "agent-dotnet-1"
+        });
         dbRun.CurrentStep = PipelineStep.GeneratingCode;
 
-        var restoredRun = PipelineRun.CreateImplementation(
-            runId: "ae3d6ae3-b243-4e45-ba90-788a88737134",
-            issueIdentifier: "992",
-            issueTitle: "Extract duplicated construction",
-            issueProviderConfigId: "issue-cfg-1",
-            repoProviderConfigId: "repo-cfg-1",
-            startedAt: DateTimeOffset.UtcNow.AddMinutes(-3),
-            initiatedBy: "loop",
-            agentId: "agent-dotnet-2");
+        var restoredRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "ae3d6ae3-b243-4e45-ba90-788a88737134",
+            IssueIdentifier = "992",
+            IssueTitle = "Extract duplicated construction",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-3),
+            InitiatedBy = "loop",
+            AgentId = "agent-dotnet-2"
+        });
         restoredRun.CurrentStep = PipelineStep.ReviewingCode;
 
         _mockRunService.Setup(r => r.GetActiveRuns())
@@ -148,15 +154,17 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        var liveRun = PipelineRun.CreateImplementation(
-            runId: workItemId.ToString(),
-            issueIdentifier: "988",
-            issueTitle: "Apply Facade Service pattern",
-            issueProviderConfigId: "issue-cfg-1",
-            repoProviderConfigId: "repo-cfg-1",
-            startedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
-            initiatedBy: "loop",
-            agentId: "agent-dotnet-1");
+        var liveRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = workItemId.ToString(),
+            IssueIdentifier = "988",
+            IssueTitle = "Apply Facade Service pattern",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            InitiatedBy = "loop",
+            AgentId = "agent-dotnet-1"
+        });
 
         _mockRunService.Setup(r => r.GetActiveRuns())
             .Returns(new List<PipelineRun> { liveRun });
@@ -202,15 +210,17 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
         }
 
         // In-memory PipelineRun has ProjectName set from dispatch
-        var liveRun = PipelineRun.CreateImplementation(
-            runId: workItemId.ToString(),
-            issueIdentifier: "1572",
-            issueTitle: "Extract step-pipeline builders",
-            issueProviderConfigId: "issue-cfg-1",
-            repoProviderConfigId: "repo-cfg-1",
-            startedAt: DateTimeOffset.UtcNow.AddMinutes(-10),
-            initiatedBy: "loop",
-            agentId: "caa-test-agent");
+        var liveRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = workItemId.ToString(),
+            IssueIdentifier = "1572",
+            IssueTitle = "Extract step-pipeline builders",
+            IssueProviderConfigId = "issue-cfg-1",
+            RepoProviderConfigId = "repo-cfg-1",
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+            InitiatedBy = "loop",
+            AgentId = "caa-test-agent"
+        });
         liveRun.CurrentStep = PipelineStep.VerifyingBaseline;
         liveRun.ProjectId = "019f1860-8b18-7b7e-ba7c-89afe24853b1";
         liveRun.ProjectName = "Default";

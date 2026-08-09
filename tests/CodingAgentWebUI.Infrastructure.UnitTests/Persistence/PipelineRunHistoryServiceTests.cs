@@ -404,13 +404,15 @@ public class PipelineRunHistoryServiceTests : IDisposable
         {
             var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
 
-            var consolidationRun = PipelineRun.CreateImplementation(
-                runId: Guid.NewGuid().ToString(),
-                issueIdentifier: Guid.NewGuid().ToString(),
-                issueTitle: "Consolidation",
-                issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
-                repoProviderConfigId: "rp-1",
-                initiatedBy: ConsolidationConstants.InitiatedBy);
+            var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            {
+                RunId = Guid.NewGuid().ToString(),
+                IssueIdentifier = Guid.NewGuid().ToString(),
+                IssueTitle = "Consolidation",
+                IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+                RepoProviderConfigId = "rp-1",
+                InitiatedBy = ConsolidationConstants.InitiatedBy
+            });
             consolidationRun.CurrentStep = PipelineStep.Completed;
             consolidationRun.MarkCompleted();
 
@@ -439,12 +441,14 @@ public class PipelineRunHistoryServiceTests : IDisposable
         var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
 
         var runId = $"non-terminal-guard-{Guid.NewGuid()}";
-        var run = PipelineRun.CreateImplementation(
-            runId: runId,
-            issueIdentifier: "org/repo#1764",
-            issueTitle: "Terminal guard test",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#1764",
+            IssueTitle = "Terminal guard test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        });
         run.CurrentStep = PipelineStep.RunningQualityGates; // non-terminal
 
         await service.AddRunToHistoryAsync(run);
@@ -486,12 +490,14 @@ public class PipelineRunHistoryServiceTests : IDisposable
         var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
 
         var runId = $"terminal-guard-{Guid.NewGuid()}";
-        var run = PipelineRun.CreateImplementation(
-            runId: runId,
-            issueIdentifier: "org/repo#1764",
-            issueTitle: "Terminal step passthrough test",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#1764",
+            IssueTitle = "Terminal step passthrough test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        });
         run.CurrentStep = PipelineStep.Cancelled; // terminal, non-Completed
 
         await service.AddRunToHistoryAsync(run);

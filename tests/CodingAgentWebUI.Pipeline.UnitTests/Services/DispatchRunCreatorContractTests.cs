@@ -186,15 +186,17 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     public async Task MockInterface_CanReplaceConcreteService_ForRunCreation()
     {
         var mockCreator = new Mock<IDispatchRunCreator>();
-        var fakeRun = PipelineRun.CreateImplementation(
-            runId: "run-1",
-            issueIdentifier: "42",
-            issueTitle: "Test",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            initiatedBy: "test",
-            agentId: "agent-1",
-            agentProviderConfigId: "ap-1");
+        var fakeRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "test",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "ap-1"
+        });
 
         mockCreator.Setup(c => c.CreateDispatchedRunAsync(
                 It.Is<DispatchRunRequest>(r =>
@@ -302,18 +304,21 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
             CancellationToken.None);
 
         // Construct a fully-populated run using the reserved RunId
-        var fullRun = PipelineRun.CreateReview(
-            runId: reservation!.RunId,
-            issueIdentifier: "105",
-            issueTitle: "Test PR",
-            issueProviderConfigId: "issue-1",
-            repoProviderConfigId: "repo-1",
-            reviewPrBranchName: "feature/test",
-            reviewPrTargetBranch: "main",
-            startedAt: reservation.StartedAt,
-            initiatedBy: "test",
-            agentId: "agent-x",
-            agentProviderConfigId: "agent-1");
+        var fullRun = PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunType = PipelineRunType.Review,
+            RunId = reservation!.RunId,
+            IssueIdentifier = "105",
+            IssueTitle = "Test PR",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1",
+            ReviewPrBranchName = "feature/test",
+            ReviewPrTargetBranch = "main",
+            StartedAt = reservation.StartedAt,
+            InitiatedBy = "test",
+            AgentId = "agent-x",
+            AgentProviderConfigId = "agent-1"
+        });
         fullRun.RepositoryName = reservation.RepositoryName;
         fullRun.ModelName = reservation.ModelName;
 
@@ -337,17 +342,19 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
             new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "106", AgentProviderId = "agent-1", AgentId = "agent-x" },
             CancellationToken.None);
 
-        var fullRun = PipelineRun.CreateDecomposition(
-            runId: reservation!.RunId,
-            issueIdentifier: "106",
-            issueTitle: "Epic",
-            issueProviderConfigId: "issue-1",
-            repoProviderConfigId: "repo-1",
-            phaseType: PipelineRunType.DecompositionAnalysis,
-            startedAt: reservation.StartedAt,
-            initiatedBy: "test",
-            agentId: "agent-x",
-            agentProviderConfigId: "agent-1");
+        var fullRun = PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+        {
+            RunId = reservation!.RunId,
+            IssueIdentifier = "106",
+            IssueTitle = "Epic",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1",
+            RunType = PipelineRunType.DecompositionAnalysis,
+            StartedAt = reservation.StartedAt,
+            InitiatedBy = "test",
+            AgentId = "agent-x",
+            AgentProviderConfigId = "agent-1"
+        });
         fullRun.RepositoryName = reservation.RepositoryName;
         fullRun.ModelName = reservation.ModelName;
 

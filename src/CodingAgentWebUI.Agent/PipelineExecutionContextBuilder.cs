@@ -31,30 +31,22 @@ internal sealed class PipelineExecutionContextBuilder
     /// </summary>
     internal Action? _testThrowAfterCtsCreation;
 
-    // TODO: Add ArgumentNullException.ThrowIfNull for required parameters (qualityGateValidator,
-    // reporterFactory, feedbackService, logger) to fail fast instead of NRE in Build().
-    public PipelineExecutionContextBuilder(
-        IQualityGateValidator qualityGateValidator,
-        IPipelineReporterFactory reporterFactory,
-        FeedbackService feedbackService,
-        AgentId agentId,
-        Serilog.ILogger logger,
-        IBrainUpdateService? brainUpdateService = null,
-        IPipelineRunHistoryService? historyService = null,
-        // TODO: PullRequestFinalizationService was changed from required to optional during the
-        // AgentIdentity→AgentId migration. This weakens type-safety — consider making it required again
-        // (non-nullable) so the compiler enforces that callers always provide it, since CreatePullRequestAsync
-        // depends on it at runtime.
-        PullRequestFinalizationService? finalization = null)
+    public PipelineExecutionContextBuilder(PipelineExecutionContextBuilderDependencies deps)
     {
-        _qualityGateValidator = qualityGateValidator;
-        _reporterFactory = reporterFactory;
-        _feedbackService = feedbackService;
-        _agentId = agentId;
-        _logger = logger;
-        _brainUpdateService = brainUpdateService;
-        _historyService = historyService;
-        _finalization = finalization;
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.QualityGateValidator);
+        ArgumentNullException.ThrowIfNull(deps.ReporterFactory);
+        ArgumentNullException.ThrowIfNull(deps.FeedbackService);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
+
+        _qualityGateValidator = deps.QualityGateValidator;
+        _reporterFactory = deps.ReporterFactory;
+        _feedbackService = deps.FeedbackService;
+        _agentId = deps.AgentId;
+        _logger = deps.Logger;
+        _brainUpdateService = deps.BrainUpdateService;
+        _historyService = deps.HistoryService;
+        _finalization = deps.Finalization;
     }
 
     /// <summary>
@@ -76,39 +68,46 @@ internal sealed class PipelineExecutionContextBuilder
         var ct = req.Ct;
         var run = job.RunType switch
         {
-            PipelineRunType.Review => PipelineRun.CreateReview(
-                runId: job.JobId,
-                issueIdentifier: job.IssueIdentifier,
-                issueTitle: job.IssueDetail.Title,
-                issueProviderConfigId: string.Empty,
-                repoProviderConfigId: job.RepoProviderConfigId,
-                reviewPrBranchName: job.LinkedPullRequest?.BranchName ?? string.Empty,
-                reviewPrTargetBranch: job.ReviewPrTargetBranch ?? string.Empty,
-                initiatedBy: job.InitiatedBy,
-                agentId: _agentId.Value,
-                brainProviderConfigId: brainProvider is not null ? job.BrainProviderConfigId : null,
-                reviewPrDescription: job.ReviewPrDescription,
-                reviewPrAuthor: job.ReviewPrAuthor,
-                linkedIssueContexts: job.LinkedIssueContexts),
-            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
-                runId: job.JobId,
-                issueIdentifier: job.IssueIdentifier,
-                issueTitle: job.IssueDetail.Title,
-                issueProviderConfigId: string.Empty,
-                repoProviderConfigId: job.RepoProviderConfigId,
-                phaseType: job.RunType,
-                initiatedBy: job.InitiatedBy,
-                agentId: _agentId.Value,
-                brainProviderConfigId: brainProvider is not null ? job.BrainProviderConfigId : null),
-            _ => PipelineRun.CreateImplementation(
-                runId: job.JobId,
-                issueIdentifier: job.IssueIdentifier,
-                issueTitle: job.IssueDetail.Title,
-                issueProviderConfigId: string.Empty,
-                repoProviderConfigId: job.RepoProviderConfigId,
-                initiatedBy: job.InitiatedBy,
-                agentId: _agentId.Value,
-                brainProviderConfigId: brainProvider is not null ? job.BrainProviderConfigId : null)
+            PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
+            {
+                RunId = job.JobId,
+                IssueIdentifier = job.IssueIdentifier,
+                IssueTitle = job.IssueDetail.Title,
+                IssueProviderConfigId = string.Empty,
+                RepoProviderConfigId = job.RepoProviderConfigId,
+                RunType = PipelineRunType.Review,
+                InitiatedBy = job.InitiatedBy,
+                AgentId = _agentId.Value,
+                BrainProviderConfigId = brainProvider is not null ? job.BrainProviderConfigId : null,
+                ReviewPrBranchName = job.LinkedPullRequest?.BranchName ?? string.Empty,
+                ReviewPrTargetBranch = job.ReviewPrTargetBranch ?? string.Empty,
+                ReviewPrDescription = job.ReviewPrDescription,
+                ReviewPrAuthor = job.ReviewPrAuthor,
+                LinkedIssueContexts = job.LinkedIssueContexts
+            }),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+            {
+                RunId = job.JobId,
+                IssueIdentifier = job.IssueIdentifier,
+                IssueTitle = job.IssueDetail.Title,
+                IssueProviderConfigId = string.Empty,
+                RepoProviderConfigId = job.RepoProviderConfigId,
+                RunType = job.RunType,
+                InitiatedBy = job.InitiatedBy,
+                AgentId = _agentId.Value,
+                BrainProviderConfigId = brainProvider is not null ? job.BrainProviderConfigId : null
+            }),
+            _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            {
+                RunId = job.JobId,
+                IssueIdentifier = job.IssueIdentifier,
+                IssueTitle = job.IssueDetail.Title,
+                IssueProviderConfigId = string.Empty,
+                RepoProviderConfigId = job.RepoProviderConfigId,
+                InitiatedBy = job.InitiatedBy,
+                AgentId = _agentId.Value,
+                BrainProviderConfigId = brainProvider is not null ? job.BrainProviderConfigId : null
+            })
         };
         run.RepositoryName = repoProvider.RepositoryFullName;
         run.ModelName = agentProvider.Model;
@@ -242,14 +241,15 @@ internal sealed class PipelineExecutionContextBuilder
         CancellationToken ct)
     {
         var callbacks = new AgentCallbacks(
+            new AgentCallbacksContext(
+                inputs.IssueOps,
+                inputs.Run,
+                inputs.PrOrchestrator,
+                inputs.RepoProvider,
+                inputs.ReportQualityGateResult,
+                (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, inputs.PrContext, token)),
             inputs.TransitionTo,
             inputs.EmitOutputLine,
-            inputs.IssueOps,
-            inputs.Run,
-            inputs.PrOrchestrator,
-            inputs.RepoProvider,
-            inputs.ReportQualityGateResult,
-            (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, inputs.PrContext, token),
             async (contextLoaded, fileCount) => await reporter.ReportBrainSyncResultAsync(contextLoaded, fileCount, ct));
 
         var ctx = PipelineStepContext.ForAgent(
@@ -322,39 +322,46 @@ internal sealed class PipelineExecutionContextBuilder
     }
 
     /// <summary>
+    /// Groups the context parameters for <see cref="AgentCallbacks"/> that are not delegates,
+    /// reducing its primary constructor to ≤ 7 parameters (S107).
+    /// </summary>
+    private sealed record AgentCallbacksContext(
+        OrchestratorProxy IssueOps,
+        PipelineRun Run,
+        PullRequestOrchestrator PrOrchestrator,
+        IRepositoryProvider RepoProvider,
+        Action<QualityGateReport> ReportQualityGateResult,
+        Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> CreatePullRequest);
+
+    /// <summary>
     /// Adapts the agent executor's callback methods to <see cref="IPipelineCallbacks"/>.
     /// Routes label swaps based on <see cref="PipelineRun.LabelTargetKind"/>:
     /// Implementation runs swap labels on issues, Review runs swap labels on PRs.
     /// </summary>
     private sealed class AgentCallbacks(
+        AgentCallbacksContext context,
         Action<PipelineStep> transitionTo,
         Action<string> emitOutputLine,
-        OrchestratorProxy orchestratorProxy,
-        PipelineRun run,
-        PullRequestOrchestrator prOrchestrator,
-        IRepositoryProvider repoProvider,
-        Action<QualityGateReport> reportQualityGateResult,
-        Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest,
         Func<bool, int, Task> reportBrainSyncResult) : PipelineCallbacksBase
     {
-        protected override PipelineRun Run => run;
+        protected override PipelineRun Run => context.Run;
         public override void TransitionTo(PipelineStep step) => transitionTo(step);
         public override void EmitOutputLine(string line) => emitOutputLine(line);
         public override void NotifyChange() { }
         public override Task AddRunToHistoryAsync(PipelineRun run) => Task.CompletedTask;
         public override Task UpdateFileChangeStats(PipelineRun run)
-            => prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
+            => context.PrOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
         public override Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
-            => orchestratorProxy.SwapLabelAsync(issueIdentifier, label, GetLabelTargetKind(), ct);
+            => context.IssueOps.SwapLabelAsync(issueIdentifier, label, GetLabelTargetKind(), ct);
         public override Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
-            => orchestratorProxy.SwapLabelAsync(issueIdentifier, string.Empty, GetLabelTargetKind(), ct);
+            => context.IssueOps.SwapLabelAsync(issueIdentifier, string.Empty, GetLabelTargetKind(), ct);
         public override Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
-            reportQualityGateResult(report);
-            return createPullRequest(run, report, isDraft, ct);
+            context.ReportQualityGateResult(report);
+            return context.CreatePullRequest(run, report, isDraft, ct);
         }
         protected override Task CreateDraftPrCoreAsync(PipelineRun run, CancellationToken ct)
-            => prOrchestrator.CreateDraftPrIfNotExistsAsync(run, repoProvider, ct);
+            => context.PrOrchestrator.CreateDraftPrIfNotExistsAsync(run, context.RepoProvider, ct);
         protected override void LogDraftPrFailure(PipelineRun run, Exception ex)
         {
             Serilog.Log.Warning(ex, "Agent {RunId} failed to create draft PR, continuing", run.RunId);

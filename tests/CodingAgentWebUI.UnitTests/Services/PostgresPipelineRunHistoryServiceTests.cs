@@ -169,13 +169,15 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     {
         // Arrange: persist a normal run and a consolidation ghost entry
         var normalRun = CreateCompletedRun(Guid.NewGuid().ToString(), "org/repo#1", "Normal run");
-        var consolidationRun = PipelineRun.CreateImplementation(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: Guid.NewGuid().ToString(),
-            issueTitle: Guid.NewGuid().ToString(),
-            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
-            repoProviderConfigId: "rp-1",
-            initiatedBy: ConsolidationConstants.InitiatedBy);
+        var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = Guid.NewGuid().ToString(),
+            IssueTitle = Guid.NewGuid().ToString(),
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = ConsolidationConstants.InitiatedBy
+        });
         consolidationRun.CurrentStep = PipelineStep.Completed;
         consolidationRun.MarkCompleted();
 
@@ -217,13 +219,15 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     public async Task GetRunHistoryAsync_ExcludesConsolidationRuns()
     {
         var normalRun = CreateCompletedRun(Guid.NewGuid().ToString(), "org/repo#2", "Async normal");
-        var consolidationRun = PipelineRun.CreateImplementation(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: Guid.NewGuid().ToString(),
-            issueTitle: Guid.NewGuid().ToString(),
-            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
-            repoProviderConfigId: "rp-1",
-            initiatedBy: ConsolidationConstants.InitiatedBy);
+        var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = Guid.NewGuid().ToString(),
+            IssueTitle = Guid.NewGuid().ToString(),
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = ConsolidationConstants.InitiatedBy
+        });
         consolidationRun.CurrentStep = PipelineStep.Completed;
         consolidationRun.MarkCompleted();
 
@@ -261,13 +265,15 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     [Fact]
     public async Task AddRunToHistory_RejectsConsolidationRun_Silently()
     {
-        var consolidationRun = PipelineRun.CreateImplementation(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: Guid.NewGuid().ToString(),
-            issueTitle: "Consolidation",
-            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
-            repoProviderConfigId: "rp-1",
-            initiatedBy: ConsolidationConstants.InitiatedBy);
+        var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = Guid.NewGuid().ToString(),
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = ConsolidationConstants.InitiatedBy
+        });
         consolidationRun.CurrentStep = PipelineStep.Completed;
         consolidationRun.MarkCompleted();
 
@@ -282,13 +288,15 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     [Fact]
     public async Task AddRunToHistoryAsync_RejectsConsolidationRun_Silently()
     {
-        var consolidationRun = PipelineRun.CreateImplementation(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: Guid.NewGuid().ToString(),
-            issueTitle: "Consolidation",
-            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
-            repoProviderConfigId: "rp-1",
-            initiatedBy: ConsolidationConstants.InitiatedBy);
+        var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = Guid.NewGuid().ToString(),
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = ConsolidationConstants.InitiatedBy
+        });
         consolidationRun.CurrentStep = PipelineStep.Completed;
         consolidationRun.MarkCompleted();
 
@@ -305,8 +313,14 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     {
         // Arrange: run with non-terminal step (should never happen, but defense-in-depth catches it)
         var runId = Guid.NewGuid().ToString();
-        var run = PipelineRun.CreateImplementation(runId, "owner/repo#99", "Bug fix",
-            "ip-1", "rp-1");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#99",
+            IssueTitle = "Bug fix",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        });
         run.CurrentStep = PipelineStep.RunningQualityGates;
         run.MarkCompleted();
 
@@ -329,8 +343,14 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     {
         // Arrange: run with non-terminal step
         var runId = Guid.NewGuid().ToString();
-        var run = PipelineRun.CreateImplementation(runId, "owner/repo#102", "Mutation test",
-            "ip-1", "rp-1");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#102",
+            IssueTitle = "Mutation test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        });
         run.CurrentStep = PipelineStep.RunningQualityGates;
         run.MarkCompleted();
 
@@ -352,8 +372,14 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     {
         // Arrange: run with terminal step (normal flow)
         var runId = Guid.NewGuid().ToString();
-        var run = PipelineRun.CreateImplementation(runId, "owner/repo#100", "Feature",
-            "ip-1", "rp-1");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#100",
+            IssueTitle = "Feature",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        });
         run.CurrentStep = PipelineStep.Completed;
         run.MarkCompleted();
 
@@ -371,8 +397,14 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     {
         // Arrange: non-terminal step via sync (obsolete) method
         var runId = Guid.NewGuid().ToString();
-        var run = PipelineRun.CreateImplementation(runId, "owner/repo#101", "Sync test",
-            "ip-1", "rp-1");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#101",
+            IssueTitle = "Sync test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        });
         run.CurrentStep = PipelineStep.ReviewingCode;
         run.MarkCompleted();
 
@@ -541,11 +573,16 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         string? modelName = null,
         DateTimeOffset? startedAt = null)
     {
-        var run = PipelineRun.CreateImplementation(
-            runId, issueIdentifier, issueTitle,
-            "ip-1", "rp-1",
-            startedAt: startedAt ?? DateTimeOffset.UtcNow,
-            agentId: agentId);
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = issueIdentifier,
+            IssueTitle = issueTitle,
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = startedAt ?? DateTimeOffset.UtcNow,
+            AgentId = agentId
+        });
         run.CurrentStep = PipelineStep.Completed;
         run.ModelName = modelName;
         run.MarkCompleted();

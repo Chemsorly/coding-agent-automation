@@ -57,25 +57,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _dbFactory = deps.DbFactory;
     }
 
-    // Backward-compatible constructor used by DI and existing callers
-    public AgentHubFacade(
-        IAgentRegistryService registry,
-        OrchestratorRunService runService,
-        JobDeduplicationGuardService dispatcher,
-        JobQueueDrainService drainService,
-        IPipelineRunHistoryService historyService,
-        IConfigurationStore configStore,
-        IProviderFactory providerFactory,
-        ILogger<AgentHubFacadeDependencies> logger,
-        WorkItemTransitionService? workItemTransition = null,
-        PendingWorkItemDrainService? pendingDrainService = null,
-        IDbContextFactory<PipelineDbContext>? dbFactory = null)
-        : this(new AgentHubFacadeDependencies(
-            registry, runService, dispatcher, drainService, historyService, configStore,
-            providerFactory, logger, workItemTransition, pendingDrainService, dbFactory))
-    {
-    }
-
     // ── Registry operations ─────────────────────────────────────────────
 
     /// <inheritdoc />

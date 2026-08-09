@@ -490,7 +490,7 @@ public class AgentAuthorizationFilterInvokeTests
 
     private AgentHub CreateHub(string connectionId)
     {
-        var hub = new AgentHub(
+        var hub = new AgentHub(new AgentHubDependencies(
             Mock.Of<IAgentHubFacade>(),
             Mock.Of<IChatNotifier>(),
             Mock.Of<IChangeNotifier>(),
@@ -502,7 +502,7 @@ public class AgentAuthorizationFilterInvokeTests
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>());
+            Mock.Of<IAgentOrphanRecoveryService>()));
         hub.Context = MakeContext(connectionId);
         return hub;
     }

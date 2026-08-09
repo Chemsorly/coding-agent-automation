@@ -41,47 +41,13 @@ public class LocalPipelineExecutorTests : IDisposable
             Directory.Delete(_tempDir, recursive: true);
     }
 
-    // ── Constructor Null Guards ──────────────────────────────────────────
-
-    [Theory]
-    [MemberData(nameof(NullConstructorArgs))]
-    public void Constructor_NullParameter_ThrowsArgumentNullException(
-        IKiroCliOrchestrator? orchestrator,
-        IHttpClientFactory? httpClientFactory,
-        PipelineConfiguration? defaultPipelineConfig,
-        IQualityGateValidator? qualityGateValidator,
-        Serilog.ILogger? logger,
-        string expectedParamName)
-    {
-        var act = () => new LocalPipelineExecutor(
-            orchestrator!, httpClientFactory!, defaultPipelineConfig!, qualityGateValidator!, logger!,
-            agentIdentity: new AgentId("test-agent"));
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
-    }
-
-    public static TheoryData<IKiroCliOrchestrator?, IHttpClientFactory?, PipelineConfiguration?, IQualityGateValidator?, Serilog.ILogger?, string> NullConstructorArgs()
-    {
-        var orch = new Mock<IKiroCliOrchestrator>().Object;
-        var http = new Mock<IHttpClientFactory>().Object;
-        var config = new PipelineConfiguration();
-        var qg = new Mock<IQualityGateValidator>().Object;
-        var log = new Mock<Serilog.ILogger>().Object;
-
-        var data = new TheoryData<IKiroCliOrchestrator?, IHttpClientFactory?, PipelineConfiguration?, IQualityGateValidator?, Serilog.ILogger?, string>();
-        data.Add(null, http, config, qg, log, "orchestrator");
-        data.Add(orch, null, config, qg, log, "httpClientFactory");
-        data.Add(orch, http, null, qg, log, "defaultPipelineConfig");
-        data.Add(orch, http, config, null, log, "qualityGateValidator");
-        data.Add(orch, http, config, qg, null, "logger");
-        return data;
-    }
+    // ── Constructor Validation ──────────────────────────────────────────
 
     [Fact]
     public void Constructor_ValidParameters_DoesNotThrow()
     {
-        var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         act.Should().NotThrow();
     }
@@ -89,10 +55,65 @@ public class LocalPipelineExecutorTests : IDisposable
     [Fact]
     public void Constructor_NullBrainUpdateService_DoesNotThrow()
     {
-        var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+        // BrainUpdateService is optional — passing null explicitly must not throw.
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object,
+            BrainUpdateService: null, AgentIdentity: new AgentId("test-agent")));
 
         act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Constructor_NullDeps_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps");
+    }
+
+    [Fact]
+    public void Constructor_NullOrchestrator_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            null!, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Orchestrator");
+    }
+
+    [Fact]
+    public void Constructor_NullHttpClientFactory_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, null!, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.HttpClientFactory");
+    }
+
+    [Fact]
+    public void Constructor_NullDefaultPipelineConfig_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, null!, _mockQualityGateValidator.Object, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.DefaultPipelineConfig");
+    }
+
+    [Fact]
+    public void Constructor_NullQualityGateValidator_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, null!, _mockLogger.Object));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.QualityGateValidator");
+    }
+
+    [Fact]
+    public void Constructor_NullLogger_ThrowsArgumentNullException()
+    {
+        var act = () => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, null!));
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
     }
 
     // ── WriteMcpConfigToWorkspace ────────────────────────────────────────
@@ -288,8 +309,8 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task ExecuteAsync_NullJob_ThrowsArgumentNullException()
     {
         // Arrange
-        var executor = new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         // Act
         var act = () => executor.ExecuteAsync(null!, null!, null!, null, CancellationToken.None);
@@ -302,8 +323,8 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task ExecuteAsync_NullConnection_ThrowsArgumentNullException()
     {
         // Arrange
-        var executor = new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
         var job = CreateMinimalJobAssignment();
 
         // Act
@@ -317,8 +338,8 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task ExecuteAsync_MissingRepoProviderConfig_ThrowsInvalidOperationException()
     {
         // Arrange — job references a provider config ID that doesn't exist in the list
-        var executor = new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         var job = new JobAssignmentMessage
         {
@@ -350,8 +371,8 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task ExecuteAsync_MissingAgentProviderConfig_ThrowsInvalidOperationException()
     {
         // Arrange — repo config exists but agent config doesn't
-        var executor = new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         var repoConfig = new ProviderConfig
         {
@@ -606,9 +627,9 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         // Arrange — provide valid config structure so factory creates a provider,
         // but the provider will fail validation because it can't reach the API
-        var executor = new LocalPipelineExecutor(
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
-            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         var repoConfig = new ProviderConfig
         {
@@ -666,9 +687,9 @@ public class LocalPipelineExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_CancellationBeforeProviderCreation_ThrowsOperationCancelled()
     {
-        var executor = new LocalPipelineExecutor(
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
-            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         var repoConfig = new ProviderConfig
         {
@@ -727,9 +748,9 @@ public class LocalPipelineExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_NullOutputBatcher_ThrowsArgumentNullException()
     {
-        var executor = new LocalPipelineExecutor(
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
-            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
         var job = CreateMinimalJobAssignment();
         await using var connection = CreateDisconnectedHubConnection();
 
@@ -746,9 +767,9 @@ public class LocalPipelineExecutorTests : IDisposable
         // This test verifies the blacklist override logic runs without error.
         // The actual override is applied before provider validation, so we verify
         // the code path doesn't throw by checking it reaches provider creation.
-        var executor = new LocalPipelineExecutor(
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
-            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         var repoConfig = new ProviderConfig
         {
@@ -808,9 +829,9 @@ public class LocalPipelineExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_WithBrainProviderConfig_AttemptsValidation()
     {
-        var executor = new LocalPipelineExecutor(
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
-            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         var repoConfig = new ProviderConfig
         {
@@ -882,9 +903,9 @@ public class LocalPipelineExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_BrainProviderConfigIdSetButNotInList_SkipsBrainProvider()
     {
-        var executor = new LocalPipelineExecutor(
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
-            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         var repoConfig = new ProviderConfig
         {
@@ -940,9 +961,9 @@ public class LocalPipelineExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_WithPipelineProviderConfig_AttemptsCreation()
     {
-        var executor = new LocalPipelineExecutor(
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
-            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         var repoConfig = new ProviderConfig
         {
@@ -1011,9 +1032,9 @@ public class LocalPipelineExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_PipelineProviderConfigIdSetButNotInList_SkipsPipelineProvider()
     {
-        var executor = new LocalPipelineExecutor(
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
-            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         var repoConfig = new ProviderConfig
         {
@@ -1068,9 +1089,9 @@ public class LocalPipelineExecutorTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_EmptyBrainProviderConfigId_SkipsBrainProvider()
     {
-        var executor = new LocalPipelineExecutor(
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
-            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+            _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
         var repoConfig = new ProviderConfig
         {
@@ -1700,9 +1721,9 @@ public class LocalPipelineExecutorTests : IDisposable
         context.BrainSync.Should().BeNull();
     }
 
-    private LocalPipelineExecutor CreateExecutor() => new(
+    private LocalPipelineExecutor CreateExecutor() => new(new LocalPipelineExecutorDependencies(
         _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
-        _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
+        _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
     // ── BuildReviewStepPipeline ─────────────────────────────────────────
 

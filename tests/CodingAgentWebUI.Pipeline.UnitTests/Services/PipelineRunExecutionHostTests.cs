@@ -113,13 +113,15 @@ public class PipelineRunExecutionHostTests
 
     // ── Helpers ──────────────────────────────────────────────────────────────────
 
-    private static PipelineRun CreateRun() => PipelineRun.CreateImplementation(
-        runId: "test-run-1",
-        issueIdentifier: "org/repo#1",
-        issueTitle: "Test Issue",
-        issueProviderConfigId: "issue-1",
-        repoProviderConfigId: "repo-1",
-        initiatedBy: "test");
+    private static PipelineRun CreateRun() => PipelineRun.CreateImplementation(new PipelineRunCreationParams
+    {
+        RunId = "test-run-1",
+        IssueIdentifier = "org/repo#1",
+        IssueTitle = "Test Issue",
+        IssueProviderConfigId = "issue-1",
+        RepoProviderConfigId = "repo-1",
+        InitiatedBy = "test"
+    });
 
     private static PipelineStepContext BuildContext(PipelineRun run) => new()
     {

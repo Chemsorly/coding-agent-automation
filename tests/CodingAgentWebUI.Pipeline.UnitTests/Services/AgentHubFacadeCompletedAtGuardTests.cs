@@ -50,7 +50,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
         var drainService = new JobQueueDrainService(new JobQueueDrainDependencies(dispatcher, registry, Mock.Of<IJobDispatcher>(),
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(), new ShutdownSignal(), mockSerilogLogger.Object));
 
-        _facade = new AgentHubFacade(
+        _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
             registry,
             runService,
             dispatcher,
@@ -59,7 +59,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            transitionService);
+            transitionService));
     }
 
     public void Dispose()

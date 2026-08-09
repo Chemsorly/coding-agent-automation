@@ -502,8 +502,15 @@ public class ReconciliationServiceLifecycleTests : IDisposable
             k8sJobName: "caa-lifecycle2", dispatchedAt: dispatchedAt,
             lastProgressAt: DateTimeOffset.UtcNow.AddHours(-2.5));
 
-        var mockRun = PipelineRun.CreateImplementation(workItemId.ToString(), "owner/repo#lifecycle2", "Test",
-            "ip-1", "rp-1", initiatedBy: "manual");
+        var mockRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = workItemId.ToString(),
+            IssueIdentifier = "owner/repo#lifecycle2",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "manual"
+        });
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         mockLifecycle
             .Setup(m => m.FailRunAsync(workItemId.ToString(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))

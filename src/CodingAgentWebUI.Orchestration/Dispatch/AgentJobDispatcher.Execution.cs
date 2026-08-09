@@ -179,23 +179,31 @@ public sealed partial class AgentJobDispatcher
     /// <param name="ct">Cancellation token.</param>
     /// <param name="revertTargetKind">Optional label target kind (e.g., PullRequest for review path).</param>
     /// <returns><c>true</c> if the job was dispatched successfully; <c>false</c> on failure or abort.</returns>
+
+    /// <summary>
+    /// Groups the routing and revert parameters for <see cref="ExecuteDispatchPipelineAsync"/>
+    /// to reduce its parameter count (S107).
+    /// </summary>
+    private sealed record DispatchRoutingParams(
+        string Identifier,
+        string IdentifierType,
+        string RevertProviderConfigId,
+        string RevertLabel,
+        string FailureMessageTemplate,
+        PipelineProject? Project,
+        LabelTargetKind? RevertTargetKind = null);
+
     private async Task<bool> ExecuteDispatchPipelineAsync(
         AgentEntry agent,
-        string identifier,
-        string identifierType,
-        string revertProviderConfigId,
-        string revertLabel,
-        string failureMessageTemplate,
-        PipelineProject? project,
+        DispatchRoutingParams routing,
         Func<PipelineProject, AgentProfile, string, CancellationToken, Task<DispatchPipelineResult?>> prepareAndCustomize,
-        CancellationToken ct,
-        LabelTargetKind? revertTargetKind = null)
+        CancellationToken ct)
     {
-        return await SafeDispatchAsync(agent, revertProviderConfigId, identifier, revertLabel,
-            failureMessageTemplate,
+        return await SafeDispatchAsync(agent, routing.RevertProviderConfigId, routing.Identifier, routing.RevertLabel,
+            routing.FailureMessageTemplate,
             async () =>
         {
-            var core = await ResolveDispatchCoreAsync(agent, identifier, identifierType, project, ct);
+            var core = await ResolveDispatchCoreAsync(agent, routing.Identifier, routing.IdentifierType, routing.Project, ct);
             if (core is null) return false;
             var (proj, profile, agentProviderId) = core.Value;
 
@@ -211,7 +219,7 @@ public sealed partial class AgentJobDispatcher
             await BuildAndSendAsync(pipelineCtx, customize, ct);
             onSuccess?.Invoke();
             return true;
-        }, revertTargetKind);
+        }, routing.RevertTargetKind);
     }
 
     /// <summary>
@@ -237,11 +245,13 @@ public sealed partial class AgentJobDispatcher
                 repoProviderId, brainProviderId, pipelineProviderId, initiatedBy, requiredLabels));
 
         return await ExecuteDispatchPipelineAsync(
-            agent, issueIdentifier, "issue",
-            revertProviderConfigId: issueProviderId,
-            revertLabel: AgentLabels.Next,
-            failureMessageTemplate: "Failed to dispatch job to agent {AgentId} for issue {IssueIdentifier}",
-            project,
+            agent,
+            new DispatchRoutingParams(
+                issueIdentifier, "issue",
+                RevertProviderConfigId: issueProviderId,
+                RevertLabel: AgentLabels.Next,
+                FailureMessageTemplate: "Failed to dispatch job to agent {AgentId} for issue {IssueIdentifier}",
+                Project: project),
             (proj, profile, agentProviderId, token) =>
                 preparation.PrepareAsync(proj, profile, agentProviderId, token),
             ct);
@@ -262,14 +272,17 @@ public sealed partial class AgentJobDispatcher
             _infra, _orchestration, _logger, agent, request, requiredLabels);
 
         return await ExecuteDispatchPipelineAsync(
-            agent, request.PrIdentifier, "PR",
-            revertProviderConfigId: request.RepoProviderId,
-            revertLabel: AgentLabels.Next,
-            failureMessageTemplate: "Failed to dispatch review job to agent {AgentId} for PR {PrIdentifier}",
-            project,
+            agent,
+            new DispatchRoutingParams(
+                request.PrIdentifier, "PR",
+                RevertProviderConfigId: request.RepoProviderId,
+                RevertLabel: AgentLabels.Next,
+                FailureMessageTemplate: "Failed to dispatch review job to agent {AgentId} for PR {PrIdentifier}",
+                Project: project,
+                RevertTargetKind: LabelTargetKind.PullRequest),
             (proj, profile, agentProviderId, token) =>
                 preparation.PrepareAsync(proj, profile, agentProviderId, token),
-            ct, LabelTargetKind.PullRequest);
+            ct);
     }
 
     /// <summary>
@@ -297,11 +310,13 @@ public sealed partial class AgentJobDispatcher
             : AgentLabels.EpicApproved;
 
         return await ExecuteDispatchPipelineAsync(
-            agent, epicIdentifier, "epic",
-            revertProviderConfigId: issueProviderId,
-            revertLabel: revertLabel,
-            failureMessageTemplate: "Failed to dispatch decomposition job to agent {AgentId} for epic {EpicIdentifier}",
-            project,
+            agent,
+            new DispatchRoutingParams(
+                epicIdentifier, "epic",
+                RevertProviderConfigId: issueProviderId,
+                RevertLabel: revertLabel,
+                FailureMessageTemplate: "Failed to dispatch decomposition job to agent {AgentId} for epic {EpicIdentifier}",
+                Project: project),
             (proj, profile, agentProviderId, token) =>
             {
                 // TODO: Strategy instantiation inside the lambda means a new object is created

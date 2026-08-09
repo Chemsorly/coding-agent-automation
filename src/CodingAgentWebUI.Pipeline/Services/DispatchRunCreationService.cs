@@ -188,39 +188,44 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
 
         var run = runType switch
         {
-            PipelineRunType.Review => PipelineRun.CreateReview(
-                runId: Guid.NewGuid().ToString(),
-                issueIdentifier: issueIdentifier,
-                issueTitle: string.Empty,
-                issueProviderConfigId: issueProviderId.Value,
-                repoProviderConfigId: repoProviderId.Value,
-                reviewPrBranchName: string.Empty,
-                reviewPrTargetBranch: string.Empty,
-                initiatedBy: initiatedBy,
-                agentId: agentId,
-                agentProviderConfigId: agentProviderId.Value,
-                brainProviderConfigId: brainProviderId),
-            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
-                runId: Guid.NewGuid().ToString(),
-                issueIdentifier: issueIdentifier,
-                issueTitle: string.Empty,
-                issueProviderConfigId: issueProviderId.Value,
-                repoProviderConfigId: repoProviderId.Value,
-                phaseType: runType,
-                initiatedBy: initiatedBy,
-                agentId: agentId,
-                agentProviderConfigId: agentProviderId.Value,
-                brainProviderConfigId: brainProviderId),
-            _ => PipelineRun.CreateImplementation(
-                runId: Guid.NewGuid().ToString(),
-                issueIdentifier: issueIdentifier,
-                issueTitle: string.Empty,
-                issueProviderConfigId: issueProviderId.Value,
-                repoProviderConfigId: repoProviderId.Value,
-                initiatedBy: initiatedBy,
-                agentId: agentId,
-                agentProviderConfigId: agentProviderId.Value,
-                brainProviderConfigId: brainProviderId)
+            PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
+            {
+                RunId = Guid.NewGuid().ToString(),
+                IssueIdentifier = issueIdentifier,
+                IssueTitle = string.Empty,
+                IssueProviderConfigId = issueProviderId.Value,
+                RepoProviderConfigId = repoProviderId.Value,
+                RunType = PipelineRunType.Review,
+                InitiatedBy = initiatedBy,
+                AgentId = agentId,
+                AgentProviderConfigId = agentProviderId.Value,
+                BrainProviderConfigId = brainProviderId
+            }),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+            {
+                RunId = Guid.NewGuid().ToString(),
+                IssueIdentifier = issueIdentifier,
+                IssueTitle = string.Empty,
+                IssueProviderConfigId = issueProviderId.Value,
+                RepoProviderConfigId = repoProviderId.Value,
+                RunType = runType,
+                InitiatedBy = initiatedBy,
+                AgentId = agentId,
+                AgentProviderConfigId = agentProviderId.Value,
+                BrainProviderConfigId = brainProviderId
+            }),
+            _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            {
+                RunId = Guid.NewGuid().ToString(),
+                IssueIdentifier = issueIdentifier,
+                IssueTitle = string.Empty,
+                IssueProviderConfigId = issueProviderId.Value,
+                RepoProviderConfigId = repoProviderId.Value,
+                InitiatedBy = initiatedBy,
+                AgentId = agentId,
+                AgentProviderConfigId = agentProviderId.Value,
+                BrainProviderConfigId = brainProviderId
+            })
         };
         run.RepositoryName = tempRepoProvider.RepositoryFullName;
         run.ModelName = configuredModel;

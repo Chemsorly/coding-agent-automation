@@ -522,7 +522,15 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         // Arrange: mock OrchestratorRunService with a run that has AgentId="pending"
         var runId = Guid.NewGuid().ToString();
         var mockRunService = new Mock<IOrchestratorRunService>();
-        var pipelineRun = PipelineRun.CreateImplementation(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "pending");
+        var pipelineRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "pending"
+        });
         mockRunService.Setup(r => r.GetRun(runId)).Returns(pipelineRun);
 
         var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
@@ -812,7 +820,15 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         var mockCancellation = new Mock<IAgentCancellationSender>();
         var runId = Guid.NewGuid().ToString();
-        var cancelledRun = PipelineRun.CreateImplementation(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "agent-1");
+        var cancelledRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-1"
+        });
 
         mockLifecycle
             .Setup(l => l.CancelRunAsync(runId, It.IsAny<CancellationToken>()))
@@ -841,7 +857,15 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         var mockCancellation = new Mock<IAgentCancellationSender>();
         var runId = Guid.NewGuid().ToString();
-        var cancelledRun = PipelineRun.CreateImplementation(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "agent-42");
+        var cancelledRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#1",
+            IssueTitle = "",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-42"
+        });
 
         mockLifecycle
             .Setup(l => l.CancelRunAsync(runId, It.IsAny<CancellationToken>()))

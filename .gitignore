@@ -81,3 +81,8 @@ core
 
 # Local Postgres data (docker-compose bind mount)
 config/postgres/
+
+# Python cache files (from tooling/automation scripts)
+__pycache__/
+*.pyc
+*.pyo

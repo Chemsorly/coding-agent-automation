@@ -415,6 +415,58 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.OrphanRestoredAt.Should().BeNull();
     }
 
+    // ── Active job: RunType=Review → creates a review run ────────────────
+
+    [Fact]
+    public async Task ActiveJob_ReviewRunType_RestoresReviewRun()
+    {
+        const string agentId = "agent-1";
+        const string runId = "review-run-1";
+
+        var entry = CreateEntry(agentId);
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
+
+        var activeJob = CreateActiveJob(runId) with { RunType = PipelineRunType.Review };
+        var message = CreateMessage(agentId, activeJob);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r =>
+            r.RunId == runId &&
+            r.RunType == PipelineRunType.Review)), Times.Once);
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+    }
+
+    // ── Active job: RunType=Decomposition → creates a decomposition run ──
+
+    [Fact]
+    public async Task ActiveJob_DecompositionRunType_RestoresDecompositionRun()
+    {
+        const string agentId = "agent-1";
+        const string runId = "decomp-run-1";
+
+        var entry = CreateEntry(agentId);
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
+
+        var activeJob = CreateActiveJob(runId) with { RunType = PipelineRunType.Decomposition };
+        var message = CreateMessage(agentId, activeJob);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r =>
+            r.RunId == runId &&
+            r.RunType == PipelineRunType.Decomposition)), Times.Once);
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private static AgentEntry CreateEntry(string agentId) => new()

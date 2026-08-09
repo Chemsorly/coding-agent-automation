@@ -92,6 +92,7 @@ builder.Services.AddSingleton<CodingAgentWebUI.Services.InfrastructureHealthServ
 
 // Page-level services (scoped — one instance per Blazor circuit)
 builder.Services.AddScoped<CodingAgentWebUI.Services.AgentCodingPageService>();
+builder.Services.AddAgentMonitoringPageServiceDependencies();
 builder.Services.AddScoped<CodingAgentWebUI.Services.AgentMonitoringPageService>();
 builder.Services.AddScoped<CodingAgentWebUI.Services.NotificationService>();
 

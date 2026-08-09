@@ -69,6 +69,25 @@ public class AgentMonitoringPageComponentTests : BunitContext
 
         Services.AddSingleton(TimeProvider.System);
 
+        // TODO: This AgentMonitoringPageServiceDependencies registration block is copy-pasted verbatim in
+        // AgentMonitoringComponentTests, AgentMonitoringPageComponentTests, and FeedbackSectionComponentTests.
+        // Any future change to AgentMonitoringPageServiceDependencies constructor signature must be applied
+        // in all three places. Extract into a shared helper or base class to avoid drift.
+        // Register AgentMonitoringPageServiceDependencies so DI can auto-construct AgentMonitoringPageService.
+        Services.AddScoped(sp => new AgentMonitoringPageServiceDependencies(
+            sp.GetRequiredService<IActiveRunQueryService>(),
+            sp.GetRequiredService<IAgentRegistryService>(),
+            sp.GetRequiredService<JobDeduplicationGuardService>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<PipelineRunLifecycleService>(),
+            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IConsolidationService>(),
+            sp.GetRequiredService<IPendingWorkQuery>(),
+            sp.GetRequiredService<IWorkDistributor>(),
+            sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
+            sp.GetRequiredService<IPipelineRunHistoryService>(),
+            sp.GetRequiredService<IRunLifecycleManager>()));
+
         // Page service — resolved via DI with all dependencies above
         Services.AddScoped<AgentMonitoringPageService>();
     }

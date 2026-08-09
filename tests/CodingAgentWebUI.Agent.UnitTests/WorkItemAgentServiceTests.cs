@@ -38,13 +38,13 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
     // TODO: Add a test for default(AgentId) — since AgentId is a value type, the removed
     // [InlineData(5, "agentIdentity")] null guard test should be replaced with a characterization
     // test verifying behavior when default(AgentId) (Value == null) is passed to the constructor.
-    [InlineData(0, "workItemId")]
-    [InlineData(1, "workItemClient")]
-    [InlineData(2, "connectionManager")]
-    [InlineData(3, "workItemExecutor")]
-    [InlineData(4, "completionReporter")]
-    [InlineData(5, "lifetime")]
-    [InlineData(6, "logger")]
+    [InlineData(0, "deps.WorkItemId")]
+    [InlineData(1, "deps.WorkItemClient")]
+    [InlineData(2, "deps.ConnectionManager")]
+    [InlineData(3, "deps.WorkItemExecutor")]
+    [InlineData(4, "deps.CompletionReporter")]
+    [InlineData(5, "deps.Lifetime")]
+    [InlineData(6, "deps.Logger")]
     public void Constructor_NullParameter_Throws(int nullIndex, string expectedParamName)
     {
         var args = new object?[]
@@ -59,7 +59,7 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         };
         args[nullIndex] = null;
 
-        var act = () => new WorkItemAgentService(
+        var act = () => new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             (string)args[0]!,
             (IWorkItemLifecycleClient)args[1]!,
             (IAgentConnectionManager)args[2]!,
@@ -67,9 +67,16 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             (IJobCompletionReporter)args[4]!,
             new AgentId("agent-1"),
             (IHostApplicationLifetime)args[5]!,
-            (Serilog.ILogger)args[6]!);
+            (Serilog.ILogger)args[6]!));
 
         act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
+        // TODO: These expectedParamName values (e.g. "deps.WorkItemId") are coupled to the internal
+        // ThrowIfNull(deps.X) call expression in the WorkItemAgentService constructor. If the
+        // constructor parameter is renamed (e.g. deps → dependencies), or if validation is moved
+        // into the record constructor using nameof, these assertions will fail for the wrong reason
+        // or pass incorrectly. They reflect an implementation detail rather than the public API
+        // contract ("passing null workItemId throws"). Consider using nameof-based param names if
+        // the validation is ever moved to the record constructor.
     }
 
     [Fact]
@@ -108,11 +115,11 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
-        var service = new WorkItemAgentService(
+        var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             "wi-rejected", client, Mock.Of<IAgentConnectionManager>(),
             CreateMinimalWorkItemExecutor(),
             Mock.Of<IJobCompletionReporter>(),
-            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object);
+            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object));
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -142,11 +149,11 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
-        var service = new WorkItemAgentService(
+        var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             "wi-terminal", client, Mock.Of<IAgentConnectionManager>(),
             CreateMinimalWorkItemExecutor(),
             Mock.Of<IJobCompletionReporter>(),
-            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object);
+            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await service.StartAsync(cts.Token);
@@ -221,11 +228,11 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
-        var service = new WorkItemAgentService(
+        var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             "job-fail", client, mockConnectionManager,
             CreateMinimalWorkItemExecutor(),
             Mock.Of<IJobCompletionReporter>(),
-            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object);
+            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object));
 
         // Act
         var previousExitCode = Environment.ExitCode;
@@ -279,11 +286,11 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
-        var service = new WorkItemAgentService(
+        var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             "job-pipeline-fail", client, failingConnectionManager,
             CreateMinimalWorkItemExecutor(),
             Mock.Of<IJobCompletionReporter>(),
-            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object);
+            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object));
 
         // Act
         var previousExitCode = Environment.ExitCode;
@@ -531,7 +538,7 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         // 'using var service = ...' to ensure Dispose() is called before serviceProvider is disposed.
         // Without deterministic disposal, the background task could access the already-disposed
         // serviceProvider after the 'using var serviceProvider' scope exits, causing ObjectDisposedException.
-        var service = new WorkItemAgentService(
+        var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             "wi-flush-timeout",
             client,
             Mock.Of<IAgentConnectionManager>(),
@@ -540,7 +547,7 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             new AgentId("agent-1"),
             _mockLifetime.Object,
             _mockLogger.Object,
-            serviceProvider: serviceProvider);
+            ServiceProvider: serviceProvider));
 
         // Act: run the full lifecycle (terminates immediately on 410 Gone)
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -655,11 +662,11 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
 
     private WorkItemAgentService CreateService(string workItemId)
     {
-        return new WorkItemAgentService(
+        return new WorkItemAgentService(new WorkItemAgentServiceDependencies(
             workItemId, _workItemClient, Mock.Of<IAgentConnectionManager>(),
             CreateMinimalWorkItemExecutor(),
             Mock.Of<IJobCompletionReporter>(),
-            new AgentId("test-agent"), _mockLifetime.Object, _mockLogger.Object);
+            new AgentId("test-agent"), _mockLifetime.Object, _mockLogger.Object));
     }
 
     private WorkItemExecutorRouter CreateMinimalWorkItemExecutor()
@@ -667,10 +674,10 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var mockHttpFactory = new Mock<IHttpClientFactory>();
         var mockQgValidator = new Mock<CodingAgentWebUI.Pipeline.Interfaces.IQualityGateValidator>();
-        var pipelineExecutor = new LocalPipelineExecutor(
+        var pipelineExecutor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             mockOrchestrator.Object, mockHttpFactory.Object,
             new PipelineConfiguration(), mockQgValidator.Object, _mockLogger.Object,
-            agentIdentity: new AgentId("test-agent"));
+            AgentIdentity: new AgentId("test-agent")));
         var consolidationExecutor = new LocalConsolidationExecutor(
             mockOrchestrator.Object, mockHttpFactory.Object, _mockLogger.Object);
         return new WorkItemExecutorRouter(pipelineExecutor, consolidationExecutor, _mockLogger.Object);
