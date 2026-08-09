@@ -286,31 +286,34 @@ public sealed class FeedbackService
 
     private HarnessFeedback TruncateHarness(HarnessFeedback source, FeedbackOutcome outcome)
     {
-        var harness = new HarnessFeedback
+        var harness = BuildTruncatedHarness(source);
+        return EnforceStuckReason(harness, outcome);
+    }
+
+    private HarnessFeedback BuildTruncatedHarness(HarnessFeedback source) => new HarnessFeedback
+    {
+        Category = TruncateField(source.Category, FeedbackConstraints.MaxCategoryLength, "Harness.Category"),
+        StuckReason = TruncateField(source.StuckReason, FeedbackConstraints.MaxStringLength, "Harness.StuckReason"),
+        MissingContext = TruncateList(source.MissingContext, FeedbackConstraints.MaxMissingContextItems, FeedbackConstraints.MaxStringLength, "Harness.MissingContext"),
+        MissingCapabilities = TruncateList(source.MissingCapabilities, FeedbackConstraints.MaxMissingCapabilitiesItems, FeedbackConstraints.MaxStringLength, "Harness.MissingCapabilities"),
+        PromptIssues = TruncateList(source.PromptIssues, FeedbackConstraints.MaxPromptIssuesItems, FeedbackConstraints.MaxStringLength, "Harness.PromptIssues"),
+        Suggestions = TruncateList(source.Suggestions, FeedbackConstraints.MaxSuggestionsItems, FeedbackConstraints.MaxStringLength, "Harness.Suggestions")
+    };
+
+    private static HarnessFeedback EnforceStuckReason(HarnessFeedback harness, FeedbackOutcome outcome)
+    {
+        if (outcome != FeedbackOutcome.Failure || !string.IsNullOrEmpty(harness.StuckReason))
+            return harness;
+
+        return new HarnessFeedback
         {
-            Category = TruncateField(source.Category, FeedbackConstraints.MaxCategoryLength, "Harness.Category"),
-            StuckReason = TruncateField(source.StuckReason, FeedbackConstraints.MaxStringLength, "Harness.StuckReason"),
-            MissingContext = TruncateList(source.MissingContext, FeedbackConstraints.MaxMissingContextItems, FeedbackConstraints.MaxStringLength, "Harness.MissingContext"),
-            MissingCapabilities = TruncateList(source.MissingCapabilities, FeedbackConstraints.MaxMissingCapabilitiesItems, FeedbackConstraints.MaxStringLength, "Harness.MissingCapabilities"),
-            PromptIssues = TruncateList(source.PromptIssues, FeedbackConstraints.MaxPromptIssuesItems, FeedbackConstraints.MaxStringLength, "Harness.PromptIssues"),
-            Suggestions = TruncateList(source.Suggestions, FeedbackConstraints.MaxSuggestionsItems, FeedbackConstraints.MaxStringLength, "Harness.Suggestions")
+            Category = harness.Category,
+            StuckReason = "Agent did not produce structured feedback",
+            MissingContext = harness.MissingContext,
+            MissingCapabilities = harness.MissingCapabilities,
+            PromptIssues = harness.PromptIssues,
+            Suggestions = harness.Suggestions
         };
-
-        // Enforce StuckReason for Failure outcome
-        if (outcome == FeedbackOutcome.Failure && string.IsNullOrEmpty(harness.StuckReason))
-        {
-            harness = new HarnessFeedback
-            {
-                Category = harness.Category,
-                StuckReason = "Agent did not produce structured feedback",
-                MissingContext = harness.MissingContext,
-                MissingCapabilities = harness.MissingCapabilities,
-                PromptIssues = harness.PromptIssues,
-                Suggestions = harness.Suggestions
-            };
-        }
-
-        return harness;
     }
 
     private IssueFeedback? TruncateIssue(IssueFeedback? source)

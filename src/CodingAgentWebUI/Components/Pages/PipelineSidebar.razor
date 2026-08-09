@@ -767,9 +767,12 @@
     private static RenderFragment RenderSingleQgcCompilationAndTests(QualityGateReport qr) => __builder =>
     {
         @RenderGateLine(qr.Compilation.Passed, "Compilation", null)
-        @RenderGateLineWithSub(qr.Tests.Passed, "Tests",
-            $"{qr.Tests.TestsPassed ?? 0} passed, {qr.Tests.TestsFailed ?? 0} failed")
+        @RenderGateLine(qr.Tests.Passed, "Tests",
+            FormatTestsSub(qr.Tests.TestsPassed, qr.Tests.TestsFailed))
     };
+
+    private static string FormatTestsSub(int? passed, int? failed) =>
+        $"{passed ?? 0} passed, {failed ?? 0} failed";
 
     /// <summary>Renders the coverage and security gate lines for the single-QGC path.</summary>
     private static RenderFragment RenderSingleQgcCoverageAndSecurity(QualityGateReport qr) => __builder =>
