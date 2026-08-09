@@ -188,8 +188,10 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
         try { await send(); }
         finally
         {
+#pragma warning disable S108 // Intentional: semaphore already disposed during pipeline teardown; release is a no-op.
             try { signalrLock.Release(); }
             catch (ObjectDisposedException) { }
+#pragma warning restore S108
         }
     }
 
