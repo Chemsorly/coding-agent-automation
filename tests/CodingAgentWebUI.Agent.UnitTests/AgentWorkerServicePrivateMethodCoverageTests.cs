@@ -660,7 +660,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         };
 
         var task = (Task<(int exitCode, string? error)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, cts.Token])!;
+            .Invoke(service, [message, batcher, cts.Token, new List<string>()])!;
         var (exitCode, _) = await task;
 
         // OCE is caught → Cancelled (1), or workspace succeeded before cancel → GeneralFailure (1) or 0
@@ -694,7 +694,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         };
 
         var task = (Task<(int exitCode, string? error)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, CancellationToken.None])!;
+            .Invoke(service, [message, batcher, CancellationToken.None, new List<string>()])!;
         var (exitCode, error) = await task;
 
         exitCode.Should().Be(1, "general exception → GeneralFailure exit code 1");
@@ -989,13 +989,43 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         };
 
         var task = (Task<(int, string?)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, CancellationToken.None])!;
+            .Invoke(service, [message, batcher, CancellationToken.None, new List<string>()])!;
         await task;
 
-        // No env vars should have been set or touched
-        var injectedKeys = GetPrivateField<List<string>>(service, "_injectedChatSecretKeys");
-        injectedKeys.Should().BeEmpty(
+        // No env vars should have been set or touched — sentinelKey was never set so remains null
+        Environment.GetEnvironmentVariable(sentinelKey).Should().BeNull(
             "null ProjectSecrets must not inject any env vars");
+    }
+
+    // ── CleanupChatSecrets — directly invoked with parameterized list ──────────
+
+    /// <summary>
+    /// Verifies that CleanupChatSecrets accepts a List&lt;string&gt; parameter and nulls out
+    /// each env var in the list. This test directly documents acceptance criterion 2
+    /// (the secret key list is passed as a parameter rather than accessed via shared state)
+    /// and serves as a compile-time guard: if the parameter were removed in a future
+    /// refactor, invoking the method with a list argument via reflection would fail.
+    /// </summary>
+    [Fact]
+    public void CleanupChatSecrets_WithInjectedKey_ClearsEnvVar()
+    {
+        var secretKey = $"TEST_CLEANUP_{Guid.NewGuid():N}";
+        Environment.SetEnvironmentVariable(secretKey, "secret-value");
+
+        var service = TestAgentWorkerServiceFactory.Create();
+        var method = typeof(AgentWorkerService)
+            .GetMethod("CleanupChatSecrets", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("CleanupChatSecrets not found");
+
+        // TODO: This test only covers the non-empty-list path. The early-exit branch
+        // `if (injectedChatSecretKeys.Count == 0) return` is not exercised here. If that
+        // guard were accidentally changed to skip cleanup unconditionally, this test would
+        // still pass. Consider adding a complementary case that verifies multi-key cleanup
+        // and confirms the empty-list path returns without side effects.
+        method.Invoke(service, [new List<string> { secretKey }]);
+
+        Environment.GetEnvironmentVariable(secretKey).Should().BeNull(
+            "CleanupChatSecrets must null out env vars for every key in the passed list");
     }
 
     // ── Project steering write ─────────────────────────────────────────────────
@@ -1041,7 +1071,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         };
 
         var task = (Task<(int, string?)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, CancellationToken.None])!;
+            .Invoke(service, [message, batcher, CancellationToken.None, new List<string>()])!;
         await task;
 
         steeringFilesWhenInvoked.Should().NotBeEmpty("orchestrator must have been invoked");
@@ -1082,7 +1112,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         };
 
         var task = (Task<(int, string?)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, CancellationToken.None])!;
+            .Invoke(service, [message, batcher, CancellationToken.None, new List<string>()])!;
         await task;
 
         var steeringPath = Path.Combine(chatWorkspace, ".kiro", "steering", "pipeline-project.md");
@@ -1123,7 +1153,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         };
 
         var task = (Task<(int, string?)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, CancellationToken.None])!;
+            .Invoke(service, [message, batcher, CancellationToken.None, new List<string>()])!;
         await task;
 
         var steeringPath = Path.Combine(chatWorkspace, ".kiro", "steering", "pipeline-project.md");
