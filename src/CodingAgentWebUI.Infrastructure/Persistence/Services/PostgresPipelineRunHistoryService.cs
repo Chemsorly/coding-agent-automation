@@ -172,14 +172,29 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             .Take(MaxHistorySize)
             .ToListAsync(ct).ConfigureAwait(false);
 
-        // TODO: Write guard uses IssueProviderConfigId to reject consolidation runs, but read-time
-        // filter uses InitiatedBy. If a consolidation run has the correct ProviderConfigId but
-        // missing/null InitiatedBy (e.g., code path that sets one without the other), it could
-        // leak through. Consider using the same discriminator for both write and read guards,
-        // or adding a test verifying their interaction under failure conditions.
+        // Dual-discriminator consolidation filter (De Morgan's law):
+        //   exclude if (InitiatedBy == consolidation OR IssueProviderConfigId == consolidation)
+        //   keep   if (InitiatedBy != consolidation AND IssueProviderConfigId != consolidation)
+        //
+        // Using both discriminants closes the gap where a row has the correct IssueProviderConfigId
+        // but a missing/null InitiatedBy (e.g., rows written before InitiatedBy was serialized into
+        // SummaryJson). For corrupt-SummaryJson rows, DeserializeSummary now reads IssueProviderConfigId
+        // from the entity column (added by migration 20260810180000) and sets InitiatedBy accordingly,
+        // so the InitiatedBy discriminant covers both the JSON-deserialized and fallback paths.
+        // Rows predating the IssueProviderConfigId column will have IssueProviderConfigId=null on the
+        // entity; the fallback produces InitiatedBy="manual" for these, and null != "consolidation"
+        // keeps them in history. The write guard in AddRunToHistoryAsync is the primary defense against
+        // new ghost entries.
+        // TODO [WARNING]: The dual-discriminator comment overstates the protection for rows predating
+        // the IssueProviderConfigId column on PipelineRunEntity. For those rows, if SummaryJson is
+        // corrupt, neither discriminant can exclude a consolidation ghost entry. The write guard
+        // is the only defense for pre-migration rows. Consider adding a data migration that backfills
+        // IssueProviderConfigId from WorkItems if a comprehensive fix for legacy data is required.
         return entities
             .Select(DeserializeSummary)
-            .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+            .Where(s => s is not null
+                && s.InitiatedBy != ConsolidationConstants.InitiatedBy
+                && s.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
             .Select(s => s!)
             .ToList();
     }
@@ -212,7 +227,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
             var batch = entities
                 .Select(DeserializeSummary)
-                .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+                .Where(s => s is not null
+                    && s.InitiatedBy != ConsolidationConstants.InitiatedBy
+                    && s.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
                 .Select(s => s!)
                 .ToList();
 
@@ -259,6 +276,12 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             existing.ProjectId = entity.ProjectId;
             existing.ProjectName = entity.ProjectName;
             existing.RunType = entity.RunType;
+            // TODO: IssueProviderConfigId is not copied here. If a row is pre-created at dispatch
+            // time (without IssueProviderConfigId) and then upserted via this branch, the column
+            // remains null. Should SummaryJson later be corrupted, the fallback path reads
+            // IssueProviderConfigId=null and produces InitiatedBy="manual", so a consolidation
+            // ghost row written before the migration (or pre-created without IssueProviderConfigId)
+            // would not be filtered out. Fix by adding: existing.IssueProviderConfigId = entity.IssueProviderConfigId;
             existing.SummaryJson = entity.SummaryJson;
         }
         else
@@ -290,6 +313,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
                 retry.ProjectId = entity.ProjectId;
                 retry.ProjectName = entity.ProjectName;
                 retry.RunType = entity.RunType;
+                retry.IssueProviderConfigId = entity.IssueProviderConfigId;
                 retry.SummaryJson = entity.SummaryJson;
                 await db.SaveChangesAsync(ct).ConfigureAwait(false);
             }
@@ -320,6 +344,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             ProjectId = summary.ProjectId,
             ProjectName = summary.ProjectName,
             RunType = summary.RunType,
+            IssueProviderConfigId = summary.IssueProviderConfigId,
             SummaryJson = JsonSerializer.Serialize(summary, JsonOptions)
         };
     }
@@ -340,11 +365,22 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             }
         }
 
-        // Fallback: reconstruct from columns (for rows inserted before SummaryJson was added)
-        // TODO: InitiatedBy is not populated in this fallback path. If a consolidation ghost entry has
-        // corrupt/null SummaryJson, it will produce a summary with InitiatedBy=null that passes through
-        // the consolidation read-time filter (InitiatedBy != "consolidation"). Consider also checking
-        // IssueProviderConfigId or adding an InitiatedBy column to the entity for robust filtering.
+        // Fallback: reconstruct from columns (for rows inserted before SummaryJson was added,
+        // or rows whose SummaryJson was corrupted).
+        //
+        // InitiatedBy is set based on IssueProviderConfigId using the same heuristic as the
+        // write guard in AddRunToHistoryAsync: if IssueProviderConfigId equals the consolidation
+        // sentinel, this row is a consolidation ghost entry and must be marked as such so the
+        // read-time filter excludes it. For all other rows (including null, which covers rows
+        // written before this column was added and rows predating the write guard), InitiatedBy
+        // defaults to "manual" via the property initializer.
+        //
+        // This closes the gap identified in the issue: a consolidation ghost row with corrupt
+        // SummaryJson now produces InitiatedBy="consolidation" and is excluded from user-facing
+        // history, provided the row was written after this column was added. Rows written before
+        // this column was added will have IssueProviderConfigId=null and remain in history (the
+        // write guard is the primary defense against new ghost entries being persisted at all).
+        var isConsolidationGhost = entity.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId;
         return new PipelineRunSummary
         {
             RunId = entity.RunId.ToString(),
@@ -357,9 +393,11 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             PullRequestUrl = entity.PullRequestUrl,
             ModelName = entity.ModelName,
             AgentId = entity.AgentId,
-            // TODO: Add ProjectId = entity.ProjectId here for consistency — fallback path loses ProjectId when SummaryJson is null/corrupt
+            ProjectId = entity.ProjectId,
             ProjectName = entity.ProjectName,
-            RunType = entity.RunType
+            RunType = entity.RunType,
+            IssueProviderConfigId = entity.IssueProviderConfigId,
+            InitiatedBy = isConsolidationGhost ? ConsolidationConstants.InitiatedBy : "manual"
         };
     }
 

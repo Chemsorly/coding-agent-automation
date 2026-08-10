@@ -97,4 +97,18 @@ public sealed class PipelineRunSummary
 
     /// <summary>Agent provider config ID for display name resolution in the UI.</summary>
     public string? AgentProviderConfigId { get; init; }
+
+    /// <summary>
+    /// Issue provider config ID captured at run-creation time.
+    /// Used as a secondary consolidation discriminant in the read-time filter:
+    /// consolidation runs use <see cref="ConsolidationConstants.ProviderConfigId"/> as their
+    /// <see cref="IssueProviderConfigId"/>, so filtering on this alongside
+    /// <see cref="InitiatedBy"/> catches ghost entries that have the correct ProviderConfigId
+    /// but a missing/null InitiatedBy (e.g., rows written before InitiatedBy was serialized).
+    /// Null for legacy runs predating this field. For rows reconstructed via the DeserializeSummary
+    /// fallback path, the value is read from the IssueProviderConfigId column on PipelineRunEntity
+    /// (added by migration 20260810180000_AddIssueProviderConfigIdToPipelineRuns) and will be null
+    /// only for rows written before that migration.
+    /// </summary>
+    public string? IssueProviderConfigId { get; init; }
 }

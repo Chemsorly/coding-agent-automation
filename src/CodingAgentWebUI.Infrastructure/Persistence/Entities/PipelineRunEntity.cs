@@ -14,6 +14,16 @@ public class PipelineRunEntity
 
     public string IssueIdentifier { get; set; } = "";
     public string? IssueTitle { get; set; }
+
+    /// <summary>
+    /// Issue provider config ID captured at run-creation time.
+    /// Used as a column-level consolidation discriminant in the read-time filter fallback path:
+    /// when SummaryJson is null or corrupt, this column allows DeserializeSummary to set
+    /// InitiatedBy correctly for consolidation ghost rows.
+    /// Null for rows written before this column was added.
+    /// </summary>
+    public string? IssueProviderConfigId { get; set; }
+
     public PipelineStep FinalStep { get; set; }
     public DateTimeOffset StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }

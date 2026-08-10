@@ -141,6 +141,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
                 StartedAt = DateTimeOffset.UtcNow.AddHours(-1),
                 CompletedAt = DateTimeOffset.UtcNow,
                 AgentId = "agent-legacy",
+                ProjectId = "proj-legacy",
                 RunType = PipelineRunType.Review,
                 SummaryJson = null // no JSON
             });
@@ -157,6 +158,167 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         restored.FinalStep.Should().Be(PipelineStep.Failed);
         restored.AgentId.Should().Be("agent-legacy");
         restored.RunType.Should().Be(PipelineRunType.Review);
+        restored.ProjectId.Should().Be("proj-legacy"); // fallback path must preserve ProjectId
+    }
+
+    [Fact]
+    public async Task GetRunHistory_CorruptSummaryJson_FallsBackToColumns_RowIsReturned()
+    {
+        // Arrange: insert a row with corrupt SummaryJson — simulates a row whose JSON was
+        // corrupted in the DB (truncation, encoding issue, manual edit).
+        var runId = Guid.NewGuid();
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#99",
+                IssueTitle = "Corrupt JSON run",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow.AddHours(-2),
+                CompletedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                AgentId = "agent-corrupt",
+                ProjectId = "proj-corrupt",
+                RunType = PipelineRunType.Implementation,
+                SummaryJson = "{ CORRUPT JSON !!!" // unparseable
+            });
+            db.SaveChanges();
+        }
+
+        // Act
+        var history = await _sut.GetRunHistoryAsync();
+
+        // Assert: row is returned (not dropped), fallback path fired
+        history.Should().HaveCount(1);
+        var restored = history[0];
+        restored.RunId.Should().Be(runId.ToString());
+        restored.IssueIdentifier.Should().Be("org/repo#99");
+        restored.IssueTitle.Should().Be("Corrupt JSON run");
+        restored.FinalStep.Should().Be(PipelineStep.Completed);
+        restored.AgentId.Should().Be("agent-corrupt");
+        restored.ProjectId.Should().Be("proj-corrupt");
+        restored.RunType.Should().Be(PipelineRunType.Implementation);
+        // InitiatedBy must default to "manual" (not "consolidation") so the row passes the
+        // consolidation filter and is visible in user-facing history.
+        restored.InitiatedBy.Should().Be("manual");
+        // TODO [WARNING]: This test only covers GetRunHistoryAsync() (unpaged). The paged overload
+        // (GetRunHistoryAsync(page, pageSize) → GetRunHistoryPagedInternalAsync) has its own batching
+        // loop with a separate .Where(...) filter. A test covering the paged path with a corrupt-JSON
+        // row would give stronger coverage of the GetRunHistoryPaged acceptance criterion.
+    }
+
+    [Fact]
+    public async Task GetRunHistory_CorruptSummaryJson_ConsolidationGhostRow_StillExcluded()
+    {
+        // Arrange: a ghost consolidation row with corrupt SummaryJson (bypassed write guard,
+        // or pre-guard legacy data). The fallback path must read IssueProviderConfigId from the
+        // entity column and set InitiatedBy="consolidation" so the read-time filter excludes it.
+        var runId = Guid.NewGuid();
+        var normalId = Guid.NewGuid();
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            // Normal run with valid SummaryJson containing InitiatedBy="manual"
+            var normalSummary = new PipelineRunSummary
+            {
+                RunId = normalId.ToString(),
+                IssueIdentifier = "org/repo#1",
+                IssueTitle = "Normal run",
+                FinalStep = PipelineStep.Completed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-3),
+                InitiatedBy = "manual"
+            };
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = normalId,
+                IssueIdentifier = normalSummary.IssueIdentifier,
+                IssueTitle = normalSummary.IssueTitle,
+                FinalStep = normalSummary.FinalStep,
+                StartedAt = normalSummary.StartedAtOffset,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(normalSummary, PipelineJsonOptions.Default)
+            });
+            // Consolidation ghost row with corrupt SummaryJson — IssueProviderConfigId column
+            // set to the consolidation sentinel so the fallback path can detect it.
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = runId,
+                IssueIdentifier = "consolidation-ghost",
+                IssueTitle = "Ghost",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+                SummaryJson = "{ CORRUPT JSON !!!"
+            });
+            db.SaveChanges();
+        }
+
+        // Act
+        var history = await _sut.GetRunHistoryAsync();
+
+        // The normal run must always appear
+        history.Should().Contain(s => s.IssueIdentifier == "org/repo#1");
+        // The consolidation ghost row must be excluded: the fallback path reads IssueProviderConfigId
+        // from the entity column and sets InitiatedBy="consolidation", causing the read-time filter
+        // to exclude it from user-facing history.
+        history.Should().NotContain(s => s.IssueIdentifier == "consolidation-ghost",
+            "consolidation ghost rows with corrupt SummaryJson must be excluded via the column-level IssueProviderConfigId discriminant");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryPaged_CorruptSummaryJson_ConsolidationGhostRow_StillExcluded()
+    {
+        // Regression test for the paged path (GetRunHistoryPagedInternalAsync).
+        // The paged path has its own batching loop and .Where(...) filter — a distinct code path
+        // from the unpaged overload. This test verifies that a consolidation ghost row with
+        // corrupt SummaryJson is excluded from GetRunHistoryAsync(page, pageSize) results.
+        var ghostId = Guid.NewGuid();
+        var normalId = Guid.NewGuid();
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            // Normal run — valid SummaryJson, InitiatedBy="manual".
+            var normalSummary = new PipelineRunSummary
+            {
+                RunId = normalId.ToString(),
+                IssueIdentifier = "org/repo#paged-1",
+                IssueTitle = "Normal paged run",
+                FinalStep = PipelineStep.Completed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-3),
+                InitiatedBy = "manual"
+            };
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = normalId,
+                IssueIdentifier = normalSummary.IssueIdentifier,
+                IssueTitle = normalSummary.IssueTitle,
+                FinalStep = normalSummary.FinalStep,
+                StartedAt = normalSummary.StartedAtOffset,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(normalSummary, PipelineJsonOptions.Default)
+            });
+            // Consolidation ghost row with corrupt SummaryJson and the consolidation sentinel
+            // as IssueProviderConfigId. The fallback path must detect this via the column and
+            // set InitiatedBy="consolidation" so the paged filter excludes it.
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = ghostId,
+                IssueIdentifier = "consolidation-ghost-paged",
+                IssueTitle = "Ghost paged",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+                SummaryJson = "{ CORRUPT JSON !!!"
+            });
+            db.SaveChanges();
+        }
+
+        // Act: use the paged overload — exercises GetRunHistoryPagedInternalAsync
+        var result = await _sut.GetRunHistoryAsync(page: 1, pageSize: 10);
+
+        // Assert: only the normal run appears; ghost is excluded by the paged filter
+        result.Items.Should().HaveCount(1,
+            "the paged filter must exclude consolidation ghost rows with corrupt SummaryJson");
+        result.Items.Should().Contain(s => s.IssueIdentifier == "org/repo#paged-1");
+        result.Items.Should().NotContain(s => s.IssueIdentifier == "consolidation-ghost-paged",
+            "consolidation ghost rows with corrupt SummaryJson must be excluded from GetRunHistoryPaged results");
+        result.HasMore.Should().BeFalse();
     }
 
     // Max history size test moved to shared contract:
