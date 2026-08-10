@@ -47,10 +47,8 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     {
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
-        // TODO: Use issueIdentifier.Value explicitly instead of relying on IssueIdentifier.ToString() for key
-        // construction. If ToString() is ever overridden to add decoration, key lookups will silently break.
-        var compositeKey = $"{issueProviderConfigId}:{issueIdentifier}";
-        return _activeRuns.Values.Any(r => $"{r.IssueProviderConfigId}:{r.IssueIdentifier}" == compositeKey);
+        var compositeKey = $"{issueProviderConfigId}:{issueIdentifier.Value}";
+        return _activeRuns.Values.Any(r => $"{r.IssueProviderConfigId}:{r.IssueIdentifier.Value}" == compositeKey);
     }
 
     /// <summary>
@@ -140,9 +138,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     {
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
-        // TODO: Use issueIdentifier.Value explicitly instead of relying on IssueIdentifier.ToString() for key
-        // construction. If ToString() is ever overridden to add decoration, key lookups will silently break.
-        var key = $"{issueProviderConfigId}:{issueIdentifier}";
+        var key = $"{issueProviderConfigId}:{issueIdentifier.Value}";
         _recentlyCompleted[key] = _timeProvider.GetUtcNow();
     }
 
@@ -151,9 +147,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     {
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
-        // TODO: Use issueIdentifier.Value explicitly instead of relying on IssueIdentifier.ToString() for key
-        // construction. If ToString() is ever overridden to add decoration, key lookups will silently break.
-        var key = $"{issueProviderConfigId}:{issueIdentifier}";
+        var key = $"{issueProviderConfigId}:{issueIdentifier.Value}";
         if (_recentlyCompleted.TryGetValue(key, out var completedAt))
         {
             if (_timeProvider.GetUtcNow() - completedAt <= RecentCompletionTtl)
