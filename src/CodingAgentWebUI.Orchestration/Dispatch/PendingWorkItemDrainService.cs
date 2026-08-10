@@ -26,6 +26,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly LabelSwapService _labelSwapService;
     private readonly DispatchRevertHandler _dispatchRevertHandler;
+    private readonly DispatchAttemptService _dispatchAttemptService;
     private readonly IProjectStore? _projectStore;
     private readonly IConsolidationDispatchService? _consolidationDispatcher;
     private readonly IConsolidationRunStore? _consolidationRunStore;
@@ -39,6 +40,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         DrainServiceDependencies deps,
         LabelSwapService labelSwapService,
         DispatchRevertHandler dispatchRevertHandler,
+        DispatchAttemptService dispatchAttemptService,
         IProjectStore? projectStore = null,
         IConsolidationDispatchService? consolidationDispatcher = null,
         IConsolidationRunStore? consolidationRunStore = null)
@@ -51,6 +53,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         _logger = deps.Logger;
         _labelSwapService = labelSwapService;
         _dispatchRevertHandler = dispatchRevertHandler;
+        _dispatchAttemptService = dispatchAttemptService;
         _projectStore = projectStore;
         _consolidationDispatcher = consolidationDispatcher;
         _consolidationRunStore = consolidationRunStore;
@@ -257,14 +260,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
         try
         {
-            // Transition to Dispatched before dispatch attempt
-            await _transitionService.TransitionAsync(
-                item.Id, WorkItemStatus.Dispatched,
-                entity =>
-                {
-                    entity.DispatchedAt = DateTimeOffset.UtcNow;
-                    entity.AssignedAgentId = agentId.Value;
-                }, ct: ct);
+            // Transition to Dispatched before dispatch attempt.
+            // Delegates to DispatchAttemptService to keep transition-to-Dispatched logic in one place (#1914).
+            await _dispatchAttemptService.TransitionToDispatchedAsync(item.Id, agentId, ct);
 
             var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
                 runId,
@@ -298,6 +296,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 // ReleaseAgent is idempotent (safe to call more than once for the same agentId),
                 // so a double-release via the catch block below is not a correctness risk.
                 _agentResolver.ReleaseAgent(agentId);
+                // TODO: Migrate to _dispatchAttemptService.RevertOnFailureAsync for full consolidation of revert-on-failure logic (#1914).
+                // Currently calls _dispatchRevertHandler directly (functionally equivalent, but the revert calls were not migrated
+                // in the same pass as the TransitionToDispatchedAsync extraction).
                 await _dispatchRevertHandler.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: ct);
                 return false;
             }
@@ -310,6 +311,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             _agentResolver.ReleaseAgent(agentId);
             // Revert WorkItem from Dispatched to Pending so it's available for the next drain cycle.
             // Uses CancellationToken.None explicitly: graceful shutdown must not prevent the revert.
+            // TODO: Migrate to _dispatchAttemptService.RevertOnFailureAsync for full consolidation of revert-on-failure logic (#1914).
             await _dispatchRevertHandler.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: CancellationToken.None);
             return false;
         }
@@ -327,16 +329,14 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             // If TransitionAsync fails, no in-memory cleanup is needed.
             // This also ensures the agent's JobAccepted → Running transition is valid
             // (Dispatched → Running, not Pending → Running which is rejected).
+            // Delegates to DispatchAttemptService to keep transition-to-Dispatched logic in one place (#1914).
+            // TODO: dispatchTime is captured here (before the call) but DispatchAttemptService.TransitionToDispatchedAsync
+            // sets entity.DispatchedAt from its own DateTimeOffset.UtcNow internally. The two timestamps are no longer
+            // guaranteed to be identical (sub-millisecond skew in practice). EnsureInMemoryRunRegistered is still called
+            // with the outer dispatchTime, so in-memory and DB DispatchedAt values may differ by a tiny amount.
+            // If any code ever compares them for equality, consider exposing DispatchedAt from TransitionToDispatchedAsync.
             var dispatchTime = DateTimeOffset.UtcNow;
-            await _transitionService.TransitionAsync(
-                item.Id,
-                WorkItemStatus.Dispatched,
-                entity =>
-                {
-                    entity.DispatchedAt = dispatchTime;
-                    entity.AssignedAgentId = agentId.Value;
-                },
-                ct: ct);
+            await _dispatchAttemptService.TransitionToDispatchedAsync(item.Id, agentId, ct);
 
             dispatchedSuccessfully = true;
 
