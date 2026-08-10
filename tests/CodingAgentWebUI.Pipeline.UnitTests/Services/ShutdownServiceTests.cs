@@ -12,7 +12,7 @@ public class ShutdownServiceTests
     private readonly ILogger _logger = new LoggerConfiguration().CreateLogger();
 
     [Fact]
-    public async Task StoppingAsync_WhenRunning_CancelsPipelineAndAgentRuns()
+    public async Task StoppingAsync_WhenRunning_ReleasesPipelineAndAgentRuns()
     {
         // Arrange
         var lifecycleCalled = false;
@@ -35,7 +35,7 @@ public class ShutdownServiceTests
     }
 
     [Fact]
-    public async Task StoppingAsync_WhenNotRunning_SkipsCancelPipeline_StillCancelsAgentRuns()
+    public async Task StoppingAsync_WhenNotRunning_SkipsCancelPipeline_StillReleasesAgentRuns()
     {
         // Arrange
         var lifecycleCalled = false;
@@ -105,7 +105,7 @@ public class ShutdownServiceTests
     }
 
     [Fact]
-    public async Task StoppingAsync_DoesNotThrow_WhenCancelAgentRunsThrows()
+    public async Task StoppingAsync_DoesNotThrow_WhenReleaseAgentRunsThrows()
     {
         // Arrange
         var orchestrationAttempted = false;
@@ -125,7 +125,7 @@ public class ShutdownServiceTests
         await service.StoppingAsync(cts.Token);
 
         // Assert: orchestration was attempted despite throwing
-        Assert.True(orchestrationAttempted, "orchestration cancel was attempted despite throwing");
+        Assert.True(orchestrationAttempted, "orchestration release was attempted despite throwing");
     }
 
     // ── Test Fakes ──────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ public class ShutdownServiceTests
             _delay = delay;
         }
 
-        public async Task CancelActiveAgentRunsAsync()
+        public async Task ReleaseActiveAgentRunsAsync()
         {
             if (_delay.HasValue)
                 await Task.Delay(_delay.Value);
