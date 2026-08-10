@@ -174,9 +174,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             .Take(MaxHistorySize)
             .ToListAsync(ct).ConfigureAwait(false);
 
-        // Dual-discriminator consolidation filter (De Morgan's law):
-        //   exclude if (InitiatedBy == consolidation OR IssueProviderConfigId == consolidation)
-        //   keep   if (InitiatedBy != consolidation AND IssueProviderConfigId != consolidation)
+        // Dual-discriminator consolidation filter:
+        // A row is excluded when either InitiatedBy or IssueProviderConfigId equals the
+        // consolidation sentinel. A row is kept only when both fields differ from the sentinel.
         //
         // Using both discriminants closes the gap where a row has the correct IssueProviderConfigId
         // but a missing/null InitiatedBy (e.g., rows written before InitiatedBy was serialized into

@@ -124,7 +124,8 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
             if (!Directory.Exists(_runsDirectory))
                 return;
 
-            // TODO: GetFiles materializes full FileInfo[] before LINQ filtering. For directories with thousands of files this is an unbounded allocation at startup. Consider EnumerateFiles or paginated loading.
+            // GetFiles materializes full FileInfo[] before LINQ filtering. For directories with
+            // thousands of files this is an unbounded allocation at startup.
             var files = new DirectoryInfo(_runsDirectory).GetFiles("*.json")
                 .OrderByDescending(f => f.LastWriteTimeUtc)
                 .Take(MaxHistorySize);
