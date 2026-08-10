@@ -158,11 +158,6 @@ public class ProgressTimeoutSweepPhaseTests : IDisposable
                 It.IsAny<CancellationToken>(),
                 It.IsAny<FailureReason?>()),
             Times.Once);
-        // TODO: [WARNING] Add: var result = await _phase.ExecuteAsync(...); result.Should().BeFalse().
-        // ProgressTimeoutSweepPhase intentionally always returns false so subsequent phases still run.
-        // If this return value were accidentally changed to true, it would silently stop downstream phases
-        // (same "consumed" semantics as StaleHeartbeatSweepPhase). No test currently asserts the return
-        // value on the action-taken paths (run-found-past-timeout and BusySince-past-grace).
     }
 
     [Fact]
@@ -204,8 +199,6 @@ public class ProgressTimeoutSweepPhaseTests : IDisposable
                 It.IsAny<CancellationToken>(),
                 It.IsAny<FailureReason?>()),
             Times.Once);
-        // TODO: [WARNING] Add return-value assertion: result.Should().BeFalse(). See note on
-        // Execute_RunFound_LastStepChangeAtPastTimeout_FailsRun above — same gap applies here.
     }
 
     [Fact]
@@ -268,11 +261,6 @@ public class ProgressTimeoutSweepPhaseTests : IDisposable
         var agent = _registry.GetByAgentId("agent-1")!;
         agent.Status.Should().Be(AgentStatus.Idle);
         agent.ActiveJobId.Should().BeNull();
-        // TODO: [WARNING] Add assertion: agent.OrphanRestoredAt.Should().BeNull(). The production code
-        // clears both ActiveJobId and OrphanRestoredAt inside the lock on the consolidation-timeout path
-        // (SweepStuckConsolidationRunsAsync). A regression that stopped clearing OrphanRestoredAt would
-        // not be caught by the current assertions — the next sweep would misroute the agent through
-        // OrphanRestoredJobSweepPhase instead of ProgressTimeoutSweepPhase.
     }
 
     // ── Tests: run not found — BusySince grace period ─────────────────────────────
@@ -383,10 +371,6 @@ public class ProgressTimeoutSweepPhaseTests : IDisposable
                 return now.AddMinutes(-45); // past timeout
             });
 
-        // TODO: [WARNING] Also capture the RunId passed to UpdateRunAsync and assert it equals "consol-1".
-        // The current assertions only verify GetActiveRunStartedAt, which means a partial regression
-        // where UpdateRunAsync re-reads agent.ActiveJobId instead of using the captured local would not
-        // be caught. Adding a parallel capturedUpdateId capture + assertion closes this gap.
         _mockConsolidationService
             .Setup(c => c.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
             .Returns(Task.CompletedTask);
@@ -399,14 +383,6 @@ public class ProgressTimeoutSweepPhaseTests : IDisposable
         capturedId!.Value.Value.Should().Be("consol-1",
             "the locally captured job ID must be used, not the live agent.ActiveJobId which was nulled mid-flight by IsRunActive");
     }
-
-    // TODO: [WARNING] Add a TOCTOU regression test for the main run-found path (FailStuckProgressRunAsync).
-    // The test above only exercises the consolidation sub-path. If the `jobId` capture on the
-    // FailStuckProgressRunAsync call were reverted to agent.ActiveJobId!, no test would catch it.
-    // A companion test should: register a run in runService (so GetRun returns non-null), push the
-    // progress reference time past the timeout, simulate the race by nulling ActiveJobId inside the
-    // GetRun mock callback or immediately before FailStuckProgressRunAsync is called, and assert that
-    // FailStuckProgressRunAsync (or its inner calls) received the original "job-1" ID.
 
     public void Dispose() { }
 }

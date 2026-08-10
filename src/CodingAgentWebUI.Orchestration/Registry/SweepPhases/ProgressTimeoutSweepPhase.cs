@@ -63,12 +63,6 @@ internal sealed class ProgressTimeoutSweepPhase : ISweepPhase
             return false;
 
         await SweepProgressTimeoutsAsync(agent, now, config, ct);
-        // TODO: [WARNING] This phase always returns false even when it mutates agent state (fails a run,
-        // resets to Idle). The ISweepPhase contract: returning true means "consumed — skip remaining phases".
-        // Currently safe because ProgressTimeoutSweepPhase is intentionally the terminal phase in
-        // _connectedAgentPhases, but a maintainer appending a new phase after this one would not realize
-        // that an agent already reset to Idle by this phase will still be processed. Consider returning
-        // true when agent state is mutated, or enforce "terminal" position with a comment at the call-site.
         return false;
     }
 
