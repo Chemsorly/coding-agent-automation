@@ -38,8 +38,11 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Shutdown_SwapsCancelledLabel_OnActiveAgentRuns()
+    public async Task Shutdown_DoesNotSwapCancelledLabel_OnActiveAgentRuns()
     {
+        // Verifies the rolling-update handoff behavior: graceful shutdown releases runs from
+        // in-memory tracking without sending CancelJob or swapping GitHub labels.
+        // Agents reconnect to the new pod and complete normally; the new pod writes the real outcome.
         // Arrange: configure mocks
         var issueConfig = new ProviderConfig
         {
@@ -130,13 +133,16 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         // Give shutdown handlers time to execute
         await Task.Delay(2000);
 
-        // Assert: verify label swap was called
+        // Assert: verify label swap was NOT called — shutdown handoff no longer touches GitHub labels
         _mockIssueProvider.Verify(
             p => p.AddLabelAsync("123", AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
-            Times.AtLeastOnce);
+            Times.Never);
         _mockIssueProvider.Verify(
-            p => p.RemoveLabelAsync("123", It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.AtLeastOnce);
+            p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        // Run must have been removed from the in-memory registry (dedup released)
+        _factory!.Services.GetRequiredService<OrchestratorRunService>()
+            .GetActiveRuns().Should().BeEmpty();
     }
 
     [Fact(Timeout = 15_000)]
