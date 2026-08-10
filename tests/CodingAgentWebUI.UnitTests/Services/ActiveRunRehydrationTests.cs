@@ -258,6 +258,10 @@ public sealed class ActiveRunRehydrationTests : IDisposable
     // TODO: This helper duplicates the logic from ActiveRunRehydrationExtensions.RehydrateActiveRunsAsync()
     // rather than calling the actual production code. Tests will still pass if the extension method regresses.
     // Refactor to invoke RehydrateActiveRunsAsync() directly for accurate coverage. (review-findings)
+    // TODO: The inline predicate below duplicates the active-work-item concept defined in WorkItemQueryExtensions.WhereActive().
+    // If WhereActive() is extended (e.g. a new active status is added), this helper will silently diverge
+    // and this unit test will give false confidence. Replace with .WhereActive() when refactoring
+    // this helper to call RehydrateActiveRunsAsync() directly. (review-findings: correctness)
     private async Task RehydrateAsync()
     {
         await using var db = await _dbFactory.CreateDbContextAsync();

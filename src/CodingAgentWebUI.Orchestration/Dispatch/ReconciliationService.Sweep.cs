@@ -20,8 +20,8 @@ public sealed partial class ReconciliationService
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var activeItems = await db.WorkItems
-            .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-                        && w.K8sJobName != null)
+            .WhereActive()
+            .Where(w => w.K8sJobName != null)
             .Select(w => new { w.Id, w.K8sJobName })
             .ToListAsync(ct);
 
@@ -67,8 +67,8 @@ public sealed partial class ReconciliationService
 
         // Find non-terminal WorkItems that have K8s Job names
         var activeItems = await db.WorkItems
-            .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-                        && w.K8sJobName != null)
+            .WhereActive()
+            .Where(w => w.K8sJobName != null)
             .Select(w => new { w.Id, w.K8sJobName })
             .ToListAsync(ct);
 
