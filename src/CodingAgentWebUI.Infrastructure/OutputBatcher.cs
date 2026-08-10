@@ -60,6 +60,7 @@ public sealed class ManualFlushTrigger : IFlushTrigger
         }
         catch (ObjectDisposedException)
         {
+            // Gate was disposed during shutdown — treat as stopped
             return false;
         }
         return !_stopped;
@@ -247,7 +248,7 @@ public sealed class OutputBatcher : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _cts.Cancel();
+        await _cts.CancelAsync();
         await _trigger.DisposeAsync();
 
         try { await _flushLoop; }
