@@ -95,6 +95,11 @@ public partial class QualityGateExecutor
 
         try
         {
+            // TODO: AdditionalEnv is not set on this AgentExecutionRequest. QualityGateContext does
+            // not carry InjectedSecrets, so if a project needs authenticated private feed access
+            // during cleanup tooling, the kiro-cli child process will not have those secrets.
+            // Consider propagating InjectedSecrets through QualityGateContext or accepting it
+            // as a parameter to this method.
             var cleanupResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
                 new AgentExecutionRequest
                 {
@@ -284,6 +289,11 @@ public partial class QualityGateExecutor
 
             try
             {
+                // TODO: AdditionalEnv is not set on this AgentExecutionRequest. QualityGateContext does
+                // not carry InjectedSecrets, so if a project needs private feed authentication during
+                // quality gate retry tooling (e.g. dotnet restore from a private NuGet feed), the
+                // kiro-cli child process will not have those secrets. Consider propagating
+                // InjectedSecrets through QualityGateContext.
                 var agentResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
                     new AgentExecutionRequest
                     {

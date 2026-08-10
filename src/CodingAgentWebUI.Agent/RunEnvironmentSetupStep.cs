@@ -9,8 +9,8 @@ namespace CodingAgentWebUI.Agent;
 /// <summary>
 /// Pipeline step that executes per-repository environment setup commands (e.g., configuring
 /// private NuGet feeds, installing tools) after clone but before the coding agent starts.
-/// Merges project-level and repo-level secrets (repo wins on key collision) and injects them
-/// as process-wide environment variables for the entire run. Also injects into each setup step process.
+/// Merges project-level and repo-level secrets (repo wins on key collision) and stores them
+/// on the pipeline context for per-process injection into each child process. Also injects into each setup step process.
 /// </summary>
 internal sealed class RunEnvironmentSetupStep : IPipelineStep
 {
@@ -45,9 +45,8 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
         if (hasSecrets)
         {
             var injectedKeys = new List<string>(effectiveSecrets.Count);
-            foreach (var (key, value) in effectiveSecrets)
+            foreach (var (key, _) in effectiveSecrets)
             {
-                Environment.SetEnvironmentVariable(key, value);
                 injectedKeys.Add(key);
             }
 

@@ -116,6 +116,22 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var pollTask = PollAllSessionStatusesAsync(pollCts.Token);
 
+        // OpenCode is an HTTP-based server process; ProcessStartInfo.Environment cannot be used to
+        // scope secrets to a single HTTP request. Instead, secrets from AdditionalEnv are injected
+        // into the process-wide environment for the duration of this call and cleaned up in the
+        // finally block below. The injection window is bounded to ExecuteAsync's lifetime (much
+        // shorter than the old AgentWorkerService session lifetime) and the slot guard prevents
+        // concurrent chat sessions, so the race window is the same as before but better-scoped.
+        var injectedEnvKeys = new List<string>();
+        if (request.AdditionalEnv is { Count: > 0 })
+        {
+            foreach (var (key, value) in request.AdditionalEnv)
+            {
+                Environment.SetEnvironmentVariable(key, value);
+                injectedEnvKeys.Add(key);
+            }
+        }
+
         try
         {
             // 1. Session selection — always create/resolve per workspace path (stateless)
@@ -199,6 +215,10 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             try { await pollCts.CancelAsync(); } catch (OperationCanceledException) { /* expected during shutdown */ }
             try { await pollTask.ConfigureAwait(false); } catch (OperationCanceledException) { /* expected during shutdown */ }
             pollCts.Dispose();
+            // Clean up process-wide env vars injected from AdditionalEnv.
+            // Runs even on exception/cancellation so secrets don't outlive this call.
+            foreach (var key in injectedEnvKeys)
+                Environment.SetEnvironmentVariable(key, null);
         }
     }
 

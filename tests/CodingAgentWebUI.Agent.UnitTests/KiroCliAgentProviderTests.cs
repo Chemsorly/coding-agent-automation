@@ -200,14 +200,45 @@ public class KiroCliAgentProviderTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WithAdditionalEnv_PassesEnvToOrchestrator()
+    {
+        // Arrange
+        IReadOnlyDictionary<string, string>? capturedEnv = null;
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, _, _, _, additionalEnv) => capturedEnv = additionalEnv)
+            .ReturnsAsync(0);
+
+        var additionalEnvDict = new Dictionary<string, string> { ["MY_SECRET"] = "secret-value" };
+        var request = new AgentRequest
+        {
+            Prompt = "test",
+            WorkspacePath = "/workspace",
+            UseResume = true,
+            AdditionalEnv = additionalEnvDict
+        };
+
+        // Act
+        await _provider.ExecuteAsync(request, CancellationToken.None);
+
+        // Assert — additionalEnv must be forwarded to the orchestrator
+        capturedEnv.Should().NotBeNull("AdditionalEnv must be passed through to ExecutePromptAsync");
+        capturedEnv!["MY_SECRET"].Should().Be("secret-value");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_CapturesOutputLines()
     {
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (_, _, _, _, onOutput, _) =>
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, _, onOutput, _, _) =>
                 {
                     onOutput?.Invoke("line 1");
                     onOutput?.Invoke("line 2");
@@ -445,8 +476,8 @@ public class KiroCliAgentProviderTests
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                async (_, _, _, ct, _, _) =>
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                async (_, _, _, ct, _, _, _) =>
                 {
                     // Simulate a long-running operation that exceeds the timeout
                     await Task.Delay(Timeout.Infinite, ct);
@@ -476,8 +507,8 @@ public class KiroCliAgentProviderTests
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (_, _, _, _, onOutput, _) =>
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, _, onOutput, _, _) =>
                 {
                     onOutput?.Invoke("\x1b[31mError:\x1b[0m something failed");
                     onOutput?.Invoke("\x1b[1;32mSuccess\x1b[0m");

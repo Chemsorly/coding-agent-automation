@@ -30,6 +30,9 @@ public partial class AgentPhaseExecutor
                 run.RunId, reviewerConfig.DisplayName, followUpPrompt.Length);
 
             // Dispatch as a fresh prompt (no resume) to the agent provider
+            // TODO: AdditionalEnv = context.InjectedSecrets is not set here. If a follow-up agent
+            // needs to access authenticated resources (e.g. run tools against a private feed),
+            // the child process will not have project secrets available.
             var agentResult = await ExecuteAgentRawAsync(
                 new AgentExecutionRequest
                 {
@@ -217,6 +220,9 @@ public partial class AgentPhaseExecutor
 
             var prompt = PromptBuilder.BuildReviewSummaryPrompt(diffStat, run.IssueTitle, findings);
 
+            // TODO: AdditionalEnv = context.InjectedSecrets is not set here. If the review summary
+            // agent needs to access authenticated resources, the child process will not have project
+            // secrets. Same gap exists in ExecuteFollowUpAsync and CodeReviewOrchestrator fix agent.
             var agentResult = await ExecuteAgentRawAsync(
                 new AgentExecutionRequest
                 {

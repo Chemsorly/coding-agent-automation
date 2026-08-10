@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Agent;
 
 /// <summary>
 /// Encapsulates the finally-block cleanup logic from pipeline execution:
-/// CTS disposal, environment secret cleanup, workspace deletion, and reporter disposal.
+/// CTS disposal, workspace deletion, and reporter disposal.
 /// Extracted from <see cref="LocalPipelineExecutor"/> to enable isolated testing.
 /// </summary>
 internal static class PipelineCleanup
@@ -22,14 +22,6 @@ internal static class PipelineCleanup
         Serilog.ILogger logger)
     {
         localCts?.Dispose();
-
-        // Clean up injected environment secrets
-        if (stepContext?.InjectedSecretKeys is { Count: > 0 })
-        {
-            foreach (var key in stepContext.InjectedSecretKeys)
-                Environment.SetEnvironmentVariable(key, null);
-            logger.Debug("Cleaned up {Count} injected secret keys", stepContext.InjectedSecretKeys.Count);
-        }
 
         // Workspace cleanup
         try

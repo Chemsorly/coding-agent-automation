@@ -363,8 +363,8 @@ public class AgentWorkerServiceTests : IDisposable
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Func<string, Task>?>(),
                 It.IsAny<string?>()))
-            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (prompt, _, _, _, _, _) =>
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (prompt, _, _, _, _, _, _) =>
                 {
                     if (prompt == "Hello, world!")
                         invoked.TrySetResult();
@@ -694,8 +694,8 @@ public class AgentWorkerServiceTests : IDisposable
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Func<string, Task>?>(),
                 It.IsAny<string?>()))
-            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (prompt, _, useResume, _, _, _) =>
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (prompt, _, useResume, _, _, _, _) =>
                 {
                     callOrder.Add((prompt, useResume));
                     return Task.FromResult(0);
@@ -749,8 +749,8 @@ public class AgentWorkerServiceTests : IDisposable
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Func<string, Task>?>(),
                 It.IsAny<string?>()))
-            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (prompt, _, useResume, _, _, _) =>
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (prompt, _, useResume, _, _, _, _) =>
                 {
                     callOrder.Add((prompt, useResume));
                     return Task.FromResult(0);

@@ -95,7 +95,8 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                     WorkspacePath = request.Run.WorkspacePath!,
                     Timeout = request.Config.AgentTimeout,
                     UseResume = resumeSessionId is null,
-                    ResumeSessionId = resumeSessionId
+                    ResumeSessionId = resumeSessionId,
+                    AdditionalEnv = request.AdditionalEnv
                 },
                 request.Run, request.Config, request.Description, callbacks.NotifyChange, request.Logger, ct,
                 line => callbacks.EmitOutputLine(line));
@@ -153,7 +154,8 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                 Prompt = request.Prompt,
                 WorkspacePath = request.Run.WorkspacePath!,
                 Timeout = request.Config.AgentTimeout,
-                UseResume = false
+                UseResume = false,
+                AdditionalEnv = request.AdditionalEnv
             },
             request.Run, request.Config, request.Description, request.OnChange, request.Logger, ct,
             request.OnOutputLine);

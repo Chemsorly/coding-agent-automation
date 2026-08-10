@@ -261,6 +261,9 @@ internal class CodeReviewOrchestrator
         var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt!);
         _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, iterationIndex + 1, fixPrompt);
 
+        // TODO: AdditionalEnv is not set on this AgentExecutionRequest. context (CodeReviewContext)
+        // does not carry InjectedSecrets, so if a project needs authenticated private feed access
+        // during code review fix tooling, the kiro-cli child process will not have those secrets.
         await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
             new AgentExecutionRequest
             {

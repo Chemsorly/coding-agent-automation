@@ -17,4 +17,10 @@ internal sealed record AgentExecutionRequest
     public Action? OnChange { get; init; }
     public Action<string>? OnOutputLine { get; init; }
     public string? Phase { get; init; }
+
+    /// <summary>
+    /// Per-process environment variables forwarded from <see cref="AgentPhaseContext.InjectedSecrets"/>.
+    /// Passed as <see cref="AgentRequest.AdditionalEnv"/> so secrets are scoped to the child process.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? AdditionalEnv { get; init; }
 }

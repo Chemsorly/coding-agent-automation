@@ -104,7 +104,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     {
     }
 
-    public async Task<int> ExecutePromptAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, Func<string, Task>? onOutputLine = null, string? resumeSessionId = null)
+    public async Task<int> ExecutePromptAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, Func<string, Task>? onOutputLine = null, string? resumeSessionId = null, IReadOnlyDictionary<string, string>? additionalEnv = null)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(workspaceDirectory);
@@ -151,7 +151,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
                     }, cancellationToken);
                 }
 
-                var exitCode = await processWrapper.StartAsync(prompt, workspaceDirectory, useResume, cancellationToken, resumeSessionId);
+                var exitCode = await processWrapper.StartAsync(prompt, workspaceDirectory, useResume, cancellationToken, resumeSessionId, additionalEnv);
 
                 // Signal no more writes and wait for drain to complete
                 channel?.Writer.TryComplete();

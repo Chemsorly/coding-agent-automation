@@ -158,9 +158,16 @@ public sealed class PipelineStepContext
     public IReadOnlyList<QualityGateConfiguration>? PreResolvedQualityGateConfigs { get; set; }
 
     /// <summary>
-    /// Keys of environment variables injected by <see cref="RunEnvironmentSetupStep"/> as process-wide
-    /// secrets. Tracked so that the executor's finally block can unset them after the run completes.
+    /// Keys of environment variables injected by <see cref="RunEnvironmentSetupStep"/>.
+    /// Used for output masking — the executor reads these keys to identify which values to redact
+    /// from pipeline output. Secrets are scoped to child processes via <see cref="InjectedSecrets"/>
+    /// (not process-wide); the executor's finally block does NOT unset environment variables for these keys.
     /// </summary>
+    // TODO: The XML doc previously stated "process-wide secrets. Tracked so that the executor's
+    // finally block can unset them after the run completes." — both statements are now false after
+    // the per-process scoping change. Secrets are no longer process-wide and PipelineCleanup no
+    // longer unsets them. A future reader following the old comment may re-introduce process-wide
+    // injection believing it is the established pattern.
     public List<string>? InjectedSecretKeys { get; set; }
 
     /// <summary>
@@ -168,6 +175,11 @@ public sealed class PipelineStepContext
     /// Used by the executor to mask secret values in ALL pipeline output (not just the setup step).
     /// Values shorter than 4 characters are not masked to avoid excessive false-positive redaction.
     /// </summary>
+    // TODO: This property is typed as mutable Dictionary<string, string>? while AgentPhaseContext.InjectedSecrets
+    // is IReadOnlyDictionary<string, string>?. The reference is copied without defensive cloning in
+    // ToAgentPhaseContext(), so any pipeline step that mutates the dictionary after RunEnvironmentSetupStep
+    // populates it would corrupt secrets for all subsequent agent calls. Consider changing this to
+    // IReadOnlyDictionary<string, string>? once RunEnvironmentSetupStep is the only writer.
     public Dictionary<string, string>? InjectedSecrets { get; set; }
 
     // Mutable state set by earlier steps, read by later steps
@@ -237,7 +249,8 @@ public sealed class PipelineStepContext
             OrchestratorCts = Cts,
             Issue = Issue,
             ParsedIssue = ParsedIssue,
-            DownloadedImages = DownloadedImages
+            DownloadedImages = DownloadedImages,
+            InjectedSecrets = InjectedSecrets
         };
     }
 

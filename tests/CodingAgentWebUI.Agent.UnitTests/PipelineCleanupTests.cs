@@ -81,12 +81,13 @@ public class PipelineCleanupTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task RunAsync_ClearsInjectedSecretKeys()
+    public async Task RunAsync_DoesNotClearInjectedSecretKeys_AndPreservesContextData()
     {
         var run = CreateRun();
         var reporter = CreateReporter(run);
         var uniqueKey = $"TEST_SECRET_{Guid.NewGuid():N}";
 
+        // Set an env var manually to simulate some other injector
         Environment.SetEnvironmentVariable(uniqueKey, "sensitive-value");
 
         var stepContext = new PipelineStepContext
@@ -113,11 +114,18 @@ public class PipelineCleanupTests : IAsyncDisposable
         {
             await PipelineCleanup.RunAsync(null, stepContext, run, reporter, _mockLogger.Object);
 
-            Environment.GetEnvironmentVariable(uniqueKey).Should().BeNull();
+            // PipelineCleanup no longer clears env vars — secrets are scoped to child processes
+            // via ProcessStartInfo.Environment. The env var must still be set.
+            Environment.GetEnvironmentVariable(uniqueKey).Should().Be("sensitive-value",
+                "PipelineCleanup must NOT clear environment variables — secret scoping is now per-process");
+
+            // InjectedSecretKeys must still be populated on the context for output masking
+            stepContext.InjectedSecretKeys.Should().NotBeEmpty(
+                "InjectedSecretKeys must remain populated after cleanup for output masking");
         }
         finally
         {
-            // Ensure cleanup even if test fails
+            // Manual cleanup so we don't leak the env var into other tests
             Environment.SetEnvironmentVariable(uniqueKey, null);
         }
     }

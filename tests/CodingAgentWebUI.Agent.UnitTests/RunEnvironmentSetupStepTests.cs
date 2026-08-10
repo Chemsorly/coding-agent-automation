@@ -191,16 +191,22 @@ public class RunEnvironmentSetupStepTests : IDisposable
         contents.IndexOf("first").Should().BeLessThan(contents.IndexOf("second"));
     }
 
-    // ── Secrets are injected as environment variables ─────────────────────
+    // ── Secrets are injected into setup step process environment ─────────────
 
+    /// <summary>
+    /// Verifies that secrets are available to setup step child processes via
+    /// <see cref="SetupCommandRunner.RunAsync"/>'s per-process psi.Environment injection.
+    /// This path does NOT use process-wide <see cref="Environment.SetEnvironmentVariable"/> —
+    /// the test validates that the correct per-process injection approach works.
+    /// </summary>
     [Fact]
     [Trait("Platform", "Linux")]
-    public async Task ExecuteAsync_SecretsInjectedAsEnvironmentVariables()
+    public async Task ExecuteAsync_SecretsInjectedIntoSetupStepProcessEnvironment()
     {
         if (!OperatingSystem.IsLinux())
             return;
 
-        // Arrange — use printenv to verify secrets are available
+        // Arrange — use printenv to verify secrets are available in setup step child process
         var outputFile = Path.Combine(_tempDir, "env-output.txt");
         var job = CreateJobWithRepoConfig(
             secrets: new Dictionary<string, string>
@@ -215,10 +221,49 @@ public class RunEnvironmentSetupStepTests : IDisposable
         // Act
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Assert
+        // Assert — secret is available to the setup step process via psi.Environment
         result.Should().Be(StepResult.Continue);
         var envValue = (await File.ReadAllTextAsync(outputFile)).Trim();
-        envValue.Should().Be("super-secret-value-1234");
+        envValue.Should().Be("super-secret-value-1234",
+            "SetupCommandRunner.RunAsync injects secrets via psi.Environment into setup step child processes");
+    }
+
+    /// <summary>
+    /// Regression guard: verifies that RunEnvironmentSetupStep does NOT mutate the parent
+    /// process environment. Secrets must only be passed via per-process psi.Environment to child
+    /// processes — not via Environment.SetEnvironmentVariable.
+    /// </summary>
+    [Fact]
+    [Trait("Platform", "Linux")]
+    public async Task ExecuteAsync_DoesNotMutateParentProcessEnvironment()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        var uniqueKey = $"ENV_SETUP_TEST_{Guid.NewGuid():N}";
+
+        // Pre-condition: key is not set
+        Environment.GetEnvironmentVariable(uniqueKey).Should().BeNull("pre-condition");
+
+        try
+        {
+            var job = CreateJobWithRepoConfig(
+                secrets: new Dictionary<string, string> { [uniqueKey] = "should-not-leak" },
+                setupSteps: [new SetupStep { Name = "Noop", Command = "true" }]);
+            var step = new RunEnvironmentSetupStep(job);
+            var context = CreateTestContext();
+
+            await step.ExecuteAsync(context, CancellationToken.None);
+
+            // The parent process must NOT have this env var set
+            Environment.GetEnvironmentVariable(uniqueKey).Should().BeNull(
+                "RunEnvironmentSetupStep must NOT call Environment.SetEnvironmentVariable — secrets are scoped to child processes via psi.Environment");
+        }
+        finally
+        {
+            // Best-effort cleanup in case the test fails due to a regression
+            Environment.SetEnvironmentVariable(uniqueKey, null);
+        }
     }
 
     // ── Log masking replaces secret values with *** in output ─────────────
