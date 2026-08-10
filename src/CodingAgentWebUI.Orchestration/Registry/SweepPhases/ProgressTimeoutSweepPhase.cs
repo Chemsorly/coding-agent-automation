@@ -63,25 +63,20 @@ internal sealed class ProgressTimeoutSweepPhase : ISweepPhase
             return false;
 
         await SweepProgressTimeoutsAsync(agent, now, config, ct);
-        // TODO: [WARNING] This phase always returns false even when it mutates agent state (fails a run,
-        // resets to Idle). The ISweepPhase contract: returning true means "consumed — skip remaining phases".
-        // Currently safe because ProgressTimeoutSweepPhase is intentionally the terminal phase in
-        // _connectedAgentPhases, but a maintainer appending a new phase after this one would not realize
-        // that an agent already reset to Idle by this phase will still be processed. Consider returning
-        // true when agent state is mutated, or enforce "terminal" position with a comment at the call-site.
         return false;
     }
 
     private async Task SweepProgressTimeoutsAsync(AgentEntry agent, DateTimeOffset now,
         PipelineConfiguration pipelineConfig, CancellationToken ct)
     {
-        // TODO: [WARNING] TOCTOU: agent.ActiveJobId is read here via GetRun(agent.ActiveJobId!) and again
-        // later in log messages / FailStuckProgressRunAsync. Another thread (e.g. ReportJobCompleted) could
-        // null out ActiveJobId between the null-guard in ExecuteAsync and this use. This is preserved
-        // pre-existing behaviour from the original code and not a regression introduced by the extraction,
-        // but the unsynchronized double-read is now more visible across method boundaries. Consider
-        // capturing agent.ActiveJobId into a local variable under lock before entering this method.
-        var run = _runService.GetRun(agent.ActiveJobId!);
+        // Capture ActiveJobId once into a local variable. agent.ActiveJobId is a mutable property
+        // without synchronization on reads — another thread (e.g. ReportJobCompleted) can null it
+        // out at any time. All subsequent uses of the job ID in this method and its callees use
+        // the captured local, eliminating the TOCTOU window.
+        var jobId = agent.ActiveJobId;
+        if (jobId is null) return; // defense-in-depth after ExecuteAsync guard
+
+        var run = _runService.GetRun(jobId);
         if (run is not null)
         {
             var referenceTime = GetProgressReferenceTime(run);
@@ -102,24 +97,24 @@ internal sealed class ProgressTimeoutSweepPhase : ISweepPhase
                 _logger.Warning(
                     "Agent {AgentId} stuck in Busy: job {JobId} has not progressed for {Elapsed:F0}s (timeout={Timeout}). " +
                     "Marking run as Failed and returning agent to Idle.",
-                    agent.AgentId, agent.ActiveJobId, elapsed.TotalSeconds, progressTimeout);
+                    agent.AgentId, jobId, elapsed.TotalSeconds, progressTimeout);
 
                 var failureReason = $"Agent busy without progress for {elapsed.TotalMinutes:F0} minutes (progress timeout)";
 
                 // TODO: Pass FailureReason.Timeout as the enum parameter to match
                 // ReconciliationService's timeout path which explicitly uses FailureReason.Timeout.
-                await FailStuckProgressRunAsync(agent, agent.ActiveJobId!, failureReason, ct);
+                await FailStuckProgressRunAsync(agent, jobId, failureReason, ct);
             }
         }
         else
         {
             // Run not found — check consolidation or BusySince grace period
-            if (await SweepStuckConsolidationRunsAsync(agent, now, pipelineConfig, ct))
+            if (await SweepStuckConsolidationRunsAsync(agent, jobId, now, pipelineConfig, ct))
             {
                 return;
             }
 
-            SweepBusySinceGracePeriod(agent, now);
+            SweepBusySinceGracePeriod(agent, jobId, now);
         }
     }
 
@@ -161,17 +156,17 @@ internal sealed class ProgressTimeoutSweepPhase : ISweepPhase
     /// so the standard progress timeout (Phase 1.6) doesn't apply.
     /// Returns true if the agent's ActiveJobId is a consolidation run (handled or not).
     /// </summary>
-    private async Task<bool> SweepStuckConsolidationRunsAsync(AgentEntry agent, DateTimeOffset now,
+    private async Task<bool> SweepStuckConsolidationRunsAsync(AgentEntry agent, string jobId, DateTimeOffset now,
         PipelineConfiguration pipelineConfig, CancellationToken ct)
     {
         // Check if this is a consolidation run — those are tracked separately
-        if (_consolidationService?.IsRunActive(agent.ActiveJobId!) != true)
+        if (_consolidationService?.IsRunActive(jobId) != true)
         {
             return false;
         }
 
         // Use the consolidation run's StartedAtUtc instead.
-        var consolidationStartedAt = _consolidationService.GetActiveRunStartedAt(agent.ActiveJobId!);
+        var consolidationStartedAt = _consolidationService.GetActiveRunStartedAt(jobId);
         if (consolidationStartedAt.HasValue)
         {
             var consolidationElapsed = now - consolidationStartedAt.Value;
@@ -180,11 +175,11 @@ internal sealed class ProgressTimeoutSweepPhase : ISweepPhase
             {
                 _logger.Warning(
                     "Agent {AgentId} consolidation run {RunId} stuck for {ElapsedMin:F0} minutes (progress timeout: {TimeoutMin:F0} min) — failing run",
-                    agent.AgentId, agent.ActiveJobId, consolidationElapsed.TotalMinutes, consolidationTimeout.TotalMinutes);
+                    agent.AgentId, jobId, consolidationElapsed.TotalMinutes, consolidationTimeout.TotalMinutes);
 
                 var failReason = $"Consolidation run exceeded progress timeout ({consolidationElapsed.TotalMinutes:F0} minutes > {consolidationTimeout.TotalMinutes:F0} minute limit)";
                 await _consolidationService.UpdateRunAsync(
-                    agent.ActiveJobId!, ConsolidationRunStatus.Failed, failReason, ct);
+                    jobId, ConsolidationRunStatus.Failed, failReason, ct);
 
                 lock (agent.SyncRoot)
                 {
@@ -204,7 +199,7 @@ internal sealed class ProgressTimeoutSweepPhase : ISweepPhase
     /// AssignJob/run registration — avoid resetting during this window (BUG-03).
     /// If past the grace period, resets the agent to Idle.
     /// </summary>
-    private void SweepBusySinceGracePeriod(AgentEntry agent, DateTimeOffset now)
+    private void SweepBusySinceGracePeriod(AgentEntry agent, string jobId, DateTimeOffset now)
     {
         DateTimeOffset? busySince;
         lock (agent.SyncRoot) { busySince = agent.BusySince; }
@@ -215,7 +210,7 @@ internal sealed class ProgressTimeoutSweepPhase : ISweepPhase
 
         _logger.Warning(
             "Agent {AgentId} is Busy with ActiveJobId {JobId} but run not found — resetting to Idle",
-            agent.AgentId, agent.ActiveJobId);
+            agent.AgentId, jobId);
         lock (agent.SyncRoot)
         {
             agent.ActiveJobId = null;
