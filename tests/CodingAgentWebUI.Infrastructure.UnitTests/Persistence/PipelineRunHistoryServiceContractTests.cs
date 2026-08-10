@@ -218,26 +218,31 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     // ── Pagination edge cases ─────────────────────────────────────────────
 
     [Fact]
-    public async Task GetRunHistoryPaged_ExtremelyLargePage_ThrowsOverflowException()
+    public async Task GetRunHistoryPaged_ExtremelyLargePage_ThrowsArgumentOutOfRangeException()
     {
         var service = CreateService();
 
-        // page=2_147_485 with pageSize=1000 causes (page-1)*pageSize to overflow int.MaxValue:
-        // (2_147_485 - 1) * 1000 = 2_147_484_000 > int.MaxValue (2_147_483_647)
-        // With unchecked arithmetic this wraps to a negative number and Skip() silently returns page 1.
-        // Both implementations should throw OverflowException instead.
-        // Note: the checked() expression throws before any EF or LINQ operation is invoked,
-        // so the InMemory EF limitation in PostgresPipelineRunHistoryServiceContractTests does not apply.
+        // page=2_147_485 with pageSize=1000 would cause (page-1)*pageSize to overflow int.MaxValue
+        // if unchecked: (2_147_485 - 1) * 1000 = 2_147_484_000 > int.MaxValue (2_147_483_647).
+        // The guard in GetRunHistoryAsync rejects such a page value before any arithmetic,
+        // throwing ArgumentOutOfRangeException.
         Func<Task> act = () => service.GetRunHistoryAsync(page: 2_147_485, pageSize: 1000);
 
-        await act.Should().ThrowAsync<OverflowException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
 
-    // TODO: Add a complementary "boundary does not throw" test for the near-overflow case:
-    // page=2_147_484 with pageSize=1000 gives (2_147_484-1)*1000 = 2_147_483_000, which is just
-    // under int.MaxValue and should succeed without throwing. Without this test the overflow threshold
-    // is not pinned, and an over-eager implementation that throws on any large page value would pass
-    // the test above while being incorrect.
+    [Fact]
+    public async Task GetRunHistoryPaged_BoundaryPage_DoesNotThrow()
+    {
+        var service = CreateService();
+
+        // page=2_147_484 with pageSize=1000 gives (2_147_484-1)*1000 = 2_147_483_000,
+        // which is just under int.MaxValue and should pass the guard without throwing.
+        Func<Task> act = () => service.GetRunHistoryAsync(page: 2_147_484, pageSize: 1000);
+
+        // Must not throw ArgumentOutOfRangeException for this near-boundary value.
+        await act.Should().NotThrowAsync<ArgumentOutOfRangeException>();
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────
 

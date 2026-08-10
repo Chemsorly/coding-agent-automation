@@ -201,10 +201,6 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         // InitiatedBy must default to "manual" (not "consolidation") so the row passes the
         // consolidation filter and is visible in user-facing history.
         restored.InitiatedBy.Should().Be("manual");
-        // TODO [WARNING]: This test only covers GetRunHistoryAsync() (unpaged). The paged overload
-        // (GetRunHistoryAsync(page, pageSize) → GetRunHistoryPagedInternalAsync) has its own batching
-        // loop with a separate .Where(...) filter. A test covering the paged path with a corrupt-JSON
-        // row would give stronger coverage of the GetRunHistoryPaged acceptance criterion.
     }
 
     [Fact]

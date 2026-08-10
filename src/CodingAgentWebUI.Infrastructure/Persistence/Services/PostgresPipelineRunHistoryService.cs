@@ -83,8 +83,10 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
-        // TODO: Add upper bound for 'page' parameter to prevent integer overflow in (page - 1) * pageSize.
-        // With page=2_147_485 and pageSize=1000, unchecked multiplication wraps negative.
+        // Guard against integer overflow in (page - 1) * pageSize.
+        // Maximum safe page is (int.MaxValue / pageSize) + 1: at that value,
+        // (page - 1) * pageSize = (int.MaxValue / pageSize) * pageSize <= int.MaxValue.
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(page, (int.MaxValue / pageSize) + 1);
 
         return await GetRunHistoryPagedInternalAsync(page, pageSize, ct).ConfigureAwait(false);
     }
@@ -185,11 +187,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         // entity; the fallback produces InitiatedBy="manual" for these, and null != "consolidation"
         // keeps them in history. The write guard in AddRunToHistoryAsync is the primary defense against
         // new ghost entries.
-        // TODO [WARNING]: The dual-discriminator comment overstates the protection for rows predating
-        // the IssueProviderConfigId column on PipelineRunEntity. For those rows, if SummaryJson is
-        // corrupt, neither discriminant can exclude a consolidation ghost entry. The write guard
-        // is the only defense for pre-migration rows. Consider adding a data migration that backfills
-        // IssueProviderConfigId from WorkItems if a comprehensive fix for legacy data is required.
+        // Note: for rows predating the IssueProviderConfigId column that have a corrupt SummaryJson,
+        // neither discriminant can exclude a consolidation ghost because both fields will be null/manual.
+        // The AddRunToHistoryAsync write guard is the only defense for such pre-migration rows.
         return entities
             .Select(DeserializeSummary)
             .Where(s => s is not null
@@ -276,12 +276,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             existing.ProjectId = entity.ProjectId;
             existing.ProjectName = entity.ProjectName;
             existing.RunType = entity.RunType;
-            // TODO: IssueProviderConfigId is not copied here. If a row is pre-created at dispatch
-            // time (without IssueProviderConfigId) and then upserted via this branch, the column
-            // remains null. Should SummaryJson later be corrupted, the fallback path reads
-            // IssueProviderConfigId=null and produces InitiatedBy="manual", so a consolidation
-            // ghost row written before the migration (or pre-created without IssueProviderConfigId)
-            // would not be filtered out. Fix by adding: existing.IssueProviderConfigId = entity.IssueProviderConfigId;
+            existing.IssueProviderConfigId = entity.IssueProviderConfigId;
             existing.SummaryJson = entity.SummaryJson;
         }
         else

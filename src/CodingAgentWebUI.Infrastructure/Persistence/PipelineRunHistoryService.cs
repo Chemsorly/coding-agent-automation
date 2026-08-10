@@ -44,6 +44,10 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
+        // Guard against integer overflow in (page - 1) * pageSize.
+        // Maximum safe page is (int.MaxValue / pageSize) + 1: at that value,
+        // (page - 1) * pageSize = (int.MaxValue / pageSize) * pageSize <= int.MaxValue.
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(page, (int.MaxValue / pageSize) + 1);
 
         lock (_lock)
         {
