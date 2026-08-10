@@ -111,7 +111,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         // Start the app
         var client = _factory.CreateClient();
 
-        // Add an active run to OrchestratorRunService
+        // Capture runService reference before shutdown disposes the container
         var runService = _factory.Services.GetRequiredService<OrchestratorRunService>();
         var run = new PipelineRun
         {
@@ -141,8 +141,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
         // Run must have been removed from the in-memory registry (dedup released)
-        _factory!.Services.GetRequiredService<OrchestratorRunService>()
-            .GetActiveRuns().Should().BeEmpty();
+        // runService was captured before shutdown to avoid ObjectDisposedException on the container
+        runService.GetActiveRuns().Should().BeEmpty();
     }
 
     [Fact(Timeout = 15_000)]
