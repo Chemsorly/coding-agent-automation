@@ -44,13 +44,13 @@ public sealed class ShutdownService : IHostedLifecycleService
     public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <summary>
-    /// Async shutdown logic with 15-second timeout. Cancels active pipeline and agent runs,
-    /// then proceeds with shutdown even if label swaps haven't completed.
+    /// Async shutdown logic with 15-second timeout. Releases active agent runs for handoff
+    /// to the successor pod, then proceeds with shutdown.
     /// Uses a linked CancellationToken so abandoned work is cancelled when the timeout fires.
     /// </summary>
     public async Task StoppingAsync(CancellationToken cancellationToken)
     {
-        _logger.Information("Graceful shutdown initiated — cancelling active runs (timeout: {Timeout}s)", _shutdownTimeout.TotalSeconds);
+        _logger.Information("Graceful shutdown initiated — releasing active agent runs for rolling-update handoff (timeout: {Timeout}s)", _shutdownTimeout.TotalSeconds);
 
         // Link a timeout-based CTS with the host cancellation token so that
         // ExecuteShutdownAsync is cancelled both on timeout AND host abort.
@@ -80,7 +80,7 @@ public sealed class ShutdownService : IHostedLifecycleService
     private async Task ExecuteShutdownAsync(CancellationToken ct)
     {
         // Signal shutdown FIRST — prevents drain service from dispatching new jobs
-        // that would immediately get cancelled by the label-swap pass below.
+        // before the in-memory run registry is cleared.
         _shutdownSignal.SignalShutdown();
         _logger.Information("Shutdown signal raised — new dispatches blocked");
 
@@ -102,19 +102,19 @@ public sealed class ShutdownService : IHostedLifecycleService
             }
         }
 
-        // Cancel active agent runs and perform label swaps
+        // Release active agent runs for handoff to the successor pod
         try
         {
-            await _orchestration.CancelActiveAgentRunsAsync().WaitAsync(ct);
-            _logger.Information("Agent run cancellation completed");
+            await _orchestration.ReleaseActiveAgentRunsAsync().WaitAsync(ct);
+            _logger.Information("Agent run handoff completed — runs released for successor pod");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            _logger.Warning("Agent run cancellation aborted — shutdown timeout reached");
+            _logger.Warning("Agent run handoff aborted — shutdown timeout reached");
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to cancel active agent runs — continuing shutdown");
+            _logger.Error(ex, "Failed to release active agent runs — continuing shutdown");
         }
     }
 }
