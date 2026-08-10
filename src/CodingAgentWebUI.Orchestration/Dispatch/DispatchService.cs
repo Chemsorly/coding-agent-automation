@@ -37,6 +37,7 @@ public sealed class DispatchService : BackgroundService
     private readonly IOrchestratorRunService? _runService;
     private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
+    private readonly DispatchStateBuilder _stateBuilder;
     private volatile bool _startupValidationRun;
 
     internal DispatchService(
@@ -64,6 +65,19 @@ public sealed class DispatchService : BackgroundService
         _options = DispatchServiceOptionsFactory.Create(configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
         _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
+        // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
+        // coreDeps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
+        // singleton is always passed, so this path is never taken at runtime. If _dbFactory or _lifecycle
+        // are null in a test scenario, the new DispatchStateBuilder(...) expression will compile fine
+        // but throw a NullReferenceException at the first BuildStateAsync call rather than at construction,
+        // making failures harder to diagnose. Consider removing the fallback and requiring StateBuilder
+        // explicitly. See DotNetSpecialist WARNING (Issue #1910).
+        _stateBuilder = coreDeps.StateBuilder ?? new DispatchStateBuilder(
+            _dbFactory,
+            _lifecycle,
+            _templateProvider,
+            new DispatchTemplateResolver(_agentProfileStore, _templateProvider),
+            _options);
     }
 
     internal static JobTemplateStore LoadTemplateProvider(IConfiguration configuration)
@@ -170,38 +184,21 @@ public sealed class DispatchService : BackgroundService
     {
         await RunStartupValidationIfNeededAsync(ct);
 
-        await using var db = await _dbFactory.CreateDbContextAsync(ct);
-
-        var pendingItems = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType != WorkItemTaskType.Consolidation)
-            .OrderBy(w => w.CreatedAt)
-            .Select(w => new PendingWorkItemProjection
-            {
-                Id = w.Id,
-                AgentSelector = w.AgentSelector,
-                CreatedAt = w.CreatedAt,
-                TimeoutSeconds = w.TimeoutSeconds,
-                ProjectId = w.ProjectId,
-                IssueIdentifier = w.IssueIdentifier,
-                IssueProviderConfigId = w.IssueProviderConfigId,
-                TaskType = w.TaskType
-            })
-            .ToListAsync(ct);
-
-        WorkDistributionTelemetry.RecordLastPollEpoch();
-
-        if (pendingItems.Count == 0)
-        {
-            WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+        var state = await _stateBuilder.BuildStateAsync(
+            w => w.TaskType != WorkItemTaskType.Consolidation,
+            recordTelemetry: true,
+            ct);
+        if (state is null)
             return;
-        }
 
-        var (concurrencyBySelector, availablePvcs) = await BuildDispatchStateAsync(db, ct);
-
-        foreach (var item in pendingItems)
+        await using (state.Db)
         {
-            if (!await ProcessDispatchCandidateAsync(db, item, concurrencyBySelector, availablePvcs, ct))
-                break;
+            foreach (var item in state.PendingItems)
+            {
+                if (!await ProcessDispatchCandidateAsync(state.Db, item,
+                        state.ConcurrencyBySelector, state.AvailablePvcs, ct))
+                    break;
+            }
         }
 
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
@@ -259,27 +256,6 @@ public sealed class DispatchService : BackgroundService
 
         await DispatchSingleItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
         return true;
-    }
-
-    /// <summary>
-    /// Queries the database to build concurrency state (active counts per selector group)
-    /// and determines available PVCs for kiro agents.
-    /// </summary>
-    private async Task<(Dictionary<string, int> ConcurrencyBySelector, List<string> AvailablePvcs)> BuildDispatchStateAsync(
-        PipelineDbContext db, CancellationToken ct)
-    {
-        var activeCounts = await db.WorkItems
-            .WhereActive()
-            .GroupBy(w => w.AgentSelector)
-            .Select(g => new { Selector = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-        var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
-
-        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
-        WorkDistributionTelemetry.UpdateCredentialPoolMetrics(pvcResult.AvailablePvcs.Count, pvcResult.ClaimedCount);
-        var availablePvcs = pvcResult.AvailablePvcs;
-
-        return (concurrencyBySelector, availablePvcs);
     }
 
     private async Task DispatchSingleItemAsync(
