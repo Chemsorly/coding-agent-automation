@@ -344,5 +344,69 @@ public class ProgressTimeoutSweepPhaseTests : IDisposable
         agent.ActiveJobId.Should().BeNull();
     }
 
+    // ── Tests: TOCTOU — local capture ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task Execute_ActiveJobIdNullifiedConcurrently_ConsolidationPath_UsesLocalCaptureNotLiveProperty()
+    {
+        // Regression test for TOCTOU race on the consolidation path.
+        // agent.ActiveJobId must be captured into a local variable before the first use.
+        // In the unfixed code, SweepStuckConsolidationRunsAsync re-reads agent.ActiveJobId!
+        // on every call (IsRunActive, GetActiveRunStartedAt, log, UpdateRunAsync). A concurrent
+        // ReportJobCompleted that nulls ActiveJobId between the ExecuteAsync null-guard and
+        // SweepStuckConsolidationRunsAsync's first re-read would produce NullReferenceException.
+        //
+        // This test simulates the race deterministically: the IsRunActive mock callback nulls
+        // out ActiveJobId when called, then asserts GetActiveRunStartedAt was still called with
+        // the original job ID — proving the captured local was used rather than the live property.
+        var now = DateTimeOffset.UtcNow;
+        var entry = RegisterBusyAgent("agent-1", "consol-1");
+        // No run in runService — takes the consolidation branch.
+
+        // IsRunActive: returns true AND nulls out ActiveJobId to simulate the race.
+        _mockConsolidationService
+            .Setup(c => c.IsRunActive((RunId)"consol-1"))
+            .Returns(() =>
+            {
+                // Simulate race: concurrent thread clears ActiveJobId right here.
+                lock (entry.SyncRoot) { entry.ActiveJobId = null; }
+                return true;
+            });
+
+        // GetActiveRunStartedAt: capture the RunId it actually receives.
+        RunId? capturedId = null;
+        _mockConsolidationService
+            .Setup(c => c.GetActiveRunStartedAt(It.IsAny<RunId>()))
+            .Returns((RunId runId) =>
+            {
+                capturedId = runId;
+                return now.AddMinutes(-45); // past timeout
+            });
+
+        // TODO: [WARNING] Also capture the RunId passed to UpdateRunAsync and assert it equals "consol-1".
+        // The current assertions only verify GetActiveRunStartedAt, which means a partial regression
+        // where UpdateRunAsync re-reads agent.ActiveJobId instead of using the captured local would not
+        // be caught. Adding a parallel capturedUpdateId capture + assertion closes this gap.
+        _mockConsolidationService
+            .Setup(c => c.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
+            .Returns(Task.CompletedTask);
+
+        // Act — must not throw NullReferenceException
+        await _phase.ExecuteAsync(entry, now, MakeConfig(TimeSpan.FromMinutes(30)), CancellationToken.None);
+
+        // Assert — GetActiveRunStartedAt received the original job ID, not null
+        capturedId.Should().NotBeNull("GetActiveRunStartedAt must have been called");
+        capturedId!.Value.Value.Should().Be("consol-1",
+            "the locally captured job ID must be used, not the live agent.ActiveJobId which was nulled mid-flight by IsRunActive");
+    }
+
+    // TODO: [WARNING] Add a TOCTOU regression test for the main run-found path (FailStuckProgressRunAsync).
+    // The test above only exercises the consolidation sub-path. If the `jobId` capture on the
+    // FailStuckProgressRunAsync call were reverted to agent.ActiveJobId!, no test would catch it.
+    // A companion test should: register a run in runService (so GetRun returns non-null), push the
+    // progress reference time past the timeout, simulate the race by nulling ActiveJobId inside the
+    // GetRun mock callback or immediately before FailStuckProgressRunAsync is called, and assert that
+    // FailStuckProgressRunAsync (or its inner calls) received the original "job-1" ID.
+
     public void Dispose() { }
 }
