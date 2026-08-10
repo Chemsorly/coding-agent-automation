@@ -59,11 +59,10 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
     public bool HasRegisteredAgents => _registry.GetAllAgents().Count > 0;
 
     /// <inheritdoc />
-    public bool IsIssueBeingProcessedOrQueued(string issueIdentifier, string issueProviderConfigId)
+    public bool IsIssueBeingProcessedOrQueued(string issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
-        return _dispatcher.IsIssueQueued(issueIdentifier, issueProviderConfigId)
+        return _dispatcher.IsIssueQueued(issueIdentifier, issueProviderConfigId.Value)
             || _runService.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId);
     }
 }

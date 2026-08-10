@@ -74,7 +74,7 @@
                                 }
                             </td>
                             <td>
-                                <button class="btn-cancel-small" @onclick="() => OnRemoveFromQueue.InvokeAsync((job.IssueIdentifier, job.IssueProviderId))">
+                                <button class="btn-cancel-small" @onclick="() => OnRemoveFromQueue.InvokeAsync((job.IssueIdentifier, job.IssueProviderId.Value))">
                                     Remove
                                 </button>
                             </td>

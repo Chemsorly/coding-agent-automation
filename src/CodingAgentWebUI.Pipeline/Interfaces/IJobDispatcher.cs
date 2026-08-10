@@ -31,8 +31,8 @@ public interface IJobDispatcher
     /// </returns>
     Task<bool> TryDispatchAsync(
         string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
         string? brainProviderId,
         string? pipelineProviderId,
         string initiatedBy,
@@ -67,8 +67,8 @@ public interface IJobDispatcher
         string epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
-        string issueProviderId,
-        string repoProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
         string? brainProviderId,
         string initiatedBy,
         CancellationToken ct,
@@ -95,5 +95,5 @@ public interface IJobDispatcher
     /// <summary>
     /// Whether the given issue is already being processed or queued.
     /// </summary>
-    bool IsIssueBeingProcessedOrQueued(string issueIdentifier, string issueProviderConfigId);
+    bool IsIssueBeingProcessedOrQueued(string issueIdentifier, ProviderConfigId issueProviderConfigId);
 }

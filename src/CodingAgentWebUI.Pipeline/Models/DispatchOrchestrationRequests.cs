@@ -12,10 +12,10 @@ public sealed record ImplementationDispatchOrchestrationRequest
     public required string IssueIdentifier { get; init; }
 
     /// <summary>Issue provider config ID.</summary>
-    public required string IssueProviderId { get; init; }
+    public required ProviderConfigId IssueProviderId { get; init; }
 
     /// <summary>Repository provider config ID.</summary>
-    public required string RepoProviderId { get; init; }
+    public required ProviderConfigId RepoProviderId { get; init; }
 
     /// <summary>Optional brain provider config ID.</summary>
     public string? BrainProviderId { get; init; }
@@ -52,10 +52,10 @@ public sealed record DecompositionDispatchOrchestrationRequest
     public required PipelineRunType PhaseType { get; init; }
 
     /// <summary>Issue provider config ID.</summary>
-    public required string IssueProviderId { get; init; }
+    public required ProviderConfigId IssueProviderId { get; init; }
 
     /// <summary>Repository provider config ID.</summary>
-    public required string RepoProviderId { get; init; }
+    public required ProviderConfigId RepoProviderId { get; init; }
 
     /// <summary>Optional brain provider config ID.</summary>
     public string? BrainProviderId { get; init; }

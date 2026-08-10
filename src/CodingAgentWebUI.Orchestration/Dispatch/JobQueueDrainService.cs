@@ -318,7 +318,7 @@ public sealed class JobQueueDrainService : BackgroundService
         // Fall back to resolving from config
         var pipelineConfig = await _configStore.LoadPipelineConfigAsync(ct);
         var repoConfig = await _configStore.GetProviderConfigByIdAsync(
-            job.RepoProviderId, Pipeline.Models.ProviderKind.Repository, ct);
+            job.RepoProviderId.Value, Pipeline.Models.ProviderKind.Repository, ct);
         return JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 

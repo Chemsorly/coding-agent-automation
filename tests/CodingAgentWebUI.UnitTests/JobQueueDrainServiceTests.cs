@@ -420,6 +420,12 @@ public class JobQueueDrainServiceTests
 
     #region Consolidation drain (Legacy mode via PendingJob.IsConsolidation)
 
+    // TODO: [WARNING] All DrainAsync_Consolidation* tests use RepoProviderId = "consolidation" (same as
+    // IssueProviderId) because ProviderConfigId rejects empty strings. This means no test exercises the
+    // runtime path where a consolidation PendingJob has a different or mismatched RepoProviderId. If the
+    // drain service logic branches on RepoProviderId for consolidation jobs (e.g., config lookup), those
+    // branches are untested. Consider adding a test variant where IssueProviderId != RepoProviderId.
+
     [Fact]
     public async Task DrainAsync_ConsolidationJob_DispatchesViaTryDispatchToAgentAsync()
     {
@@ -428,7 +434,7 @@ public class JobQueueDrainServiceTests
         {
             IssueIdentifier = "crun-1",
             IssueProviderId = "consolidation",
-            RepoProviderId = "",
+            RepoProviderId = "consolidation",
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
@@ -456,7 +462,7 @@ public class JobQueueDrainServiceTests
         {
             IssueIdentifier = "crun-fail",
             IssueProviderId = "consolidation",
-            RepoProviderId = "",
+            RepoProviderId = "consolidation",
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
@@ -493,7 +499,7 @@ public class JobQueueDrainServiceTests
         {
             IssueIdentifier = "crun-cancelled",
             IssueProviderId = "consolidation",
-            RepoProviderId = "",
+            RepoProviderId = "consolidation",
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
@@ -520,7 +526,7 @@ public class JobQueueDrainServiceTests
         {
             IssueIdentifier = "crun-throw",
             IssueProviderId = "consolidation",
-            RepoProviderId = "",
+            RepoProviderId = "consolidation",
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
@@ -577,7 +583,7 @@ public class JobQueueDrainServiceTests
                 {
                     IssueIdentifier = "crun-exhaust",
                     IssueProviderId = "consolidation",
-                    RepoProviderId = "",
+                    RepoProviderId = "consolidation",
                     InitiatedBy = "consolidation",
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = Array.Empty<string>(),
@@ -642,7 +648,7 @@ public class JobQueueDrainServiceTests
                 {
                     IssueIdentifier = "crun-exhaust-ex",
                     IssueProviderId = "consolidation",
-                    RepoProviderId = "",
+                    RepoProviderId = "consolidation",
                     InitiatedBy = "consolidation",
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = Array.Empty<string>(),
@@ -687,7 +693,7 @@ public class JobQueueDrainServiceTests
         {
             IssueIdentifier = "crun-counter",
             IssueProviderId = "consolidation",
-            RepoProviderId = "",
+            RepoProviderId = "consolidation",
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
@@ -752,7 +758,7 @@ public class JobQueueDrainServiceTests
                 {
                     IssueIdentifier = "crun-no-store",
                     IssueProviderId = "consolidation",
-                    RepoProviderId = "",
+                    RepoProviderId = "consolidation",
                     InitiatedBy = "consolidation",
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = Array.Empty<string>(),

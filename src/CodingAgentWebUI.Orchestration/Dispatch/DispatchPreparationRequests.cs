@@ -21,8 +21,8 @@ internal sealed record DecompositionDispatchRequest(
     string EpicIdentifier,
     string EpicTitle,
     PipelineRunType PhaseType,
-    string IssueProviderId,
-    string RepoProviderId,
+    ProviderConfigId IssueProviderId,
+    ProviderConfigId RepoProviderId,
     string? BrainProviderId,
     string InitiatedBy,
     string? DecompositionSource);
@@ -37,8 +37,8 @@ internal sealed record ImplementationDispatchRequest(
     ILogger Logger,
     AgentEntry Agent,
     string IssueIdentifier,
-    string IssueProviderId,
-    string RepoProviderId,
+    ProviderConfigId IssueProviderId,
+    ProviderConfigId RepoProviderId,
     string? BrainProviderId,
     string? PipelineProviderId,
     string InitiatedBy,
@@ -51,8 +51,8 @@ internal sealed record ImplementationDispatchRequest(
 internal sealed record DispatchCoreRequest(
     IReadOnlyList<string> RequiredLabels,
     string IssueIdentifier,
-    string IssueProviderId,
-    string RepoProviderId,
+    ProviderConfigId IssueProviderId,
+    ProviderConfigId RepoProviderId,
     string AgentProviderId,
     string? BrainProviderId,
     string? PipelineProviderId,
@@ -68,7 +68,7 @@ public sealed record StalenessEvaluationRequest(
     IReadOnlyList<IssueComment> IssueComments,
     string IssueBody,
     string IssueIdentifier,
-    string IssueProviderConfigId,
+    ProviderConfigId IssueProviderConfigId,
     int CommitThreshold,
     Func<DateTimeOffset, CancellationToken, Task<int>>? GetCommitCount);
 
@@ -107,8 +107,8 @@ internal sealed record DispatchLifecycleContext(
 /// </summary>
 public sealed record OrchestratorPreparationRequest(
     string IssueIdentifier,
-    string IssueProviderId,
-    string RepoProviderId,
+    ProviderConfigId IssueProviderId,
+    ProviderConfigId RepoProviderId,
     string? BrainProviderId,
     string? PipelineProviderId,
     string InitiatedBy,
