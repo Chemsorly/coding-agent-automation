@@ -240,6 +240,51 @@ public class PipelineRunLifecycleServiceTests
         _mockHistory.Verify(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ── MarkAgentRunsCancelled Rolling-Update Safety ────────────────────
+    // Bug: on graceful shutdown during a rolling update, the new pod has already rehydrated
+    // active runs. If MarkAgentRunsCancelled writes Cancelled history entries, those runs
+    // appear as CANCELLED in the UI even though the agents will complete them on the new pod.
+    // Fix: MarkAgentRunsCancelled must NOT write history — it should only remove runs from
+    // in-memory tracking so dedup guards are released.
+
+    [Fact]
+    public async Task MarkAgentRunsCancelled_DoesNotWriteHistoryEntries()
+    {
+        // Arrange — two active agent runs
+        var runService = new Orchestration.OrchestratorRunService(_mockLogger.Object);
+        var run1 = CreateRun("run-1", "issue-1", PipelineStep.GeneratingCode);
+        var run2 = CreateRun("run-2", "issue-2", PipelineStep.CloningRepository);
+        runService.AddRun(run1);
+        runService.AddRun(run2);
+
+        var service = CreateService(runService);
+
+        // Act
+        service.MarkAgentRunsCancelled();
+
+        // Assert — no history written; new pod will write the real outcome
+        _mockHistory.Verify(
+            h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task MarkAgentRunsCancelled_DoesNotSetCancelledStep()
+    {
+        // Arrange
+        var runService = new Orchestration.OrchestratorRunService(_mockLogger.Object);
+        var run = CreateRun("run-1", "issue-1", PipelineStep.GeneratingCode);
+        runService.AddRun(run);
+
+        var service = CreateService(runService);
+
+        // Act
+        service.MarkAgentRunsCancelled();
+
+        // Assert — step is not mutated; leave the run state for the new pod to finalise
+        run.CurrentStep.Should().NotBe(PipelineStep.Cancelled);
+    }
+
     // ── MarkAgentRunsCancelled No-Op ────────────────────────────────────
 
     [Fact]
@@ -250,7 +295,7 @@ public class PipelineRunLifecycleServiceTests
             runService: null,
             _mockLogger.Object);
 
-        var result = await service.MarkAgentRunsCancelled();
+        var result = service.MarkAgentRunsCancelled();
 
         result.Should().BeEmpty();
         _mockHistory.Verify(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -269,7 +314,7 @@ public class PipelineRunLifecycleServiceTests
 
         var service = CreateService(runService);
 
-        await service.MarkAgentRunsCancelled();
+        service.MarkAgentRunsCancelled();
 
         runService.GetActiveRuns().Should().BeEmpty();
         runService.ActiveRunCount.Should().Be(0);
@@ -286,7 +331,7 @@ public class PipelineRunLifecycleServiceTests
 
         var service = CreateService(runService);
 
-        var cancelledIssues = await service.MarkAgentRunsCancelled();
+        var cancelledIssues = service.MarkAgentRunsCancelled();
 
         cancelledIssues.Should().Contain(("issue-1", "ip-1"));
         cancelledIssues.Should().Contain(("issue-2", "ip-1"));

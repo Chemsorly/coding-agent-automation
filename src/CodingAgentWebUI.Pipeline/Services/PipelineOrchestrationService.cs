@@ -73,54 +73,33 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     }
 
     /// <summary>
-    /// Best-effort label swap to <see cref="AgentLabels.Cancelled"/> for all agent-dispatched active runs.
-    /// Called during graceful shutdown to mark interrupted runs.
-    /// Delegates state changes to lifecycle service, retains label swap logic.
+    /// Releases all agent-dispatched active runs from in-memory tracking during graceful shutdown.
+    /// Does NOT send CancelJob to agents and does NOT write Cancelled history entries.
+    /// During a rolling update the new pod has already rehydrated these runs; agents will
+    /// reconnect to the new pod and complete normally. The dedup guard is released so the
+    /// new pod is not blocked on re-adopting the issues.
     /// </summary>
-    public async Task CancelActiveAgentRunsAsync()
+    public Task CancelActiveAgentRunsAsync()
     {
-        // Label swap logic (requires provider resolution)
         var allRuns = _lifecycle.GetAllActiveRuns()
             .Where(r => r.AgentId != null)
             .ToList();
 
-        if (allRuns.Count == 0) return;
+        if (allRuns.Count == 0) return Task.CompletedTask;
 
-        // Send CancelJob to each agent in parallel (2s per-agent timeout)
-        // Non-fatal — agent may already be disconnected
-        if (_cancellationFacade.AgentCancellation is not null)
-        {
-            try
-            {
-                var cancelTasks = allRuns.Select(run =>
-                    _cancellationFacade.AgentCancellation.SendCancelJobAsync(run.AgentId!, run.RunId, CancellationToken.None));
-                await Task.WhenAll(cancelTasks);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "One or more CancelJob sends failed during shutdown — proceeding with cleanup");
-            }
-        }
+        // Delegate state changes to lifecycle — releases in-memory tracking, no history written
+        var releasedIssues = _lifecycle.MarkAgentRunsCancelled();
 
-        foreach (var run in allRuns)
-        {
-            // TODO: Behavioral change — original code called SwapLabelAsync directly (exceptions would abort loop).
-            // TrySwapLabelAsync swallows non-cancellation exceptions, so all runs are now attempted regardless of
-            // individual failures. More resilient but changes exception propagation behavior.
-            await _labelSwapper.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "PipelineOrchestrationService.CancelActiveAgentRunsAsync", CancellationToken.None);
-        }
-
-        // Delegate state changes to lifecycle — returns cancelled issue identifiers
-        var cancelledIssues = await _lifecycle.MarkAgentRunsCancelled();
-
-        // Release dedup guards so issues become re-dispatchable after restart
+        // Release dedup guards so the new pod can adopt / re-dispatch the issues
         if (_cancellationFacade.DedupGuard is not null)
         {
-            foreach (var (issueId, providerId) in cancelledIssues)
+            foreach (var (issueId, providerId) in releasedIssues)
             {
                 _cancellationFacade.DedupGuard.MarkIssueComplete(issueId, providerId);
             }
         }
+
+        return Task.CompletedTask;
     }
 
     private bool _disposed;

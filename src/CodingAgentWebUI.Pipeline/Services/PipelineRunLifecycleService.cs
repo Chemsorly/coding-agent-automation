@@ -225,30 +225,33 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     }
 
     /// <summary>
-    /// Marks all agent-dispatched runs as cancelled. Sets CompletedAt, transitions to Cancelled, adds to history,
-    /// and removes runs from active tracking. Returns list of cancelled issue identifiers for caller to release dedup.
+    /// Releases all agent-dispatched runs from in-memory tracking during graceful shutdown.
+    /// Returns list of issue identifiers for the caller to release dedup guards.
     /// No-op if no run service is configured.
     /// </summary>
-    public async Task<IReadOnlyList<(IssueIdentifier IssueIdentifier, string IssueProviderConfigId)>> MarkAgentRunsCancelled()
+    /// <remarks>
+    /// Intentionally does NOT write Cancelled history entries and does NOT mutate run state.
+    /// During a rolling update the new pod has already rehydrated these runs before this pod
+    /// shuts down. Writing Cancelled history here would cause those runs to appear as CANCELLED
+    /// in the UI even though the agents will complete them successfully on the new pod.
+    /// The new pod's <see cref="RunLifecycleManager.CompleteRunAsync"/> writes the real outcome.
+    /// </remarks>
+    public IReadOnlyList<(IssueIdentifier IssueIdentifier, string IssueProviderConfigId)> MarkAgentRunsCancelled()
     {
         if (_runService is null) return [];
 
         var activeRuns = _runService.GetActiveRuns();
         if (activeRuns.Count == 0) return [];
 
-        var cancelledIssues = new List<(IssueIdentifier IssueIdentifier, string IssueProviderConfigId)>();
+        var releasedIssues = new List<(IssueIdentifier IssueIdentifier, string IssueProviderConfigId)>();
         foreach (var run in activeRuns)
         {
-            run.MarkCompleted();
-            run.CurrentStep = PipelineStep.Cancelled;
-            // Fire-and-forget: called from shutdown path with no ambient token; history must always be saved
-            await AddRunToHistoryAsync(run, CancellationToken.None).ConfigureAwait(false);
             _runService.RemoveRun(run.RunId);
-            cancelledIssues.Add((run.IssueIdentifier, run.IssueProviderConfigId));
+            releasedIssues.Add((run.IssueIdentifier, run.IssueProviderConfigId));
         }
 
         NotifyChange();
-        return cancelledIssues;
+        return releasedIssues;
     }
 
     // ── Dispatched Run Registration ─────────────────────────────────────

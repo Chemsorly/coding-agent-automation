@@ -320,7 +320,9 @@ public class PipelineRunLifecyclePropertyTests
     /// <summary>
     /// Property 10: MarkAgentRunsCancelled Postconditions
     /// For any set of active agent-dispatched runs, after MarkAgentRunsCancelled:
-    /// every run has CompletedAt set, CurrentStep is Cancelled, added to history.
+    /// every run is removed from tracking and its issue identifier is returned for dedup release.
+    /// Run state (CurrentStep, CompletedAt) is intentionally NOT mutated — the new pod owns
+    /// the run and will write the real outcome.
     /// **Validates: Requirements 4.4**
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
@@ -344,15 +346,19 @@ public class PipelineRunLifecyclePropertyTests
 
         var service = CreateService(historyMock: historyMock, runServiceMock: runServiceMock);
 
-        var cancelledIssues = service.MarkAgentRunsCancelled().GetAwaiter().GetResult();
+        var releasedIssues = service.MarkAgentRunsCancelled();
 
-        var allCompleted = agentRuns.All(r => r.CompletedAt != null);
-        var allCancelled = agentRuns.All(r => r.CurrentStep == PipelineStep.Cancelled);
-        var allInHistory = agentRuns.All(r => addedRuns.Contains(r));
+        // Runs removed from in-memory tracking so new pod is authoritative
         var allRemoved = agentRuns.All(r => removedRunIds.Contains(r.RunId));
-        var returnedIssues = cancelledIssues.SequenceEqual(agentRuns.Select(r => (r.IssueIdentifier, r.IssueProviderConfigId)));
+        // Issue identifiers returned for caller to release dedup guards
+        var returnedIssues = releasedIssues.SequenceEqual(agentRuns.Select(r => (r.IssueIdentifier, r.IssueProviderConfigId)));
+        // State NOT mutated — new pod writes the real outcome
+        var noneCompleted = agentRuns.All(r => r.CompletedAt == null);
+        var noneStepMutated = agentRuns.All(r => r.CurrentStep == PipelineStep.GeneratingCode);
+        // No history written — new pod writes Succeeded/Failed when agent completes
+        var noHistoryWritten = addedRuns.Count == 0;
 
-        return allCompleted && allCancelled && allInHistory && allRemoved && returnedIssues;
+        return allRemoved && returnedIssues && noneCompleted && noneStepMutated && noHistoryWritten;
     }
 
     // ── Property 11: RegisterDispatchedRun Success ──────────────────────
