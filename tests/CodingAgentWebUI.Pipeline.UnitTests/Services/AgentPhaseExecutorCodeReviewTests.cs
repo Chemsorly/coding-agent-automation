@@ -250,6 +250,104 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         _run.CodeReviewIterationsCompleted.Should().Be(1);
     }
 
+    #region ExecuteFollowUpAsync tests
+
+    [Fact]
+    public async Task ExecuteFollowUpAsync_EmptyFollowUpPrompt_ReturnsEmptyString()
+    {
+        var context = BuildContext();
+        var reviewer = new ReviewerConfiguration { DisplayName = "Correctness", Agents = Array.Empty<ReviewAgent>() };
+
+        var result = await _executor.ExecuteFollowUpAsync(context, reviewer, string.Empty, CancellationToken.None);
+
+        result.Should().BeEmpty("empty follow-up prompt short-circuits before calling the agent");
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteFollowUpAsync_WithPrompt_CallsAgentAndReturnsOutputLines()
+    {
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = new[] { "Line1", "Line2" } });
+
+        var context = BuildContext();
+        var reviewer = new ReviewerConfiguration { DisplayName = "Security", Agents = Array.Empty<ReviewAgent>() };
+
+        var result = await _executor.ExecuteFollowUpAsync(context, reviewer, "Please fix security issue X.", CancellationToken.None);
+
+        result.Should().Contain("Line1");
+        result.Should().Contain("Line2");
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteFollowUpAsync_AgentReturnsEmptyOutputLines_ReturnsEmptyString()
+    {
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var context = BuildContext();
+        var reviewer = new ReviewerConfiguration { DisplayName = "Correctness", Agents = Array.Empty<ReviewAgent>() };
+
+        var result = await _executor.ExecuteFollowUpAsync(context, reviewer, "Follow-up prompt", CancellationToken.None);
+
+        result.Should().BeEmpty("agent returning no output lines yields empty response text");
+    }
+
+    [Fact]
+    public async Task ExecuteFollowUpAsync_AgentThrows_ReturnsEmptyStringGracefully()
+    {
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("agent failed"));
+
+        var context = BuildContext();
+        var reviewer = new ReviewerConfiguration { DisplayName = "Correctness", Agents = Array.Empty<ReviewAgent>() };
+
+        var result = await _executor.ExecuteFollowUpAsync(context, reviewer, "Follow-up prompt", CancellationToken.None);
+
+        result.Should().BeEmpty("exceptions from the agent are caught and swallowed, returning empty string");
+    }
+
+    [Fact]
+    public async Task ExecuteFollowUpAsync_Cancelled_PropagatesCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new OperationCanceledException(cts.Token));
+
+        var context = BuildContext();
+        var reviewer = new ReviewerConfiguration { DisplayName = "Correctness", Agents = Array.Empty<ReviewAgent>() };
+
+        await _executor.Invoking(e => e.ExecuteFollowUpAsync(context, reviewer, "Prompt", cts.Token))
+            .Should().ThrowAsync<OperationCanceledException>("cancellation must propagate, not be swallowed");
+    }
+
+    [Fact]
+    public async Task ExecuteFollowUpAsync_NullContext_ReturnsEmptyStringGracefully()
+    {
+        // ArgumentNullException from ThrowIfNull is caught by the outer catch, returning empty
+        var reviewer = new ReviewerConfiguration { DisplayName = "Correctness", Agents = Array.Empty<ReviewAgent>() };
+
+        var result = await _executor.ExecuteFollowUpAsync(null!, reviewer, "Prompt", CancellationToken.None);
+
+        result.Should().BeEmpty("ArgumentNullException for null context is caught internally and returns empty string");
+    }
+
+    [Fact]
+    public async Task ExecuteFollowUpAsync_NullReviewerConfig_ReturnsEmptyStringGracefully()
+    {
+        // ArgumentNullException from ThrowIfNull is caught by the outer catch, returning empty
+        var context = BuildContext();
+
+        var result = await _executor.ExecuteFollowUpAsync(context, null!, "Prompt", CancellationToken.None);
+
+        result.Should().BeEmpty("ArgumentNullException for null reviewerConfig is caught internally and returns empty string");
+    }
+
+    #endregion
+
     private AgentPhaseContext BuildContext(PipelineConfiguration? config = null)
     {
         return new AgentPhaseContext

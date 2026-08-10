@@ -62,6 +62,7 @@ public class PipelineModelCoverageTests
     {
         var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws" };
         request.AdditionalEnv.Should().BeNull();
+        request.Timeout.Should().Be(PipelineConstants.DefaultAgentTimeout, "Timeout initializes to the default pipeline timeout");
     }
 
     [Fact]
