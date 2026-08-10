@@ -74,6 +74,11 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DispatchRevertHandler>>()));
 
+        // DispatchAttemptService: shared transition-to-Dispatched + revert-on-failure lifecycle (#1914)
+        services.AddSingleton<DispatchAttemptService>(sp => new DispatchAttemptService(
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetRequiredService<DispatchRevertHandler>()));
+
         // PendingWorkItemDrainService: drains Pending WorkItems to idle agents
         services.AddSingleton<PendingWorkItemDrainService>(sp => new PendingWorkItemDrainService(
             new DrainServiceDependencies(
@@ -85,6 +90,7 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>()),
             sp.GetRequiredService<LabelSwapService>(),
             sp.GetRequiredService<DispatchRevertHandler>(),
+            sp.GetRequiredService<DispatchAttemptService>(),
             sp.GetService<IProjectStore>(),
             sp.GetRequiredService<IConsolidationDispatchService>(),
             sp.GetRequiredService<IConsolidationRunStore>()));

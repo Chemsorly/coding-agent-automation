@@ -234,7 +234,14 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
                 _mockPendingWorkQuery.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance),
             new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
-            new DispatchRevertHandler(_dbFactory, _mockAgentResolver.Object, _mockRunService.Object, _transitionService, NullLogger<DispatchRevertHandler>.Instance));
+            new DispatchRevertHandler(_dbFactory, _mockAgentResolver.Object, _mockRunService.Object, _transitionService, NullLogger<DispatchRevertHandler>.Instance),
+            // TODO: The DispatchRevertHandler inside DispatchAttemptService is a separate instance from the one
+            // passed as the third constructor argument. Both use the same backing _dbFactory so they are
+            // functionally equivalent for stateless DB operations, but if DispatchRevertHandler ever gains
+            // mutable in-memory state the two instances will diverge silently. Consider sharing a single
+            // instance via a local variable. The same pattern is repeated in other PendingWorkItemDrainService
+            // test fixtures.
+            new DispatchAttemptService(_transitionService, new DispatchRevertHandler(_dbFactory, _mockAgentResolver.Object, _mockRunService.Object, _transitionService, NullLogger<DispatchRevertHandler>.Instance)));
     }
 
     private static async Task InvokeDrainPendingItems(PendingWorkItemDrainService service)
