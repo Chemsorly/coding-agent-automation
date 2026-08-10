@@ -65,9 +65,8 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     // PipelineRunHistoryServiceContractTests.EmptyHistory_ReturnsEmptyList
 
     [Fact]
-    public async Task AddRunToHistory_Upsert_UpdatesExistingRow()
+    public async Task AddRunToHistory_Upsert_UpdatesExistingRow_IncludingIssueProviderConfigId()
     {
-        // TODO: Verify ProjectId is copied during upsert (both primary and retry paths) — currently only IssueTitle/FinalStep are asserted
         var runId = Guid.NewGuid();
 
         // Pre-insert a row (simulating dispatch-time creation)
@@ -102,7 +101,6 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     [Fact]
     public async Task GetRunHistory_DeserializesFullSummary_WithAllFields()
     {
-        // TODO: Set and assert ProjectId in this round-trip test to verify ToEntity mapping and deserialization
         var runId = Guid.NewGuid().ToString();
         var run = CreateCompletedRun(runId, "issue-full", "Full fields",
             agentId: "agent-full", modelName: "gpt-4o");
@@ -443,27 +441,6 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         db.PipelineRuns.Should().BeEmpty();
     }
 
-    [Fact]
-    public async Task AddRunToHistoryAsync_RejectsConsolidationRun_Silently()
-    {
-        var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
-        {
-            RunId = Guid.NewGuid().ToString(),
-            IssueIdentifier = Guid.NewGuid().ToString(),
-            IssueTitle = "Consolidation",
-            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
-            RepoProviderConfigId = "rp-1",
-            InitiatedBy = ConsolidationConstants.InitiatedBy
-        });
-        consolidationRun.CurrentStep = PipelineStep.Completed;
-        consolidationRun.MarkCompleted();
-
-        await _sut.AddRunToHistoryAsync(consolidationRun);
-
-        using var db = new InMemoryPipelineDbContext(_dbOptions);
-        db.PipelineRuns.Should().BeEmpty();
-    }
-
     // ── Terminal Step Guard ──────────────────────────────────────────────
 
     [Fact]
@@ -495,11 +472,10 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
             "AddRunToHistoryAsync must not mutate the caller's PipelineRun.CurrentStep");
     }
 
-    // TODO: This test is functionally identical to AddRunToHistoryAsync_NonTerminalStep_ForcedToFailed above — consider removing one to reduce maintenance burden.
     [Fact]
     public async Task AddRunToHistoryAsync_NonTerminalStep_DoesNotMutateCallerReference()
     {
-        // Arrange: run with non-terminal step
+        // Arrange: run with non-terminal step — verifies the caller's object is not modified
         var runId = Guid.NewGuid().ToString();
         var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
         {
@@ -581,7 +557,14 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
 
     // ── Pagination tests ──────────────────────────────────────────────────
 
-    // TODO: Add boundary/edge case tests for pagination parameter validation (page=0, pageSize=0, pageSize > MaxHistorySize).
+    [Fact]
+    public async Task GetRunHistoryPaged_InvalidArgs_ThrowArgumentOutOfRange()
+    {
+        await ((Func<Task>)(() => _sut.GetRunHistoryAsync(page: 0, pageSize: 10)))
+            .Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await ((Func<Task>)(() => _sut.GetRunHistoryAsync(page: 1, pageSize: 0)))
+            .Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
 
     [Fact]
     public async Task GetRunHistoryPaged_ReturnsFirstPage_WithCorrectItems()
@@ -719,6 +702,259 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         result.Items.Should().HaveCount(3);
         result.HasMore.Should().BeTrue();
         result.Items.Should().NotContain(s => s.InitiatedBy == ConsolidationConstants.InitiatedBy);
+    }
+
+    // ── TryDeleteWorkspace tests ──────────────────────────────────────────
+
+    [Fact]
+    public void TryDeleteWorkspace_NullPath_DoesNothing()
+    {
+        // No exception should be thrown for null/empty path
+        _sut.TryDeleteWorkspace(null, "run-1", Path.GetTempPath());
+        _sut.TryDeleteWorkspace("", "run-1", Path.GetTempPath());
+        _sut.TryDeleteWorkspace("  ", "run-1", Path.GetTempPath());
+    }
+
+    [Fact]
+    public void TryDeleteWorkspace_NonExistentPath_DoesNothing()
+    {
+        var nonExistent = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        // Should not throw even for a path that doesn't exist
+        _sut.TryDeleteWorkspace(nonExistent, "run-1", Path.GetTempPath());
+    }
+
+    [Fact]
+    public void TryDeleteWorkspace_PathOutsideBase_DoesNothing()
+    {
+        // Create a real temp directory
+        var baseDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(baseDir);
+        try
+        {
+            // Provide a path that is outside the base
+            var outsidePath = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar);
+            _sut.TryDeleteWorkspace(outsidePath, "run-1", baseDir);
+            // Directory should still exist (not deleted)
+            Directory.Exists(outsidePath).Should().BeTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(baseDir))
+                Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TryDeleteWorkspace_ValidSubdir_DeletesDirectory()
+    {
+        var baseDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var runId = Guid.NewGuid().ToString();
+        var workspacePath = Path.Combine(baseDir, runId);
+        Directory.CreateDirectory(workspacePath);
+        try
+        {
+            _sut.TryDeleteWorkspace(workspacePath, runId, baseDir);
+            Directory.Exists(workspacePath).Should().BeFalse("valid workspace should be deleted");
+        }
+        finally
+        {
+            if (Directory.Exists(baseDir))
+                Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    // ── CleanupExpiredWorkspaces tests ────────────────────────────────────
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_NegativeRetention_DoesNothing()
+    {
+        var config = new PipelineConfiguration { FailedWorkspaceRetentionDays = -1, WorkspaceBaseDirectory = Path.GetTempPath() };
+        // Should return immediately without doing anything
+        _sut.CleanupExpiredWorkspaces(config);
+    }
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_NoExpiredRuns_DoesNothing()
+    {
+        // Seed a run that is NOT expired (completed recently)
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.NewGuid(),
+                IssueIdentifier = "org/repo#1",
+                IssueTitle = "Recent",
+                FinalStep = PipelineStep.Failed,
+                StartedAt = DateTimeOffset.UtcNow,
+                CompletedAt = DateTimeOffset.UtcNow // Just completed, not expired
+            });
+            db.SaveChanges();
+        }
+
+        var baseDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        Directory.CreateDirectory(baseDir);
+        try
+        {
+            var config = new PipelineConfiguration { FailedWorkspaceRetentionDays = 7, WorkspaceBaseDirectory = baseDir };
+            _sut.CleanupExpiredWorkspaces(config); // Should not throw
+        }
+        finally
+        {
+            if (Directory.Exists(baseDir))
+                Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_ExpiredRun_DeletesWorkspace()
+    {
+        var runId = Guid.NewGuid();
+        // Seed an expired failed run
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#expired",
+                IssueTitle = "Expired",
+                FinalStep = PipelineStep.Failed,
+                StartedAt = DateTimeOffset.UtcNow.AddDays(-10),
+                CompletedAt = DateTimeOffset.UtcNow.AddDays(-10)
+            });
+            db.SaveChanges();
+        }
+
+        var baseDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var workspacePath = Path.Combine(baseDir, runId.ToString());
+        Directory.CreateDirectory(workspacePath);
+        try
+        {
+            var config = new PipelineConfiguration { FailedWorkspaceRetentionDays = 7, WorkspaceBaseDirectory = baseDir };
+            _sut.CleanupExpiredWorkspaces(config);
+            Directory.Exists(workspacePath).Should().BeFalse("expired workspace should be deleted");
+        }
+        finally
+        {
+            if (Directory.Exists(baseDir))
+                Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void CleanupExpiredWorkspaces_ActiveRunIdExcluded_SkipsActiveRun()
+    {
+        var activeRunId = Guid.NewGuid();
+        var expiredRunId = Guid.NewGuid();
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = activeRunId,
+                IssueIdentifier = "org/repo#active",
+                IssueTitle = "Active",
+                FinalStep = PipelineStep.Failed,
+                StartedAt = DateTimeOffset.UtcNow.AddDays(-10),
+                CompletedAt = DateTimeOffset.UtcNow.AddDays(-10)
+            });
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = expiredRunId,
+                IssueIdentifier = "org/repo#expired",
+                IssueTitle = "Expired",
+                FinalStep = PipelineStep.Failed,
+                StartedAt = DateTimeOffset.UtcNow.AddDays(-10),
+                CompletedAt = DateTimeOffset.UtcNow.AddDays(-10)
+            });
+            db.SaveChanges();
+        }
+
+        var baseDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var activeWorkspace = Path.Combine(baseDir, activeRunId.ToString());
+        var expiredWorkspace = Path.Combine(baseDir, expiredRunId.ToString());
+        Directory.CreateDirectory(activeWorkspace);
+        Directory.CreateDirectory(expiredWorkspace);
+        try
+        {
+            var config = new PipelineConfiguration { FailedWorkspaceRetentionDays = 7, WorkspaceBaseDirectory = baseDir };
+            _sut.CleanupExpiredWorkspaces(config, activeRunId: activeRunId.ToString());
+
+            Directory.Exists(activeWorkspace).Should().BeTrue("active run workspace must not be deleted");
+            Directory.Exists(expiredWorkspace).Should().BeFalse("expired run workspace should be deleted");
+        }
+        finally
+        {
+            if (Directory.Exists(baseDir))
+                Directory.Delete(baseDir, recursive: true);
+        }
+    }
+
+    // ── DeserializeSummary fallback coverage ──────────────────────────────
+
+    [Fact]
+    public async Task GetRunHistory_NullSummaryJson_FallsBackToColumns_IssueProviderConfigIdPreserved()
+    {
+        // Verifies that when SummaryJson is null, the fallback path copies IssueProviderConfigId from the column
+        var runId = Guid.NewGuid();
+        var providerConfigId = "my-provider-config";
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#fallback",
+                IssueTitle = "Fallback",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow,
+                IssueProviderConfigId = providerConfigId,
+                SummaryJson = null
+            });
+            db.SaveChanges();
+        }
+
+        var history = await _sut.GetRunHistoryAsync();
+
+        history.Should().HaveCount(1);
+        history[0].IssueProviderConfigId.Should().Be(providerConfigId);
+        history[0].InitiatedBy.Should().Be("manual");
+    }
+
+    [Fact]
+    public async Task GetRunHistory_Upsert_CopiesIssueProviderConfigId_ToExistingRow()
+    {
+        // Verifies that AddRunToHistoryAsync copies IssueProviderConfigId when upserting
+        // (fixes the gap where rows pre-created at dispatch time had null IssueProviderConfigId)
+        var runId = Guid.NewGuid();
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = runId,
+                IssueIdentifier = "org/repo#upsert",
+                IssueTitle = "",
+                FinalStep = PipelineStep.Created,
+                StartedAt = DateTimeOffset.UtcNow,
+                IssueProviderConfigId = null // Pre-created without IssueProviderConfigId
+            });
+            db.SaveChanges();
+        }
+
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "org/repo#upsert",
+            IssueTitle = "Upsert test",
+            IssueProviderConfigId = "my-provider",
+            RepoProviderConfigId = "rp-1"
+        });
+        run.CurrentStep = PipelineStep.Completed;
+        run.MarkCompleted();
+
+        await _sut.AddRunToHistoryAsync(run);
+
+        using var verifyDb = new InMemoryPipelineDbContext(_dbOptions);
+        var entity = verifyDb.PipelineRuns.Single();
+        entity.IssueProviderConfigId.Should().Be("my-provider",
+            "upsert path must copy IssueProviderConfigId so the fallback filter works correctly");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

@@ -62,7 +62,8 @@ public class RepositoryGitOperationsThrowLoggingTests : IDisposable
 
         act.Should().Throw<InvalidOperationException>();
 
-        _sink.Events.Should().Contain(e =>
+        var events = _sink.Events.ToList();
+        events.Should().Contain(e =>
             e.Level == LogEventLevel.Error &&
             e.MessageTemplate.Text.Contains("Remote branch"));
     }
@@ -93,7 +94,8 @@ public class RepositoryGitOperationsThrowLoggingTests : IDisposable
         act.Should().Throw<InvalidOperationException>()
             .Which.Message.Should().Contain("No changes to commit");
 
-        _sink.Events.Should().Contain(e =>
+        var events = _sink.Events.ToList();
+        events.Should().Contain(e =>
             e.Level == LogEventLevel.Warning &&
             e.MessageTemplate.Text.Contains("No changes to commit"));
     }
@@ -105,9 +107,9 @@ public class RepositoryGitOperationsThrowLoggingTests : IDisposable
     private sealed class CollectingSink : ILogEventSink
     {
         private readonly List<LogEvent> _events = new();
-        public IReadOnlyList<LogEvent> Events => _events;
-        public void Emit(LogEvent logEvent) => _events.Add(logEvent);
-        public void Clear() => _events.Clear();
+        public IReadOnlyList<LogEvent> Events { get { lock (_events) return _events.ToList(); } }
+        public void Emit(LogEvent logEvent) { lock (_events) _events.Add(logEvent); }
+        public void Clear() { lock (_events) _events.Clear(); }
     }
 
     #endregion
