@@ -262,13 +262,14 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
     // TokenRefreshFailure. The unit tests mock the interface so the actual DB filtering
     // logic has no coverage. A regression in the EF predicate would go undetected.
     public async Task<bool> HasAgentErrorSinceAsync(
-        string issueIdentifier, ProviderConfigId issueProviderConfigId,
+        IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId,
         DateTimeOffset since, CancellationToken ct)
     {
+        var issueIdentifierValue = issueIdentifier.Value;
         var providerConfigIdValue = issueProviderConfigId.Value;
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         return await db.WorkItems.AnyAsync(w =>
-            w.IssueIdentifier == issueIdentifier
+            w.IssueIdentifier == issueIdentifierValue
             && w.IssueProviderConfigId == providerConfigIdValue
             && w.Status == WorkItemStatus.Failed
             && w.FailureReason == FailureReason.AgentError
@@ -277,13 +278,14 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
 
     /// <inheritdoc />
     public async Task<DateTimeOffset?> GetLastSuccessfulCompletionAsync(
-        string issueIdentifier, ProviderConfigId issueProviderConfigId,
+        IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId,
         CancellationToken ct)
     {
+        var issueIdentifierValue = issueIdentifier.Value;
         var providerConfigIdValue = issueProviderConfigId.Value;
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         return await db.WorkItems
-            .Where(w => w.IssueIdentifier == issueIdentifier
+            .Where(w => w.IssueIdentifier == issueIdentifierValue
                 && w.IssueProviderConfigId == providerConfigIdValue
                 && w.Status == WorkItemStatus.Succeeded
                 && w.CompletedAt != null)

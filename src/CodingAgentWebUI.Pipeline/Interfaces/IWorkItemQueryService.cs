@@ -20,7 +20,7 @@ public interface IWorkItemQueryService
     /// <param name="since">Only consider WorkItems completed after this timestamp.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<bool> HasAgentErrorSinceAsync(
-        string issueIdentifier, ProviderConfigId issueProviderConfigId,
+        IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId,
         DateTimeOffset since, CancellationToken ct);
 
     /// <summary>
@@ -32,6 +32,6 @@ public interface IWorkItemQueryService
     /// <param name="issueProviderConfigId">Issue provider config ID for disambiguation.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<DateTimeOffset?> GetLastSuccessfulCompletionAsync(
-        string issueIdentifier, ProviderConfigId issueProviderConfigId,
+        IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId,
         CancellationToken ct);
 }

@@ -18,7 +18,7 @@ public sealed partial class AgentJobDispatcher
         public required AgentEntry Agent { get; init; }
         public required PipelineRun Run { get; init; }
         public required AgentProfile Profile { get; init; }
-        public required string IssueIdentifier { get; init; }
+        public required IssueIdentifier IssueIdentifier { get; init; }
         public required IssueDetail IssueDetail { get; init; }
         public required ParsedIssue ParsedIssue { get; init; }
         public required IReadOnlyList<IssueComment> IssueComments { get; init; }
@@ -229,7 +229,7 @@ public sealed partial class AgentJobDispatcher
     /// </summary>
     internal async Task<bool> DispatchToAgentAsync(
         AgentEntry agent,
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         string issueProviderId,
         string repoProviderId,
         string? brainProviderId,
@@ -290,6 +290,11 @@ public sealed partial class AgentJobDispatcher
     /// correct RunType (DecompositionAnalysis or Decomposition), sets workspace path to
     /// <c>{base}/decomposition/{runId}/</c>, and sends the <see cref="JobAssignmentMessage"/> via SignalR.
     /// </summary>
+    // TODO: epicIdentifier should be IssueIdentifier here to complete the type migration at the internal
+    // call chain level. Currently the public TryDispatchDecompositionAsync accepts IssueIdentifier but
+    // converts it back to string via implicit operator before passing down. DecompositionDispatchRequest.EpicIdentifier
+    // and DecompositionDispatchPreparation._epicIdentifier are also still string-typed — the parameter-swap
+    // risk the issue aimed to eliminate is still present in this internal layer.
     internal async Task<bool> DispatchDecompositionToAgentAsync(
         AgentEntry agent,
         string epicIdentifier,

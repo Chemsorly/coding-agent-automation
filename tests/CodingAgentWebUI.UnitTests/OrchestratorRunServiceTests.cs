@@ -234,8 +234,10 @@ public class OrchestratorRunServiceTests
     public void IsIssueBeingProcessed_NullIdentifier_Throws()
     {
         var service = CreateService();
-        var act = () => service.IsIssueBeingProcessed(null!, "provider-1");
-        act.Should().Throw<ArgumentNullException>();
+        var act = () => service.IsIssueBeingProcessed(new IssueIdentifier(null!), "provider-1");
+        act.Should().Throw<ArgumentException>();
+        // TODO: Add a second test case for new IssueIdentifier(string.Empty) — ArgumentException.ThrowIfNullOrEmpty
+        // guards against both null and empty, but only null is currently covered here.
     }
 
     [Fact]

@@ -13,7 +13,7 @@ public interface IOrchestratorRunService
     bool HasActiveRuns { get; }
 
     /// <summary>Checks whether the given issue identifier is being processed by any active run.</summary>
-    bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId);
+    bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, string issueProviderConfigId);
 
     /// <summary>Returns all active runs as a read-only snapshot.</summary>
     IReadOnlyList<PipelineRun> GetActiveRuns();
@@ -44,12 +44,12 @@ public interface IOrchestratorRunService
     /// Records that a run for this issue just completed. Used by orphan recovery grace period
     /// to prevent race conditions between run removal and label swap.
     /// </summary>
-    void MarkRecentlyCompleted(string issueIdentifier, string issueProviderConfigId);
+    void MarkRecentlyCompleted(IssueIdentifier issueIdentifier, string issueProviderConfigId);
 
     /// <summary>
     /// Returns <c>true</c> if this issue had a run complete within the last 120 seconds.
     /// Used by <c>OrphanedLabelRecoveryService</c> to avoid incorrectly treating
     /// recently-completed issues as orphaned.
     /// </summary>
-    bool WasRecentlyCompleted(string issueIdentifier, string issueProviderConfigId);
+    bool WasRecentlyCompleted(IssueIdentifier issueIdentifier, string issueProviderConfigId);
 }

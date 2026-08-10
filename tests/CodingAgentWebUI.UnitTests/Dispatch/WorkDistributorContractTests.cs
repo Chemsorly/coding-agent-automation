@@ -115,6 +115,10 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
     private readonly Mock<IOrchestratorRunService> _mockRunService = new();
     private readonly AgentRegistryService _registry;
     private readonly JobDeduplicationGuardService _dispatcherService;
+    // TODO: Update _distributedIssues type to HashSet<(IssueIdentifier IssueIdentifier, string IssueProviderConfigId)>
+    // to match the updated callback signature. Currently the implicit IssueIdentifier→string conversion silently coerces
+    // the struct at insertion and lookup — a future removal of the implicit operator would break this at runtime
+    // rather than at compile time.
     private readonly HashSet<(string IssueIdentifier, string IssueProviderConfigId)> _distributedIssues = new();
 
     public LegacyWorkDistributorContractTests()
@@ -139,18 +143,18 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
         // validating request data flows correctly or correct overload is called. Consider stricter argument matching.
         _mockJobDispatcher
             .Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<PipelineProject?>()))
             .ReturnsAsync(true)
-            .Callback<string, string, string, string?, string?, string, CancellationToken, string?, PipelineProject?>(
+            .Callback<IssueIdentifier, string, string, string?, string?, string, CancellationToken, string?, PipelineProject?>(
                 (issueId, provId, _, _, _, _, _, _, _) => _distributedIssues.Add((issueId, provId)));
 
         // TODO: IsIssueBeingProcessedOrQueued uses It.IsAny<string>() matchers — incorrect argument
         // forwarding by LegacyWorkDistributor would go undetected. Consider matching specific values.
         _mockJobDispatcher
-            .Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>()))
-            .Returns<string, string>((issueId, provId) => _distributedIssues.Contains((issueId, provId)));
+            .Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<IssueIdentifier>(), It.IsAny<string>()))
+            .Returns<IssueIdentifier, string>((issueId, provId) => _distributedIssues.Contains((issueId, provId)));
 
         _mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun>());
     }
@@ -442,7 +446,7 @@ public class WorkDistributorAdditionalTests
     private static LegacyWorkDistributor CreateLegacy()
     {
         var mockJobDispatcher = new Mock<IJobDispatcher>();
-        mockJobDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>()))
+        mockJobDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<IssueIdentifier>(), It.IsAny<string>()))
             .Returns(false);
         var logger = Mock.Of<ILogger>();
         var registry = new AgentRegistryService(logger);

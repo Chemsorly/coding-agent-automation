@@ -149,14 +149,14 @@ public class LegacyWorkDistributorTests
         result.Success.Should().BeTrue();
         result.ErrorMessage.Should().BeNull();
         _mockJobDispatcher.Verify(d => d.TryDispatchAsync(
-            "org/repo#1", "ip-1", "rp-1", (string?)null, (string?)null, "loop",
+            It.Is<IssueIdentifier>(id => id.Value == "org/repo#1"), "ip-1", "rp-1", (string?)null, (string?)null, "loop",
             It.IsAny<CancellationToken>(), "Fix bug", (PipelineProject?)null), Times.Once);
         _mockJobDispatcher.Verify(d => d.TryDispatchReviewAsync(
             It.IsAny<ReviewDispatchRequest>(),
             It.IsAny<CancellationToken>(),
             It.IsAny<PipelineProject?>()), Times.Never);
         _mockJobDispatcher.Verify(d => d.TryDispatchDecompositionAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
+            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
             It.IsAny<string>(), It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<PipelineProject?>()), Times.Never);

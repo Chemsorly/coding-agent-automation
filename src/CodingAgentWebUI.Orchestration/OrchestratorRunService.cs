@@ -43,10 +43,12 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <summary>
     /// Checks whether the given issue identifier is being processed by any active run.
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId)
+    public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, string issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        // TODO: Use issueIdentifier.Value explicitly instead of relying on IssueIdentifier.ToString() for key
+        // construction. If ToString() is ever overridden to add decoration, key lookups will silently break.
         var compositeKey = $"{issueProviderConfigId}:{issueIdentifier}";
         return _activeRuns.Values.Any(r => $"{r.IssueProviderConfigId}:{r.IssueIdentifier}" == compositeKey);
     }
@@ -134,19 +136,23 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     public int ActiveRunCount => _activeRuns.Count;
 
     /// <inheritdoc />
-    public void MarkRecentlyCompleted(string issueIdentifier, string issueProviderConfigId)
+    public void MarkRecentlyCompleted(IssueIdentifier issueIdentifier, string issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        // TODO: Use issueIdentifier.Value explicitly instead of relying on IssueIdentifier.ToString() for key
+        // construction. If ToString() is ever overridden to add decoration, key lookups will silently break.
         var key = $"{issueProviderConfigId}:{issueIdentifier}";
         _recentlyCompleted[key] = _timeProvider.GetUtcNow();
     }
 
     /// <inheritdoc />
-    public bool WasRecentlyCompleted(string issueIdentifier, string issueProviderConfigId)
+    public bool WasRecentlyCompleted(IssueIdentifier issueIdentifier, string issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        // TODO: Use issueIdentifier.Value explicitly instead of relying on IssueIdentifier.ToString() for key
+        // construction. If ToString() is ever overridden to add decoration, key lookups will silently break.
         var key = $"{issueProviderConfigId}:{issueIdentifier}";
         if (_recentlyCompleted.TryGetValue(key, out var completedAt))
         {

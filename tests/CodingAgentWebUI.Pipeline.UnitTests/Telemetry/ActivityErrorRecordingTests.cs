@@ -164,7 +164,7 @@ public class ActivityErrorRecordingTests : IDisposable
         };
         var prOrchestrator = new PullRequestOrchestrator(logger);
         var callbacks = new Mock<IPipelineCallbacks>();
-        callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return new PipelineStepContext
         {

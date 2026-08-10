@@ -49,10 +49,10 @@ public abstract class PipelineCallbacksBase : IPipelineCallbacks
     public abstract Task UpdateFileChangeStats(PipelineRun run);
 
     /// <inheritdoc />
-    public abstract Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct);
+    public abstract Task SwapAgentLabel(IssueIdentifier issueIdentifier, string label, CancellationToken ct);
 
     /// <inheritdoc />
-    public abstract Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct);
+    public abstract Task RemoveAllAgentLabels(IssueIdentifier issueIdentifier, CancellationToken ct);
 
     /// <inheritdoc />
     public abstract Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct);

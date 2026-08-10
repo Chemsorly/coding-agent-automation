@@ -8,7 +8,7 @@ public sealed partial class AgentJobDispatcher
 {
     /// <inheritdoc />
     public async Task<bool> TryDispatchAsync(
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         string issueProviderId,
         string repoProviderId,
         string? brainProviderId,
@@ -18,7 +18,7 @@ public sealed partial class AgentJobDispatcher
         string? issueTitle = null,
         PipelineProject? project = null)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(issueProviderId);
         ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(initiatedBy);
@@ -96,7 +96,7 @@ public sealed partial class AgentJobDispatcher
 
     /// <inheritdoc />
     public async Task<bool> TryDispatchDecompositionAsync(
-        string epicIdentifier,
+        IssueIdentifier epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
         string issueProviderId,
@@ -107,7 +107,7 @@ public sealed partial class AgentJobDispatcher
         string? decompositionSource = null,
         PipelineProject? project = null)
     {
-        ArgumentNullException.ThrowIfNull(epicIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value);
         ArgumentNullException.ThrowIfNull(epicTitle);
         ArgumentNullException.ThrowIfNull(issueProviderId);
         ArgumentNullException.ThrowIfNull(repoProviderId);

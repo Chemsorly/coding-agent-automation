@@ -30,7 +30,7 @@ public interface IJobDispatcher
     /// <c>false</c> if the issue is already being processed or queued.
     /// </returns>
     Task<bool> TryDispatchAsync(
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         string issueProviderId,
         string repoProviderId,
         string? brainProviderId,
@@ -64,7 +64,7 @@ public interface IJobDispatcher
     /// <param name="project">Optional project that owns the dispatching template. Used for settings resolution.</param>
     /// <returns>true if dispatched or enqueued; false if already processing.</returns>
     Task<bool> TryDispatchDecompositionAsync(
-        string epicIdentifier,
+        IssueIdentifier epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
         string issueProviderId,
@@ -95,5 +95,5 @@ public interface IJobDispatcher
     /// <summary>
     /// Whether the given issue is already being processed or queued.
     /// </summary>
-    bool IsIssueBeingProcessedOrQueued(string issueIdentifier, string issueProviderConfigId);
+    bool IsIssueBeingProcessedOrQueued(IssueIdentifier issueIdentifier, string issueProviderConfigId);
 }

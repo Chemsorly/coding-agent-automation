@@ -153,6 +153,10 @@ public class AgentJobDispatcherTests : IDisposable
         });
 
         var dispatcher = CreateDispatcher();
+        // TODO: Add a companion test that passes new IssueIdentifier("issue-1") explicitly (without relying on
+        // implicit string→IssueIdentifier conversion) to confirm the composite key built from ToString() matches
+        // correctly. Removes implicit dependency on IssueIdentifier.ToString() returning Value without a compile
+        // guard — if that contract breaks the lookup silently returns false.
         dispatcher.IsIssueBeingProcessedOrQueued("issue-1", "ip").Should().BeTrue();
     }
 
@@ -160,8 +164,10 @@ public class AgentJobDispatcherTests : IDisposable
     public void IsIssueBeingProcessedOrQueued_NullIdentifier_Throws()
     {
         var dispatcher = CreateDispatcher();
-        var act = () => dispatcher.IsIssueBeingProcessedOrQueued(null!, "provider-1");
-        act.Should().Throw<ArgumentNullException>();
+        var act = () => dispatcher.IsIssueBeingProcessedOrQueued(new IssueIdentifier(null!), "provider-1");
+        act.Should().Throw<ArgumentException>();
+        // TODO: Add a second test case for new IssueIdentifier(string.Empty) — ArgumentException.ThrowIfNullOrEmpty
+        // guards against both null and empty, but only null is currently covered here.
     }
 
     [Fact]
@@ -209,8 +215,8 @@ public class AgentJobDispatcherTests : IDisposable
     {
         var dispatcher = CreateDispatcher();
         var act = () => dispatcher.TryDispatchAsync(
-            null!, "ip", "rp", null, null, "test", CancellationToken.None);
-        await act.Should().ThrowAsync<ArgumentNullException>();
+            new IssueIdentifier(null!), "ip", "rp", null, null, "test", CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>();
     }
 
     [Fact]

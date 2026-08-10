@@ -64,7 +64,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(request.IssueProviderId);
         ArgumentNullException.ThrowIfNull(request.RepoProviderId);
         ArgumentNullException.ThrowIfNull(request.InitiatedBy);

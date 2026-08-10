@@ -33,7 +33,7 @@ public class RunEnvironmentSetupStepIntegrationTests : IDisposable
             .Callback<string>(line => _emittedOutput.Add(line));
         _callbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()))
             .Callback<PipelineStep>(step => _transitions.Add(step));
-        _callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 

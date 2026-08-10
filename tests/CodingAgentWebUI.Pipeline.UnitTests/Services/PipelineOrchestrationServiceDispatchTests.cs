@@ -58,7 +58,7 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
 
         // TODO: This mocks IsIssueBeingProcessed to always return false, so CreateDispatchedRunAsync_Success
         // would pass even if RegisterDispatchedRun was broken. Add a Verify call to confirm AddRun is invoked.
-        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<string>())).Returns(false);
 
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>().AsReadOnly());
@@ -110,7 +110,11 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
     public async Task CreateDispatchedRunAsync_IssueAlreadyProcessed_ReturnsNull()
     {
         // Arrange
-        _mockRunService.Setup(r => r.IsIssueBeingProcessed("42", It.IsAny<string>())).Returns(true);
+        // TODO: DispatchRunRequest.IssueIdentifier is still string-typed (not yet migrated to IssueIdentifier).
+        // The string "42" is implicitly converted to IssueIdentifier before reaching IsIssueBeingProcessed.
+        // Once DispatchRunRequest.IssueIdentifier is migrated, the mock setup and request construction here
+        // should use the typed form directly to close the implicit-conversion gap.
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.Is<IssueIdentifier>(id => id.Value == "42"), It.IsAny<string>())).Returns(true);
 
         // Act
         var run = await _service.CreateDispatchedRunAsync(

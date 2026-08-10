@@ -36,7 +36,7 @@ internal sealed record ImplementationDispatchRequest(
     IDispatchRunCreator Orchestration,
     ILogger Logger,
     AgentEntry Agent,
-    string IssueIdentifier,
+    IssueIdentifier IssueIdentifier,
     string IssueProviderId,
     string RepoProviderId,
     string? BrainProviderId,
@@ -50,7 +50,7 @@ internal sealed record ImplementationDispatchRequest(
 /// </summary>
 internal sealed record DispatchCoreRequest(
     IReadOnlyList<string> RequiredLabels,
-    string IssueIdentifier,
+    IssueIdentifier IssueIdentifier,
     string IssueProviderId,
     string RepoProviderId,
     string AgentProviderId,
@@ -67,7 +67,7 @@ public sealed record StalenessEvaluationRequest(
     IssueComment AnalysisComment,
     IReadOnlyList<IssueComment> IssueComments,
     string IssueBody,
-    string IssueIdentifier,
+    IssueIdentifier IssueIdentifier,
     string IssueProviderConfigId,
     int CommitThreshold,
     Func<DateTimeOffset, CancellationToken, Task<int>>? GetCommitCount);
@@ -106,7 +106,7 @@ internal sealed record DispatchLifecycleContext(
 /// Groups the 10 orchestration parameters to satisfy S107.
 /// </summary>
 public sealed record OrchestratorPreparationRequest(
-    string IssueIdentifier,
+    IssueIdentifier IssueIdentifier,
     string IssueProviderId,
     string RepoProviderId,
     string? BrainProviderId,

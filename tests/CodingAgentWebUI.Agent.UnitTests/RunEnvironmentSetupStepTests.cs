@@ -30,7 +30,7 @@ public class RunEnvironmentSetupStepTests : IDisposable
 
         // FailRunAsync calls SwapAgentLabel → mock it to return completed task
         _mockCallbacks
-            .Setup(c => c.SwapAgentLabel(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 
