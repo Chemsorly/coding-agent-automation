@@ -131,18 +131,18 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 .Take(MaxHistorySize);
 
             var summaries = new List<PipelineRunSummary>();
-            foreach (var file in files)
+            foreach (var filePath in files.Select(file => file.FullName))
             {
                 try
                 {
-                    var json = File.ReadAllText(file.FullName);
+                    var json = File.ReadAllText(filePath);
                     var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, JsonOptions);
                     if (summary != null && summary.InitiatedBy != ConsolidationConstants.InitiatedBy)
                         summaries.Add(summary);
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning(ex, "Failed to load run summary from {File}", file.FullName);
+                    _logger.Warning(ex, "Failed to load run summary from {File}", filePath);
                 }
             }
 

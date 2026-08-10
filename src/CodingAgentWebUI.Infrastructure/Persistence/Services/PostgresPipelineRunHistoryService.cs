@@ -151,10 +151,10 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
                 .Select(r => new { RunId = r.RunId.ToString(), CompletedAt = r.CompletedAt!.Value })
                 .ToList();
 
-            foreach (var expired in expiredRuns)
+            foreach (var runId in expiredRuns.Select(expired => expired.RunId))
             {
-                var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, expired.RunId);
-                TryDeleteWorkspace(workspacePath, expired.RunId, config.WorkspaceBaseDirectory);
+                var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, runId);
+                TryDeleteWorkspace(workspacePath, runId, config.WorkspaceBaseDirectory);
             }
         }
         catch (Exception ex)
