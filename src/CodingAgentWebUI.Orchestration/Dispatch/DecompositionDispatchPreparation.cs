@@ -21,8 +21,8 @@ internal sealed class DecompositionDispatchPreparation : IDispatchPreparationHan
     private readonly string _epicIdentifier;
     private readonly string _epicTitle;
     private readonly PipelineRunType _phaseType;
-    private readonly string _issueProviderId;
-    private readonly string _repoProviderId;
+    private readonly ProviderConfigId _issueProviderId;
+    private readonly ProviderConfigId _repoProviderId;
     private readonly string? _brainProviderId;
     private readonly string _initiatedBy;
     private readonly string? _decompositionSource;
@@ -80,8 +80,8 @@ internal sealed class DecompositionDispatchPreparation : IDispatchPreparationHan
             RunId = runId,
             IssueIdentifier = _epicIdentifier,
             IssueTitle = _epicTitle,
-            IssueProviderConfigId = _issueProviderId,
-            RepoProviderConfigId = _repoProviderId,
+            IssueProviderConfigId = _issueProviderId.Value,
+            RepoProviderConfigId = _repoProviderId.Value,
             RunType = _phaseType,
             StartedAt = reservation.StartedAt,
             InitiatedBy = _initiatedBy,

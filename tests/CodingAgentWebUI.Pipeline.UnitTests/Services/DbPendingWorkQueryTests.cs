@@ -96,10 +96,16 @@ public sealed class DbPendingWorkQueryTests : IDisposable
 
         // Assert
         result.Should().HaveCount(1);
-        result[0].RepoProviderId.Should().Be("repo-provider-xyz");
+        result[0].RepoProviderId.Value.Should().Be("repo-provider-xyz");
     }
 
     [Fact]
+    // TODO: [WARNING] Test name is stale — it was renamed from "ReturnsEmptyStrings" but the method
+    // name was not updated. More importantly, there is a second untested fallback path: when the
+    // payload is non-null but its JSON contains an empty repoProviderId string, the code also falls
+    // back to IssueProviderConfigId. Only the null-payload path is covered here. Add a test for the
+    // case where payload deserialization succeeds but repoProviderId is empty/absent so that branch
+    // cannot be accidentally dropped without a test failure.
     public async Task GetPendingJobsAsync_NullPayload_ReturnsEmptyStrings()
     {
         // Arrange — insert without payload
@@ -125,7 +131,8 @@ public sealed class DbPendingWorkQueryTests : IDisposable
         // Assert
         result.Should().HaveCount(1);
         result[0].IssueTitle.Should().BeEmpty();
-        result[0].RepoProviderId.Should().BeEmpty();
+        // When payload is null, RepoProviderId falls back to IssueProviderConfigId ("ip-1")
+        result[0].RepoProviderId.Value.Should().Be("ip-1");
     }
 
     [Fact]

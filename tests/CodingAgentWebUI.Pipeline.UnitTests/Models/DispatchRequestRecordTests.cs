@@ -74,8 +74,8 @@ public class DispatchRequestRecordTests
         };
 
         req.IssueIdentifier.Should().Be("owner/repo#5");
-        req.IssueProviderId.Should().Be("issue-cfg");
-        req.RepoProviderId.Should().Be("repo-cfg");
+        req.IssueProviderId.Value.Should().Be("issue-cfg");
+        req.RepoProviderId.Value.Should().Be("repo-cfg");
         req.InitiatedBy.Should().Be("user");
         req.Project.Should().BeSameAs(project);
         req.BrainProviderId.Should().BeNull();

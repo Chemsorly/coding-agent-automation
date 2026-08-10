@@ -213,7 +213,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
     /// <inheritdoc />
     public async Task AgentAcceptedRunAsync(RunId runId, AgentId agentId, string issueIdentifier,
-        string issueProviderConfigId, string repoProviderConfigId,
+        ProviderConfigId issueProviderConfigId, ProviderConfigId repoProviderConfigId,
         PipelineRunType runType, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(runId.Value);

@@ -22,11 +22,11 @@ public sealed partial class AgentJobDispatcher
         public required IssueDetail IssueDetail { get; init; }
         public required ParsedIssue ParsedIssue { get; init; }
         public required IReadOnlyList<IssueComment> IssueComments { get; init; }
-        public required string RepoProviderId { get; init; }
+        public required ProviderConfigId RepoProviderId { get; init; }
         public required string AgentProviderId { get; init; }
         public string? BrainProviderId { get; init; }
         public string? PipelineProviderId { get; init; }
-        public string? IssueProviderId { get; init; }
+        public ProviderConfigId? IssueProviderId { get; init; }
         public required IReadOnlyList<ProviderConfig> ProviderConfigs { get; init; }
         public required PipelineConfiguration Config { get; init; }
         public required string InitiatedBy { get; init; }
@@ -58,7 +58,7 @@ public sealed partial class AgentJobDispatcher
             IssueDetail = ctx.IssueDetail,
             ParsedIssue = ctx.ParsedIssue,
             IssueComments = ctx.IssueComments,
-            RepoProviderConfigId = ctx.RepoProviderId,
+            RepoProviderConfigId = ctx.RepoProviderId.Value,
             AgentProviderConfigId = ctx.AgentProviderId,
             BrainProviderConfigId = ctx.BrainProviderId,
             PipelineProviderConfigId = ctx.PipelineProviderId,
@@ -74,8 +74,8 @@ public sealed partial class AgentJobDispatcher
             ProjectSteeringContent = ctx.Project.SteeringContent,
             // NOTE: This path was historically dead code (TokenVendingService.CloneWithSettings dropped SteeringContent).
             // Fixed in #1628. Integration test in RepoSteeringContentIntegrationTests guards against regression.
-            RepoSteeringContent = ctx.ProviderConfigs.FirstOrDefault(c => c.Id == ctx.RepoProviderId)?.SteeringContent,
-            IssueProviderConfigId = ctx.IssueProviderId,
+            RepoSteeringContent = ctx.ProviderConfigs.FirstOrDefault(c => c.Id == ctx.RepoProviderId.Value)?.SteeringContent,
+            IssueProviderConfigId = ctx.IssueProviderId?.Value,
             // Variant-specific properties default to safe values; callers override via `with`
             QualityGateConfigs = Array.Empty<QualityGateConfiguration>(),
             ReviewerConfigs = Array.Empty<ReviewerConfiguration>()
@@ -138,7 +138,7 @@ public sealed partial class AgentJobDispatcher
     /// <param name="revertTargetKind">Optional label target kind (e.g., PullRequest for review path).</param>
     private async Task<bool> SafeDispatchAsync(
         AgentEntry agent,
-        string revertProviderConfigId,
+        ProviderConfigId revertProviderConfigId,
         string identifier,
         string revertLabel,
         string failureMessageTemplate,
@@ -187,7 +187,7 @@ public sealed partial class AgentJobDispatcher
     private sealed record DispatchRoutingParams(
         string Identifier,
         string IdentifierType,
-        string RevertProviderConfigId,
+        ProviderConfigId RevertProviderConfigId,
         string RevertLabel,
         string FailureMessageTemplate,
         PipelineProject? Project,
@@ -230,8 +230,8 @@ public sealed partial class AgentJobDispatcher
     internal async Task<bool> DispatchToAgentAsync(
         AgentEntry agent,
         string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
         string? brainProviderId,
         string? pipelineProviderId,
         string initiatedBy,
@@ -295,8 +295,8 @@ public sealed partial class AgentJobDispatcher
         string epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
-        string issueProviderId,
-        string repoProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
         string? brainProviderId,
         string initiatedBy,
         IReadOnlyList<string> requiredLabels,
@@ -363,14 +363,25 @@ public sealed partial class AgentJobDispatcher
     {
         await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
 
-        if (_lifecycleManager is not null)
+        // TODO: [WARNING] Silent state-tracking gap: when _lifecycleManager is non-null but either
+        // IssueProviderConfigId or RepoProviderConfigId is empty, neither branch below executes.
+        // The job has already been sent to the agent (AssignJobAsync completed), but agent.ActiveJobId
+        // is never set and the agent is never transitioned to Busy — making the run invisible to the
+        // orchestrator (IsIssueBeingProcessed returns false, duplicate dispatches become possible).
+        // Concrete scenario: a consolidation job with an intentionally empty RepoProviderConfigId.
+        // The original code called AgentAcceptedRunAsync unconditionally (using ?? ""), which was always
+        // correct. Consider passing ProviderConfigId directly from the dispatch path to eliminate the
+        // empty-string case rather than guarding against it here. See review finding for full context.
+        if (_lifecycleManager is not null
+            && !string.IsNullOrEmpty(message.IssueProviderConfigId)
+            && !string.IsNullOrEmpty(message.RepoProviderConfigId))
         {
             await _lifecycleManager.AgentAcceptedRunAsync(
                 runId, agent.AgentId,
-                message.IssueIdentifier, message.IssueProviderConfigId ?? "",
-                message.RepoProviderConfigId ?? "", message.RunType, ct);
+                message.IssueIdentifier, message.IssueProviderConfigId,
+                message.RepoProviderConfigId, message.RunType, ct);
         }
-        else
+        else if (_lifecycleManager is null)
         {
             // Fallback for tests without lifecycle manager
             agent.ActiveJobId = runId;
@@ -385,7 +396,7 @@ public sealed partial class AgentJobDispatcher
         AgentEntry agent,
         Exception ex,
         string messageTemplate,
-        string providerConfigId,
+        ProviderConfigId providerConfigId,
         string identifier,
         string revertLabel,
         LabelTargetKind? targetKind = null)

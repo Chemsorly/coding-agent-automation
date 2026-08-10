@@ -65,8 +65,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
-        ArgumentNullException.ThrowIfNull(request.IssueProviderId);
-        ArgumentNullException.ThrowIfNull(request.RepoProviderId);
         ArgumentNullException.ThrowIfNull(request.InitiatedBy);
         ArgumentNullException.ThrowIfNull(request.RequiredLabels);
         ArgumentNullException.ThrowIfNull(request.Project);
@@ -283,10 +281,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// Resolves required labels from the repo provider config, falling back to global config defaults.
     /// </summary>
     private async Task<IReadOnlyList<string>> ResolveRequiredLabelsInternalAsync(
-        string repoProviderId, CancellationToken ct)
+        ProviderConfigId repoProviderId, CancellationToken ct)
     {
         var repoConfig = await _providerConfigStore
-            .GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+            .GetProviderConfigByIdAsync(repoProviderId.Value, ProviderKind.Repository, ct);
         var pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
         return LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }

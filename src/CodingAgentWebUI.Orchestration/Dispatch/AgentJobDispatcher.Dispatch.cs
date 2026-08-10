@@ -9,8 +9,8 @@ public sealed partial class AgentJobDispatcher
     /// <inheritdoc />
     public async Task<bool> TryDispatchAsync(
         string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
         string? brainProviderId,
         string? pipelineProviderId,
         string initiatedBy,
@@ -19,12 +19,18 @@ public sealed partial class AgentJobDispatcher
         PipelineProject? project = null)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentNullException.ThrowIfNull(issueProviderId);
-        ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(initiatedBy);
+        // TODO: [WARNING] No validation for default(ProviderConfigId) (Value == null). The
+        // ArgumentNullException.ThrowIfNull guards that previously covered issueProviderId/repoProviderId
+        // as strings were removed during the ProviderConfigId migration. ProviderConfigId is a readonly
+        // record struct, so its default value has Value = null and bypasses the implicit string→ProviderConfigId
+        // conversion guard. A default-constructed or zero-value ProviderConfigId would propagate silently
+        // until .Value produces null downstream (e.g., composite key construction or GetProviderConfigByIdAsync).
+        // Consider adding: ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value, nameof(issueProviderId))
+        // and the equivalent for repoProviderId at the entry point of each public dispatch method.
 
         // Check if already being processed
-        if (_orchestration.IsIssueBeingProcessed(issueIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(issueIdentifier, issueProviderId))
+        if (_orchestration.IsIssueBeingProcessed(issueIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(issueIdentifier, issueProviderId.Value))
         {
             _logger.Information("Issue {IssueIdentifier} already being processed or queued, skipping dispatch", issueIdentifier);
             return false;
@@ -99,8 +105,8 @@ public sealed partial class AgentJobDispatcher
         string epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
-        string issueProviderId,
-        string repoProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
         string? brainProviderId,
         string initiatedBy,
         CancellationToken ct,
@@ -109,15 +115,13 @@ public sealed partial class AgentJobDispatcher
     {
         ArgumentNullException.ThrowIfNull(epicIdentifier);
         ArgumentNullException.ThrowIfNull(epicTitle);
-        ArgumentNullException.ThrowIfNull(issueProviderId);
-        ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(initiatedBy);
 
         if (phaseType is not (PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition))
             throw new ArgumentOutOfRangeException(nameof(phaseType), phaseType, "Must be DecompositionAnalysis or Decomposition");
 
         // Check if already being processed
-        if (_orchestration.IsIssueBeingProcessed(epicIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(epicIdentifier, issueProviderId))
+        if (_orchestration.IsIssueBeingProcessed(epicIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(epicIdentifier, issueProviderId.Value))
         {
             _logger.Information("Epic {EpicIdentifier} already being processed or queued, skipping decomposition dispatch", epicIdentifier);
             return false;
@@ -153,7 +157,7 @@ public sealed partial class AgentJobDispatcher
 
     private async Task<bool> TryDispatchCoreAsync(
         string identifier,
-        string repoProviderId,
+        ProviderConfigId repoProviderId,
         Func<AgentEntry, IReadOnlyList<string>, CancellationToken, Task<bool>> dispatchToAgent,
         Func<IReadOnlyList<string>, PendingJob> buildPendingJob,
         string logMessageTemplate,
@@ -167,7 +171,7 @@ public sealed partial class AgentJobDispatcher
         }
 
         var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
-        var repoConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+        var repoConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId.Value, ProviderKind.Repository, ct);
         var requiredLabels = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, config);
 
         var agent = _dispatcher.SelectAgent(requiredLabels);

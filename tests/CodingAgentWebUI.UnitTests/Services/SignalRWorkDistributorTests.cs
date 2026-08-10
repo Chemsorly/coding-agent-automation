@@ -779,12 +779,19 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     }
 
     [Fact]
+    // TODO: [WARNING] No test covers the three-way interaction: _lifecycleManager != null AND either
+    // IssueProviderConfigId or RepoProviderConfigId is empty in the JobAssignmentMessage. In
+    // AssignAndSendAsync, that combination silently skips both the lifecycle path AND the fallback
+    // path (agent.ActiveJobId and Busy transition are never set). This leaves the agent in an incorrect
+    // state with no log warning. Add a test fixture that injects a lifecycle manager but dispatches
+    // a job whose message has an empty provider ID, and assert the agent's state is still updated
+    // (or that the regression is explicitly detected until the root cause is fixed).
     public async Task DistributeAsync_AgentAvailable_LabelSwapFailure_DoesNotFailDispatch()
     {
         // Arrange: agent available, lifecycle manager throws — dispatch should still succeed
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         mockLifecycle
-            .Setup(l => l.AgentAcceptedRunAsync(It.IsAny<RunId>(), It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
+            .Setup(l => l.AgentAcceptedRunAsync(It.IsAny<RunId>(), It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("GitHub API error"));
 
         var sut = new SignalRWorkDistributor(

@@ -97,7 +97,17 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
                 {
                     IssueIdentifier = request.IssueIdentifier,
                     IssueProviderId = request.IssueProviderConfigId,
-                    RepoProviderId = request.RepoProviderConfigId,
+                    // Consolidation jobs may have an empty RepoProviderConfigId — fall back to IssueProviderId
+                    // since ProviderConfigId cannot hold empty strings and the field is not used for consolidation dispatch.
+                    // TODO: [WARNING] If request.IssueProviderConfigId is also null or empty, the implicit
+                    // string → ProviderConfigId conversion will throw ArgumentException, aborting the entire
+                    // consolidation job enqueue with no specific error identifying which field caused the failure.
+                    // The original code stored an empty string without issue; the new ProviderConfigId constraint
+                    // surfaces a crash instead of a runtime validation error at dispatch time.
+                    // Consider validating IssueProviderConfigId is non-empty before reaching this point.
+                    RepoProviderId = string.IsNullOrEmpty(request.RepoProviderConfigId)
+                        ? request.IssueProviderConfigId
+                        : request.RepoProviderConfigId,
                     InitiatedBy = request.InitiatedBy,
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = requiredLabels,

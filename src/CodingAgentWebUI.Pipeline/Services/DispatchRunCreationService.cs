@@ -48,7 +48,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
 
     /// <inheritdoc />
     public bool IsIssueBeingProcessed(string issueIdentifier, ProviderConfigId issueProviderConfigId) =>
-        _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId.Value);
+        _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId);
 
     /// <inheritdoc />
     public async Task<PipelineRun?> CreateDispatchedRunAsync(DispatchRunRequest request, CancellationToken ct)
