@@ -7,12 +7,59 @@ using Serilog;
 namespace KiroCliLib.UnitTests.Core;
 
 /// <summary>
-/// Integration tests for <see cref="ProcessWrapper.StartAsync"/> per-process environment injection.
-/// These tests spawn a real child process and verify that additionalEnv entries appear in the
-/// child's environment without mutating the parent process environment.
+/// Tests for <see cref="ProcessWrapper"/> per-process environment injection and property behaviour.
 /// </summary>
 public class ProcessWrapperAdditionalEnvTests
 {
+    private static ProcessWrapper CreateWrapper()
+    {
+        var config = new global::KiroCliLib.Configuration.Configuration { KiroCliPath = "/bin/bash" };
+        var logger = new Mock<ILogger>().Object;
+        return new ProcessWrapper(config, logger);
+    }
+
+    // ── Property coverage on a fresh (no process) instance ───────────────────
+
+    [Fact]
+    public void IsRunning_WhenNoProcess_ReturnsFalse()
+    {
+        using var wrapper = CreateWrapper();
+        wrapper.IsRunning.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ExitCode_WhenNoProcess_ReturnsNull()
+    {
+        using var wrapper = CreateWrapper();
+        wrapper.ExitCode.Should().BeNull();
+    }
+
+    [Fact]
+    public void LastOutputTime_WhenNoProcess_ReturnsDefault()
+    {
+        using var wrapper = CreateWrapper();
+        wrapper.LastOutputTime.Should().Be(default(DateTime));
+    }
+
+    [Fact]
+    public void Dispose_WhenNoProcess_DoesNotThrow()
+    {
+        var wrapper = CreateWrapper();
+        var act = () => wrapper.Dispose();
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Dispose_CalledTwice_DoesNotThrow()
+    {
+        var wrapper = CreateWrapper();
+        wrapper.Dispose();
+        var act = () => wrapper.Dispose();
+        act.Should().NotThrow("Dispose must be idempotent");
+    }
+
+    // ── Environment injection test ────────────────────────────────────────────
+
     [Fact]
     [Trait("Platform", "Linux")]
     public async Task StartAsync_WithAdditionalEnv_InjectedIntoChildProcess_NotParentProcess()

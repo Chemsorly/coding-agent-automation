@@ -44,6 +44,27 @@ public class PipelineModelCoverageTests
     }
 
     [Fact]
+    public void AgentRequest_AdditionalEnv_CanBeSetAndRead()
+    {
+        var env = new Dictionary<string, string> { ["NUGET_TOKEN"] = "secret" };
+        var request = new AgentRequest
+        {
+            Prompt = "test",
+            WorkspacePath = "/ws",
+            AdditionalEnv = env
+        };
+        request.AdditionalEnv.Should().NotBeNull();
+        request.AdditionalEnv!["NUGET_TOKEN"].Should().Be("secret");
+    }
+
+    [Fact]
+    public void AgentRequest_AdditionalEnv_DefaultsToNull()
+    {
+        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws" };
+        request.AdditionalEnv.Should().BeNull();
+    }
+
+    [Fact]
     public void GenerateBranchName_VeryLongTitle_TruncatesSlug()
     {
         var longTitle = new string('a', 200);
