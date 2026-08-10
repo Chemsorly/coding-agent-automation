@@ -411,6 +411,64 @@ public class DispatchStateBuilderTests : IDisposable
             "BuildStateAsync must dispose DbContext on all exception paths after the early-return guard");
     }
 
+    [Fact]
+    public async Task GetEligibleCandidatesAsync_ResolvedSelectorAtConcurrencyLimit_SkipsItem()
+    {
+        // Exercises DispatchStateBuilder.TryResolveCandidateAsync lines 313-321:
+        // when a work item's AgentSelector doesn't directly match a template, but profile-based
+        // resolution finds a fallback template whose effective selector IS at its concurrency limit,
+        // the item should be skipped with skip:true (not dispatched).
+        //
+        // Setup:
+        //   - Item selector "kiro" (partial — no direct template match)
+        //   - AgentProfile with MatchLabels ["dotnet","kiro"] covers the "kiro" selector
+        //   - Template "dotnet,kiro" has MaxConcurrent=1
+        //   - 1 active item already using "dotnet,kiro" → concurrency limit reached
+        var partialSelector = "kiro";
+        var fullSelector = "dotnet,kiro";
+
+        // 1 pending item with partial selector
+        await InsertWorkItem(Guid.NewGuid(), partialSelector, WorkItemStatus.Pending);
+        // 1 active item with the full resolved selector — fills the concurrency slot
+        await InsertWorkItem(Guid.NewGuid(), fullSelector, WorkItemStatus.Running);
+
+        var profileStore = new Mock<IAgentProfileStore>();
+        profileStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new AgentProfile
+                {
+                    Id = "kiro-dotnet",
+                    DisplayName = "Kiro + DotNet",
+                    AgentProviderConfigId = "test-provider",
+                    MatchLabels = new List<string> { "dotnet", "kiro" }
+                }
+            });
+
+        var builder = CreateBuilder(
+            imageMapping: new() { [fullSelector] = "img:latest" },
+            maxConcurrent: new() { [fullSelector] = 1 },
+            profileStore: profileStore.Object);
+
+        var state = await builder.BuildStateAsync(
+            w => w.TaskType != WorkItemTaskType.Consolidation,
+            recordTelemetry: false,
+            CancellationToken.None);
+
+        using var rateLimiter = CreateUnlimitedRateLimiter();
+
+        var candidates = new List<DispatchCandidate>();
+        await foreach (var candidate in builder.GetEligibleCandidatesAsync(
+            state!, _leaderElection, rateLimiter, "Test",
+            (_, _, _) => Task.CompletedTask, CancellationToken.None))
+        {
+            candidates.Add(candidate);
+        }
+
+        candidates.Should().BeEmpty(
+            "the resolved selector 'dotnet,kiro' is at its concurrency limit (1/1), so the partial-selector item should be skipped");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private DispatchStateBuilder CreateBuilder(

@@ -1010,6 +1010,51 @@ public class DispatchServiceConsolidationTests : IDisposable
             "dispatch latency should use OriginalEnqueuedAt (60s ago) as anchor, not CreatedAt (10s ago)");
     }
 
+    // ── Constructor coverage (public IConfiguration overload) ────────────
+
+    [Fact]
+    public async Task Constructor_PublicIConfigurationOverload_PollsEmptyDbAndReturnsImmediately()
+    {
+        // Exercises the public ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps)
+        // constructor in the CodingAgentWebUI.Pipeline.UnitTests coverage domain.
+        // Uses a real ConfigurationBuilder (not Mock<IConfiguration>) so that
+        // DispatchServiceOptionsFactory.Create doesn't throw.
+        // Does NOT supply deps.StateBuilder so the null-coalescing fallback (lines 63-68) is taken,
+        // covering the DispatchStateBuilder construction code path in the public constructor.
+        // Polls an empty DB, hitting the "state is null → return" early exit path (line 189).
+        var configData = new Dictionary<string, string?>
+        {
+            ["WorkDistribution:Namespace"] = "default",
+            ["WorkDistribution:OrchestratorUrl"] = "http://orchestrator:8080",
+            ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key",
+            ["WorkDistribution:RateLimitPerSecond"] = "100",
+            ["WorkDistribution:CredentialPools:Kiro:0"] = "pvc-test-1",
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
+
+        var lifecycle = new DispatchLifecycleService(
+            _mockKubeClient.Object,
+            _transitionService,
+            new DispatchServiceOptions());
+
+        // StateBuilder is intentionally omitted (null) to exercise the ?? fallback path
+        var handler = new ConsolidationDispatchHandler(
+            new ConsolidationDispatchHandlerDependencies(
+                _dbFactory,
+                _leaderElection,
+                lifecycle,
+                BuildTemplateProvider(),
+                config,
+                _transitionService));
+
+        // DB is empty → BuildStateAsync returns null → method returns immediately without throwing
+        await handler.PollAndDispatchConsolidationAsync(CancellationToken.None);
+
+        // No interactions expected — nothing to dispatch
+        _mockKubeClient.Verify(k => k.CreateJobAsync(
+            It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private void SetupDefaultMocks()
