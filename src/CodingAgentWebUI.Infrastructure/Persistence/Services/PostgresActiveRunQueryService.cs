@@ -32,29 +32,33 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
         // Left join: work items might not yet have a PipelineRun row (just dispatched).
         // Project to anonymous type server-side, then map to ActiveRunSummary client-side
         // to avoid EF Core translation issues with helper methods.
-        var rows = await (
-            from wi in db.WorkItems.AsNoTracking()
-            where (wi.Status == WorkItemStatus.Dispatched || wi.Status == WorkItemStatus.Running)
-                && wi.TaskType != WorkItemTaskType.Consolidation
-            join pr in db.PipelineRuns.AsNoTracking()
-                on wi.Id equals pr.WorkItemId into runs
-            from pr in runs.DefaultIfEmpty()
-            select new
-            {
-                WorkItemId = wi.Id,
-                wi.IssueIdentifier,
-                wi.Status,
-                wi.TaskType,
-                wi.AssignedAgentId,
-                wi.DispatchedAt,
-                wi.CreatedAt,
-                RunId = pr != null ? pr.RunId : (Guid?)null,
-                IssueTitle = pr != null ? pr.IssueTitle : null,
-                RunType = pr != null ? pr.RunType : (PipelineRunType?)null,
-                AgentId = pr != null ? pr.AgentId : null,
-                ProjectName = pr != null ? pr.ProjectName : null
-            }
-        ).ToListAsync(ct);
+        var rows = await db.WorkItems
+            .AsNoTracking()
+            .WhereActive()
+            .Where(wi => wi.TaskType != WorkItemTaskType.Consolidation)
+            .GroupJoin(
+                db.PipelineRuns.AsNoTracking(),
+                wi => wi.Id,
+                pr => pr.WorkItemId,
+                (wi, runs) => new { wi, runs })
+            .SelectMany(
+                x => x.runs.DefaultIfEmpty(),
+                (x, pr) => new
+                {
+                    WorkItemId = x.wi.Id,
+                    x.wi.IssueIdentifier,
+                    x.wi.Status,
+                    x.wi.TaskType,
+                    x.wi.AssignedAgentId,
+                    x.wi.DispatchedAt,
+                    x.wi.CreatedAt,
+                    RunId = pr != null ? pr.RunId : (Guid?)null,
+                    IssueTitle = pr != null ? pr.IssueTitle : null,
+                    RunType = pr != null ? pr.RunType : (PipelineRunType?)null,
+                    AgentId = pr != null ? pr.AgentId : null,
+                    ProjectName = pr != null ? pr.ProjectName : null
+                })
+            .ToListAsync(ct);
 
         var summaries = rows.Select(r => MapRowToSummary(new ActiveRunRow(
             r.RunId, r.WorkItemId, r.IssueIdentifier,

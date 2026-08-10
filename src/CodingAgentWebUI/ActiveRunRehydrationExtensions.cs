@@ -36,12 +36,17 @@ internal static class ActiveRunRehydrationExtensions
             return; // Legacy mode — no WorkItems table to rehydrate from
 
         var rehydrationDbFactory = app.Services.GetRequiredService<IDbContextFactory<PipelineDbContext>>();
+        // TODO: Neither CreateDbContextAsync() nor ToListAsync() below receive a CancellationToken.
+        // RehydrateActiveRunsAsync() has no CancellationToken parameter (called at startup before app.Run()),
+        // so the query cannot be cancelled if a shutdown signal arrives during startup rehydration.
+        // Consider adding a CancellationToken parameter if startup latency or graceful shutdown becomes a concern.
+        // (review-findings: dotnet-specialist)
         await using var rehydrationDb = await rehydrationDbFactory.CreateDbContextAsync();
 
         var activeWorkItems = await rehydrationDb.WorkItems
             .AsNoTracking()
-            .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-                     && w.TaskType != WorkItemTaskType.Consolidation)
+            .WhereActive()
+            .Where(w => w.TaskType != WorkItemTaskType.Consolidation)
             .ToListAsync();
 
         if (activeWorkItems.Count == 0)

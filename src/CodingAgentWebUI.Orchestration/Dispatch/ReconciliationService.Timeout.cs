@@ -38,8 +38,8 @@ public sealed partial class ReconciliationService
         var now = DateTimeOffset.UtcNow;
 
         var candidates = await db.WorkItems
-            .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-                        && w.TimeoutSeconds > 0)
+            .WhereActive()
+            .Where(w => w.TimeoutSeconds > 0)
             .Select(w => new { w.Id, w.DispatchedAt, w.CreatedAt, w.TimeoutSeconds, w.K8sJobName, w.LastProgressAt, w.IssueIdentifier, w.IssueProviderConfigId })
             .ToListAsync(ct);
 

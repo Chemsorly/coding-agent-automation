@@ -269,7 +269,7 @@ public sealed class DispatchService : BackgroundService
         PipelineDbContext db, CancellationToken ct)
     {
         var activeCounts = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+            .WhereActive()
             .GroupBy(w => w.AgentSelector)
             .Select(g => new { Selector = g.Key, Count = g.Count() })
             .ToListAsync(ct);
