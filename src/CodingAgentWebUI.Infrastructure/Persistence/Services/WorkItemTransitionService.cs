@@ -109,9 +109,9 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
                 await db.SaveChangesAsync(ct);
                 return true;
             }
-            catch (DbUpdateConcurrencyException) when (attempt < maxRetries)
+            catch (DbUpdateConcurrencyException ex) when (attempt < maxRetries)
             {
-                _logger.LogInformation(
+                _logger.LogInformation(ex,
                     "Concurrency conflict on WorkItem {WorkItemId} transition to {Target}, retry {Attempt}/{MaxRetries}",
                     workItemId, target, attempt + 1, maxRetries);
                 // Row modified by another writer — retry with fresh state
@@ -212,10 +212,10 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
                     workItemId, desiredStatus);
                 return true;
             }
-            catch (DbUpdateConcurrencyException) when (attempt < MaxRetries)
+            catch (DbUpdateConcurrencyException ex) when (attempt < MaxRetries)
             {
                 var retryAttempt = attempt + 1;
-                _logger.LogInformation(
+                _logger.LogInformation(ex,
                     "Concurrency conflict on WorkItem {WorkItemId} recovery to {DesiredStatus}, retry {Attempt}/{MaxRetries}",
                     workItemId, desiredStatus, retryAttempt, MaxRetries);
                 // Row modified by another writer — retry with fresh state
@@ -224,8 +224,8 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
 
         // Structurally unreachable for the "all-retries-throw" case (final attempt propagates unhandled).
         // Exists for pattern symmetry with TransitionCoreAsync.
-        // TODO: Document in method XML doc that callers must handle DbUpdateConcurrencyException when
-        // all retries are exhausted under sustained concurrency pressure — the method is not purely true/false.
+        // Callers must handle DbUpdateConcurrencyException when all retries are exhausted
+        // under sustained concurrency pressure — the method is not purely true/false.
         _logger.LogWarning(
             "WorkItem {WorkItemId} recovery to {DesiredStatus} failed after exhausting all retries",
             workItemId, desiredStatus);
@@ -257,10 +257,9 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
     }
 
     /// <inheritdoc />
-    // TODO: No integration test exists to verify this query correctly filters only
-    // FailureReason.AgentError and excludes Timeout, InfrastructureFailure, and
-    // TokenRefreshFailure. The unit tests mock the interface so the actual DB filtering
-    // logic has no coverage. A regression in the EF predicate would go undetected.
+    // Note: no integration test verifies this query filters only FailureReason.AgentError
+    // and excludes Timeout, InfrastructureFailure, and TokenRefreshFailure. The unit tests
+    // mock the interface so the actual DB filtering logic has no coverage.
     public async Task<bool> HasAgentErrorSinceAsync(
         IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId,
         DateTimeOffset since, CancellationToken ct)
