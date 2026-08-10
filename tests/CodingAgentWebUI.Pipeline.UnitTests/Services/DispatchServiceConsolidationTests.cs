@@ -548,7 +548,123 @@ public class DispatchServiceConsolidationTests : IDisposable
         item.K8sJobName.Should().StartWith("caa-");
     }
 
-    // ── FailWorkItem cascading to ConsolidationRun ──────────────────────
+    // ── TransitionConsolidationRunToRunningAsync: fallback path (no IConsolidationService) ──
+
+    [Fact]
+    public async Task PollAndDispatch_WhenConsolidationServiceNull_TransitionsRunToRunningViaDirectStore()
+    {
+        // Covers TransitionConsolidationRunToRunningAsync fallback path (lines 561-585):
+        // When IConsolidationService is unavailable, the service falls back to direct IConsolidationRunStore write.
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+        await InsertConsolidationWorkItem(workItemId, runId, "kiro,dotnet");
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var existingRun = new ConsolidationRun
+        {
+            RunId = runId,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Queued
+        };
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingRun);
+
+        ConsolidationRun? savedRun = null;
+        _mockRunStore
+            .Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
+            .Callback<ConsolidationRun, CancellationToken>((r, _) => savedRun = r)
+            .Returns(Task.CompletedTask);
+
+        // Create service WITHOUT IConsolidationService — forces the direct-store fallback
+        var service = CreateServiceWithoutConsolidationService();
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: WorkItem dispatched
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Dispatched);
+
+        // Assert: Fallback store write was used to transition run to Running
+        savedRun.Should().NotBeNull("direct store fallback must write the run when IConsolidationService is null");
+        savedRun!.Status.Should().Be(ConsolidationRunStatus.Running);
+        savedRun.StartedAtUtc.Should().NotBe(default);
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_WhenConsolidationServiceNull_AndRunAlreadyRunning_DoesNotOverwrite()
+    {
+        // Covers the fallback path guard: only transitions Queued → Running, not Running → Running
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+        await InsertConsolidationWorkItem(workItemId, runId, "kiro,dotnet");
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConsolidationRun
+            {
+                RunId = runId,
+                Type = ConsolidationRunType.BrainConsolidation,
+                StartedAtUtc = DateTimeOffset.UtcNow,
+                Status = ConsolidationRunStatus.Running // already Running
+            });
+
+        var service = CreateServiceWithoutConsolidationService();
+        await InvokePollAndDispatch(service);
+
+        // Run is already Running — SaveRunAsync must NOT be called
+        _mockRunStore.Verify(
+            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "store write should be skipped when run is already Running");
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_WhenConsolidationServiceNull_AndStoreThrows_IsNonFatal()
+    {
+        // Covers the Exception catch in TransitionConsolidationRunToRunningAsync fallback
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+        await InsertConsolidationWorkItem(workItemId, runId, "kiro,dotnet");
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // First call (CheckIfRunCancelledOrFailedAsync pre-check) returns null — no cancellation
+        // Second call (TransitionConsolidationRunToRunningAsync fallback) throws — must be non-fatal
+        var getByIdCallCount = 0;
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                getByIdCallCount++;
+                if (getByIdCallCount >= 2)
+                    throw new InvalidOperationException("Store unavailable");
+                return (ConsolidationRun?)null; // First call: no cancelled/failed run
+            });
+
+        var service = CreateServiceWithoutConsolidationService();
+
+        // Should not throw — TransitionConsolidationRunToRunningAsync is non-fatal
+        await InvokePollAndDispatch(service);
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Dispatched, "store failure in run transition must be non-fatal");
+    }
+
+
 
     /// <summary>
     /// When a consolidation WorkItem fails (e.g., no template match, K8s Job creation failure),
@@ -1132,6 +1248,42 @@ public class DispatchServiceConsolidationTests : IDisposable
         spyContext.Should().NotBeNull("factory must have been called");
         spyContext!.WasDisposed.Should().BeTrue(
             "DbContext must be disposed when BuildDispatchStateAsync throws OperationCanceledException");
+    }
+
+    private ConsolidationWorkItemDispatchService CreateServiceWithoutConsolidationService()
+    {
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
+        };
+
+        var lifecycle = new DispatchLifecycleService(
+            _mockKubeClient.Object,
+            _transitionService,
+            options);
+
+        var templateProvider = BuildTemplateProvider();
+
+        return new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
+                _dbFactory, _leaderElection, lifecycle, templateProvider, Mock.Of<IConfiguration>(), _transitionService,
+                ConsolidationRunStore: _mockRunStore.Object,
+                ConsolidationService: null,  // explicitly no IConsolidationService — forces direct-store fallback
+                ConsolidationJobPreparer: new ConsolidationJobPreparationService(
+                    _mockProviderConfigStore.Object,
+                    _mockProjectStore.Object,
+                    _mockTokenVending.Object,
+                    Serilog.Log.Logger,
+                    _mockAgentProfileStore.Object),
+                PipelineConfigStore: _mockPipelineConfigStore.Object,
+                ProjectStore: _mockProjectStore.Object,
+                AgentProfileStore: _mockAgentProfileStore.Object),
+            options);
     }
 
     private ConsolidationWorkItemDispatchService CreateService(ILabelService? labelService = null)

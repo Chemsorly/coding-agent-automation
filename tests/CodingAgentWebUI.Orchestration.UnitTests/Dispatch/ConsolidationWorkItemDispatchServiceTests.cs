@@ -171,6 +171,93 @@ public class ConsolidationWorkItemDispatchServiceTests
         savedRun.CompletedAtUtc.Should().NotBeNull();
     }
 
+    [Fact]
+    public async Task CascadeFailureAsync_WhenServiceThrowsOperationCanceled_IsNonFatal()
+    {
+        // Covers the OperationCanceledException catch branch inside the IConsolidationService path
+        var mockService = new Mock<IConsolidationService>();
+        mockService
+            .Setup(s => s.UpdateRunAsync(
+                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("Shutdown"));
+
+        var handler = CreateHandler(consolidationService: mockService.Object);
+
+        // Must not throw — the OperationCanceledException branch is treated as debug-only, non-fatal
+        await handler.Invoking(h => h.CascadeFailureAsync("run-cancel", "dispatch error", CancellationToken.None))
+            .Should().NotThrowAsync("OperationCanceledException from IConsolidationService must be swallowed");
+    }
+
+    [Fact]
+    public async Task CascadeFailureAsync_WhenStoreThrowsOperationCanceled_IsNonFatal()
+    {
+        // Covers the OperationCanceledException catch in the direct-store fallback path
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("Store cancelled"));
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object);
+
+        await handler.Invoking(h => h.CascadeFailureAsync("run-store-cancel", "dispatch error", CancellationToken.None))
+            .Should().NotThrowAsync("OperationCanceledException from store fallback must be swallowed");
+    }
+
+    [Fact]
+    public async Task CascadeFailureAsync_WhenStoreThrowsException_IsNonFatal()
+    {
+        // Covers the general Exception catch in the direct-store fallback path
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Store unavailable"));
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object);
+
+        await handler.Invoking(h => h.CascadeFailureAsync("run-store-ex", "dispatch error", CancellationToken.None))
+            .Should().NotThrowAsync("general Exception from store fallback must be swallowed");
+    }
+
+    [Fact]
+    public async Task CascadeFailureAsync_WhenStoreRunRunning_TransitionsToFailed()
+    {
+        // Running is the other allowed-overwrite state (Queued | Running)
+        var existingRun = new ConsolidationRun
+        {
+            RunId = "run-running",
+            Status = ConsolidationRunStatus.Running,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync((RunId)"run-running", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingRun);
+
+        ConsolidationRun? savedRun = null;
+        mockStore
+            .Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
+            .Callback<ConsolidationRun, CancellationToken>((r, _) => savedRun = r)
+            .Returns(Task.CompletedTask);
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object);
+
+        await handler.CascadeFailureAsync("run-running", "K8s error", CancellationToken.None);
+
+        savedRun.Should().NotBeNull();
+        savedRun!.Status.Should().Be(ConsolidationRunStatus.Failed);
+        savedRun.Summary.Should().Contain("K8s error");
+    }
+
+    [Fact]
+    public void Dispose_DoesNotThrow()
+    {
+        // Covers the Dispose() override which disposes the rate limiter
+        var handler = CreateHandler();
+        handler.Invoking(h => h.Dispose()).Should().NotThrow();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static ConsolidationWorkItemDispatchService CreateHandler(
