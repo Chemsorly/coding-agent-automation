@@ -10,7 +10,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 ///   <item><description>Transition the <see cref="WorkItemEntity"/> to <see cref="WorkItemStatus.Dispatched"/>,
 ///   setting <c>DispatchedAt</c> and <c>AssignedAgentId</c>.</description></item>
 ///   <item><description>Revert to <see cref="WorkItemStatus.Pending"/> on failure, delegating to
-///   <see cref="DispatchRevertHandler.TryRevertToPendingAsync"/>.</description></item>
+///   <see cref="DispatchRevertService.TryRevertToPendingAsync"/>.</description></item>
 /// </list>
 ///
 /// <para>
@@ -30,11 +30,11 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 public sealed class DispatchAttemptService
 {
     private readonly WorkItemTransitionService _transitionService;
-    private readonly DispatchRevertHandler _revertHandler;
+    private readonly DispatchRevertService _revertHandler;
 
     public DispatchAttemptService(
         WorkItemTransitionService transitionService,
-        DispatchRevertHandler revertHandler)
+        DispatchRevertService revertHandler)
     {
         ArgumentNullException.ThrowIfNull(transitionService);
         ArgumentNullException.ThrowIfNull(revertHandler);
@@ -66,7 +66,7 @@ public sealed class DispatchAttemptService
     /// <summary>
     /// Reverts a work item from <see cref="WorkItemStatus.Dispatched"/> back to
     /// <see cref="WorkItemStatus.Pending"/> after a dispatch failure. Swallows exceptions
-    /// internally (via <see cref="DispatchRevertHandler.TryRevertToPendingAsync"/>) — the
+    /// internally (via <see cref="DispatchRevertService.TryRevertToPendingAsync"/>) — the
     /// stuck-item detector handles items that could not be reverted.
     /// </summary>
     /// <param name="workItemId">The work item to revert.</param>

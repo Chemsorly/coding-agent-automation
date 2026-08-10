@@ -66,18 +66,18 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<LabelSwapService>>()));
 
-        // DispatchRevertHandler: handles dispatch failure recovery, in-memory run registration
-        services.AddSingleton<DispatchRevertHandler>(sp => new DispatchRevertHandler(
+        // DispatchRevertService: handles dispatch failure recovery, in-memory run registration
+        services.AddSingleton<DispatchRevertService>(sp => new DispatchRevertService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DispatchRevertHandler>>()));
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DispatchRevertService>>()));
 
         // DispatchAttemptService: shared transition-to-Dispatched + revert-on-failure lifecycle (#1914)
         services.AddSingleton<DispatchAttemptService>(sp => new DispatchAttemptService(
             sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<DispatchRevertHandler>()));
+            sp.GetRequiredService<DispatchRevertService>()));
 
         // PendingWorkItemDrainService: drains Pending WorkItems to idle agents
         services.AddSingleton<PendingWorkItemDrainService>(sp => new PendingWorkItemDrainService(
@@ -89,7 +89,7 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<IPendingWorkQuery>(),
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>()),
             sp.GetRequiredService<LabelSwapService>(),
-            sp.GetRequiredService<DispatchRevertHandler>(),
+            sp.GetRequiredService<DispatchRevertService>(),
             sp.GetRequiredService<DispatchAttemptService>(),
             sp.GetService<IProjectStore>(),
             sp.GetRequiredService<IConsolidationDispatchService>(),

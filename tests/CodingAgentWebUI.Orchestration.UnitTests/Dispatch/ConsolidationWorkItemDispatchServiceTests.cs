@@ -13,11 +13,11 @@ using Moq;
 namespace CodingAgentWebUI.Orchestration.UnitTests.Dispatch;
 
 /// <summary>
-/// Unit tests for <see cref="ConsolidationDispatchHandler.CascadeFailureAsync"/>.
+/// Unit tests for <see cref="ConsolidationWorkItemDispatchService.CascadeFailureAsync"/>.
 /// Covers: IConsolidationService path, direct IConsolidationRunStore fallback path,
 /// non-fatal exception handling, and no-op when neither dependency is available.
 /// </summary>
-public class ConsolidationDispatchHandlerTests
+public class ConsolidationWorkItemDispatchServiceTests
 {
     [Fact]
     public async Task CascadeFailureAsync_WhenConsolidationServiceAvailable_DelegatesToService()
@@ -173,7 +173,7 @@ public class ConsolidationDispatchHandlerTests
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    private static ConsolidationDispatchHandler CreateHandler(
+    private static ConsolidationWorkItemDispatchService CreateHandler(
         IConsolidationService? consolidationService = null,
         IConsolidationRunStore? consolidationRunStore = null)
     {
@@ -190,8 +190,8 @@ public class ConsolidationDispatchHandlerTests
             transitionService,
             new DispatchServiceOptions());
 
-        return new ConsolidationDispatchHandler(
-            new ConsolidationDispatchHandlerDependencies(
+        return new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
                 dbFactoryMock.Object,
             leaderElectionMock.Object,
             lifecycle,

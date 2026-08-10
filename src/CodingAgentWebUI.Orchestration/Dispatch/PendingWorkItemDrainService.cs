@@ -25,7 +25,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly WorkItemTransitionService _transitionService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly LabelSwapService _labelSwapService;
-    private readonly DispatchRevertHandler _dispatchRevertHandler;
+    private readonly DispatchRevertService _dispatchRevertService;
     private readonly DispatchAttemptService _dispatchAttemptService;
     private readonly IProjectStore? _projectStore;
     private readonly IConsolidationDispatchService? _consolidationDispatcher;
@@ -39,7 +39,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     public PendingWorkItemDrainService(
         DrainServiceDependencies deps,
         LabelSwapService labelSwapService,
-        DispatchRevertHandler dispatchRevertHandler,
+        DispatchRevertService dispatchRevertService,
         DispatchAttemptService dispatchAttemptService,
         IProjectStore? projectStore = null,
         IConsolidationDispatchService? consolidationDispatcher = null,
@@ -52,7 +52,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         _pendingWorkQuery = deps.PendingWorkQuery;
         _logger = deps.Logger;
         _labelSwapService = labelSwapService;
-        _dispatchRevertHandler = dispatchRevertHandler;
+        _dispatchRevertService = dispatchRevertService;
         _dispatchAttemptService = dispatchAttemptService;
         _projectStore = projectStore;
         _consolidationDispatcher = consolidationDispatcher;
@@ -297,9 +297,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 // so a double-release via the catch block below is not a correctness risk.
                 _agentResolver.ReleaseAgent(agentId);
                 // TODO: Migrate to _dispatchAttemptService.RevertOnFailureAsync for full consolidation of revert-on-failure logic (#1914).
-                // Currently calls _dispatchRevertHandler directly (functionally equivalent, but the revert calls were not migrated
+                // Currently calls _dispatchRevertService directly (functionally equivalent, but the revert calls were not migrated
                 // in the same pass as the TransitionToDispatchedAsync extraction).
-                await _dispatchRevertHandler.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: ct);
+                await _dispatchRevertService.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: ct);
                 return false;
             }
         }
@@ -312,7 +312,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             // Revert WorkItem from Dispatched to Pending so it's available for the next drain cycle.
             // Uses CancellationToken.None explicitly: graceful shutdown must not prevent the revert.
             // TODO: Migrate to _dispatchAttemptService.RevertOnFailureAsync for full consolidation of revert-on-failure logic (#1914).
-            await _dispatchRevertHandler.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: CancellationToken.None);
+            await _dispatchRevertService.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: CancellationToken.None);
             return false;
         }
     }
@@ -340,7 +340,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
             dispatchedSuccessfully = true;
 
-            _dispatchRevertHandler.EnsureInMemoryRunRegistered(request, agentId.Value, dispatchTime, item);
+            _dispatchRevertService.EnsureInMemoryRunRegistered(request, agentId.Value, dispatchTime, item);
 
             var message = DbWorkDistributorBase.BuildJobAssignmentMessage(item.Id, request);
 
@@ -362,7 +362,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         }
         catch (Exception ex)
         {
-            await _dispatchRevertHandler.HandlePipelineDispatchFailureAsync(item, request, agentId, dispatchedSuccessfully, ex);
+            await _dispatchRevertService.HandlePipelineDispatchFailureAsync(item, request, agentId, dispatchedSuccessfully, ex);
             return false;
         }
     }

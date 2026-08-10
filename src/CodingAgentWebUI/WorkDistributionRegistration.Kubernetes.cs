@@ -57,7 +57,7 @@ public static partial class WorkDistributionRegistration
                 options);
         });
 
-        // JobTemplateStore — single load, shared by DispatchService, ConsolidationDispatchHandler, and UI validation.
+        // JobTemplateStore — single load, shared by DispatchService, ConsolidationWorkItemDispatchService, and UI validation.
         services.AddSingleton<JobTemplateStore>(sp =>
             DispatchService.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
 
@@ -73,9 +73,9 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<IConfiguration>(),
             sp.GetRequiredService<JobTemplateStore>()));
 
-        // ConsolidationDispatchHandler — handles consolidation work items
-        services.AddHostedService(sp => new ConsolidationDispatchHandler(
-            new ConsolidationDispatchHandlerDependencies(
+        // ConsolidationWorkItemDispatchService — handles consolidation work items
+        services.AddHostedService(sp => new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
                 sp.GetRequiredService<ILeaderElectionService>(),
                 sp.GetRequiredService<DispatchLifecycleService>(),
@@ -137,6 +137,6 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<ModelFetchService>(),
                 Logger: Log.Logger)));
 
-        Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ConsolidationDispatchHandler + ReconciliationService + LeaderElection registered");
+        Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ConsolidationWorkItemDispatchService + ReconciliationService + LeaderElection registered");
     }
 }
