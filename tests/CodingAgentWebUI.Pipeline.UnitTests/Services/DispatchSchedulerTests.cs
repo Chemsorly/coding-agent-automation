@@ -185,9 +185,11 @@ public class DispatchSchedulerTests
     #region Fairness Test
 
     [Fact]
-    public async Task FairRoundRobin_EqualQueues_DispatchesEquallyAcrossTypes()
+    public async Task FairRoundRobin_EqualQueues_DispatchesByPriorityOrder()
     {
         // Arrange: 1 template, 3 queue types, 9 items each, budget = 9
+        // With priority ordering (PRs > Decomp > Issues), all 9 budget slots are consumed by
+        // PRs first (highest priority). Decomposition and Issues receive 0 dispatches.
         var template = CreateTemplate("t1");
         var project = CreateProject("p1");
         var (pollable, flattened) = BuildTemplateLists(template, project);
@@ -224,11 +226,16 @@ public class DispatchSchedulerTests
             },
             CancellationToken.None, CancellationToken.None);
 
-        // Assert: exactly 3 per queue type (fairness ±1)
+        // Assert: all 9 budget slots consumed by PRs (highest priority); Decomp and Issues get 0.
         result.ProcessedCount.Should().Be(9);
-        _issueDispatchCount.Should().Be(3);
-        _prDispatchCount.Should().Be(3);
-        _decompDispatchCount.Should().Be(3);
+        _prDispatchCount.Should().Be(9);
+        _decompDispatchCount.Should().Be(0);
+        _issueDispatchCount.Should().Be(0);
+        // TODO: add an integration test where the PR queue has fewer items than the budget so the
+        // scheduler falls through to Decomposition (and then Issues) within a single cycle. The
+        // current test always exhausts the full budget on PRs, so fallthrough to lower-priority
+        // queues (e.g. Decomposition dispatched when PR queue empties mid-cycle) is not covered
+        // by DispatchSchedulerTests integration tests.
     }
 
     #endregion
@@ -360,14 +367,13 @@ public class DispatchSchedulerTests
             },
             CancellationToken.None, CancellationToken.None);
 
-        // Assert: exactly 2 dispatched, no more
-        // Per-queue-type assertions verify that round-robin fairness is maintained under budget pressure:
-        // turn order is issue→PR→(budget exhausted), so exactly 1 issue and 1 PR should be dispatched.
-        // A bug dispatching 2 items from a single queue type would fail these per-type checks.
+        // Assert: exactly 2 dispatched, no more.
+        // Priority order is PR→Decomp→Issues; PRs have highest priority, so both budget slots
+        // are consumed by PRs. A bug dispatching from a lower-priority queue would fail these checks.
         result.ProcessedCount.Should().Be(2);
-        _issueDispatchCount.Should().Be(1);
-        _prDispatchCount.Should().Be(1);
+        _prDispatchCount.Should().Be(2);
         _decompDispatchCount.Should().Be(0);
+        _issueDispatchCount.Should().Be(0);
     }
 
     #endregion
@@ -864,6 +870,162 @@ public class DispatchSchedulerTests
         _issueDispatchCount.Should().Be(3);
         _prDispatchCount.Should().Be(0);
         _decompDispatchCount.Should().Be(0);
+    }
+
+    #endregion
+
+    #region Priority Ordering — TrySelectNextTurn and DispatchFairRoundRobinAsync (#1931)
+
+    /// <summary>
+    /// TrySelectNextTurn returns PullRequests when both PRs and Issues are available.
+    /// </summary>
+    [Fact]
+    public void TrySelectNextTurn_HasPrsAndIssues_SelectsPullRequestsFirst()
+    {
+        var (found, turn) = DispatchScheduler.TrySelectNextTurn(
+            DispatchTurn.Issues, hasIssues: true, hasPrs: true, hasDecomp: false);
+
+        found.Should().BeTrue();
+        turn.Should().Be(DispatchTurn.PullRequests);
+    }
+
+    /// <summary>
+    /// TrySelectNextTurn returns Decomposition when Decomposition and Issues are available but no PRs.
+    /// </summary>
+    [Fact]
+    public void TrySelectNextTurn_HasDecompAndIssues_SelectsDecompositionFirst()
+    {
+        var (found, turn) = DispatchScheduler.TrySelectNextTurn(
+            DispatchTurn.Issues, hasIssues: true, hasPrs: false, hasDecomp: true);
+
+        found.Should().BeTrue();
+        turn.Should().Be(DispatchTurn.Decomposition);
+    }
+
+    /// <summary>
+    /// TrySelectNextTurn returns Issues when only Issues queue is non-empty.
+    /// </summary>
+    [Fact]
+    public void TrySelectNextTurn_OnlyIssues_SelectsIssues()
+    {
+        var (found, turn) = DispatchScheduler.TrySelectNextTurn(
+            DispatchTurn.Issues, hasIssues: true, hasPrs: false, hasDecomp: false);
+
+        found.Should().BeTrue();
+        turn.Should().Be(DispatchTurn.Issues);
+    }
+
+    /// <summary>
+    /// TrySelectNextTurn returns found=false when all queues are empty.
+    /// </summary>
+    [Fact]
+    public void TrySelectNextTurn_NoneEligible_ReturnsFalse()
+    {
+        var (found, _) = DispatchScheduler.TrySelectNextTurn(
+            DispatchTurn.Issues, hasIssues: false, hasPrs: false, hasDecomp: false);
+
+        found.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// TrySelectNextTurn returns PullRequests when all three queues are non-empty (PRs have highest priority).
+    /// </summary>
+    [Fact]
+    public void TrySelectNextTurn_AllEligible_SelectsPullRequestsFirst()
+    {
+        var (found, turn) = DispatchScheduler.TrySelectNextTurn(
+            DispatchTurn.Issues, hasIssues: true, hasPrs: true, hasDecomp: true);
+
+        found.Should().BeTrue();
+        turn.Should().Be(DispatchTurn.PullRequests);
+    }
+
+    /// <summary>
+    /// Integration: when PR and Issue queues are both non-empty with budget=1,
+    /// the PR (Review) is dispatched first — not the Issue (Implementation).
+    /// </summary>
+    [Fact]
+    public async Task FairRoundRobin_ReviewAndImplementation_ReviewDispatchedFirst()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = new() { CreateIssueSummary("issue-1") }
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = new() { CreatePrSummary("pr-1", 1) }
+        };
+        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 1,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(1);
+        _prDispatchCount.Should().Be(1, "Review (PR) has higher priority than Implementation (Issue)");
+        _issueDispatchCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Integration: when Decomposition and Issue queues are both non-empty with budget=1,
+    /// the Decomposition is dispatched first — not the Issue (Implementation).
+    /// </summary>
+    [Fact]
+    public async Task FairRoundRobin_DecompAndImplementation_DecompDispatchedFirst()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = new() { CreateIssueSummary("issue-1") }
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>();
+        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        {
+            ["t1"] = new() { (CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis) }
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 1,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(1);
+        _decompDispatchCount.Should().Be(1, "Decomposition has higher priority than Implementation (Issue)");
+        _issueDispatchCount.Should().Be(0);
     }
 
     #endregion

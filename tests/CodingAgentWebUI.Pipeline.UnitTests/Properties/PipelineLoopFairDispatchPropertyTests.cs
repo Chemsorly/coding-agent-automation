@@ -103,6 +103,14 @@ public class PipelineLoopFairDispatchPropertyTests
     // gets at least 1 dispatch. Empty-queue-type templates don't block others.
     // ══════════════════════════════════════════════════════════════════════
 
+    // TODO: This property test simulates the OLD round-robin algorithm (modulo % 3 turn cycling)
+    // internally, not the priority-ordered TrySelectNextTurn introduced in #1931. The production
+    // code now always selects PRs first (Review > Decomposition > Issues), so the "no starvation"
+    // invariant ("each non-empty queue type gets at least 1 dispatch") is factually incorrect for
+    // the production system: lower-priority queues will be starved whenever higher-priority ones
+    // have work and the budget is limited. This test still passes because it runs against a private
+    // re-implementation, not DispatchFairRoundRobinAsync. Update the simulation and invariant to
+    // reflect priority-ordered dispatch semantics to avoid misleading future maintainers.
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(StarvationArbitraries) })]
     public Property StarvationPrevention_NonEmptyQueueTypesGetDispatches(StarvationInput input)
     {
