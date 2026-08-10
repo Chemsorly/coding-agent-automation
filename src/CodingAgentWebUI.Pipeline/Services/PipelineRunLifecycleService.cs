@@ -235,8 +235,9 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// shuts down. Writing Cancelled history here would cause those runs to appear as CANCELLED
     /// in the UI even though the agents will complete them successfully on the new pod.
     /// The new pod's <see cref="RunLifecycleManager.CompleteRunAsync"/> writes the real outcome.
+    /// Includes sentinel runs (AgentId == null) so their dedup guards are always freed.
     /// </remarks>
-    public IReadOnlyList<(IssueIdentifier IssueIdentifier, string IssueProviderConfigId)> MarkAgentRunsCancelled()
+    public IReadOnlyList<(IssueIdentifier IssueIdentifier, string IssueProviderConfigId)> ReleaseAgentRunsForHandoff()
     {
         if (_runService is null) return [];
 

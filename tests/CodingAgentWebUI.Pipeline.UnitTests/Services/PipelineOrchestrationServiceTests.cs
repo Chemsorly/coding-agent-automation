@@ -3471,13 +3471,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CancelActiveAgentRunsAsync_SendsCancelJobToAgents_BeforeLabelSwap()
+    public async Task ReleaseActiveAgentRunsAsync_NeverInvokesCancellationSender_Legacy()
     {
-        // This test previously asserted that CancelJob WAS sent during shutdown.
-        // That behavior caused agents to abort during rolling updates — the dedicated
-        // "DoesNotSendCancelJobToAgents" test now covers the correct behavior.
-        // Repurpose: verify that even when an IAgentCancellationSender is wired up,
-        // shutdown does NOT use it (sender is present but should never be called).
+        // Retained from the original CancelActiveAgentRunsAsync_SendsCancelJobToAgents_BeforeLabelSwap test.
+        // Verifies the repurposed behavior: sender is wired but release path never calls it.
+        // The dedicated DoesNotSendCancelJobToAgents_WhenSenderIsWired test below covers the same
+        // invariant more cleanly; this test is kept for traceability to the original spec.
         var mockRunService = new Mock<IOrchestratorRunService>();
         var agentRun = new PipelineRun
         {
@@ -3509,7 +3508,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockLogger.Object);
 
         // Act
-        await service.CancelActiveAgentRunsAsync();
+        await service.ReleaseActiveAgentRunsAsync();
 
         // Assert: CancelJob is never sent — agents must reconnect to the new pod
         mockCancellation.Verify(
@@ -3518,7 +3517,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CancelActiveAgentRunsAsync_CancelJobFailure_DoesNotPreventCancellation()
+    public async Task ReleaseActiveAgentRunsAsync_CancelJobFailure_DoesNotPreventHandoff()
     {
         // This test previously verified that a throwing CancelJob sender doesn't prevent
         // "cancellation" (step mutation). CancelJob is no longer sent during shutdown, so
@@ -3558,7 +3557,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockLogger.Object);
 
         // Act — must not throw
-        await service.CancelActiveAgentRunsAsync();
+        await service.ReleaseActiveAgentRunsAsync();
 
         // Assert: run removed from tracking; state NOT mutated (new pod owns the run now)
         mockRunService.Verify(r => r.RemoveRun(agentRun.RunId), Times.Once);
@@ -3567,11 +3566,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CancelActiveAgentRunsAsync_CallsMarkAgentRunsCancelled_ThenPerformsLabelSwaps()
+    public async Task ReleaseActiveAgentRunsAsync_ReleasesRunsFromTracking_NoLabelSwap()
     {
         // Label swaps are no longer performed during graceful shutdown — they caused agents to
-        // abort on rolling updates. This test is repurposed to verify the runs are released
-        // from tracking (MarkAgentRunsCancelled) and no label swap is attempted.
+        // abort on rolling updates. Verifies runs are released from tracking (ReleaseAgentRunsForHandoff)
+        // and no label swap is attempted.
         var runService = new Orchestration.OrchestratorRunService(_mockLogger.Object);
         var agentRun = new PipelineRun
         {
@@ -3599,7 +3598,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             new Orchestration.LabelService(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),
             _mockLogger.Object);
 
-        await service.CancelActiveAgentRunsAsync();
+        await service.ReleaseActiveAgentRunsAsync();
 
         // Run released from in-memory tracking
         runService.GetActiveRuns().Should().BeEmpty();
@@ -3613,16 +3612,78 @@ public class PipelineOrchestrationServiceTests : IDisposable
             Times.Never);
     }
 
-    // ── CancelActiveAgentRunsAsync Rolling-Update Safety ────────────────
+    // ── ReleaseActiveAgentRunsAsync Rolling-Update Safety ────────────────
     // Bug: during a K8s rolling update, the new pod has already rehydrated active runs before
     // the old pod receives SIGTERM. The old pod's shutdown then sends CancelJob to all agents
     // (causing them to abort) and writes Cancelled history entries — even though the new pod
     // will complete those runs successfully.
-    // Fix: CancelActiveAgentRunsAsync must NOT send CancelJob and must NOT write Cancelled
+    // Fix: ReleaseActiveAgentRunsAsync must NOT send CancelJob and must NOT write Cancelled
     // history. It should only release dedup guards so the new pod can dispatch / adopt the runs.
 
     [Fact]
-    public async Task CancelActiveAgentRunsAsync_DoesNotSendCancelJobToAgents()
+    public async Task ReleaseActiveAgentRunsAsync_ReleasesAllRuns_EvenWhenAllAgentIdsAreNull()
+    {
+        // Regression: the old CancelActiveAgentRunsAsync had an early-return guard
+        // filtering Where(r => r.AgentId != null). Sentinel runs (registered at dispatch
+        // before JobAccepted sets AgentId) were invisible to it, so dedup guards were
+        // never released if all active runs were sentinels.
+        // Fix: ReleaseAgentRunsForHandoff is called unconditionally — no outer filter.
+        var runService = new Orchestration.OrchestratorRunService(_mockLogger.Object);
+        var sentinel1 = new PipelineRun
+        {
+            RunId = "sentinel-1",
+            IssueIdentifier = "2001",
+            IssueTitle = "Sentinel run 1",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1",
+            CurrentStep = PipelineStep.Created,
+            HighWaterMark = PipelineStep.Created,
+            StartedAt = DateTime.UtcNow,
+            AgentId = null   // ← sentinel: AgentId not yet set
+        };
+        var sentinel2 = new PipelineRun
+        {
+            RunId = "sentinel-2",
+            IssueIdentifier = "2002",
+            IssueTitle = "Sentinel run 2",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1",
+            CurrentStep = PipelineStep.Created,
+            HighWaterMark = PipelineStep.Created,
+            StartedAt = DateTime.UtcNow,
+            AgentId = null
+        };
+        runService.AddRun(sentinel1);
+        runService.AddRun(sentinel2);
+
+        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
+        var lifecycle = new PipelineRunLifecycleService(
+            mockHistoryService.Object, runService, _mockLogger.Object);
+
+        var dedupCount = 0;
+        var mockDedup = new Mock<IJobDeduplicationGuard>();
+        mockDedup
+            .Setup(d => d.MarkIssueComplete(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+            .Callback(() => dedupCount++);
+
+        var service = new PipelineOrchestrationService(
+            _mockConfigStore.Object,
+            _mockFactory.Object,
+            new PipelineCancellationFacade(mockDedup.Object, null),
+            lifecycle,
+            new TestOrchestrationFactory.NoOpLabelService(),
+            _mockLogger.Object);
+
+        // Act
+        await service.ReleaseActiveAgentRunsAsync();
+
+        // Assert — both sentinels released even though AgentId is null
+        runService.GetActiveRuns().Should().BeEmpty();
+        dedupCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ReleaseActiveAgentRunsAsync_DoesNotSendCancelJobToAgents_WhenSenderIsWired()
     {
         // Arrange
         var mockRunService = new Mock<IOrchestratorRunService>();
@@ -3656,7 +3717,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockLogger.Object);
 
         // Act
-        await service.CancelActiveAgentRunsAsync();
+        await service.ReleaseActiveAgentRunsAsync();
 
         // Assert — CancelJob must NOT be sent; agents should reconnect to the new pod
         mockCancellation.Verify(
@@ -3665,7 +3726,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CancelActiveAgentRunsAsync_DoesNotWriteCancelledHistoryEntry()
+    public async Task ReleaseActiveAgentRunsAsync_DoesNotWriteCancelledHistoryEntry()
     {
         // Arrange
         var mockRunService = new Mock<IOrchestratorRunService>();
@@ -3697,7 +3758,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockLogger.Object);
 
         // Act
-        await service.CancelActiveAgentRunsAsync();
+        await service.ReleaseActiveAgentRunsAsync();
 
         // Assert — no Cancelled history written; new pod writes the real outcome
         mockHistoryService.Verify(
@@ -3706,7 +3767,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CancelActiveAgentRunsAsync_StillReleasesIssueFromDedupGuard()
+    public async Task ReleaseActiveAgentRunsAsync_StillReleasesIssueFromDedupGuard()
     {
         // Arrange — dedup must be released so the new pod can adopt / re-dispatch the issue
         var mockRunService = new Mock<IOrchestratorRunService>();
@@ -3744,14 +3805,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockLogger.Object);
 
         // Act
-        await service.CancelActiveAgentRunsAsync();
+        await service.ReleaseActiveAgentRunsAsync();
 
         // Assert — dedup released so new pod is not blocked on re-dispatching
         dedupCallCount.Should().Be(1);
     }
 
     [Fact]
-    public async Task CancelActiveAgentRunsAsync_StillRemovesRunsFromInMemoryTracking()
+    public async Task ReleaseActiveAgentRunsAsync_StillRemovesRunsFromInMemoryTracking()
     {
         // Arrange — in-memory tracking must be cleared so the new pod's rehydrated copy is authoritative
         var runService = new Orchestration.OrchestratorRunService(_mockLogger.Object);
@@ -3782,7 +3843,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockLogger.Object);
 
         // Act
-        await service.CancelActiveAgentRunsAsync();
+        await service.ReleaseActiveAgentRunsAsync();
 
         // Assert — removed from this pod's in-memory state
         runService.GetActiveRuns().Should().BeEmpty();

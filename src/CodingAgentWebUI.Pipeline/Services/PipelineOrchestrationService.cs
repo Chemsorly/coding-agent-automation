@@ -79,16 +79,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// reconnect to the new pod and complete normally. The dedup guard is released so the
     /// new pod is not blocked on re-adopting the issues.
     /// </summary>
-    public Task CancelActiveAgentRunsAsync()
+    // synchronous — no async work after rolling-update handoff fix
+    public Task ReleaseActiveAgentRunsAsync()
     {
-        var allRuns = _lifecycle.GetAllActiveRuns()
-            .Where(r => r.AgentId != null)
-            .ToList();
-
-        if (allRuns.Count == 0) return Task.CompletedTask;
-
-        // Delegate state changes to lifecycle — releases in-memory tracking, no history written
-        var releasedIssues = _lifecycle.MarkAgentRunsCancelled();
+        // Release all runs from in-memory tracking — includes sentinels (AgentId == null)
+        // so their dedup guards are always freed, even if agents haven't called JobAccepted yet.
+        var releasedIssues = _lifecycle.ReleaseAgentRunsForHandoff();
 
         // Release dedup guards so the new pod can adopt / re-dispatch the issues
         if (_cancellationFacade.DedupGuard is not null)

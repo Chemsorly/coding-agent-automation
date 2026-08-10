@@ -315,18 +315,18 @@ public class PipelineRunLifecyclePropertyTests
         return ctsCancelled && completedAtSet && stepIsCancelled && addedToHistory;
     }
 
-    // ── Property 10: MarkAgentRunsCancelled Postconditions ──────────────
+    // ── Property 10: ReleaseAgentRunsForHandoff Postconditions ──────────
 
     /// <summary>
-    /// Property 10: MarkAgentRunsCancelled Postconditions
-    /// For any set of active agent-dispatched runs, after MarkAgentRunsCancelled:
+    /// Property 10: ReleaseAgentRunsForHandoff Postconditions
+    /// For any set of active agent-dispatched runs, after ReleaseAgentRunsForHandoff:
     /// every run is removed from tracking and its issue identifier is returned for dedup release.
     /// Run state (CurrentStep, CompletedAt) is intentionally NOT mutated — the new pod owns
     /// the run and will write the real outcome.
     /// **Validates: Requirements 4.4**
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineRunLifecycleArbitraries) })]
-    public bool MarkAgentRunsCancelled_CancelsAllAgentRuns(MarkAgentRunsCancelledInput input)
+    public bool ReleaseAgentRunsForHandoff_ReleasesAllRunsWithoutMutation(MarkAgentRunsCancelledInput input)
     {
         var agentRuns = Enumerable.Range(0, input.AgentRunCount)
             .Select(i => CreateRun($"agent-{i}", $"issue-{i}", PipelineStep.GeneratingCode))
@@ -346,7 +346,7 @@ public class PipelineRunLifecyclePropertyTests
 
         var service = CreateService(historyMock: historyMock, runServiceMock: runServiceMock);
 
-        var releasedIssues = service.MarkAgentRunsCancelled();
+        var releasedIssues = service.ReleaseAgentRunsForHandoff();
 
         // Runs removed from in-memory tracking so new pod is authoritative
         var allRemoved = agentRuns.All(r => removedRunIds.Contains(r.RunId));
