@@ -78,13 +78,8 @@ public class ProcessWrapperAdditionalEnvTests
         var logger = new Mock<ILogger>().Object;
         var wrapper = new ProcessWrapper(config, logger);
 
-        // Use bash to print the env var value into a temp file
-        var tmpFile = Path.Combine(Path.GetTempPath(), $"pw-env-test-{Guid.NewGuid():N}.txt");
         var tempDir = Path.GetTempPath();
         Directory.CreateDirectory(Path.Combine(tempDir, ".agent"));
-
-        var capturedOutput = new List<string>();
-        wrapper.OutputReceived += (_, line) => capturedOutput.Add(line);
 
         var additionalEnv = new Dictionary<string, string> { [uniqueKey] = uniqueValue };
 

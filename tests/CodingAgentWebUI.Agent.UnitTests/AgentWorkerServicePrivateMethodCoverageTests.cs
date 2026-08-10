@@ -1086,8 +1086,6 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         catch { return; }
 
         await using var batcher = new OutputBatcher();
-        var linesEmitted = new List<string>();
-        batcher.OnFlush += lines => { linesEmitted.AddRange(lines); return Task.CompletedTask; };
 
         var message = new ChatPromptMessage
         {
