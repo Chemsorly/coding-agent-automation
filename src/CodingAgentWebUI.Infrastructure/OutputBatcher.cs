@@ -252,7 +252,7 @@ public sealed class OutputBatcher : IAsyncDisposable
         await _trigger.DisposeAsync();
 
         try { await _flushLoop; }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected during disposal — _cts was cancelled above */ }
 
         // Final flush of remaining lines
         List<string>? batch = null;
