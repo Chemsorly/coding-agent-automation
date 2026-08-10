@@ -43,11 +43,10 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <summary>
     /// Checks whether the given issue identifier is being processed by any active run.
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId)
+    public bool IsIssueBeingProcessed(string issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
-        var compositeKey = $"{issueProviderConfigId}:{issueIdentifier}";
+        var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         return _activeRuns.Values.Any(r => $"{r.IssueProviderConfigId}:{r.IssueIdentifier}" == compositeKey);
     }
 
@@ -134,20 +133,18 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     public int ActiveRunCount => _activeRuns.Count;
 
     /// <inheritdoc />
-    public void MarkRecentlyCompleted(string issueIdentifier, string issueProviderConfigId)
+    public void MarkRecentlyCompleted(string issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
-        var key = $"{issueProviderConfigId}:{issueIdentifier}";
+        var key = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         _recentlyCompleted[key] = _timeProvider.GetUtcNow();
     }
 
     /// <inheritdoc />
-    public bool WasRecentlyCompleted(string issueIdentifier, string issueProviderConfigId)
+    public bool WasRecentlyCompleted(string issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
-        var key = $"{issueProviderConfigId}:{issueIdentifier}";
+        var key = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         if (_recentlyCompleted.TryGetValue(key, out var completedAt))
         {
             if (_timeProvider.GetUtcNow() - completedAt <= RecentCompletionTtl)

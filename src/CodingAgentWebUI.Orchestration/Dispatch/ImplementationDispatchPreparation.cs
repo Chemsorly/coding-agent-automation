@@ -16,8 +16,8 @@ internal sealed class ImplementationDispatchPreparation : IDispatchPreparationHa
     private readonly ILogger _logger;
     private readonly AgentEntry _agent;
     private readonly string _issueIdentifier;
-    private readonly string _issueProviderId;
-    private readonly string _repoProviderId;
+    private readonly ProviderConfigId _issueProviderId;
+    private readonly ProviderConfigId _repoProviderId;
     private readonly string? _brainProviderId;
     private readonly string? _pipelineProviderId;
     private readonly string _initiatedBy;

@@ -205,17 +205,17 @@ public static class PipelineConfigurationResolver
     /// </summary>
     public static PipelineConfiguration ApplyTemplateOverrides(
         PipelineConfiguration config,
-        string repoProviderId,
+        ProviderConfigId repoProviderId,
         string? brainProviderId,
         IReadOnlyList<ProviderConfig> providerConfigs,
         IReadOnlyList<PipelineJobTemplate> templates)
     {
         var matchingTemplate = templates.FirstOrDefault(t =>
-            t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
+            t.RepoProviderId == repoProviderId.Value && t.BrainProviderId == brainProviderId);
         if (matchingTemplate is { BrainReadOnly: true })
             config = config with { BrainReadOnly = true };
 
-        return ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
+        return ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId.Value));
     }
 
     /// <summary>
@@ -227,7 +227,7 @@ public static class PipelineConfigurationResolver
         Func<CancellationToken, Task<PipelineConfiguration>> loadConfig,
         Func<CancellationToken, Task<IReadOnlyList<PipelineJobTemplate>>> loadTemplates,
         PipelineProject project,
-        string repoProviderId,
+        ProviderConfigId repoProviderId,
         string? brainProviderId,
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
@@ -248,7 +248,7 @@ public static class PipelineConfigurationResolver
         PipelineConfiguration preLoaded,
         Func<CancellationToken, Task<IReadOnlyList<PipelineJobTemplate>>> loadTemplates,
         PipelineProject project,
-        string repoProviderId,
+        ProviderConfigId repoProviderId,
         string? brainProviderId,
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)

@@ -423,7 +423,7 @@ internal sealed class DispatchScheduler
     /// in-memory cycle snapshot. Do not remove or short-circuit check (1) — it guards against races that
     /// the snapshot alone cannot detect (e.g., an issue dispatched by another agent instance between polls).
     /// </summary>
-    private bool IsIssueAlreadyActive(string identifier, string issueProviderId, RoundDispatchContext ctx)
+    private bool IsIssueAlreadyActive(string identifier, ProviderConfigId issueProviderId, RoundDispatchContext ctx)
     {
         if (_orchestration.IsIssueBeingProcessed(identifier, issueProviderId))
             return true;

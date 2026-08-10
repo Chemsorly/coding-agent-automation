@@ -39,15 +39,29 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
 
         var result = items.Select(w =>
         {
-            var (issueTitle, repoProviderId, consolidationRunType, projectId, projectName) = ExtractFromPayload(w.Payload);
+            var (issueTitle, repoProviderIdStr, consolidationRunType, projectId, projectName) = ExtractFromPayload(w.Payload);
             var isConsolidation = w.TaskType == WorkItemTaskType.Consolidation;
+            // RepoProviderId from payload may be empty when payload is null or deserialization fails.
+            // Fall back to the IssueProviderConfigId as a best-effort value to satisfy the required
+            // ProviderConfigId constraint while still allowing the job to be dequeued.
+            // A job with a missing RepoProviderId will fail at dispatch time anyway.
+            // TODO: [WARNING] If w.IssueProviderConfigId is itself null or empty (e.g., a corrupt/legacy
+            // DB row with an empty IssueProviderConfigId column), the implicit string → ProviderConfigId
+            // conversion below will throw ArgumentException("The value cannot be an empty string"),
+            // crashing GetPendingJobsAsync for the entire page of results and causing ALL pending jobs
+            // in that batch to be lost — not just the malformed one. This is a DoS risk on the job
+            // polling loop. Consider skipping/logging rows with empty IssueProviderConfigId rather than
+            // crashing the entire Select projection. Same applies to IssueProviderId = w.IssueProviderConfigId.
+            var effectiveRepoProviderId = string.IsNullOrEmpty(repoProviderIdStr)
+                ? w.IssueProviderConfigId
+                : repoProviderIdStr;
             var pendingJob = new PendingJob
             {
                 WorkItemId = w.Id.ToString(),
                 IssueIdentifier = w.IssueIdentifier,
                 IssueProviderId = w.IssueProviderConfigId,
                 IssueTitle = issueTitle,
-                RepoProviderId = repoProviderId,
+                RepoProviderId = effectiveRepoProviderId,
                 EnqueuedAt = w.OriginalEnqueuedAt ?? w.CreatedAt,
                 InitiatedBy = "loop",
                 RequiredLabels = string.IsNullOrEmpty(w.AgentSelector)

@@ -74,8 +74,8 @@ internal sealed class ReviewDispatchPreparation : IDispatchPreparationHandler
             RunId = reservation.RunId,
             IssueIdentifier = _request.PrIdentifier,
             IssueTitle = _request.PrTitle,
-            IssueProviderConfigId = _request.IssueProviderId,
-            RepoProviderConfigId = _request.RepoProviderId,
+            IssueProviderConfigId = _request.IssueProviderId.Value,
+            RepoProviderConfigId = _request.RepoProviderId.Value,
             RunType = PipelineRunType.Review,
             StartedAt = reservation.StartedAt,
             InitiatedBy = _request.InitiatedBy,
@@ -164,8 +164,8 @@ internal sealed class ReviewDispatchPreparation : IDispatchPreparationHandler
     /// </summary>
     private async Task<IReadOnlyList<LinkedIssueContext>> PreFetchLinkedIssuesAsync(
         string prIdentifier,
-        string issueProviderId,
-        string repoProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
         CancellationToken ct)
     {
         var linkedIssueContexts = new List<LinkedIssueContext>();
@@ -173,7 +173,7 @@ internal sealed class ReviewDispatchPreparation : IDispatchPreparationHandler
         try
         {
             // Resolve repository provider to extract linked issues
-            var repoConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+            var repoConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId.Value, ProviderKind.Repository, ct);
             if (repoConfig == null)
             {
                 _logger.Warning("Repo provider config '{ConfigId}' not found for linked issue extraction", repoProviderId);
@@ -199,7 +199,7 @@ internal sealed class ReviewDispatchPreparation : IDispatchPreparationHandler
             }
 
             // Resolve issue provider to fetch issue details
-            var issueConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+            var issueConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId.Value, ProviderKind.Issue, ct);
             if (issueConfig == null)
             {
                 _logger.Warning("Issue provider config '{ConfigId}' not found for linked issue pre-fetch", issueProviderId);

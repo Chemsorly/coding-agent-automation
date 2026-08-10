@@ -86,18 +86,17 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// <summary>
     /// Checks whether the given issue is being processed by any active run (in-process or agent-dispatched).
     /// </summary>
-    public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, string issueProviderConfigId)
+    public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
         // TODO: ThrowIfNullOrEmpty is stricter than the original ThrowIfNull — it now rejects empty strings.
         // Also, [CallerArgumentExpression] emits "issueIdentifier.Value" as ParamName instead of "issueIdentifier".
         // Consider reverting to ArgumentNullException.ThrowIfNull(issueIdentifier.Value) to match original semantics,
         // or use the explicit paramName overload: ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)).
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
-        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
 
         // Check in-process run
         if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier
-            && ActiveRun.IssueProviderConfigId == issueProviderConfigId && IsRunning)
+            && ActiveRun.IssueProviderConfigId == issueProviderConfigId.Value && IsRunning)
             return true;
 
         // Check agent runs via OrchestratorRunService

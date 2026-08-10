@@ -66,7 +66,7 @@ public sealed class DispatchInfrastructure
     /// <see cref="PipelineConfiguration.WorkspaceBaseDirectory"/> access before run creation.
     /// </summary>
     internal async Task<(IReadOnlyList<ProviderConfig> ProviderConfigs, PipelineConfiguration Config)> PrepareAndResolveConfigAsync(
-        string repoProviderId,
+        ProviderConfigId repoProviderId,
         string agentProviderId,
         string? brainProviderId,
         string? pipelineProviderId,
@@ -116,7 +116,7 @@ public sealed class DispatchInfrastructure
     /// need cross-repo support simply omit the parameter.
     /// </remarks>
     internal async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
-        string repoProviderId,
+        ProviderConfigId repoProviderId,
         string agentProviderId,
         string? brainProviderId,
         string? pipelineProviderId,
@@ -126,7 +126,7 @@ public sealed class DispatchInfrastructure
     {
         var rawConfigs = await BuildAgentProviderConfigsAsync(
             repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct, additionalRepoProviderIds);
-        return await TokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
+        return await TokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId.Value, ct);
     }
 
     /// <summary>
@@ -134,7 +134,7 @@ public sealed class DispatchInfrastructure
     /// Excludes issue provider configs (agents don't get issue access).
     /// </summary>
     internal async Task<IReadOnlyList<ProviderConfig>> BuildAgentProviderConfigsAsync(
-        string repoProviderId,
+        ProviderConfigId repoProviderId,
         string agentProviderId,
         string? brainProviderId,
         string? pipelineProviderId,
@@ -146,7 +146,7 @@ public sealed class DispatchInfrastructure
 
         var repoConfigs = await Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = await ProviderConfigResolver.ResolveAsync(
-            Resolution.ConfigStore, repoProviderId, ProviderKind.Repository, repoConfigs, required: true, logger, ct);
+            Resolution.ConfigStore, repoProviderId.Value, ProviderKind.Repository, repoConfigs, required: true, logger, ct);
         configs.Add(repoConfig!);
 
         // Include additional repo provider configs for cross-repo decomposition.
@@ -154,7 +154,7 @@ public sealed class DispatchInfrastructure
         if (additionalRepoProviderIds is not null)
         {
             var additionalConfigs = await ResolveAdditionalRepoConfigsAsync(
-                repoProviderId, additionalRepoProviderIds, repoConfigs, logger, ct);
+                repoProviderId.Value, additionalRepoProviderIds, repoConfigs, logger, ct);
             configs.AddRange(additionalConfigs);
         }
 
@@ -227,11 +227,11 @@ public sealed class DispatchInfrastructure
     /// </remarks>
     internal async Task<IssueContextResult?> BuildIssueContextAsync(
         string issueIdentifier,
-        string issueProviderId,
+        ProviderConfigId issueProviderId,
         CancellationToken ct)
     {
         var issueConfig = await Resolution.ConfigStore
-            .GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+            .GetProviderConfigByIdAsync(issueProviderId.Value, ProviderKind.Issue, ct);
         if (issueConfig is null)
             return null;
 
@@ -384,7 +384,7 @@ public sealed class DispatchInfrastructure
                 // For signal 3 (commit_threshold): create a short-lived repo provider for commit counting
                 Func<DateTimeOffset, CancellationToken, Task<int>>? getCommitCount = null;
                 var repoConfig = await Resolution.ConfigStore
-                    .GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+                    .GetProviderConfigByIdAsync(repoProviderId.Value, ProviderKind.Repository, ct);
                 if (repoConfig is not null)
                 {
                     getCommitCount = async (since, token) =>
