@@ -203,10 +203,7 @@ internal sealed class DispatchStateBuilder
             var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
             if (IsAtConcurrencyLimit(item.AgentSelector, state.ConcurrencyBySelector, maxConcurrent))
             {
-                // TODO: Restore {Current}/{Max} structured log properties stripped during complexity refactoring.
-                // These are useful for diagnosing why items are stuck at a concurrency limit.
-                // Restore: Log.Debug("{CallerName}: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                //     callerName, item.AgentSelector, state.ConcurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0), maxConcurrent, item.Id);
+                // TODO: Restore {Current}/{Max} structured log properties stripped during complexity refactoring (useful for diagnosing stuck items).
                 Log.Debug("{CallerName}: selector {Selector} at concurrency limit, skipping {WorkItemId}",
                     callerName, item.AgentSelector, item.Id);
                 continue;
