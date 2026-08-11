@@ -1,4 +1,5 @@
 using LibGit2Sharp;
+using System.Diagnostics.CodeAnalysis;
 using NGitLab;
 using Polly;
 using CodingAgentWebUI.Infrastructure.Git;
@@ -128,30 +129,30 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
     /// <inheritdoc />
     public Task CommitAllAsync(WorkspacePath workspacePath, string message, CancellationToken ct)
-        => CommitAllAsync(workspacePath, message, null, ct);
+        => SharedRepositoryOperations.CommitAllAsync(workspacePath, message, ct);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message,
         IReadOnlyList<string>? blacklistedPaths, CancellationToken ct,
         IReadOnlyList<string>? pipelineInjectedPaths = null)
-        => CommitAllAsync(workspacePath, message, blacklistedPaths, allowEmpty: false, ct, pipelineInjectedPaths);
+        => SharedRepositoryOperations.CommitAllAsync(workspacePath, message, blacklistedPaths, ct, pipelineInjectedPaths);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message,
         IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct,
         IReadOnlyList<string>? pipelineInjectedPaths = null)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
-        ArgumentNullException.ThrowIfNull(message);
-
-        return Task.Run(() => RepositoryGitOperations.CommitAll(workspacePath, message, blacklistedPaths, allowEmpty, pipelineInjectedPaths), ct);
-    }
+        => SharedRepositoryOperations.CommitAllAsync(workspacePath, message, blacklistedPaths, allowEmpty, ct, pipelineInjectedPaths);
 
     /// <inheritdoc />
+    // Requires a live git remote — not unit-testable; core retry logic covered via PushWithTokenFactory tests.
+    [ExcludeFromCodeCoverage]
     public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
         => PushBranchAsync(workspacePath, branchName, forcePush: false, ct);
 
     /// <inheritdoc />
+    // Token factory passed so each Polly retry fetches a fresh token (GitLab tokens can also
+    // be dynamically vended; stale tokens cause 403s in long pipeline runs).
+    [ExcludeFromCodeCoverage]
     public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, bool forcePush, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
@@ -159,14 +160,15 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
         return Task.Run(async () =>
         {
-            var token = await GetTokenAsync(ct);
-
             try
             {
-                await RepositoryGitOperations.Push(workspacePath, branchName, forcePush, GitConstants.GitLabTokenUsername, token, _gitPipeline, ct);
+                await RepositoryGitOperations.Push(workspacePath, branchName, forcePush,
+                    GitConstants.GitLabTokenUsername, tokenFactory: GetTokenAsync, _gitPipeline, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not InvalidOperationException)
             {
+                // Redact any token value that may have leaked into the exception message.
+                var token = await GetTokenAsync(ct);
                 throw RedactTokenFromException(ex, token);
             }
         }, ct);
@@ -174,27 +176,15 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
 
     /// <inheritdoc />
     public Task<string> GetHeadCommitShaAsync(WorkspacePath workspacePath, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
-
-        return Task.Run(() => RepositoryGitOperations.GetHeadCommitSha(workspacePath), ct);
-    }
+        => SharedRepositoryOperations.GetHeadCommitShaAsync(workspacePath, ct);
 
     /// <inheritdoc />
-    public async Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
-
-        return await RepositoryGitOperations.HasCommitsAhead(workspacePath, _baseBranch, _gitPipeline, ct);
-    }
+    public Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, CancellationToken ct)
+        => SharedRepositoryOperations.HasCommitsAheadAsync(workspacePath, _baseBranch, _gitPipeline, ct);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<FileChangeSummary>> GetFileChangesAsync(WorkspacePath workspacePath, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
-
-        return Task.Run(() => RepositoryGitOperations.GetFileChanges(workspacePath, _baseBranch), ct);
-    }
+        => SharedRepositoryOperations.GetFileChangesAsync(workspacePath, _baseBranch, ct);
 
     /// <inheritdoc />
     public Task<MergeResult> MergeFromBaseAsync(WorkspacePath workspacePath, CancellationToken ct)

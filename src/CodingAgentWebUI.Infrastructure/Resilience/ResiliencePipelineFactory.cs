@@ -342,20 +342,22 @@ public static class ResiliencePipelineFactory
     {
         var message = ex.Message;
 
-        // Non-retryable patterns
+        // Non-retryable patterns (permanent failures even with a fresh token)
         if (message.Contains("protected branch", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("required status check", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("rejected", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("authentication", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("credentials", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("401", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("403", StringComparison.OrdinalIgnoreCase))
+            message.Contains("rejected", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        // Retryable: known network patterns OR unclassified errors (potentially transient)
+        // Auth errors (401/403/authentication/credentials) are retryable when thrown by
+        // PushWithTokenFactory with retryOnAuth=true: the next attempt will fetch a fresh token.
+        // They are NOT retryable when thrown directly (e.g. by callers that don't use the factory),
+        // but PushWithTokenFactory wraps auth errors in InvalidOperationException in that case,
+        // so they never reach this predicate.
+
+        // Retryable: auth errors (stale token), known network patterns, and unclassified errors
         return true;
     }
 
