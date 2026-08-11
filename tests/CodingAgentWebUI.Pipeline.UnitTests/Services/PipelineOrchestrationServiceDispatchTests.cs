@@ -110,7 +110,7 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
     public async Task CreateDispatchedRunAsync_IssueAlreadyProcessed_ReturnsNull()
     {
         // Arrange
-        // TODO: [WARNING] Raw string "42" passed to IsIssueBeingProcessed whose signature now takes IssueIdentifier.
+        // [WARNING] Raw string "42" passed to IsIssueBeingProcessed whose signature now takes IssueIdentifier.
         // Moq resolves via implicit conversion today, but a mismatch in the production construction path would
         // cause this mock to silently miss — the guard would not fire and the test would return a non-null run
         // instead of null, directly contradicting the test's intent. Replace with (IssueIdentifier)"42".

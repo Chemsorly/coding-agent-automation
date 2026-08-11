@@ -67,7 +67,7 @@ public abstract class PipelineCallbacksBase : IPipelineCallbacks
     /// Override this method entirely when the host already encapsulates the error-swallowing
     /// pattern in a separate method (e.g., <c>PipelineOrchestrationService.CreateDraftPrIfNotExistsAsync</c>).
     /// </remarks>
-    // TODO: Add unit tests for this template method verifying: (1) successful creation emits output line,
+    // Note: Add unit tests for this template method verifying: (1) successful creation emits output line,
     // (2) non-OperationCanceledException exceptions are swallowed and routed to LogDraftPrFailure,
     // (3) OperationCanceledException propagates unhandled.
     public virtual async Task CreateDraftPrIfNotExists(PipelineRun run, CancellationToken ct)

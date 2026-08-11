@@ -69,7 +69,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             Labels = InProgressLabels
         });
 
-        // TODO: [WARNING] Raw string "42" is passed to IsIssueBeingProcessed whose signature now takes IssueIdentifier.
+        // [WARNING] Raw string "42" is passed to IsIssueBeingProcessed whose signature now takes IssueIdentifier.
         // Moq resolves this via the implicit string→IssueIdentifier conversion, so the test compiles and passes today.
         // If the production code ever constructs the IssueIdentifier through a different path (e.g., factory/normalisation),
         // this mock will silently miss and the test will produce a false positive. Use (IssueIdentifier)"42" explicitly.
@@ -109,7 +109,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             Labels = InProgressLabels
         });
 
-        // TODO: [WARNING] Raw string "42" passed to IsIssueBeingProcessed — same implicit-conversion concern
+        // [WARNING] Raw string "42" passed to IsIssueBeingProcessed — same implicit-conversion concern
         // as Sweep_SwapsOrphanedIssues above. Replace with (IssueIdentifier)"42" for explicit typing.
         _mockRunService
             .Setup(r => r.IsIssueBeingProcessed("42", "provider-1"))
@@ -196,7 +196,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             Labels = InProgressLabels
         });
 
-        // TODO: [WARNING] Raw string "99" passed to IsIssueBeingProcessed — same implicit-conversion concern
+        // [WARNING] Raw string "99" passed to IsIssueBeingProcessed — same implicit-conversion concern
         // as the other setups in this file. Replace with (IssueIdentifier)"99" for explicit typing.
         _mockRunService
             .Setup(r => r.IsIssueBeingProcessed("99", "provider-2"))

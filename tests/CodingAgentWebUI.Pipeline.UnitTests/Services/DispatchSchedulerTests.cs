@@ -31,7 +31,7 @@ public class DispatchSchedulerTests
 
         _cacheManager = new ProviderCacheManager(mockFactory.Object, Serilog.Core.Logger.None);
 
-        // TODO: [WARNING] IDispatchRunCreator.IsIssueBeingProcessed still accepts string (not yet migrated),
+        // [WARNING] IDispatchRunCreator.IsIssueBeingProcessed still accepts string (not yet migrated),
         // so this compiles. Once IDispatchRunCreator is migrated to IssueIdentifier, this setup will silently
         // stop matching (It.IsAny<string>() won't match IssueIdentifier) and the dedup guard will appear
         // always-bypassed in tests. Update to It.IsAny<IssueIdentifier>() when that migration lands.
@@ -427,12 +427,12 @@ public class DispatchSchedulerTests
     public async Task FilterAll_AllItemsAlreadyProcessing_TerminatesWithZeroProcessed()
     {
         // Arrange: all issues are already being processed
-        // TODO: [WARNING] Same as constructor setup above — It.IsAny<string>() will stop matching after
+        // [WARNING] Same as constructor setup above — It.IsAny<string>() will stop matching after
         // IDispatchRunCreator.IsIssueBeingProcessed is migrated to IssueIdentifier. Update when that lands.
         _mockOrchestration.Setup(o => o.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
             .Returns(true);
 
-        // TODO: [WARNING] The test below only exercises IsIssueAlreadyActive branch (1):
+        // [WARNING] The test below only exercises IsIssueAlreadyActive branch (1):
         // _orchestration.IsIssueBeingProcessed. Branch (2) — ctx.ActiveIssueIdentifiers.Contains —
         // is never covered because ActiveIssueIdentifiers is always initialized empty.
         // Add a test where IsIssueBeingProcessed returns false but the identifier IS in
@@ -561,7 +561,7 @@ public class DispatchSchedulerTests
             CancellationToken.None, CancellationToken.None);
 
         // Assert: 2 issues + 1 project-level decomp = 3
-        // TODO: [WARNING] Add assertion for _decompDispatchCount to verify the project-level decomp
+        // [WARNING] Add assertion for _decompDispatchCount to verify the project-level decomp
         // was actually dispatched (not just counted). The DispatchProjectLevelEpicAsync extraction
         // changed how dispatched/failed propagate back to counters — a regression where
         // additionalDecompDispatches is not incremented but processed still is would not be caught

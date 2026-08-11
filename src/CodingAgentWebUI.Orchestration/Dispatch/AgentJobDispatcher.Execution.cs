@@ -211,7 +211,7 @@ public sealed partial class AgentJobDispatcher
             if (result is null) return false;
             var (pipelineCtx, customize, onSuccess) = result;
 
-            // TODO: ApplyRunMetadata is called AFTER RegisterDispatchedRun (which fires NotifyChange) in the
+            // Note: ApplyRunMetadata is called AFTER RegisterDispatchedRun (which fires NotifyChange) in the
             // review and decomposition paths. Subscribers reading the run between registration and this point
             // may observe ProjectId/ProjectName/ResolvedProfileId as null. Consider calling ApplyRunMetadata
             // inside the delegate before RegisterDispatchedRun, or suppressing notification until metadata is set.
@@ -319,7 +319,7 @@ public sealed partial class AgentJobDispatcher
                 Project: project),
             (proj, profile, agentProviderId, token) =>
             {
-                // TODO: Strategy instantiation inside the lambda means a new object is created
+                // Note: Strategy instantiation inside the lambda means a new object is created
                 // for every dispatch attempt, even when ResolveDispatchCoreAsync returns null
                 // (before the delegate is invoked). Since the class is stateless beyond readonly
                 // fields, this is harmless but wasteful. Consider lazy-initializing or caching
@@ -363,7 +363,7 @@ public sealed partial class AgentJobDispatcher
     {
         await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
 
-        // TODO: [WARNING] Silent state-tracking gap: when _lifecycleManager is non-null but either
+        // [WARNING] Silent state-tracking gap: when _lifecycleManager is non-null but either
         // IssueProviderConfigId or RepoProviderConfigId is empty, neither branch below executes.
         // The job has already been sent to the agent (AssignJobAsync completed), but agent.ActiveJobId
         // is never set and the agent is never transitioned to Busy — making the run invisible to the

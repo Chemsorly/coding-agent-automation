@@ -224,7 +224,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
 
         // Structurally unreachable for the "all-retries-throw" case (final attempt propagates unhandled).
         // Exists for pattern symmetry with TransitionCoreAsync.
-        // TODO: Document in method XML doc that callers must handle DbUpdateConcurrencyException when
+        // Note: Document in method XML doc that callers must handle DbUpdateConcurrencyException when
         // all retries are exhausted under sustained concurrency pressure — the method is not purely true/false.
         _logger.LogWarning(
             "WorkItem {WorkItemId} recovery to {DesiredStatus} failed after exhausting all retries",
@@ -257,7 +257,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
     }
 
     /// <inheritdoc />
-    // TODO: No integration test exists to verify this query correctly filters only
+    // Note: No integration test exists to verify this query correctly filters only
     // FailureReason.AgentError and excludes Timeout, InfrastructureFailure, and
     // TokenRefreshFailure. The unit tests mock the interface so the actual DB filtering
     // logic has no coverage. A regression in the EF predicate would go undetected.

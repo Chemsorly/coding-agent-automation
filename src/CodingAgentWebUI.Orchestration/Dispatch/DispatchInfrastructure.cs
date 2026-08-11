@@ -29,10 +29,10 @@ public sealed class DispatchInfrastructure
     public ILabelService LabelService { get; }
     public DispatchResolutionService Resolution { get; }
 
-    // TODO: Consider making StalenessDetector an init-only or constructor parameter to eliminate
+    // Note: Consider making StalenessDetector an init-only or constructor parameter to eliminate
     // temporal coupling — currently set as a side-effect inside the IDispatchOrchestrationService
     // singleton factory, creating an implicit DI resolution ordering dependency.
-    // TODO: Restrict setter to internal to prevent accidental mutation from outside the assembly/initialization path.
+    // Note: Restrict setter to internal to prevent accidental mutation from outside the assembly/initialization path.
     /// <summary>
     /// Optional staleness detector for evaluating analysis freshness.
     /// Set by DI in DB mode; null in legacy (no-DB) mode where
