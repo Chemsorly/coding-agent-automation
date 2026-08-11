@@ -178,6 +178,12 @@ internal sealed class DispatchScheduler
             if (ct.IsCancellationRequested || remaining <= 0) break;
             if (!turnResult.AnyProgress) break;
 
+            // TODO: currentTurn = NextTurn(currentTurn) is dead state mutation after the priority ordering
+            // change (#1931). TrySelectNextTurn now ignores startTurn entirely (iterates PriorityOrder),
+            // so advancing currentTurn here has no effect on turn selection. The call is harmless but
+            // misleading — it creates the impression that round-robin state still matters. Remove
+            // NextTurn, the currentTurn variable, and the startTurn parameter from TrySelectNextTurn
+            // in a follow-up clean-up to make program intent clear.
             currentTurn = NextTurn(currentTurn);
         }
 
@@ -286,22 +292,28 @@ internal sealed class DispatchScheduler
     }
 
     /// <summary>
-    /// Selects the next eligible turn in the three-way round-robin cycle, starting at
-    /// <paramref name="startTurn"/> and cycling through up to three turns.
-    /// Returns (found=false, default) when all queues are exhausted.
+    /// Priority order for turn selection. Review (PRs) is dispatched first, then Decomposition,
+    /// then Issues (Implementation). Within each type, FIFO order is preserved by the per-queue
+    /// dequeue logic. <c>startTurn</c> is retained for signature compatibility but is no longer
+    /// used after priority ordering replaced the modulo round-robin.
     /// </summary>
-    private static (bool found, DispatchTurn selectedTurn) TrySelectNextTurn(
+    private static readonly DispatchTurn[] PriorityOrder =
+        [DispatchTurn.PullRequests, DispatchTurn.Decomposition, DispatchTurn.Issues];
+
+    /// <summary>
+    /// Selects the next eligible turn using priority ordering: PullRequests first, then
+    /// Decomposition, then Issues. Returns (found=false, default) when all queues are exhausted.
+    /// </summary>
+    /// <param name="startTurn">Unused after priority ordering replaced round-robin; retained for signature compatibility.</param>
+    internal static (bool found, DispatchTurn selectedTurn) TrySelectNextTurn(
         DispatchTurn startTurn, bool hasIssues, bool hasPrs, bool hasDecomp)
     {
-        for (int attempt = 0; attempt < 3; attempt++)
+        foreach (var turn in PriorityOrder)
         {
-            var tryTurn = (DispatchTurn)(((int)startTurn + attempt) % 3);
-            if ((tryTurn == DispatchTurn.Issues && hasIssues)
-                || (tryTurn == DispatchTurn.PullRequests && hasPrs)
-                || (tryTurn == DispatchTurn.Decomposition && hasDecomp))
-            {
-                return (true, tryTurn);
-            }
+            if ((turn == DispatchTurn.Issues && hasIssues)
+                || (turn == DispatchTurn.PullRequests && hasPrs)
+                || (turn == DispatchTurn.Decomposition && hasDecomp))
+                return (true, turn);
         }
         return (false, startTurn);
     }

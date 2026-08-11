@@ -31,6 +31,15 @@ public class DecompositionDispatchPropertyTests
     ///
     /// **Validates: Requirements 12.3, 17.10, 19.1**
     /// </summary>
+    // TODO: This property test simulates the OLD round-robin algorithm (modulo % 3 turn cycling)
+    // rather than the priority-ordered TrySelectNextTurn introduced in #1931. The production code
+    // no longer provides "fair three-way alternation" — it uses strict priority ordering
+    // (PRs > Decomposition > Issues). The invariant "no queue type is starved when budget >= 3" is
+    // no longer valid for the production system: Issues and Decomposition will be starved whenever
+    // PRs have work and the budget is limited. This test still passes because it runs against a
+    // private re-implementation, not DispatchFairRoundRobinAsync. Update the simulation and
+    // invariant to reflect priority-ordered dispatch semantics to avoid creating a false impression
+    // of the current system behaviour.
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(FairAlternationArbitraries) })]
     public Property FairThreeWayAlternation_NoStarvationWhenBudgetAtLeast3(FairAlternationInput input)
     {

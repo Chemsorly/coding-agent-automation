@@ -346,6 +346,15 @@ public class JobQueueDrainServiceTests
 
     #region Review/Decomposition routing (via DispatchToAgentDirectAsync)
 
+    // TODO: [WARNING] No test in this class exercises the DrainAsync → DequeueForAgent priority path:
+    // i.e., that when both a Review job AND an Implementation job are queued and an agent is idle,
+    // DrainAsync dispatches the Review job first (not the Implementation job). The priority selection
+    // is delegated entirely to DequeueForAgent (covered in JobDeduplicationGuardPriorityTests), but
+    // the integration between DrainAsync and DequeueForAgent's priority selection is not tested here.
+    // A regression that causes DrainAsync to bypass DequeueForAgent or call it in a non-priority-aware
+    // way (e.g., scanning the raw ConcurrentQueue directly) would go undetected. Add a test:
+    //   DrainAsync_ReviewAndImplementationQueued_ReviewDispatchedFirst (#1931).
+
     [Fact]
     public async Task DrainAsync_ReviewRunType_DispatchesDirectlyWithJob()
     {
@@ -438,6 +447,7 @@ public class JobQueueDrainServiceTests
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
             ConsolidationTemplateId = null,
             ConsolidationWorkspacePath = "/tmp/ws"
@@ -466,6 +476,7 @@ public class JobQueueDrainServiceTests
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.HarnessSuggestions,
             ConsolidationTemplateId = "t-1",
             ConsolidationWorkspacePath = "/tmp/ws"
@@ -503,6 +514,7 @@ public class JobQueueDrainServiceTests
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.RefactoringDetection,
             ConsolidationWorkspacePath = "/tmp/ws"
         });
@@ -530,6 +542,7 @@ public class JobQueueDrainServiceTests
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
             ConsolidationWorkspacePath = "/tmp/ws"
         });
@@ -587,6 +600,7 @@ public class JobQueueDrainServiceTests
                     InitiatedBy = "consolidation",
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = Array.Empty<string>(),
+                    RunType = PipelineRunType.Consolidation,
                     ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
                     ConsolidationWorkspacePath = "/tmp/ws"
                 });
@@ -652,6 +666,7 @@ public class JobQueueDrainServiceTests
                     InitiatedBy = "consolidation",
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = Array.Empty<string>(),
+                    RunType = PipelineRunType.Consolidation,
                     ConsolidationRunType = ConsolidationRunType.RefactoringDetection,
                     ConsolidationWorkspacePath = "/tmp/ws"
                 });
@@ -697,6 +712,7 @@ public class JobQueueDrainServiceTests
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
             ConsolidationWorkspacePath = "/tmp/ws"
         });
@@ -762,6 +778,7 @@ public class JobQueueDrainServiceTests
                     InitiatedBy = "consolidation",
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = Array.Empty<string>(),
+                    RunType = PipelineRunType.Consolidation,
                     ConsolidationRunType = ConsolidationRunType.HarnessSuggestions,
                     ConsolidationWorkspacePath = "/tmp/ws"
                 });

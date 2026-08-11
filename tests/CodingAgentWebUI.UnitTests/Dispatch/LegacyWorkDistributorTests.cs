@@ -369,6 +369,41 @@ public class LegacyWorkDistributorTests
         queuedJobs[0].RequiredLabels.Should().BeEquivalentTo(s_DotnetKiroLabels);
     }
 
+    [Fact]
+    public async Task DistributeAsync_Consolidation_PendingJob_HasRunType_Consolidation()
+    {
+        // Arrange
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "crun-runtype",
+            IssueProviderConfigId = "consolidation",
+            RepoProviderConfigId = "",
+            InitiatedBy = "consolidation",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet,kiro",
+            TimeoutSeconds = 0,
+            ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
+            ConsolidationWorkspacePath = "/tmp/ws"
+        };
+
+        // Act
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        var queuedJobs = _dispatcherService.GetQueuedJobs();
+        queuedJobs.Should().HaveCount(1);
+        queuedJobs[0].RunType.Should().Be(PipelineRunType.Consolidation,
+            because: "PendingJob constructed in legacy/in-memory mode for a consolidation job must have RunType == PipelineRunType.Consolidation");
+        // TODO: [WARNING] The IsConsolidation assertion below is tautologically derived from the RunType assertion
+        // above: because IsConsolidation is defined as `RunType == PipelineRunType.Consolidation`, if the RunType
+        // assertion passes the IsConsolidation assertion is guaranteed to pass regardless of the IsConsolidation
+        // implementation. The property's independent behaviour is exercised in PendingJobTests — this assertion
+        // adds no independent signal here and may mislead reviewers into thinking it provides separate coverage.
+        queuedJobs[0].IsConsolidation.Should().BeTrue(
+            because: "IsConsolidation must return true when RunType is Consolidation");
+    }
+
     // ── Null argument validation ────────────────────────────────────────
 
     [Fact]

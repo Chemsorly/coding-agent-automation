@@ -368,7 +368,7 @@ public sealed class DbPendingWorkQueryTests : IDisposable
     [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
     [InlineData(WorkItemTaskType.Decomposition, PipelineRunType.DecompositionAnalysis)]
     [InlineData(WorkItemTaskType.Implementation, PipelineRunType.Implementation)]
-    [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Implementation)] // Consolidation has no distinct run type
+    [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Consolidation)]
     public async Task GetPendingJobsAsync_TaskType_MapsToCorrectRunType(
         WorkItemTaskType taskType, PipelineRunType expectedRunType)
     {

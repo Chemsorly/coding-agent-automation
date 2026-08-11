@@ -48,6 +48,7 @@ public static class UiFormatters
         PipelineRunType.Review => "PR Review",
         PipelineRunType.DecompositionAnalysis => "Decomposition (Analysis)",
         PipelineRunType.Decomposition => "Decomposition",
+        PipelineRunType.Consolidation => "Consolidation",
         _ => "Implementation"
     };
 

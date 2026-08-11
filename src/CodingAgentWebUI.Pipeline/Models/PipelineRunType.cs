@@ -1,7 +1,7 @@
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
-/// Discriminates between pipeline run types: implementation, review, and decomposition phases.
+/// Discriminates between pipeline run types: implementation, review, decomposition phases, and consolidation.
 /// </summary>
 public enum PipelineRunType
 {
@@ -15,5 +15,8 @@ public enum PipelineRunType
     DecompositionAnalysis,
 
     /// <summary>Epic decomposition Phase 2 — create implementation-ready sub-issues from approved plan.</summary>
-    Decomposition
+    Decomposition,
+
+    /// <summary>Brain consolidation, refactoring detection, or harness suggestion run.</summary>
+    Consolidation
 }
