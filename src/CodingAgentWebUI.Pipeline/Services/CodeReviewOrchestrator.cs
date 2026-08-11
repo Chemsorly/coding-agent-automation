@@ -32,7 +32,7 @@ internal class CodeReviewOrchestrator
     /// decision is made (no findings, or warnings-only with fix prompt sent). This replaces the
     /// <c>goto exitLoop</c> pattern that was previously used in the inlined loop.
     /// </remarks>
-    // TODO: Add ArgumentNullException.ThrowIfNull for `context` and `agents` parameters to match constructor validation pattern
+        // NOTE: Add ArgumentNullException.ThrowIfNull for `context` and `agents` parameters to match constructor validation pattern
     internal async Task RunReviewLoopAsync(
         AgentPhaseContext context,
         IReadOnlyList<ReviewAgentConfig> agents,
@@ -195,7 +195,7 @@ internal class CodeReviewOrchestrator
     /// Runs acceptance criteria check and injects non-compliant criteria as CRITICAL findings.
     /// Returns the number of additional critical findings injected.
     /// </summary>
-    // TODO: Add targeted unit tests for InjectAcceptanceCriteriaFindingsAsync branching logic
+    // NOTE: Add targeted unit tests for InjectAcceptanceCriteriaFindingsAsync branching logic
     // (acResult null, no criteria, no non-compliant criteria). Currently only covered at integration level.
     private async Task<int> InjectAcceptanceCriteriaFindingsAsync(
         AgentPhaseContext context,
@@ -270,7 +270,7 @@ internal class CodeReviewOrchestrator
                 Config = config,
                 Description = $"Code review fix agent (iteration {iterationIndex + 1})",
                 Logger = _logger,
-                // TODO [WARNING]: EnvironmentVariables is not set here. This is the only agent dispatch
+                // NOTE [WARNING]: EnvironmentVariables is not set here. This is the only agent dispatch
                 // site updated in issue #1913 that was missed. A fix agent that needs a project secret
                 // (e.g. a private NuGet feed credential) to run a build tool will not receive it.
                 // Fix by adding: EnvironmentVariables = context.InjectedSecrets

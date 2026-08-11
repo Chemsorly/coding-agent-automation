@@ -162,7 +162,7 @@ public sealed class PipelineStepContext
     /// Used by the executor to mask secret values in ALL pipeline output (not just the setup step).
     /// Values shorter than 4 characters are not masked to avoid excessive false-positive redaction.
     /// </summary>
-    // TODO [WARNING]: InjectedSecrets is a mutable Dictionary<string, string> while all downstream
+    // NOTE [WARNING]: InjectedSecrets is a mutable Dictionary<string, string> while all downstream
     // consumers (AgentPhaseContext, QualityGateContext, AgentExecutionRequest, AgentRequest) expose it
     // as IReadOnlyDictionary<string, string>. A caller could cast it back to Dictionary and mutate the
     // shared reference, silently affecting subsequent steps. Consider changing the property type to

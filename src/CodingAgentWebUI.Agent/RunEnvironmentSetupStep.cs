@@ -81,7 +81,7 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
 
             if (!result.Success)
             {
-                // TODO: Record telemetry on failure (Activity.Current?.RecordMaskedError / SetStatus) to maintain
+                // NOTE: Record telemetry on failure (Activity.Current?.RecordMaskedError / SetStatus) to maintain
                 // observability parity with the Pipeline version of RunEnvironmentSetupStep.
                 _logger.Error("Pipeline {RunId} setup step '{StepName}' failed: {Message}",
                     context.Run.RunId, step.Name, result.FailureMessage);

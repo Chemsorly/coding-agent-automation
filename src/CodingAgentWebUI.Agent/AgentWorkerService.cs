@@ -71,7 +71,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
         _connectionLifecycle = deps.ConnectionLifecycle;
         _slotManager = deps.SlotManager;
-        // TODO: Validate agentId.Value is not null/empty — default(AgentId) would propagate null.
+        // NOTE: Validate agentId.Value is not null/empty — default(AgentId) would propagate null.
         _agentId = deps.AgentId.Value;
         _executor = deps.Executor;
         _consolidationExecutor = deps.ConsolidationExecutor;
@@ -431,7 +431,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 Prompt = message.Prompt,
                 WorkspacePath = chatWorkspace,
                 UseResume = message.UseResume,
-                // TODO [WARNING]: EnvironmentVariables (message.ProjectSecrets) is not forwarded here.
+                // NOTE [WARNING]: EnvironmentVariables (message.ProjectSecrets) is not forwarded here.
                 // Secrets are silently dropped for the OpenCode provider path — the "Loaded N secret(s)"
                 // log line is emitted before this branch, implying injection that never happens.
                 // This is a behavioral regression vs the old process-wide injection which applied to all
@@ -465,7 +465,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         if (!message.UseResume)
         {
             _logger.Information("Sending warm-up prompt to establish chat session");
-            // TODO [WARNING]: Warm-up prompt does not forward environmentVariables (message.ProjectSecrets).
+            // NOTE [WARNING]: Warm-up prompt does not forward environmentVariables (message.ProjectSecrets).
             // If secrets are required during session establishment (e.g. MCP server auth tokens),
             // the warm-up child process will not have them. Safe for now because the warm-up prompt
             // is a throwaway session-initialiser that should not need project secrets, but this

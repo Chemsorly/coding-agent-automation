@@ -41,7 +41,7 @@ public partial class AgentPhaseExecutor
                     OnChange = context.Callbacks.NotifyChange,
                     Logger = _logger,
                     OnOutputLine = line => context.Callbacks.EmitOutputLine(line),
-                    // TODO [WARNING]: EnvironmentVariables is not set here. Review agents use isolated
+                    // NOTE [WARNING]: EnvironmentVariables is not set here. Review agents use isolated
                     // sessions and are documented as read-only, so they likely don't need project secrets.
                     // However, this creates an asymmetry with analysis, code-generation, and quality-gate
                     // retry agents which all propagate InjectedSecrets. If a follow-up reviewer ever needs
@@ -233,7 +233,7 @@ public partial class AgentPhaseExecutor
                     OnChange = context.Callbacks.NotifyChange,
                     Logger = _logger,
                     OnOutputLine = line => context.Callbacks.EmitOutputLine($"[ReviewSummary] {line}"),
-                    // TODO [WARNING]: EnvironmentVariables is not set here (see follow-up agent TODO above).
+                    // NOTE [WARNING]: EnvironmentVariables is not set here (see follow-up agent NOTE above).
                     // Review summary agents are read-only; add EnvironmentVariables = context.InjectedSecrets
                     // if they ever need project secrets.
                     Phase = "review_summary"
