@@ -40,7 +40,7 @@ public class JobDeduplicationGuardPriorityTests
         EnqueuedAt = enqueuedAt ?? DateTimeOffset.UtcNow,
         InitiatedBy = "test",
         RequiredLabels = labels ?? Array.Empty<string>(),
-        RunType = runType,
+        RunType = isConsolidation ? PipelineRunType.Consolidation : runType,
         TaskType = isConsolidation ? WorkItemTaskType.Consolidation : WorkItemTaskType.Implementation,
         ConsolidationRunType = isConsolidation ? CodingAgentWebUI.Pipeline.Models.ConsolidationRunType.BrainConsolidation : null
     };
