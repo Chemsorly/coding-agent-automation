@@ -296,9 +296,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 // ReleaseAgent is idempotent (safe to call more than once for the same agentId),
                 // so a double-release via the catch block below is not a correctness risk.
                 _agentResolver.ReleaseAgent(agentId);
-                // TODO: Migrate to _dispatchAttemptService.RevertOnFailureAsync for full consolidation of revert-on-failure logic (#1914).
-                // Currently calls _dispatchRevertHandler directly (functionally equivalent, but the revert calls were not migrated
-                // in the same pass as the TransitionToDispatchedAsync extraction).
+                // Revert directly via _dispatchRevertHandler (functionally equivalent to RevertOnFailureAsync).
                 await _dispatchRevertHandler.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: ct);
                 return false;
             }
@@ -311,7 +309,6 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             _agentResolver.ReleaseAgent(agentId);
             // Revert WorkItem from Dispatched to Pending so it's available for the next drain cycle.
             // Uses CancellationToken.None explicitly: graceful shutdown must not prevent the revert.
-            // TODO: Migrate to _dispatchAttemptService.RevertOnFailureAsync for full consolidation of revert-on-failure logic (#1914).
             await _dispatchRevertHandler.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: CancellationToken.None);
             return false;
         }
@@ -330,11 +327,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             // This also ensures the agent's JobAccepted → Running transition is valid
             // (Dispatched → Running, not Pending → Running which is rejected).
             // Delegates to DispatchAttemptService to keep transition-to-Dispatched logic in one place (#1914).
-            // TODO: dispatchTime is captured here (before the call) but DispatchAttemptService.TransitionToDispatchedAsync
-            // sets entity.DispatchedAt from its own DateTimeOffset.UtcNow internally. The two timestamps are no longer
-            // guaranteed to be identical (sub-millisecond skew in practice). EnsureInMemoryRunRegistered is still called
-            // with the outer dispatchTime, so in-memory and DB DispatchedAt values may differ by a tiny amount.
-            // If any code ever compares them for equality, consider exposing DispatchedAt from TransitionToDispatchedAsync.
+            // Note: dispatchTime is captured before the call; DispatchAttemptService sets entity.DispatchedAt
+            // internally, so the two timestamps may differ by a sub-millisecond skew in practice.
             var dispatchTime = DateTimeOffset.UtcNow;
             await _dispatchAttemptService.TransitionToDispatchedAsync(item.Id, agentId, ct);
 

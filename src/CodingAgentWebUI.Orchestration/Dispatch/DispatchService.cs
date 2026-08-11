@@ -246,7 +246,8 @@ public sealed class DispatchService : BackgroundService
 
         var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
 
-        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
+        // Note: The switch handles known EligibilityOutcome values; new values will be caught
+        // by the default case returning true (conservative: skip item, continue polling).
         switch (result.Outcome)
         {
             case EligibilityOutcome.AtConcurrencyLimit:

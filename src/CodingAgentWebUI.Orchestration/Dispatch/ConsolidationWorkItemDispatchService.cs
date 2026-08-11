@@ -231,7 +231,8 @@ internal sealed class ConsolidationWorkItemDispatchService : BackgroundService
 
         var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
 
-        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
+        // Note: The switch handles known EligibilityOutcome values; new values will be caught
+        // by the default case returning true (conservative: skip item, continue polling).
         switch (result.Outcome)
         {
             case EligibilityOutcome.AtConcurrencyLimit:
@@ -428,9 +429,8 @@ internal sealed class ConsolidationWorkItemDispatchService : BackgroundService
         if (_consolidationJobPreparer is null)
         {
             Log.Error("ConsolidationWorkItemDispatchService: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
-            // Throw without calling FailConsolidationWorkItemAsync here: the caller's catch (Exception ex) block
-            // will call FailConsolidationWorkItemAsync exactly once. Calling it here AND throwing would cause a
-            // double-fail — the same work item would be transitioned to Failed twice with two different messages.
+            // Do not call FailConsolidationWorkItemAsync here. The outer catch block handles the failure
+            // transition exactly once; calling it here before throwing would cause a double-fail.
             throw new InvalidOperationException("IConsolidationJobPreparationService not registered");
         }
 

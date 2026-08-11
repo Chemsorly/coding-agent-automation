@@ -37,9 +37,6 @@ internal sealed class DispatchEligibilityChecker
     /// <returns>An <see cref="EligibilityResult"/> indicating whether the item can be dispatched.</returns>
     public async Task<EligibilityResult> CheckEligibilityAsync(
         PendingWorkItemProjection item,
-        // TODO: Consider typing as IReadOnlyDictionary<string, int> to make the read-only contract explicit.
-        // The checker only reads from this dictionary, but the mutable type allows callers to pass a live-mutating
-        // dictionary (which is intentional for within-cycle tracking). The implicit contract is unclear.
         Dictionary<string, int> concurrencyBySelector,
         int availablePvcCount,
         CancellationToken ct)

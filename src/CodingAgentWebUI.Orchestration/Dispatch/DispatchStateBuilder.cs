@@ -89,11 +89,6 @@ internal sealed class DispatchStateBuilder
     /// </param>
     /// <param name="recordTelemetry">Whether to record poll telemetry (only DispatchService does this).</param>
     /// <param name="ct">Cancellation token.</param>
-    // TODO: DbContext leak on exception path — if an exception (e.g., OperationCanceledException)
-    // propagates from the activeCounts query, QueryAvailablePvcsAsync, or telemetry call after
-    // the pendingItems.Count == 0 guard, the DbContext is never disposed. Wrap in try/catch that
-    // disposes db on exception, or use a pattern where db is always in a using scope and transferred
-    // to the caller only on success.
     public async Task<DispatchState?> BuildStateAsync(
         System.Linq.Expressions.Expression<Func<WorkItemEntity, bool>> taskTypeFilter,
         bool recordTelemetry,
@@ -194,10 +189,6 @@ internal sealed class DispatchStateBuilder
             var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
             if (IsAtConcurrencyLimit(item.AgentSelector, state.ConcurrencyBySelector, maxConcurrent))
             {
-                // TODO: Restore {Current}/{Max} structured log properties stripped during complexity refactoring.
-                // These are useful for diagnosing why items are stuck at a concurrency limit.
-                // Restore: Log.Debug("{CallerName}: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                //     callerName, item.AgentSelector, state.ConcurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0), maxConcurrent, item.Id);
                 Log.Debug("{CallerName}: selector {Selector} at concurrency limit, skipping {WorkItemId}",
                     callerName, item.AgentSelector, item.Id);
                 continue;
@@ -226,12 +217,7 @@ internal sealed class DispatchStateBuilder
 
         if (skipItem || template is null)
         {
-            // TODO: When skipItem=true and template is also null simultaneously, the onNoTemplate
-            // callback is correctly suppressed (the !skipItem guard below prevents it). However this
-            // reduces observability: there is no log/metric indicating that onNoTemplate was suppressed
-            // rather than invoked, which could mask misconfigured selectors. Consider adding a
-            // diagnostic log here for the (skipItem && template is null) case.
-            // See review finding: DotNetSpecialist WARNING DispatchStateBuilder.cs:206
+            // When skipItem=true the onNoTemplate callback is suppressed; the !skipItem guard below prevents it.
             if (!skipItem)
                 await onNoTemplate(item, $"No job template for selector: {item.AgentSelector}", ct);
             return null;

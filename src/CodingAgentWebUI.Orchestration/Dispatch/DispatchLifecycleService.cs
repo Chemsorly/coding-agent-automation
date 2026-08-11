@@ -142,9 +142,9 @@ internal sealed class DispatchLifecycleService
         {
             await db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateConcurrencyException)
+        catch (DbUpdateConcurrencyException duce)
         {
-            Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
+            Log.Warning(duce, "DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
             ReleaseClaimedPvc(claimedPvc, availablePvcs);
             return;
         }
@@ -155,7 +155,7 @@ internal sealed class DispatchLifecycleService
         }
 
         // Create K8s Job via JobSpecBuilder
-        if (!await CreateK8sJobAsync(db, new K8sJobCreationContext(item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, logPrefix, onFailure), ct))
+        if (!await CreateK8sJobAsync(db, new K8SJobCreationContext(item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, logPrefix, onFailure), ct))
             return;
 
         // Create per-job K8s Secret if project has secrets
@@ -232,7 +232,8 @@ internal sealed class DispatchLifecycleService
             WorkDistributionTelemetry.RecordDispatchLatency(workItem.DispatchedAt!.Value, workItem.OriginalEnqueuedAt, workItem.CreatedAt, item.AgentSelector);
 
             // Track concurrency
-            // TODO: Use effectiveSelector (from eligibility checker's profile fallback resolution) instead of item.AgentSelector.
+            // Note: Uses item.AgentSelector rather than the effectiveSelector resolved during eligibility
+            // checking; a follow-up can align these if profile-fallback selectors need separate tracking.
             concurrencyBySelector[item.AgentSelector ?? ""] =
                 concurrencyBySelector.GetValueOrDefault(item.AgentSelector ?? "", 0) + 1;
 
@@ -244,9 +245,9 @@ internal sealed class DispatchLifecycleService
             if (onDispatchSuccess is not null)
                 await onDispatchSuccess(workItem);
         }
-        catch (DbUpdateConcurrencyException)
+        catch (DbUpdateConcurrencyException duce)
         {
-            Log.Warning("DispatchLifecycleService: concurrency conflict updating {LogPrefix}WorkItem {WorkItemId} to Dispatched", logPrefix, item.Id);
+            Log.Warning(duce, "DispatchLifecycleService: concurrency conflict updating {LogPrefix}WorkItem {WorkItemId} to Dispatched", logPrefix, item.Id);
             // Job exists in K8s — ReconciliationService will reconcile
         }
     }
@@ -310,7 +311,7 @@ internal sealed class DispatchLifecycleService
     /// Groups the parameters of <see cref="CreateK8sJobAsync"/> related to the job being created,
     /// reducing its parameter count (S107).
     /// </summary>
-    private sealed record K8sJobCreationContext(
+    private sealed record K8SJobCreationContext(
         PendingWorkItemProjection Item,
         WorkItemEntity WorkItem,
         JobTemplate Template,
@@ -328,7 +329,7 @@ internal sealed class DispatchLifecycleService
     /// </summary>
     private async Task<bool> CreateK8sJobAsync(
         PipelineDbContext db,
-        K8sJobCreationContext ctx,
+        K8SJobCreationContext ctx,
         CancellationToken ct)
     {
         try
@@ -353,7 +354,7 @@ internal sealed class DispatchLifecycleService
         catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
             // 409 Conflict = Job already exists = success (idempotent)
-            Log.Information("DispatchLifecycleService: K8s Job {JobName} already exists (409 Conflict), treating as success", ctx.JobName);
+            Log.Information(httpEx, "DispatchLifecycleService: K8s Job {JobName} already exists (409 Conflict), treating as success", ctx.JobName);
         }
         catch (Exception ex)
         {

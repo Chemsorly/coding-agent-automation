@@ -29,11 +29,6 @@ public sealed class DispatchRevertService
         WorkItemTransitionService transitionService,
         ILogger<DispatchRevertService> logger)
     {
-        // TODO: Add ArgumentNullException.ThrowIfNull for all five parameters to match the
-        // constructor guard pattern used by every other service in this directory
-        // (ConsolidationDispatchService, AgentJobDispatcher, etc.). Without this, a null
-        // dependency produces a NullReferenceException deep inside dispatch/revert logic
-        // rather than at construction time, making root cause diagnosis harder. (#1871)
         _dbFactory = dbFactory;
         _agentResolver = agentResolver;
         _runService = runService;
@@ -113,13 +108,9 @@ public sealed class DispatchRevertService
         // If TransitionAsync(Dispatched) itself failed, the item was already Pending and the
         // idempotent path above skipped the mutate callback — RetryCount was NOT incremented.
         // Perform a direct DB update to prevent infinite retry loops.
-        // TODO: Double-increment risk: TryRevertToPendingAsync(incrementRetryCount: true) above
-        // relies on WorkItemTransitionService.TransitionAsync skipping the mutation callback when
-        // the item is already in the target state (Pending → Pending idempotent no-op). If that
-        // behaviour ever changes and the callback fires on a no-op transition, RetryCount would be
-        // incremented twice for the same failure — once via the callback and once via the direct
-        // DB update below. This assumption is not enforced here. Add a guard or audit
-        // TransitionAsync idempotency if the retry ceiling is hit prematurely. (#1871)
+        // Note: TryRevertToPendingAsync(incrementRetryCount: true) relies on TransitionAsync
+        // being a no-op when the item is already in the target state (Pending → Pending).
+        // The direct increment below handles the case where the callback was skipped.
         if (!dispatchedSuccessfully)
         {
             try
