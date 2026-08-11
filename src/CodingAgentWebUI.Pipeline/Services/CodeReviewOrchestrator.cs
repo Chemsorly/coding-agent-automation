@@ -32,7 +32,7 @@ internal class CodeReviewOrchestrator
     /// decision is made (no findings, or warnings-only with fix prompt sent). This replaces the
     /// <c>goto exitLoop</c> pattern that was previously used in the inlined loop.
     /// </remarks>
-        // NOTE: Add ArgumentNullException.ThrowIfNull for `context` and `agents` parameters to match constructor validation pattern
+    // NOTE: Add ArgumentNullException.ThrowIfNull for `context` and `agents` parameters to match constructor validation pattern
     internal async Task RunReviewLoopAsync(
         AgentPhaseContext context,
         IReadOnlyList<ReviewAgentConfig> agents,
