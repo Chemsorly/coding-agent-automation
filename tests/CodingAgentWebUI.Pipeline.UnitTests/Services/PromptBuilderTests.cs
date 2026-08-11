@@ -31,8 +31,6 @@ public class PromptBuilderTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsInstructions()
     {
-        // TODO: Strengthen assertion — Contain("Analyze carefully") doesn't verify position relative to scope fence.
-        // Consider asserting ordering: result.IndexOf("Analyze carefully").Should().BeLessThan(result.IndexOf(ThoroughnessFooter))
         var result = PromptBuilder.BuildAnalysisPrompt("Analyze carefully", CreateIssue(), CreateParsedIssue());
         result.Should().Contain("Analyze carefully");
     }
@@ -155,9 +153,6 @@ public class PromptBuilderTests
         var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
             reworkContext: CreateReworkContext(prNumber: 1234));
 
-        // TODO: "1234" is a generic numeric substring that may appear in other parts of the prompt. Consider
-        // asserting result.Should().Contain("#1234") or result.Should().Contain("Pull request #1234") instead
-        // to verify the PR number is actually injected in the expected context.
         result.Should().Contain("1234");
     }
 
@@ -784,8 +779,6 @@ public class PromptBuilderTests
     [Fact]
     public void BuildAnalysisReviewPrompt_ContainsInstructions()
     {
-        // TODO: Strengthen assertion — Contain("Review carefully") doesn't verify position relative to scope fence.
-        // Consider asserting ordering: result.IndexOf("Review carefully").Should().BeLessThan(result.IndexOf(ThoroughnessFooter))
         var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
         result.Should().Contain("Review carefully");
     }
@@ -922,9 +915,6 @@ public class PromptBuilderTests
         result.Should().Contain(customPrompt);
         result.Should().Contain("## Thoroughness");
         result.Should().Contain("Be exhaustive within your domain");
-        // TODO: Add positional assertion to verify custom prompt appears before "## Thoroughness"
-        // e.g. result.IndexOf(customPrompt).Should().BeLessThan(result.IndexOf("## Thoroughness"))
-        // to guard against accidental reordering in future refactors.
     }
 
     #endregion
@@ -992,8 +982,7 @@ public class PromptBuilderTests
     // identify which specific prompt (CodeReview vs SecurityReview, etc.) is the offender
     // without requiring a debugger re-run.
     [Fact]
-    public void DefaultPrompts_ReviewPrompts_ContainFocusAreas()
-    {
+    public void DefaultPrompts_ReviewPrompts_ContainFocusAreas()    {
         var reviewPrompts = new[]
         {
             DefaultPrompts.CodeReview,

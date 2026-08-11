@@ -61,11 +61,6 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             .Returns(Task.CompletedTask);
         _mockIssueOps.Setup(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        // TODO: Add a test that verifies PostCommentAsync is called with content containing
-        // the <!-- agent:analysis-body-hash:{hash} --> marker. Currently all tests use It.IsAny<string>()
-        // for the comment body, so removing the hash embedding in production would go undetected.
-        // TODO: Add a test exercising the forceRefreshFromDispatch = true path to verify the
-        // dispatch-level staleness merge logic (bool forceRefresh = forceRefreshFromDispatch || ...) works.
     }
 
     public void Dispose()
@@ -317,9 +312,6 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
 
         capturedPrompt.Should().NotBeNull();
         capturedPrompt.Should().Contain("## Rework Context");
-        // TODO: "99" is a generic single/double-digit substring that may appear elsewhere in the prompt
-        // (e.g. numeric literals, year references). Consider asserting Contain("#99") or
-        // Contain("Pull request #99") to verify the PR number is injected in the expected context.
         capturedPrompt.Should().Contain("99");
         capturedPrompt.Should().Contain("feature/rework-branch");
     }
@@ -379,9 +371,6 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
 
         capturedPrompt.Should().NotContain("force-resolved");
         capturedPrompt.Should().Contain("## Rework Context"); // rework section still present
-        // TODO: Add a positive assertion that capturedPrompt.Should().Contain("rebased onto main without conflicts")
-        // to validate the else-branch output of AppendReworkPreamble when ForceResolvedFiles is empty.
-        // The PromptBuilderTests unit test covers this at the builder level but not at the executor wiring level.
     }
 
     [Fact]
@@ -417,20 +406,12 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         capturedPrompt.Should().Contain("pr-conversation-context.md");
-        // TODO: Add a test for the file-existence path of HasReviewFeedback: a run where ReviewComments is empty
-        // but a non-trivial pr-conversation-context.md exists on disk. Currently only the ReviewComments.Count
-        // branch is exercised here; the File.Exists + FileInfo.Length branch is untested at the executor level.
     }
 
     [Fact]
     public async Task Analysis_WithoutLinkedPullRequest_PromptExcludesReworkContext()
     {
         // Fresh run with no LinkedPullRequest — must NOT contain rework context (regression guard)
-        // TODO: SetupAgentWithValidAnalysis("ready") below is dead code — Moq's second Setup below overrides it.
-        // Remove the dead call or consolidate into a single Setup. If the second Setup is later removed without
-        // restoring file-writing logic, the test would fail to write analysis files and mask the real failure.
-        SetupAgentWithValidAnalysis("ready");
-
         string? capturedPrompt = null;
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>

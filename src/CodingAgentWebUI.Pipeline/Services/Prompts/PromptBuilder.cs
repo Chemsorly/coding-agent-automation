@@ -952,9 +952,6 @@ public static partial class PromptBuilder
 
         sb.AppendLine("**Your task is to assess what remains to be done**, not to determine whether work is needed at all.");
         sb.AppendLine("Set `recommendation` to `\"ready\"` with a concrete plan for what still needs fixing — or confirm");
-        // TODO: Verify backtick pairing in this line — the inline code span opens before 'plannedApproach' and should
-        // close after the final quote mark. Currently reads: `plannedApproach: "..."` which appears correct, but
-        // review flagged the possibility of an unclosed backtick; double-check in rendered output.
         sb.AppendLine("everything is correct (use `plannedApproach: \"No changes needed — implementation is complete and correct\"`) if nothing needs changing.");
         sb.AppendLine();
     }
