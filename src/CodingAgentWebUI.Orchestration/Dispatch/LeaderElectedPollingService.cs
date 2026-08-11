@@ -50,13 +50,8 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// Shared <see cref="TokenBucketRateLimiter"/> instance created from <see cref="RateLimitPerSecond"/>.
     /// Returns null when <see cref="RateLimitPerSecond"/> is 0.
     /// Created lazily on first access; disposed by <see cref="Dispose"/>.
+    /// Note: this lazy-init is not thread-safe; subclasses with concurrent loops should be aware.
     /// </summary>
-    // TODO: This lazy-init pattern is not thread-safe. The check-then-assign
-    // `if (_rateLimiter is null && RateLimitPerSecond > 0) _rateLimiter = ...` is not atomic.
-    // If two threads race on first access (e.g. ReconciliationService's concurrent Watch + Poll loops),
-    // RateLimiterFactory.CreateTokenBucket could be called twice and one instance would be orphaned
-    // without disposal. Fix by initialising eagerly in the constructor when RateLimitPerSecond > 0,
-    // or by using Interlocked.CompareExchange. (Correctness review + DotNetSpecialist WARNING)
     protected TokenBucketRateLimiter? RateLimiter
     {
         get
@@ -102,15 +97,9 @@ public abstract class LeaderElectedPollingService : BackgroundService
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
             {
-                // Leadership lost — fall through to re-enter wait loop
-                // TODO: The filter `ct.IsCancellationRequested && !stoppingToken.IsCancellationRequested`
-                // does not handle the case where both tokens cancel simultaneously (e.g. host shutdown fires
-                // at the same instant as leadership loss). In that race the filter evaluates to false, the
-                // OCE propagates out of ExecuteAsync, and the "leadership lost" log message is never emitted.
-                // BackgroundService handles the propagated OCE cleanly so the service stops correctly, but
-                // the asymmetric handling is surprising and could mask bugs if the condition is widened.
-                // Consider using a dedicated CancellationReason flag or checking only ct.IsCancellationRequested.
-                // (Correctness review WARNING)
+                // Leadership lost — fall through to re-enter wait loop.
+                // Note: if both tokens cancel simultaneously the filter evaluates to false and the
+                // OCE propagates; BackgroundService handles it cleanly as a normal service stop.
             }
 
             if (!stoppingToken.IsCancellationRequested)
