@@ -180,13 +180,7 @@
     /// <summary>Filters out steps that should be hidden (skipped features, disabled brain, etc.).</summary>
     private List<PipelineStep> GetVisibleSteps(PipelineStep[] steps)
     {
-        var visible = new List<PipelineStep>(steps.Length);
-        foreach (var step in steps)
-        {
-            if (!IsStepHidden(step, steps))
-                visible.Add(step);
-        }
-        return visible;
+        return steps.Where(step => !IsStepHidden(step, steps)).ToList();
     }
 
     private bool IsStepHidden(PipelineStep step, PipelineStep[] allSteps)
@@ -306,7 +300,7 @@
         return PhaseState.Active;
     }
 
-    private record StepStateFlags(bool HasActive, bool HasFailed, bool HasCancelled, bool HasRevisited, bool AllCompleted, bool AllPending);
+    private sealed record StepStateFlags(bool HasActive, bool HasFailed, bool HasCancelled, bool HasRevisited, bool AllCompleted, bool AllPending);
 
     private StepStateFlags GetStepStateFlags(List<PipelineStep> steps)
     {
@@ -710,7 +704,7 @@
         }
     };
 
-    private RenderFragment RenderMultiQgcResults(QualityGateReport qr) => __builder =>
+    private static RenderFragment RenderMultiQgcResults(QualityGateReport qr) => __builder =>
     {
         @foreach (var qgcResult in qr.QgcResults)
         {
@@ -718,30 +712,35 @@
         }
     };
 
-    private RenderFragment RenderQgcSubItem(QgcExecutionResult qgcResult) => __builder =>
+    private static RenderFragment RenderQgcSubItem(QgcExecutionResult qgcResult) => __builder =>
     {
         <div class="qgc-sub-item @(qgcResult.Passed ? "qgc-pass" : "qgc-fail")">
             <div class="qgc-sub-header">
                 @if (qgcResult.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} @qgcResult.DisplayName
             </div>
             <div class="qgc-sub-details">
-                @if (qgcResult.Compilation is { } comp)
-                {
-                    <span class="@(comp.Passed ? "qg-pass" : "qg-fail")">Build: @(comp.Passed ? "OK" : "FAIL")</span>
-                }
-                @if (qgcResult.Tests is { } tests)
-                {
-                    <span class="@(tests.Passed ? "qg-pass" : "qg-fail")">Tests: @(tests.TestsPassed ?? 0)/@((tests.TestsPassed ?? 0) + (tests.TestsFailed ?? 0))</span>
-                }
-                @if (qgcResult.Coverage is { } cov)
-                {
-                    <span class="@(cov.Passed ? "qg-pass" : "qg-fail")">Cov: @(cov.CoveragePercent?.ToString("F1") ?? "N/A")%</span>
-                }
+                @RenderQgcSubDetails(qgcResult)
             </div>
         </div>
     };
 
-    private RenderFragment RenderSingleQgcResult(QualityGateReport qr) => __builder =>
+    private static RenderFragment RenderQgcSubDetails(QgcExecutionResult qgcResult) => __builder =>
+    {
+        @if (qgcResult.Compilation is { } comp)
+        {
+            <span class="@(comp.Passed ? "qg-pass" : "qg-fail")">Build: @(comp.Passed ? "OK" : "FAIL")</span>
+        }
+        @if (qgcResult.Tests is { } tests)
+        {
+            <span class="@(tests.Passed ? "qg-pass" : "qg-fail")">Tests: @(tests.TestsPassed ?? 0)/@((tests.TestsPassed ?? 0) + (tests.TestsFailed ?? 0))</span>
+        }
+        @if (qgcResult.Coverage is { } cov)
+        {
+            <span class="@(cov.Passed ? "qg-pass" : "qg-fail")">Cov: @(cov.CoveragePercent?.ToString("F1") ?? "N/A")%</span>
+        }
+    };
+
+    private static RenderFragment RenderSingleQgcResult(QualityGateReport qr) => __builder =>
     {
         <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
             @if (qr.Compilation.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Compilation
@@ -750,6 +749,12 @@
             @if (qr.Tests.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Tests
             <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
         </div>
+        @RenderCoverageLine(qr)
+        @RenderSecurityLine(qr)
+    };
+
+    private static RenderFragment RenderCoverageLine(QualityGateReport qr) => __builder =>
+    {
         @if (qr.Coverage is { } cov)
         {
             <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
@@ -757,6 +762,10 @@
                 <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
             </div>
         }
+    };
+
+    private static RenderFragment RenderSecurityLine(QualityGateReport qr) => __builder =>
+    {
         @if (qr.SecurityScan is { } sec)
         {
             <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
@@ -769,7 +778,7 @@
         }
     };
 
-    private RenderFragment RenderExternalCiLine(QualityGateReport qr) => __builder =>
+    private static RenderFragment RenderExternalCiLine(QualityGateReport qr) => __builder =>
     {
         @if (qr.ExternalCi is { } ci)
         {
@@ -783,7 +792,7 @@
         }
     };
 
-    private RenderFragment RenderQualityGateHistory(QualityGateReport[] history) => __builder =>
+    private static RenderFragment RenderQualityGateHistory(QualityGateReport[] history) => __builder =>
     {
         @if (history.Length > 1)
         {

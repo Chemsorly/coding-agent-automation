@@ -9,6 +9,8 @@ namespace CodingAgentWebUI.Pipeline.Services.Prompts;
 /// </summary>
 public static class FeedbackPromptBuilder
 {
+    private const string Passed = "PASSED";
+    private const string Failed = "FAILED";
     private const string JsonSchemaExample = """
         ```json
         {
@@ -314,7 +316,7 @@ public static class FeedbackPromptBuilder
 
     private static void AppendTestsSection(StringBuilder sb, GateResult tests)
     {
-        sb.AppendLine($"- **Tests:** {(tests.Passed ? "PASSED" : "FAILED")}");
+        sb.AppendLine($"- **Tests:** {(tests.Passed ? Passed : Failed)}");
         if (!string.IsNullOrEmpty(tests.Details))
             sb.AppendLine($"  - Details: {tests.Details}");
         if (tests.TestsPassed.HasValue || tests.TestsFailed.HasValue)
@@ -324,7 +326,7 @@ public static class FeedbackPromptBuilder
     private static void AppendCoverageSection(StringBuilder sb, GateResult? coverage)
     {
         if (coverage is null) return;
-        sb.AppendLine($"- **Coverage:** {(coverage.Passed ? "PASSED" : "FAILED")}");
+        sb.AppendLine($"- **Coverage:** {(coverage.Passed ? Passed : Failed)}");
         if (coverage.CoveragePercent.HasValue)
             sb.AppendLine($"  - Coverage: {coverage.CoveragePercent:F1}%");
         if (!string.IsNullOrEmpty(coverage.Details))
@@ -336,12 +338,12 @@ public static class FeedbackPromptBuilder
         if (results.Count == 0) return;
         sb.AppendLine("- **QGC Results:**");
         foreach (var qgc in results)
-            sb.AppendLine($"  - {qgc.DisplayName}: {(qgc.Passed ? "PASSED" : "FAILED")}");
+            sb.AppendLine($"  - {qgc.DisplayName}: {(qgc.Passed ? Passed : Failed)}");
     }
 
     private static void AppendGateResult(StringBuilder sb, string name, bool passed, string? details)
     {
-        sb.AppendLine($"- **{name}:** {(passed ? "PASSED" : "FAILED")}");
+        sb.AppendLine($"- **{name}:** {(passed ? Passed : Failed)}");
         if (!string.IsNullOrEmpty(details))
             sb.AppendLine($"  - Details: {details}");
     }

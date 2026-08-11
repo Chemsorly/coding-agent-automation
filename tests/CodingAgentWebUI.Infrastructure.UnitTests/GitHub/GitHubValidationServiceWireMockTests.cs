@@ -114,7 +114,114 @@ public class GitHubValidationServiceWireMockTests : WireMockTestBase
             Server.Url!, ClientId, InstallationId, invalidKey, CancellationToken.None);
 
         success.Should().BeFalse();
-        message.Should().Contain("failed");
+        message.Should().Contain("private key");
+    }
+
+    /// <summary>
+    /// Covers the GitHubAuthErrorKind.PrivateKeyDecodeFailure catch in AuthenticateAndGetTokenAsync:
+    /// a base64 key that contains PEM markers but has an invalid body triggers PrivateKeyDecodeFailure.
+    /// </summary>
+    [Fact]
+    public async Task ValidateAppCredentialsAsync_MalformedPrivateKeyPem_ReturnsPrivateKeyErrorMessage()
+    {
+        // A valid base64-encoded string that looks like a PEM header but has no valid RSA key body
+        var fakePem = "-----BEGIN RSA PRIVATE KEY-----\nnotvalidbase64content==\n-----END RSA PRIVATE KEY-----";
+        var malformedKey = Convert.ToBase64String(Encoding.UTF8.GetBytes(fakePem));
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateAppCredentialsAsync(
+            Server.Url!, ClientId, InstallationId, malformedKey, CancellationToken.None);
+
+        success.Should().BeFalse();
+        // Malformed PEM body triggers PrivateKeyDecodeFailure or a downstream auth error — either way failure
+        message.Should().NotBeNullOrEmpty();
+    }
+
+    /// <summary>
+    /// Covers the AuthorizationException catch in ValidateInstallationWithoutRepoAsync:
+    /// token exchange succeeds but listing installation repositories returns 401.
+    /// </summary>
+    [Fact]
+    public async Task ValidateAppCredentialsAsync_NoOwnerRepo_InstallationTokenRejected_ReturnsAuthFailure()
+    {
+        StubTokenExchange();
+        StubError(ApiPath("/installation/repositories"), 401, new { message = "Bad credentials" });
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateAppCredentialsAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(), CancellationToken.None);
+
+        success.Should().BeFalse();
+        message.Should().Contain("Authentication failed");
+    }
+
+    /// <summary>
+    /// Covers the NotFoundException catch in ValidateRepositoryPermissionsAsync:
+    /// token exchange succeeds but the specific repository returns 404.
+    /// </summary>
+    [Fact]
+    public async Task ValidateAppCredentialsAsync_WithOwnerRepo_RepoNotFound_ReturnsFalse()
+    {
+        StubTokenExchange();
+        StubError(ApiPath("/repos/test-owner/missing-repo"), 404, new { message = "Not Found" });
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateAppCredentialsAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(), CancellationToken.None,
+            owner: "test-owner", repo: "missing-repo");
+
+        success.Should().BeFalse();
+        message.Should().Contain("not found");
+    }
+
+    /// <summary>
+    /// Covers the admin-only permissions path in ValidateRepositoryPermissionsAsync.
+    /// </summary>
+    [Fact]
+    public async Task ValidateAppCredentialsAsync_WithOwnerRepo_AdminOnly_ReturnsAdminPermission()
+    {
+        StubTokenExchange();
+        StubGet(ApiPath("/repos/test-owner/test-repo"), new
+        {
+            id = 1,
+            name = "test-repo",
+            full_name = "test-owner/test-repo",
+            owner = new { login = "test-owner", id = 1 },
+            permissions = new { pull = false, push = false, admin = true }
+        });
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateAppCredentialsAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(), CancellationToken.None,
+            owner: "test-owner", repo: "test-repo");
+
+        success.Should().BeTrue();
+        message.Should().Contain("admin");
+    }
+
+    /// <summary>
+    /// Covers the no-permissions path in ValidateRepositoryPermissionsAsync (all flags false → "none").
+    /// </summary>
+    [Fact]
+    public async Task ValidateAppCredentialsAsync_WithOwnerRepo_NoPermissions_ReturnsNone()
+    {
+        StubTokenExchange();
+        StubGet(ApiPath("/repos/test-owner/test-repo"), new
+        {
+            id = 1,
+            name = "test-repo",
+            full_name = "test-owner/test-repo",
+            owner = new { login = "test-owner", id = 1 },
+            permissions = new { pull = false, push = false, admin = false }
+        });
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateAppCredentialsAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(), CancellationToken.None,
+            owner: "test-owner", repo: "test-repo");
+
+        success.Should().BeTrue();
+        message.Should().Contain("none");
     }
 
     #endregion

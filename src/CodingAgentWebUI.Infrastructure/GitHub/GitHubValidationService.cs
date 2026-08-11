@@ -15,6 +15,9 @@ public class GitHubValidationService
     private readonly ILogger _logger = Log.Logger;
     private readonly IProviderFactory? _providerFactory;
 
+    /// <summary>Groups GitHub App credentials used across validation methods.</summary>
+    private sealed record AppCredentials(string ApiUrl, string ClientId, long InstallationId, string PrivateKeyBase64);
+
     public GitHubValidationService() { }
 
     public GitHubValidationService(IProviderFactory providerFactory)
@@ -34,33 +37,35 @@ public class GitHubValidationService
         string apiUrl, string clientId, long installationId, string privateKeyBase64, CancellationToken ct,
         string? owner = null, string? repo = null)
     {
+        var credentials = new AppCredentials(apiUrl, clientId, installationId, privateKeyBase64);
+
         // Step 1: Create a temporary auth service and get a token
-        var (tokenSuccess, token, tokenError) = await AuthenticateAndGetTokenAsync(apiUrl, clientId, installationId, privateKeyBase64, ct);
+        var (tokenSuccess, token, tokenError) = await AuthenticateAndGetTokenAsync(credentials, ct);
         if (!tokenSuccess) return (false, tokenError!);
 
         // Step 2: If no owner/repo, just verify the token works by listing repos
         if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
-            return await ValidateInstallationWithoutRepoAsync(token!, apiUrl, ct);
+            return await ValidateInstallationWithoutRepoAsync(token!, apiUrl);
 
         // Step 3+4: owner/repo provided — verify repository access and permissions
-        return await ValidateRepositoryPermissionsAsync(token!, apiUrl, clientId, installationId, privateKeyBase64, owner, repo, ct);
+        return await ValidateRepositoryPermissionsAsync(token!, credentials, owner, repo, ct);
     }
 
     private async Task<(bool Success, string? Token, string? Error)> AuthenticateAndGetTokenAsync(
-        string apiUrl, string clientId, long installationId, string privateKeyBase64, CancellationToken ct)
+        AppCredentials credentials, CancellationToken ct)
     {
         try
         {
             var authService = new GitHubAppAuthService(
-                clientId, installationId, privateKeyBase64, apiUrl, _logger);
+                credentials.ClientId, credentials.InstallationId, credentials.PrivateKeyBase64, credentials.ApiUrl, _logger);
             var token = await authService.GetTokenAsync(ct);
             return (true, token, null);
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Failed to decode private key"))
+        catch (GitHubAuthException ex) when (ex.ErrorKind == GitHubAuthErrorKind.PrivateKeyDecodeFailure)
         {
             return (false, null, "Invalid private key: could not decode from base64");
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("token exchange failed"))
+        catch (GitHubAuthException ex) when (ex.ErrorKind == GitHubAuthErrorKind.TokenExchangeFailure)
         {
             return (false, null, $"Authentication failed: {ex.InnerException?.Message ?? ex.Message}");
         }
@@ -71,15 +76,11 @@ public class GitHubValidationService
     }
 
     private async Task<(bool Success, string Message)> ValidateInstallationWithoutRepoAsync(
-        string token, string apiUrl, CancellationToken ct)
+        string token, string apiUrl)
     {
         try
         {
             var client = CreateClient(apiUrl, token);
-            // TODO: CancellationToken ct is declared in this method signature but not forwarded to GetAllRepositoriesForCurrent()
-            // because the Octokit overload that accepts a CancellationToken is not used here. This is a pre-existing gap
-            // (carried over from the original code), but the explicit ct parameter creates a misleading contract.
-            // Either pass ct to the Octokit call or remove the parameter from the signature to make the limitation explicit.
             var response = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
             return (true, $"✅ GitHub App credentials validated — {response.TotalCount} repository(ies) accessible");
         }
@@ -94,7 +95,7 @@ public class GitHubValidationService
     }
 
     private async Task<(bool Success, string Message)> ValidateRepositoryPermissionsAsync(
-        string token, string apiUrl, string clientId, long installationId, string privateKeyBase64,
+        string token, AppCredentials credentials,
         string owner, string repo, CancellationToken ct)
     {
         // NOTE: [GH-06] Provider delegation (below) already validates credentials + repo access via provider.ValidateAsync.
@@ -112,10 +113,10 @@ public class GitHubValidationService
                     DisplayName = "Validation",
                     Settings = new Dictionary<string, string>
                     {
-                        [ProviderSettingKeys.ApiUrl] = apiUrl,
-                        [ProviderSettingKeys.ClientId] = clientId,
-                        [ProviderSettingKeys.InstallationId] = installationId.ToString(),
-                        [ProviderSettingKeys.PrivateKeyBase64] = privateKeyBase64,
+                        [ProviderSettingKeys.ApiUrl] = credentials.ApiUrl,
+                        [ProviderSettingKeys.ClientId] = credentials.ClientId,
+                        [ProviderSettingKeys.InstallationId] = credentials.InstallationId.ToString(),
+                        [ProviderSettingKeys.PrivateKeyBase64] = credentials.PrivateKeyBase64,
                         [ProviderSettingKeys.Owner] = owner,
                         [ProviderSettingKeys.Repo] = repo
                     }
@@ -131,11 +132,7 @@ public class GitHubValidationService
 
         try
         {
-            var client = CreateClient(apiUrl, token);
-            // TODO: CancellationToken ct is not forwarded to client.Repository.Get(owner, repo) because the Octokit
-            // overload that accepts a CancellationToken is not used here. This is a pre-existing gap surfaced by
-            // the extraction: a cancellation arriving after provider.ValidateAsync(ct) completes will be silently
-            // ignored and the second HTTP call will run to completion regardless. Pass ct to the Octokit call.
+            var client = CreateClient(credentials.ApiUrl, token);
             var repository = await client.Repository.Get(owner, repo);
             var permissions = repository.Permissions;
 
