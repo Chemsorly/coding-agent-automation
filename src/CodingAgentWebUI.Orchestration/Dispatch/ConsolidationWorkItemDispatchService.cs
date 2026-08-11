@@ -504,9 +504,9 @@ internal sealed class ConsolidationWorkItemDispatchService : BackgroundService
                     ct);
                 Log.Information("ConsolidationWorkItemDispatchService: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException oce)
             {
-                Log.Debug("ConsolidationWorkItemDispatchService: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
+                Log.Debug(oce, "ConsolidationWorkItemDispatchService: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
             }
             catch (Exception ex)
             {
@@ -534,9 +534,9 @@ internal sealed class ConsolidationWorkItemDispatchService : BackgroundService
                 Log.Information("ConsolidationWorkItemDispatchService: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException oce)
         {
-            Log.Debug("ConsolidationWorkItemDispatchService: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
+            Log.Debug(oce, "ConsolidationWorkItemDispatchService: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
         }
         catch (Exception ex)
         {
