@@ -210,7 +210,248 @@ public class WorkItemTransitionServiceTests
         result.Should().BeFalse();
     }
 
+    // ── HasAgentErrorSinceAsync Tests ─────────────────────────────────────
+
+    [Fact]
+    public async Task HasAgentErrorSinceAsync_WithMatchingAgentErrorAfterSince_ReturnsTrue()
+    {
+        // Arrange
+        var issueIdentifier = (IssueIdentifier)"owner/repo#1";
+        var providerConfigId = (ProviderConfigId)"ip-1";
+        var since = DateTimeOffset.UtcNow.AddHours(-1);
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                IssueIdentifier = issueIdentifier.Value!,
+                IssueProviderConfigId = providerConfigId.Value!,
+                Status = WorkItemStatus.Failed,
+                FailureReason = FailureReason.AgentError,
+                CompletedAt = since.AddMinutes(30),
+                CreatedAt = since.AddMinutes(-10),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new SimpleDbContextFactory(dbOptions);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        // Act
+        var result = await service.HasAgentErrorSinceAsync(issueIdentifier, providerConfigId, since, CancellationToken.None);
+
+        // Assert
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HasAgentErrorSinceAsync_NoMatchingItems_ReturnsFalse()
+    {
+        // Arrange: item exists but with different FailureReason (Timeout, not AgentError)
+        var issueIdentifier = (IssueIdentifier)"owner/repo#2";
+        var providerConfigId = (ProviderConfigId)"ip-1";
+        var since = DateTimeOffset.UtcNow.AddHours(-1);
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                IssueIdentifier = issueIdentifier.Value!,
+                IssueProviderConfigId = providerConfigId.Value!,
+                Status = WorkItemStatus.Failed,
+                FailureReason = FailureReason.Timeout,
+                CompletedAt = since.AddMinutes(30),
+                CreatedAt = since.AddMinutes(-10),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new SimpleDbContextFactory(dbOptions);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        // Act
+        var result = await service.HasAgentErrorSinceAsync(issueIdentifier, providerConfigId, since, CancellationToken.None);
+
+        // Assert: Timeout is not AgentError
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HasAgentErrorSinceAsync_AgentErrorBeforeSince_ReturnsFalse()
+    {
+        // Arrange: AgentError exists but CompletedAt is before the 'since' cutoff
+        var issueIdentifier = (IssueIdentifier)"owner/repo#3";
+        var providerConfigId = (ProviderConfigId)"ip-1";
+        var since = DateTimeOffset.UtcNow;
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                IssueIdentifier = issueIdentifier.Value!,
+                IssueProviderConfigId = providerConfigId.Value!,
+                Status = WorkItemStatus.Failed,
+                FailureReason = FailureReason.AgentError,
+                CompletedAt = since.AddHours(-1),
+                CreatedAt = since.AddHours(-2),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new SimpleDbContextFactory(dbOptions);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        // Act
+        var result = await service.HasAgentErrorSinceAsync(issueIdentifier, providerConfigId, since, CancellationToken.None);
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    // ── GetLastSuccessfulCompletionAsync Tests ─────────────────────────────────────
+
+    [Fact]
+    public async Task GetLastSuccessfulCompletionAsync_WithSucceededItem_ReturnsCompletedAt()
+    {
+        // Arrange
+        var issueIdentifier = (IssueIdentifier)"owner/repo#10";
+        var providerConfigId = (ProviderConfigId)"ip-1";
+        var completedAt = DateTimeOffset.UtcNow.AddHours(-2);
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                IssueIdentifier = issueIdentifier.Value!,
+                IssueProviderConfigId = providerConfigId.Value!,
+                Status = WorkItemStatus.Succeeded,
+                CompletedAt = completedAt,
+                CreatedAt = completedAt.AddHours(-1),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new SimpleDbContextFactory(dbOptions);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        // Act
+        var result = await service.GetLastSuccessfulCompletionAsync(issueIdentifier, providerConfigId, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Value.Should().BeCloseTo(completedAt, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task GetLastSuccessfulCompletionAsync_NoSucceededItems_ReturnsNull()
+    {
+        // Arrange: only failed items
+        var issueIdentifier = (IssueIdentifier)"owner/repo#11";
+        var providerConfigId = (ProviderConfigId)"ip-1";
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                IssueIdentifier = issueIdentifier.Value!,
+                IssueProviderConfigId = providerConfigId.Value!,
+                Status = WorkItemStatus.Failed,
+                FailureReason = FailureReason.AgentError,
+                CompletedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                CreatedAt = DateTimeOffset.UtcNow.AddHours(-2),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new SimpleDbContextFactory(dbOptions);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        // Act
+        var result = await service.GetLastSuccessfulCompletionAsync(issueIdentifier, providerConfigId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetLastSuccessfulCompletionAsync_MultipleSucceededItems_ReturnsMostRecent()
+    {
+        // Arrange: two succeeded items for same issue — should return the later one
+        var issueIdentifier = (IssueIdentifier)"owner/repo#12";
+        var providerConfigId = (ProviderConfigId)"ip-1";
+        var earlier = DateTimeOffset.UtcNow.AddHours(-4);
+        var later = DateTimeOffset.UtcNow.AddHours(-1);
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.AddRange(
+                new WorkItemEntity
+                {
+                    Id = Guid.NewGuid(),
+                    IssueIdentifier = issueIdentifier.Value!,
+                    IssueProviderConfigId = providerConfigId.Value!,
+                    Status = WorkItemStatus.Succeeded,
+                    CompletedAt = earlier,
+                    CreatedAt = earlier.AddHours(-1),
+                    TaskType = WorkItemTaskType.Implementation
+                },
+                new WorkItemEntity
+                {
+                    Id = Guid.NewGuid(),
+                    IssueIdentifier = issueIdentifier.Value!,
+                    IssueProviderConfigId = providerConfigId.Value!,
+                    Status = WorkItemStatus.Succeeded,
+                    CompletedAt = later,
+                    CreatedAt = later.AddHours(-1),
+                    TaskType = WorkItemTaskType.Implementation
+                });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new SimpleDbContextFactory(dbOptions);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        // Act
+        var result = await service.GetLastSuccessfulCompletionAsync(issueIdentifier, providerConfigId, CancellationToken.None);
+
+        // Assert: returns the most recent completion
+        result.Should().NotBeNull();
+        result!.Value.Should().BeCloseTo(later, TimeSpan.FromSeconds(1));
+    }
+
     // ── Test Infrastructure ─────────────────────────────────────────────
+
+    /// <summary>Simple factory that always returns an InMemoryPipelineDbContext.</summary>
+    private sealed class SimpleDbContextFactory : IDbContextFactory<PipelineDbContext>
+    {
+        private readonly DbContextOptions<PipelineDbContext> _options;
+        public SimpleDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
+        public PipelineDbContext CreateDbContext() => new InMemoryPipelineDbContext(_options);
+        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+            => Task.FromResult(CreateDbContext());
+    }
 
     private static DbContextOptions<PipelineDbContext> CreateInMemoryDbOptions()
         => new DbContextOptionsBuilder<PipelineDbContext>()
