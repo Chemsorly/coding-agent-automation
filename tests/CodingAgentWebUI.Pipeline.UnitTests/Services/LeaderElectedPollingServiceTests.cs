@@ -18,6 +18,22 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// completes without the CT being cancelled. A scenario where watchTask faults while pollTask is
 /// in a long Task.Delay would now wait until the delay completes rather than being cancelled
 /// immediately. This behavioral change is untested.
+///
+/// TODO: No test covers the RateLimiter property introduced in this diff. Three scenarios need coverage:
+/// (a) a subclass returning RateLimitPerSecond > 0 should have RateLimiter return a non-null instance;
+/// (b) a subclass returning 0 should have RateLimiter return null;
+/// (c) Dispose should dispose the limiter exactly once. Without these tests, a misconfigured
+/// RateLimitPerSecond of 0 would cause a NullReferenceException at the RateLimiter! call sites
+/// in DispatchService and ConsolidationDispatchHandler with no test catching the regression.
+/// (TestQualityReviewer WARNING)
+///
+/// TODO: The DispatchService.RunLeadershipTermAsync override (which resets _startupValidationRun = false
+/// before delegating to base) has no direct test. The existing lifecycle characterization test
+/// incidentally exercises this path but does not assert on the observable effect: that
+/// RunStartupValidationIfNeededAsync is called again on re-acquisition. If the reset line were
+/// accidentally removed, no existing test would fail. Add a test that verifies startup validation
+/// is re-executed after leadership loss and re-acquisition.
+/// (TestQualityReviewer WARNING)
 /// </remarks>
 [Trait("Feature", "LeaderElectedPollingService")]
 public class LeaderElectedPollingServiceTests
@@ -74,6 +90,12 @@ public class LeaderElectedPollingServiceTests
         leaderCts.Cancel();
         SetLeaderState(leaderElection, isLeader: false, new CancellationTokenSource());
         // Brief fixed delay — just enough for the cancellation to propagate through the loop
+        // TODO: This 100ms fixed delay is a fragile time-dependent assertion. On a heavily loaded
+        // CI machine the delay may expire before the inner poll-loop Task.Delay(1s) completes, so
+        // `countAfterLoss` may still be growing, making the subsequent assertion on re-acquisition
+        // pass vacuously. Fix by waiting until PollCycleCount stops growing for two consecutive
+        // 50ms checks before snapshotting `countAfterLoss`, then asserting against that stable value.
+        // (TestQualityReviewer WARNING)
         await Task.Delay(100);
 
         var countAfterLoss = service.PollCycleCount;
