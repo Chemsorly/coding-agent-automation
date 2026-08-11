@@ -279,6 +279,34 @@ public class PromptConstructionPropertyTests
     }
 
     /// <summary>
+    /// Backward compat AC: BuildAnalysisPrompt with explicit reworkContext: null produces
+    /// byte-for-byte identical output to a call with no reworkContext parameter, across
+    /// randomly-generated issue titles and descriptions.
+    /// </summary>
+    [Property(MaxTest = 20)]
+    public void BuildAnalysisPrompt_NullReworkContext_ProducesIdenticalOutputToDefault(
+        NonEmptyString title, NonEmptyString description)
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "1",
+            Title = title.Get,
+            Description = description.Get,
+            Labels = Array.Empty<string>()
+        };
+        var parsed = new ParsedIssue
+        {
+            RequirementsSection = description.Get,
+            AcceptanceCriteria = new[] { "AC1" }.ToList().AsReadOnly()
+        };
+
+        var withoutParam = PromptBuilder.BuildAnalysisPrompt(DefaultAnalysis, issue, parsed);
+        var withNullParam = PromptBuilder.BuildAnalysisPrompt(DefaultAnalysis, issue, parsed, reworkContext: null);
+
+        withNullParam.Should().Be(withoutParam);
+    }
+
+    /// <summary>
     /// Implementation prompt includes pipeline mechanics (git prohibition, analysis reference).
     /// </summary>
     [Fact]

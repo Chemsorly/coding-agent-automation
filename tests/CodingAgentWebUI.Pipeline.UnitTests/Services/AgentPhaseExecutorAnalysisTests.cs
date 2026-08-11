@@ -61,11 +61,6 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             .Returns(Task.CompletedTask);
         _mockIssueOps.Setup(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        // TODO: Add a test that verifies PostCommentAsync is called with content containing
-        // the <!-- agent:analysis-body-hash:{hash} --> marker. Currently all tests use It.IsAny<string>()
-        // for the comment body, so removing the hash embedding in production would go undetected.
-        // TODO: Add a test exercising the forceRefreshFromDispatch = true path to verify the
-        // dispatch-level staleness merge logic (bool forceRefresh = forceRefreshFromDispatch || ...) works.
     }
 
     public void Dispose()
@@ -291,6 +286,147 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         ex.Should().NotBeNull();
     }
 
+    // --- Rework context wiring tests ---
+
+    [Fact]
+    public async Task Analysis_WithLinkedPullRequest_PromptContainsReworkContext()
+    {
+        _run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Number = 99,
+            BranchName = "feature/rework-branch",
+            IsDraft = false,
+            Url = "https://github.com/test/repo/pull/99"
+        };
+
+        string? capturedPrompt = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompt = req.Prompt;
+                WriteValidAnalysisFiles();
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        capturedPrompt.Should().NotBeNull();
+        capturedPrompt.Should().Contain("## Rework Context");
+        capturedPrompt.Should().Contain("99");
+        capturedPrompt.Should().Contain("feature/rework-branch");
+    }
+
+    [Fact]
+    public async Task Analysis_WithLinkedPullRequestAndForceResolvedFiles_PromptListsConflictFiles()
+    {
+        _run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Number = 100,
+            BranchName = "feature/conflict-branch",
+            IsDraft = false,
+            Url = "https://github.com/test/repo/pull/100"
+        };
+        _run.MergeConflictFiles = new[] { "src/Foo.cs", "src/Bar.cs" };
+        _run.MergeForceResolved = true;
+
+        string? capturedPrompt = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompt = req.Prompt;
+                WriteValidAnalysisFiles();
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        capturedPrompt.Should().Contain("src/Foo.cs");
+        capturedPrompt.Should().Contain("src/Bar.cs");
+        capturedPrompt.Should().Contain("force-resolved");
+    }
+
+    [Fact]
+    public async Task Analysis_WithLinkedPullRequest_NoForceResolved_PromptExcludesConflictList()
+    {
+        _run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Number = 101,
+            BranchName = "feature/clean-branch",
+            IsDraft = false,
+            Url = "https://github.com/test/repo/pull/101"
+        };
+        _run.MergeConflictFiles = new[] { "src/Foo.cs" }; // conflicted but NOT force-resolved
+        _run.MergeForceResolved = false;
+
+        string? capturedPrompt = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompt = req.Prompt;
+                WriteValidAnalysisFiles();
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        capturedPrompt.Should().NotContain("force-resolved");
+        capturedPrompt.Should().Contain("## Rework Context"); // rework section still present
+    }
+
+    [Fact]
+    public async Task Analysis_WithLinkedPullRequestAndReviewComments_PromptReferencesConversationFile()
+    {
+        _run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Number = 102,
+            BranchName = "feature/reviewed-branch",
+            IsDraft = false,
+            Url = "https://github.com/test/repo/pull/102",
+            ReviewComments = new[]
+            {
+                new PullRequestReviewComment
+                {
+                    Id = "c1",
+                    Author = "reviewer",
+                    Body = "Please fix the null check here.",
+                    CreatedAt = DateTime.UtcNow
+                }
+            }
+        };
+
+        string? capturedPrompt = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompt = req.Prompt;
+                WriteValidAnalysisFiles();
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        capturedPrompt.Should().Contain("pr-conversation-context.md");
+    }
+
+    [Fact]
+    public async Task Analysis_WithoutLinkedPullRequest_PromptExcludesReworkContext()
+    {
+        // Fresh run with no LinkedPullRequest — must NOT contain rework context (regression guard)
+        string? capturedPrompt = null;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                capturedPrompt = req.Prompt;
+                WriteValidAnalysisFiles();
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        capturedPrompt.Should().NotContain("## Rework Context");
+        capturedPrompt.Should().NotContain("rework run");
+    }
+
     private AgentPhaseContext BuildContext()
     {
         return new AgentPhaseContext
@@ -328,5 +464,25 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
                     JsonSerializer.Serialize(assessment));
             })
             .ReturnsAsync(new AgentResult { ExitCode = exitCode, OutputLines = Array.Empty<string>() });
+    }
+
+    /// <summary>Writes minimal valid analysis files so the executor can complete successfully.</summary>
+    private void WriteValidAnalysisFiles(string recommendation = "ready")
+    {
+        var agentDir = Path.Combine(_workspacePath, ".agent");
+        Directory.CreateDirectory(agentDir);
+        File.WriteAllText(
+            Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisFilePath),
+            new string('x', PipelineConstants.MinAnalysisLength + 100));
+        var assessment = new
+        {
+            recommendation,
+            reason = "test",
+            concerns = Array.Empty<string>(),
+            blockingIssues = Array.Empty<string>()
+        };
+        File.WriteAllText(
+            Path.Combine(_workspacePath, AgentWorkspacePaths.AnalysisAssessmentFilePath),
+            JsonSerializer.Serialize(assessment));
     }
 }

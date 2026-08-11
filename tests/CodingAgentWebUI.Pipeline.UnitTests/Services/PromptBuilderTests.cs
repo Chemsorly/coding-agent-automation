@@ -31,8 +31,6 @@ public class PromptBuilderTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsInstructions()
     {
-        // TODO: Strengthen assertion — Contain("Analyze carefully") doesn't verify position relative to scope fence.
-        // Consider asserting ordering: result.IndexOf("Analyze carefully").Should().BeLessThan(result.IndexOf(ThoroughnessFooter))
         var result = PromptBuilder.BuildAnalysisPrompt("Analyze carefully", CreateIssue(), CreateParsedIssue());
         result.Should().Contain("Analyze carefully");
     }
@@ -129,6 +127,123 @@ public class PromptBuilderTests
         result.Should().Contain(">30 files");
         result.Should().Contain(">3 distinct projects");
         result.Should().Contain("splitting recommendations");
+    }
+
+    // --- Rework context tests ---
+
+    private static AnalysisReworkContext CreateReworkContext(
+        int prNumber = 42,
+        string branchName = "feature/test-branch",
+        IReadOnlyList<string>? forceResolvedFiles = null,
+        bool hasReviewFeedback = false) =>
+        new(prNumber, branchName, forceResolvedFiles ?? Array.Empty<string>(), hasReviewFeedback);
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsReworkContextSection()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext());
+
+        result.Should().Contain("## Rework Context");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsPrNumber()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(prNumber: 1234));
+
+        result.Should().Contain("1234");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsBranchName()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(branchName: "feature/my-feature-branch"));
+
+        result.Should().Contain("feature/my-feature-branch");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithForceResolvedFiles_ListsEachFile()
+    {
+        var files = new[] { "src/Foo.cs", "src/Bar.cs" };
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(forceResolvedFiles: files));
+
+        result.Should().Contain("`src/Foo.cs`");
+        result.Should().Contain("`src/Bar.cs`");
+        result.Should().Contain("force-resolved");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithEmptyForceResolvedFiles_NoConflictList()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(forceResolvedFiles: Array.Empty<string>()));
+
+        result.Should().NotContain("force-resolved");
+        result.Should().Contain("rebased onto main without conflicts");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithHasReviewFeedback_ReferencesConversationContextFile()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(hasReviewFeedback: true));
+
+        result.Should().Contain(AgentWorkspacePaths.PrConversationContextFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithoutHasReviewFeedback_OmitsConversationContextReference()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(hasReviewFeedback: false, forceResolvedFiles: Array.Empty<string>()));
+
+        result.Should().NotContain("pr-conversation-context.md");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_UpdatesWontDoInstruction()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext());
+
+        // Rework-specific wont_do clause is present
+        result.Should().Contain("AND this is not a rework run");
+        result.Should().Contain("\"wont_do\"` is never correct in a rework run");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithNullReworkContext_ProducesIdenticalOutputToNoParameter()
+    {
+        // Core backward-compat AC: explicit null must produce byte-for-byte identical output to omitting the parameter.
+        var withoutParam = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        var withNullParam = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: null);
+
+        withNullParam.Should().Be(withoutParam);
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithNullReworkContext_ContainsOriginalWontDoClause()
+    {
+        // When reworkContext is null, the original unmodified wont_do clause must be present.
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+
+        result.Should().Contain("do NOT pivot to `\"ready\"` on the grounds that test coverage could still be added");
+        result.Should().NotContain("AND this is not a rework run");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsAssessWhatRemainsDirective()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext());
+
+        result.Should().Contain("assess what remains to be done");
     }
 
     #endregion
@@ -664,8 +779,6 @@ public class PromptBuilderTests
     [Fact]
     public void BuildAnalysisReviewPrompt_ContainsInstructions()
     {
-        // TODO: Strengthen assertion — Contain("Review carefully") doesn't verify position relative to scope fence.
-        // Consider asserting ordering: result.IndexOf("Review carefully").Should().BeLessThan(result.IndexOf(ThoroughnessFooter))
         var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
         result.Should().Contain("Review carefully");
     }
@@ -802,9 +915,6 @@ public class PromptBuilderTests
         result.Should().Contain(customPrompt);
         result.Should().Contain("## Thoroughness");
         result.Should().Contain("Be exhaustive within your domain");
-        // TODO: Add positional assertion to verify custom prompt appears before "## Thoroughness"
-        // e.g. result.IndexOf(customPrompt).Should().BeLessThan(result.IndexOf("## Thoroughness"))
-        // to guard against accidental reordering in future refactors.
     }
 
     #endregion
@@ -872,8 +982,7 @@ public class PromptBuilderTests
     // identify which specific prompt (CodeReview vs SecurityReview, etc.) is the offender
     // without requiring a debugger re-run.
     [Fact]
-    public void DefaultPrompts_ReviewPrompts_ContainFocusAreas()
-    {
+    public void DefaultPrompts_ReviewPrompts_ContainFocusAreas()    {
         var reviewPrompts = new[]
         {
             DefaultPrompts.CodeReview,
