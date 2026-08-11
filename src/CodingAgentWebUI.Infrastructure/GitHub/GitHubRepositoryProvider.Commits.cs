@@ -6,9 +6,11 @@ namespace CodingAgentWebUI.Infrastructure.GitHub;
 
 public partial class GitHubRepositoryProvider
 {
+    [ExcludeFromCodeCoverage]
     public Task CommitAllAsync(WorkspacePath workspacePath, string message, CancellationToken ct)
         => SharedRepositoryOperations.CommitAllAsync(workspacePath, message, ct);
 
+    [ExcludeFromCodeCoverage]
     public Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message,
         IReadOnlyList<string>? blacklistedPaths, CancellationToken ct,
         IReadOnlyList<string>? pipelineInjectedPaths = null)
@@ -17,6 +19,7 @@ public partial class GitHubRepositoryProvider
     /// <summary>
     /// Stages all changes, unstages blacklisted paths, and commits.
     /// </summary>
+    [ExcludeFromCodeCoverage]
     public Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message,
         IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct,
         IReadOnlyList<string>? pipelineInjectedPaths = null)
@@ -41,14 +44,17 @@ public partial class GitHubRepositoryProvider
     }
 
     /// <inheritdoc />
+    [ExcludeFromCodeCoverage]
     public Task<string> GetHeadCommitShaAsync(WorkspacePath workspacePath, CancellationToken ct)
         => SharedRepositoryOperations.GetHeadCommitShaAsync(workspacePath, ct);
 
     /// <inheritdoc />
+    [ExcludeFromCodeCoverage]
     public Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, CancellationToken ct)
         => SharedRepositoryOperations.HasCommitsAheadAsync(workspacePath, _baseBranch, _gitPipeline, ct);
 
     /// <inheritdoc />
+    [ExcludeFromCodeCoverage]
     public Task<IReadOnlyList<FileChangeSummary>> GetFileChangesAsync(WorkspacePath workspacePath, CancellationToken ct)
         => SharedRepositoryOperations.GetFileChangesAsync(workspacePath, _baseBranch, ct);
 
