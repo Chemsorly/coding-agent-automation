@@ -227,7 +227,7 @@ public sealed partial class AgentJobDispatcher
     /// configurations, creates the PipelineRun, prepares configs, and sends the
     /// <see cref="JobAssignmentMessage"/> via SignalR.
     /// </summary>
-    internal async Task<bool> DispatchToAgentAsync(
+    internal async Task<bool> DispatchToAgentAsync( // NOSONAR S107 — internal dispatch; all params are independent agent dispatch inputs
         AgentEntry agent,
         IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderId,
@@ -290,7 +290,7 @@ public sealed partial class AgentJobDispatcher
     /// correct RunType (DecompositionAnalysis or Decomposition), sets workspace path to
     /// <c>{base}/decomposition/{runId}/</c>, and sends the <see cref="JobAssignmentMessage"/> via SignalR.
     /// </summary>
-    internal async Task<bool> DispatchDecompositionToAgentAsync(
+    internal async Task<bool> DispatchDecompositionToAgentAsync( // NOSONAR S107 — internal dispatch; all params are independent decomposition dispatch inputs
         AgentEntry agent,
         IssueIdentifier epicIdentifier,
         string epicTitle,

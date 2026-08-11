@@ -29,7 +29,7 @@ public interface IJobDispatcher
     /// <c>true</c> if the issue was dispatched or enqueued successfully;
     /// <c>false</c> if the issue is already being processed or queued.
     /// </returns>
-    Task<bool> TryDispatchAsync(
+    Task<bool> TryDispatchAsync( // NOSONAR S107 — interface entry point; all params are independent dispatch inputs
         IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderId,
         ProviderConfigId repoProviderId,
@@ -63,7 +63,7 @@ public interface IJobDispatcher
     /// <param name="decompositionSource">Optional source indicator for the decomposition (e.g., "project-level" or "template-level").</param>
     /// <param name="project">Optional project that owns the dispatching template. Used for settings resolution.</param>
     /// <returns>true if dispatched or enqueued; false if already processing.</returns>
-    Task<bool> TryDispatchDecompositionAsync(
+    Task<bool> TryDispatchDecompositionAsync( // NOSONAR S107 — interface entry point; all params are independent dispatch inputs
         IssueIdentifier epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,

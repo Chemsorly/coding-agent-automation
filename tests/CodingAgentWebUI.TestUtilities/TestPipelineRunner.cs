@@ -60,7 +60,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
     public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
         => _historyService.GetRunHistoryAsync(ct);
 
-    public TestPipelineRunner(
+    public TestPipelineRunner( // NOSONAR S107 — test utility; all params are independent injectable dependencies
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
