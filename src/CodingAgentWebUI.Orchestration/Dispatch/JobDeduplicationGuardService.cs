@@ -131,11 +131,14 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
     }
 
     /// <summary>
-    /// Dequeues the next compatible job for the given agent.
-    /// Scans the queue for the first job whose required labels match the agent's labels.
-    /// Non-matching jobs are re-enqueued at the back.
+    /// Dequeues the highest-priority compatible job for the given agent.
+    /// Collects all jobs under <c>_queueLock</c>, selects the compatible job with the lowest
+    /// priority number (Review=0 &gt; Decomposition=1 &gt; Implementation=2 &gt; Consolidation=3),
+    /// breaking ties by <see cref="PendingJob.EnqueuedAt"/> to preserve FIFO within the same tier.
+    /// Non-selected jobs are re-enqueued in their original order to preserve within-tier FIFO for
+    /// subsequent calls.
     /// </summary>
-    /// <returns>The next compatible job, or <c>null</c> if no compatible jobs are queued.</returns>
+    /// <returns>The highest-priority compatible job, or <c>null</c> if no compatible jobs are queued.</returns>
     public PendingJob? DequeueForAgent(AgentEntry agent)
     {
         ArgumentNullException.ThrowIfNull(agent);
@@ -143,26 +146,81 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
         lock (_queueLock)
         {
             var count = _jobQueue.Count;
+            if (count == 0) return null;
+
+            // Step 1: Collect all jobs in FIFO order
+            // TODO: Using _jobQueue.Count as a snapshot before the drain loop means items
+            // concurrently enqueued (by EnqueueJob or ReEnqueue outside this lock) between the
+            // Count read and the loop completing will not be included in `all`. Those items stay
+            // at the back of ConcurrentQueue and are considered on the next call — no job is lost,
+            // but a high-priority job enqueued during this window will not be promoted in the
+            // current cycle. A tighter implementation would drain until TryDequeue returns false
+            // rather than relying on a Count snapshot.
+            var all = new List<PendingJob>(count);
             for (var i = 0; i < count; i++)
             {
-                if (!_jobQueue.TryDequeue(out var job))
-                    break;
-
-                if (LabelMatchHelper.IsLabelMatch(agent.Labels, job.RequiredLabels))
-                {
-                    _logger.Information(
-                        "Dequeued job for issue {IssueIdentifier} → agent {AgentId}",
-                        job.IssueIdentifier, agent.AgentId);
-                    return job;
-                }
-
-                // Not compatible — put it back
-                _jobQueue.Enqueue(job);
+                if (_jobQueue.TryDequeue(out var j))
+                    all.Add(j);
             }
-        }
 
-        return null;
+            // Step 2: Find the highest-priority label-compatible job
+            PendingJob? selected = null;
+            int selectedIndex = -1;
+            int bestPriority = int.MaxValue;
+            DateTimeOffset bestEnqueuedAt = DateTimeOffset.MaxValue;
+
+            for (var i = 0; i < all.Count; i++)
+            {
+                var job = all[i];
+                if (!LabelMatchHelper.IsLabelMatch(agent.Labels, job.RequiredLabels))
+                    continue;
+
+                var p = GetJobPriority(job);
+                if (p < bestPriority || (p == bestPriority && job.EnqueuedAt < bestEnqueuedAt))
+                {
+                    bestPriority = p;
+                    bestEnqueuedAt = job.EnqueuedAt;
+                    selected = job;
+                    selectedIndex = i;
+                }
+            }
+
+            // Step 3: Re-enqueue all non-selected jobs in their original collected order
+            // (not sorted by priority) to preserve within-tier FIFO for subsequent calls.
+            for (var i = 0; i < all.Count; i++)
+            {
+                if (i != selectedIndex)
+                    _jobQueue.Enqueue(all[i]);
+            }
+
+            if (selected is not null)
+                _logger.Information(
+                    "Dequeued job for issue {IssueIdentifier} → agent {AgentId}",
+                    selected.IssueIdentifier, agent.AgentId);
+
+            return selected;
+        }
     }
+
+    /// <summary>
+    /// Returns the dispatch priority for a job. Lower values are dispatched first.
+    /// Priority order: Review (0) &gt; Decomposition (1) &gt; Implementation (2) &gt; Consolidation (3).
+    /// Consolidation is detected via <see cref="PendingJob.IsConsolidation"/> because
+    /// <see cref="PipelineRunType"/> has no Consolidation value — consolidation jobs have
+    /// <see cref="PipelineRunType.Implementation"/> as their RunType.
+    /// The default arm (<c>_ =&gt; 2</c>) is unreachable with the current enum but acts as a
+    /// safe fallback for any future values.
+    /// </summary>
+    private static int GetJobPriority(PendingJob job) => job.IsConsolidation
+        ? 3
+        : job.RunType switch
+        {
+            PipelineRunType.Review                => 0,
+            PipelineRunType.DecompositionAnalysis => 1,
+            PipelineRunType.Decomposition         => 1,
+            PipelineRunType.Implementation        => 2,
+            _                                     => 2
+        };
 
     /// <summary>
     /// Checks whether the given issue identifier is already queued for processing.
