@@ -270,5 +270,145 @@ public class GitHubValidationServiceWireMockTests : WireMockTestBase
         result.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// Covers the catch block in ListRepositoriesWithAppAsync when token exchange fails.
+    /// Returns an empty list rather than throwing.
+    /// </summary>
+    [Fact]
+    public async Task ListRepositoriesWithAppAsync_AuthFailure_ReturnsEmptyList()
+    {
+        StubTokenExchangeUnauthorized();
+
+        var service = new GitHubValidationService();
+        var result = await service.ListRepositoriesWithAppAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(), CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    #endregion
+
+    #region ValidateActionsAccessAsync
+
+    /// <summary>
+    /// Covers the success path of ValidateActionsAccessAsync: token exchange succeeds and
+    /// the actions runs endpoint returns results.
+    /// </summary>
+    [Fact]
+    public async Task ValidateActionsAccessAsync_Success_ReturnsVerifiedMessage()
+    {
+        StubTokenExchange();
+        StubGet(ApiPath("/repos/test-owner/test-repo/actions/runs"), new
+        {
+            total_count = 5,
+            workflow_runs = Array.Empty<object>()
+        });
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateActionsAccessAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(),
+            "test-owner", "test-repo", CancellationToken.None);
+
+        success.Should().BeTrue();
+        message.Should().Contain("Actions access verified");
+        message.Should().Contain("5");
+    }
+
+    /// <summary>
+    /// Covers the ForbiddenException path: actions endpoint returns 403.
+    /// </summary>
+    [Fact]
+    public async Task ValidateActionsAccessAsync_Forbidden_ReturnsPermissionError()
+    {
+        StubTokenExchange();
+        StubError(ApiPath("/repos/test-owner/test-repo/actions/runs"), 403,
+            new { message = "Resource not accessible by integration" });
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateActionsAccessAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(),
+            "test-owner", "test-repo", CancellationToken.None);
+
+        success.Should().BeFalse();
+        message.Should().Contain("lacks Actions read permission");
+    }
+
+    /// <summary>
+    /// Covers the NotFoundException path in ValidateActionsAccessAsync: repo not found returns 404.
+    /// </summary>
+    [Fact]
+    public async Task ValidateActionsAccessAsync_RepoNotFound_ReturnsFalse()
+    {
+        StubTokenExchange();
+        StubError(ApiPath("/repos/test-owner/missing-repo/actions/runs"), 404,
+            new { message = "Not Found" });
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateActionsAccessAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(),
+            "test-owner", "missing-repo", CancellationToken.None);
+
+        success.Should().BeFalse();
+        message.Should().Contain("not found");
+    }
+
+    /// <summary>
+    /// Covers the auth failure path in ValidateActionsAccessAsync: token exchange returns 401.
+    /// </summary>
+    [Fact]
+    public async Task ValidateActionsAccessAsync_AuthFailure_ReturnsFalse()
+    {
+        StubTokenExchangeUnauthorized();
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateActionsAccessAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(),
+            "test-owner", "test-repo", CancellationToken.None);
+
+        success.Should().BeFalse();
+        message.Should().Contain("Authentication failed");
+    }
+
+    /// <summary>
+    /// Covers the generic Exception catch in ValidateActionsAccessAsync: unexpected server error.
+    /// </summary>
+    [Fact]
+    public async Task ValidateActionsAccessAsync_ServerError_ReturnsFailureMessage()
+    {
+        StubTokenExchange();
+        StubError(ApiPath("/repos/test-owner/test-repo/actions/runs"), 500,
+            new { message = "Internal Server Error" });
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateActionsAccessAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(),
+            "test-owner", "test-repo", CancellationToken.None);
+
+        success.Should().BeFalse();
+        message.Should().NotBeNullOrEmpty();
+    }
+
+    #endregion
+
+    #region ValidateInstallationWithoutRepoAsync (connection failure)
+
+    /// <summary>
+    /// Covers the generic Exception catch in ValidateInstallationWithoutRepoAsync:
+    /// token exchange succeeds but the installation repositories endpoint returns 500.
+    /// </summary>
+    [Fact]
+    public async Task ValidateAppCredentialsAsync_NoOwnerRepo_ServerError_ReturnsConnectionFailed()
+    {
+        StubTokenExchange();
+        StubError(ApiPath("/installation/repositories"), 500, new { message = "Internal Server Error" });
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateAppCredentialsAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(), CancellationToken.None);
+
+        success.Should().BeFalse();
+        message.Should().NotBeNullOrEmpty();
+    }
+
     #endregion
 }
