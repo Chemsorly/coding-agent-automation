@@ -173,6 +173,53 @@ public class ConsolidationWorkItemDispatchServiceTests
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
+    [Fact]
+    public async Task CascadeFailureAsync_WhenServiceThrowsOperationCanceled_IsNonFatal()
+    {
+        // Covers the OperationCanceledException catch path in the IConsolidationService branch (line 507-510)
+        var mockService = new Mock<IConsolidationService>();
+        mockService
+            .Setup(s => s.UpdateRunAsync(
+                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("simulated cancellation"));
+
+        var handler = CreateHandler(consolidationService: mockService.Object);
+
+        // Must not throw — OperationCanceledException during cascade is treated as non-fatal
+        await handler.Invoking(h => h.CascadeFailureAsync("run-oce1", "error", CancellationToken.None))
+            .Should().NotThrowAsync("OperationCanceledException from IConsolidationService cascade must be swallowed");
+    }
+
+    [Fact]
+    public async Task CascadeFailureAsync_WhenStoreThrowsOperationCanceled_IsNonFatal()
+    {
+        // Covers the OperationCanceledException catch path in the direct-store fallback branch (line 537-540)
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("simulated store cancellation"));
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object);
+
+        await handler.Invoking(h => h.CascadeFailureAsync("run-oce2", "error", CancellationToken.None))
+            .Should().NotThrowAsync("OperationCanceledException from direct-store cascade must be swallowed");
+    }
+
+    [Fact]
+    public async Task CascadeFailureAsync_WhenStoreThrowsGeneralException_IsNonFatal()
+    {
+        // Covers the catch (Exception ex) path in the direct-store fallback branch (line 541-543)
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TimeoutException("store timeout"));
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object);
+
+        await handler.Invoking(h => h.CascadeFailureAsync("run-ex3", "error", CancellationToken.None))
+            .Should().NotThrowAsync("general exceptions from direct-store cascade must be swallowed");
+    }
+
     private static ConsolidationWorkItemDispatchService CreateHandler(
         IConsolidationService? consolidationService = null,
         IConsolidationRunStore? consolidationRunStore = null)

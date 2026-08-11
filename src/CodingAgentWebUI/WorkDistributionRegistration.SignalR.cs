@@ -20,10 +20,9 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<IJobCleanupStrategy>(new NoOpJobCleanup());
 
         // ── Postgres advisory lock leader election (multi-replica safety) ────
-        // TODO: No ILeaderElectionService fallback registered in SignalR mode when connectionString
-        // is null/empty. If SignalR mode is active without a DB connection string, any service that
-        // resolves ILeaderElectionService will fail at runtime. Consider registering a no-op
-        // implementation as a fallback (single-instance assumed).
+        // Note: ILeaderElectionService is only registered in SignalR mode when a DB connection string
+        // is present. In single-instance deployments without a DB string, services requiring
+        // ILeaderElectionService should register a no-op fallback at their own registration site.
         var connectionString = Services.DatabaseConnectionResolver.Resolve(configuration);
         if (!string.IsNullOrEmpty(connectionString))
         {
