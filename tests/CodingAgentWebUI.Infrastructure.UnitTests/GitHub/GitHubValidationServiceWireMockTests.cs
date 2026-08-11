@@ -2,6 +2,9 @@ using System.Security.Cryptography;
 using System.Text;
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.GitHub;
+using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
+using Moq;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.GitHub;
 
@@ -408,6 +411,89 @@ public class GitHubValidationServiceWireMockTests : WireMockTestBase
 
         success.Should().BeFalse();
         message.Should().NotBeNullOrEmpty();
+    }
+
+    #endregion
+
+    #region ValidateRepositoryPermissionsAsync (server error + provider factory)
+
+    /// <summary>
+    /// Covers the generic catch in ValidateRepositoryPermissionsAsync:
+    /// token exchange succeeds but Repository.Get returns a 500 (not a NotFoundException).
+    /// </summary>
+    [Fact]
+    public async Task ValidateAppCredentialsAsync_WithOwnerRepo_RepoServerError_ReturnsConnectionFailed()
+    {
+        StubTokenExchange();
+        StubError(ApiPath("/repos/test-owner/test-repo"), 500, new { message = "Internal Server Error" });
+
+        var service = new GitHubValidationService();
+        var (success, message) = await service.ValidateAppCredentialsAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(), CancellationToken.None,
+            owner: "test-owner", repo: "test-repo");
+
+        success.Should().BeFalse();
+        message.Should().Contain("Connection failed");
+    }
+
+    /// <summary>
+    /// Covers the _providerFactory != null path in ValidateRepositoryPermissionsAsync:
+    /// a mock provider factory is injected; provider.ValidateAsync succeeds and the repo endpoint returns permissions.
+    /// </summary>
+    [Fact]
+    public async Task ValidateAppCredentialsAsync_WithProviderFactory_ProviderSucceeds_ReturnsPermissions()
+    {
+        StubTokenExchange();
+        StubGet(ApiPath("/repos/test-owner/test-repo"), new
+        {
+            id = 1,
+            name = "test-repo",
+            full_name = "test-owner/test-repo",
+            owner = new { login = "test-owner", id = 1 },
+            permissions = new { pull = true, push = false, admin = false }
+        });
+
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var mockFactory = new Mock<IProviderFactory>();
+        mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
+
+        var service = new GitHubValidationService(mockFactory.Object);
+        var (success, message) = await service.ValidateAppCredentialsAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(), CancellationToken.None,
+            owner: "test-owner", repo: "test-repo");
+
+        success.Should().BeTrue();
+        message.Should().Contain("test-owner/test-repo");
+        message.Should().Contain("read");
+    }
+
+    /// <summary>
+    /// Covers the _providerFactory != null path where provider.ValidateAsync throws:
+    /// ValidateRepositoryPermissionsAsync returns failure without calling Repository.Get.
+    /// </summary>
+    [Fact]
+    public async Task ValidateAppCredentialsAsync_WithProviderFactory_ProviderThrows_ReturnsFalse()
+    {
+        StubTokenExchange();
+
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Provider validation failed: insufficient permissions"));
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var mockFactory = new Mock<IProviderFactory>();
+        mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
+
+        var service = new GitHubValidationService(mockFactory.Object);
+        var (success, message) = await service.ValidateAppCredentialsAsync(
+            Server.Url!, ClientId, InstallationId, GenerateValidPrivateKeyBase64(), CancellationToken.None,
+            owner: "test-owner", repo: "test-repo");
+
+        success.Should().BeFalse();
+        message.Should().Contain("insufficient permissions");
     }
 
     #endregion
