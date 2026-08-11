@@ -503,6 +503,128 @@ public class ImageDownloadServiceTests : IDisposable
         ImageDownloadService.ValidateMagicBytes(path, "image/png").Should().BeFalse();
     }
 
+    // ─── ValidateMagicBytes WebP path ────────────────────────────────────────────
+
+    [Fact]
+    public void ValidateMagicBytes_ValidWebP_ReturnsTrue()
+    {
+        // WebP: RIFF (4 bytes) + 4 bytes file size + "WEBP" (4 bytes) = 12 bytes minimum
+        var webpHeader = new byte[12];
+        webpHeader[0] = 0x52; // R
+        webpHeader[1] = 0x49; // I
+        webpHeader[2] = 0x46; // F
+        webpHeader[3] = 0x46; // F
+        // bytes 4-7 = file size (not checked)
+        webpHeader[8]  = (byte)'W';
+        webpHeader[9]  = (byte)'E';
+        webpHeader[10] = (byte)'B';
+        webpHeader[11] = (byte)'P';
+
+        var path = Path.Combine(_tempDir, "test.webp");
+        File.WriteAllBytes(path, webpHeader);
+
+        ImageDownloadService.ValidateMagicBytes(path, "image/webp").Should().BeTrue();
+    }
+
+    [Fact]
+    public void ValidateMagicBytes_WebP_WrongRiffPrefix_ReturnsFalse()
+    {
+        // 12 bytes but wrong RIFF prefix
+        var badHeader = new byte[12];
+        badHeader[8]  = (byte)'W';
+        badHeader[9]  = (byte)'E';
+        badHeader[10] = (byte)'B';
+        badHeader[11] = (byte)'P';
+        // bytes 0-3 are all zeros — not RIFF
+
+        var path = Path.Combine(_tempDir, "bad.webp");
+        File.WriteAllBytes(path, badHeader);
+
+        ImageDownloadService.ValidateMagicBytes(path, "image/webp").Should().BeFalse();
+    }
+
+    [Fact]
+    public void ValidateMagicBytes_WebP_WrongWebpMarker_ReturnsFalse()
+    {
+        // Correct RIFF prefix but wrong marker at offset 8
+        var badHeader = new byte[12];
+        badHeader[0] = 0x52; // R
+        badHeader[1] = 0x49; // I
+        badHeader[2] = 0x46; // F
+        badHeader[3] = 0x46; // F
+        // bytes 8-11 are all zeros — not WEBP
+
+        var path = Path.Combine(_tempDir, "bad2.webp");
+        File.WriteAllBytes(path, badHeader);
+
+        ImageDownloadService.ValidateMagicBytes(path, "image/webp").Should().BeFalse();
+    }
+
+    [Fact]
+    public void ValidateMagicBytes_WebP_FileShorterThan12Bytes_ReturnsFalse()
+    {
+        // RIFF prefix present but only 8 bytes (not 12)
+        var shortFile = new byte[] { 0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00 };
+        var path = Path.Combine(_tempDir, "short.webp");
+        File.WriteAllBytes(path, shortFile);
+
+        ImageDownloadService.ValidateMagicBytes(path, "image/webp").Should().BeFalse();
+    }
+
+    [Fact]
+    public void ValidateMagicBytes_UnknownContentType_ReturnsFalse()
+    {
+        var path = Path.Combine(_tempDir, "test.bmp");
+        File.WriteAllBytes(path, [0x42, 0x4D]); // BMP magic bytes
+
+        ImageDownloadService.ValidateMagicBytes(path, "image/bmp").Should().BeFalse();
+    }
+
+    [Fact]
+    public void ValidateMagicBytes_FileNotFound_ReturnsFalse()
+    {
+        var path = Path.Combine(_tempDir, "nonexistent.png");
+
+        ImageDownloadService.ValidateMagicBytes(path, "image/png").Should().BeFalse();
+    }
+
+    // ─── SendRedirectRequestAsync failure via HttpRequestException ───────────────
+
+    [Fact]
+    public async Task DownloadAllAsync_HttpRequestException_SkipsImage()
+    {
+        // Simulate a network-level failure (HttpRequestException) on every request.
+        // This exercises the catch(HttpRequestException) in SendRedirectRequestAsync.
+        var handler = new MockHttpMessageHandler(_ =>
+            throw new HttpRequestException("Connection refused"));
+        using var service = new ImageDownloadService(handler);
+
+        var result = await service.DownloadAllAsync(
+            [MakeRef("https://example.com/image.png")],
+            _tempDir, "token", null, null, DefaultConfig(), CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    // ─── ProcessRedirectLocation: null Location header ───────────────────────────
+
+    [Fact]
+    public async Task DownloadAllAsync_RedirectWithNullLocation_SkipsImage()
+    {
+        // Server returns 302 but omits Location header.
+        // This exercises the `if (location is null) return (null, true)` path in ProcessRedirectLocation.
+        var handler = new MockHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.Found)); // no Location header
+
+        using var service = new ImageDownloadService(handler);
+
+        var result = await service.DownloadAllAsync(
+            [MakeRef("https://example.com/image.png")],
+            _tempDir, "token", null, null, DefaultConfig(), CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
     // ─── Redirect to non-HTTPS ──────────────────────────────────────────────────
 
     [Fact]

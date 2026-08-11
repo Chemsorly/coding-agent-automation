@@ -15,6 +15,9 @@ public class GitHubValidationService
     private readonly ILogger _logger = Log.Logger;
     private readonly IProviderFactory? _providerFactory;
 
+    /// <summary>Groups GitHub App credentials used across validation methods.</summary>
+    private sealed record AppCredentials(string ApiUrl, string ClientId, long InstallationId, string PrivateKeyBase64);
+
     public GitHubValidationService() { }
 
     public GitHubValidationService(IProviderFactory providerFactory)
@@ -34,51 +37,70 @@ public class GitHubValidationService
         string apiUrl, string clientId, long installationId, string privateKeyBase64, CancellationToken ct,
         string? owner = null, string? repo = null)
     {
+        var credentials = new AppCredentials(apiUrl, clientId, installationId, privateKeyBase64);
+
         // Step 1: Create a temporary auth service and get a token
-        string token;
+        var (tokenSuccess, token, tokenError) = await AuthenticateAndGetTokenAsync(credentials, ct);
+        if (!tokenSuccess) return (false, tokenError!);
+
+        // Step 2: If no owner/repo, just verify the token works by listing repos
+        if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
+            return await ValidateInstallationWithoutRepoAsync(token!, apiUrl);
+
+        // Step 3+4: owner/repo provided — verify repository access and permissions
+        return await ValidateRepositoryPermissionsAsync(token!, credentials, owner, repo, ct);
+    }
+
+    private async Task<(bool Success, string? Token, string? Error)> AuthenticateAndGetTokenAsync(
+        AppCredentials credentials, CancellationToken ct)
+    {
         try
         {
             var authService = new GitHubAppAuthService(
-                clientId, installationId, privateKeyBase64, apiUrl, _logger);
-            token = await authService.GetTokenAsync(ct);
+                credentials.ClientId, credentials.InstallationId, credentials.PrivateKeyBase64, credentials.ApiUrl, _logger);
+            var token = await authService.GetTokenAsync(ct);
+            return (true, token, null);
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Failed to decode private key"))
+        catch (GitHubAuthException ex) when (ex.ErrorKind == GitHubAuthErrorKind.PrivateKeyDecodeFailure)
         {
-            return (false, "Invalid private key: could not decode from base64");
+            return (false, null, "Invalid private key: could not decode from base64");
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("token exchange failed"))
+        catch (GitHubAuthException ex) when (ex.ErrorKind == GitHubAuthErrorKind.TokenExchangeFailure)
         {
-            return (false, $"Authentication failed: {ex.InnerException?.Message ?? ex.Message}");
+            return (false, null, $"Authentication failed: {ex.InnerException?.Message ?? ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            return (false, null, $"Connection failed: {ex.Message}");
+        }
+    }
+
+    private async Task<(bool Success, string Message)> ValidateInstallationWithoutRepoAsync(
+        string token, string apiUrl)
+    {
+        try
+        {
+            var client = CreateClient(apiUrl, token);
+            var response = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
+            return (true, $"✅ GitHub App credentials validated — {response.TotalCount} repository(ies) accessible");
+        }
+        catch (AuthorizationException)
+        {
+            return (false, "Authentication failed: installation token was rejected");
         }
         catch (Exception ex)
         {
             return (false, $"Connection failed: {ex.Message}");
         }
+    }
 
-        // Step 2: Verify the installation token works.
-        // If owner/repo are provided, go straight to repo validation (Step 3).
-        // Otherwise, list installation repos to confirm the token is accepted.
-        if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
-        {
-            try
-            {
-                var client = CreateClient(apiUrl, token);
-                var response = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
-                return (true, $"✅ GitHub App credentials validated — {response.TotalCount} repository(ies) accessible");
-            }
-            catch (AuthorizationException)
-            {
-                return (false, "Authentication failed: installation token was rejected");
-            }
-            catch (Exception ex)
-            {
-                return (false, $"Connection failed: {ex.Message}");
-            }
-        }
-
-        // Step 3: owner/repo provided — verify repository access and permissions
-        // NOTE: [GH-06] Provider delegation (below) already validates credentials + repo access via provider.ValidateAsync. The subsequent Repository.Get call is redundant for access validation — only the permission extraction (read/write/admin) is needed. Refactor to skip the redundant API call.
-        // Delegate basic credential + repo access check to the provider's ValidateAsync when available
+    private async Task<(bool Success, string Message)> ValidateRepositoryPermissionsAsync(
+        string token, AppCredentials credentials,
+        string owner, string repo, CancellationToken ct)
+    {
+        // NOTE: [GH-06] Provider delegation (below) already validates credentials + repo access via provider.ValidateAsync.
+        // The subsequent Repository.Get call is redundant for access validation — only the permission extraction
+        // (read/write/admin) is needed. Refactor to skip the redundant API call.
         if (_providerFactory is not null)
         {
             try
@@ -91,10 +113,10 @@ public class GitHubValidationService
                     DisplayName = "Validation",
                     Settings = new Dictionary<string, string>
                     {
-                        [ProviderSettingKeys.ApiUrl] = apiUrl,
-                        [ProviderSettingKeys.ClientId] = clientId,
-                        [ProviderSettingKeys.InstallationId] = installationId.ToString(),
-                        [ProviderSettingKeys.PrivateKeyBase64] = privateKeyBase64,
+                        [ProviderSettingKeys.ApiUrl] = credentials.ApiUrl,
+                        [ProviderSettingKeys.ClientId] = credentials.ClientId,
+                        [ProviderSettingKeys.InstallationId] = credentials.InstallationId.ToString(),
+                        [ProviderSettingKeys.PrivateKeyBase64] = credentials.PrivateKeyBase64,
                         [ProviderSettingKeys.Owner] = owner,
                         [ProviderSettingKeys.Repo] = repo
                     }
@@ -110,7 +132,7 @@ public class GitHubValidationService
 
         try
         {
-            var client = CreateClient(apiUrl, token);
+            var client = CreateClient(credentials.ApiUrl, token);
             var repository = await client.Repository.Get(owner, repo);
             var permissions = repository.Permissions;
 
