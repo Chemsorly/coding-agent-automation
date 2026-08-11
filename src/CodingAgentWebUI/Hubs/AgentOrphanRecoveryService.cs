@@ -95,7 +95,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         }
     }
 
-    private async Task RestoreNewRunAsync(AgentId agentId, ActiveJobState activeJob)
+    private Task RestoreNewRunAsync(AgentId agentId, ActiveJobState activeJob)
     {
         // Skip restoration for consolidation runs — they have their own
         // completion path (ReportConsolidationComplete) and should not
@@ -108,12 +108,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         {
             RestorePipelineRun(agentId, activeJob);
         }
-        // TODO: [WARNING] This method is declared `async Task` but contains no genuine await — it delegates
-        // synchronously to `RestoreConsolidationTracking` or `RestorePipelineRun` and ends with
-        // `await Task.CompletedTask`. This creates an unnecessary state-machine on every agent reconnect.
-        // Consider removing the `async` modifier and returning `Task.CompletedTask` directly, or calling
-        // the two inner synchronous methods directly from the caller (HandleOrphanedRunAsync).
-        await Task.CompletedTask; // Preserved async signature for future use
+        return Task.CompletedTask;
     }
 
     private void RestoreConsolidationTracking(AgentId agentId, ActiveJobState activeJob)

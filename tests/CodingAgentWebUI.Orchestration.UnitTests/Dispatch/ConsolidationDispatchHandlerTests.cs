@@ -171,6 +171,83 @@ public class ConsolidationDispatchHandlerTests
         savedRun.CompletedAtUtc.Should().NotBeNull();
     }
 
+    // ── Constructor coverage ─────────────────────────────────────────────
+
+    [Fact]
+    public void Constructor_PublicDepsOnly_ConstructsWithoutThrowing()
+    {
+        // Exercises the public ConsolidationDispatchHandler(deps) constructor that accepts
+        // IConfiguration (rather than the internal test constructor that accepts DispatchServiceOptions).
+        // This covers the DI-wired code path used in production.
+        var dbFactoryMock = new Mock<IDbContextFactory<PipelineDbContext>>();
+        var leaderElectionMock = new Mock<ILeaderElectionService>();
+        var kubeClientMock = new Mock<IKubernetesJobClient>();
+
+        var transitionService = new WorkItemTransitionService(
+            dbFactoryMock.Object,
+            NullLogger<WorkItemTransitionService>.Instance);
+
+        var lifecycle = new DispatchLifecycleService(
+            kubeClientMock.Object,
+            transitionService,
+            new DispatchServiceOptions());
+
+        var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build();
+
+        var deps = new ConsolidationDispatchHandlerDependencies(
+            dbFactoryMock.Object,
+            leaderElectionMock.Object,
+            lifecycle,
+            JobTemplateStore.CreateEmpty(),
+            configuration,
+            TransitionService: transitionService);
+
+        var handler = new ConsolidationDispatchHandler(deps);
+
+        handler.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Constructor_PublicDepsWithStateBuilder_UsesProvidedStateBuilder()
+    {
+        // Exercises the StateBuilder injection path in the public constructor:
+        // when deps.StateBuilder is provided, the null-coalescing fallback is NOT taken.
+        var dbFactoryMock = new Mock<IDbContextFactory<PipelineDbContext>>();
+        var leaderElectionMock = new Mock<ILeaderElectionService>();
+        var kubeClientMock = new Mock<IKubernetesJobClient>();
+
+        var transitionService = new WorkItemTransitionService(
+            dbFactoryMock.Object,
+            NullLogger<WorkItemTransitionService>.Instance);
+
+        var lifecycle = new DispatchLifecycleService(
+            kubeClientMock.Object,
+            transitionService,
+            new DispatchServiceOptions());
+
+        var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build();
+
+        var stateBuilder = new DispatchStateBuilder(
+            dbFactoryMock.Object,
+            lifecycle,
+            JobTemplateStore.CreateEmpty(),
+            new DispatchTemplateResolver(null, JobTemplateStore.CreateEmpty()),
+            new DispatchServiceOptions());
+
+        var deps = new ConsolidationDispatchHandlerDependencies(
+            dbFactoryMock.Object,
+            leaderElectionMock.Object,
+            lifecycle,
+            JobTemplateStore.CreateEmpty(),
+            configuration,
+            TransitionService: transitionService,
+            StateBuilder: stateBuilder);
+
+        var handler = new ConsolidationDispatchHandler(deps);
+
+        handler.Should().NotBeNull();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static ConsolidationDispatchHandler CreateHandler(

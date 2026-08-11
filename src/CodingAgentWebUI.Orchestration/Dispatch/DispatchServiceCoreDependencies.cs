@@ -14,4 +14,5 @@ internal sealed record DispatchServiceCoreDependencies(
     DispatchLifecycleService Lifecycle,
     ILabelService? LabelService = null,
     IAgentProfileStore? AgentProfileStore = null,
-    IOrchestratorRunService? RunService = null);
+    IOrchestratorRunService? RunService = null,
+    DispatchStateBuilder? StateBuilder = null);

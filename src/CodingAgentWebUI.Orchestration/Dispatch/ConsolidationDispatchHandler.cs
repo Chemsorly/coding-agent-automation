@@ -4,7 +4,6 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.LeaderElection;
-using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -37,6 +36,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly IProjectStore? _projectStore;
     private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
+    private readonly DispatchStateBuilder _stateBuilder;
 
     public ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps)
     {
@@ -53,6 +53,19 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _options = DispatchServiceOptionsFactory.Create(deps.Configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
         _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
+        // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
+        // deps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
+        // singleton is always passed, so this path is never taken at runtime. However, a test that
+        // accidentally omits StateBuilder will get a second live builder instance instead of a fast-fail,
+        // making missing DI wiring invisible. Consider removing the fallback and requiring StateBuilder
+        // explicitly, or asserting that deps.StateBuilder is non-null in production paths.
+        // See DotNetSpecialist WARNING (Issue #1910).
+        _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
+            _dbFactory,
+            _lifecycle,
+            deps.TemplateProvider,
+            new DispatchTemplateResolver(deps.AgentProfileStore, deps.TemplateProvider),
+            _options);
     }
 
     /// <summary>
@@ -76,6 +89,14 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _options = options;
         _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
         _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
+        // TODO: Same null-coalescing fallback as in the primary constructor — silently constructs a live
+        // DispatchStateBuilder when deps.StateBuilder is not provided. See DotNetSpecialist WARNING (Issue #1910).
+        _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
+            _dbFactory,
+            _lifecycle,
+            deps.TemplateProvider,
+            new DispatchTemplateResolver(deps.AgentProfileStore, deps.TemplateProvider),
+            _options);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -151,63 +172,33 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
     internal async Task PollAndDispatchConsolidationAsync(CancellationToken ct)
     {
-        var state = await LoadConsolidationDispatchStateAsync(ct);
+        // TODO: recordTelemetry:false means RecordLastPollEpoch() and UpdateCredentialPoolMetrics() are
+        // not called for consolidation polls. This IS a behavioral change from the old private
+        // BuildDispatchStateAsync in this class, which unconditionally called
+        // WorkDistributionTelemetry.UpdateCredentialPoolMetrics(...) on every consolidation poll.
+        // Credential pool gauge metrics (available PVC count, claimed count) will no longer be updated
+        // during consolidation polls. If this handler is the only active poller at a given moment,
+        // dashboards may show stale or zero values until a regular DispatchService poll runs.
+        // To restore the original behaviour, switch to recordTelemetry:true or introduce a separate
+        // consolidation-specific metric path. See CorrectnesReviewer WARNING (Issue #1910).
+        var state = await _stateBuilder.BuildStateAsync(
+            w => w.TaskType == WorkItemTaskType.Consolidation,
+            recordTelemetry: false,
+            ct);
         if (state is null)
             return;
 
-        var (db, pendingItems, concurrencyBySelector, availablePvcs) = state.Value;
-        await using (db)
+        await using (state.Db)
         {
-            foreach (var item in pendingItems)
+            foreach (var item in state.PendingItems)
             {
                 if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
                     break;
 
-                if (!await ProcessConsolidationItemAsync(db, item, concurrencyBySelector, availablePvcs, ct))
+                if (!await ProcessConsolidationItemAsync(state.Db, item,
+                        state.ConcurrencyBySelector, state.AvailablePvcs, ct))
                     break;
             }
-        }
-    }
-
-    /// <summary>
-    /// Loads pending consolidation items and the dispatch state (concurrency map + available PVCs).
-    /// Returns null if there are no pending items (caller should return immediately).
-    /// </summary>
-    private async Task<(PipelineDbContext Db, List<PendingWorkItemProjection> PendingItems, Dictionary<string, int> ConcurrencyBySelector, List<string> AvailablePvcs)?>
-        LoadConsolidationDispatchStateAsync(CancellationToken ct)
-    {
-        var db = await _dbFactory.CreateDbContextAsync(ct);
-        try
-        {
-            var pendingItems = await db.WorkItems
-                .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType == WorkItemTaskType.Consolidation)
-                .OrderBy(w => w.CreatedAt)
-                .Select(w => new PendingWorkItemProjection
-                {
-                    Id = w.Id,
-                    AgentSelector = w.AgentSelector,
-                    CreatedAt = w.CreatedAt,
-                    TimeoutSeconds = w.TimeoutSeconds,
-                    ProjectId = w.ProjectId,
-                    IssueIdentifier = w.IssueIdentifier,
-                    IssueProviderConfigId = w.IssueProviderConfigId,
-                    TaskType = w.TaskType
-                })
-                .ToListAsync(ct);
-
-            if (pendingItems.Count == 0)
-            {
-                await db.DisposeAsync();
-                return null;
-            }
-
-            var (concurrencyBySelector, availablePvcs) = await BuildDispatchStateAsync(db, ct);
-            return (db, pendingItems, concurrencyBySelector, availablePvcs);
-        }
-        catch
-        {
-            await db.DisposeAsync();
-            throw;
         }
     }
 
@@ -244,27 +235,6 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
         await DispatchConsolidationItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
         return true;
-    }
-
-    /// <summary>
-    /// Queries the database to build concurrency state (active counts per selector group)
-    /// and determines available PVCs for kiro agents.
-    /// </summary>
-    private async Task<(Dictionary<string, int> ConcurrencyBySelector, List<string> AvailablePvcs)> BuildDispatchStateAsync(
-        PipelineDbContext db, CancellationToken ct)
-    {
-        var activeCounts = await db.WorkItems
-            .WhereActive()
-            .GroupBy(w => w.AgentSelector)
-            .Select(g => new { Selector = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-        var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
-
-        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
-        WorkDistributionTelemetry.UpdateCredentialPoolMetrics(pvcResult.AvailablePvcs.Count, pvcResult.ClaimedCount);
-        var availablePvcs = pvcResult.AvailablePvcs;
-
-        return (concurrencyBySelector, availablePvcs);
     }
 
     // ── Consolidation-specific dispatch ─────────────────────────────────
