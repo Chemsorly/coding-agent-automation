@@ -35,50 +35,71 @@ public class GitHubValidationService
         string? owner = null, string? repo = null)
     {
         // Step 1: Create a temporary auth service and get a token
-        string token;
+        var (tokenSuccess, token, tokenError) = await AuthenticateAndGetTokenAsync(apiUrl, clientId, installationId, privateKeyBase64, ct);
+        if (!tokenSuccess) return (false, tokenError!);
+
+        // Step 2: If no owner/repo, just verify the token works by listing repos
+        if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
+            return await ValidateInstallationWithoutRepoAsync(token!, apiUrl, ct);
+
+        // Step 3+4: owner/repo provided — verify repository access and permissions
+        return await ValidateRepositoryPermissionsAsync(token!, apiUrl, clientId, installationId, privateKeyBase64, owner, repo, ct);
+    }
+
+    private async Task<(bool Success, string? Token, string? Error)> AuthenticateAndGetTokenAsync(
+        string apiUrl, string clientId, long installationId, string privateKeyBase64, CancellationToken ct)
+    {
         try
         {
             var authService = new GitHubAppAuthService(
                 clientId, installationId, privateKeyBase64, apiUrl, _logger);
-            token = await authService.GetTokenAsync(ct);
+            var token = await authService.GetTokenAsync(ct);
+            return (true, token, null);
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Failed to decode private key"))
         {
-            return (false, "Invalid private key: could not decode from base64");
+            return (false, null, "Invalid private key: could not decode from base64");
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("token exchange failed"))
         {
-            return (false, $"Authentication failed: {ex.InnerException?.Message ?? ex.Message}");
+            return (false, null, $"Authentication failed: {ex.InnerException?.Message ?? ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            return (false, null, $"Connection failed: {ex.Message}");
+        }
+    }
+
+    private async Task<(bool Success, string Message)> ValidateInstallationWithoutRepoAsync(
+        string token, string apiUrl, CancellationToken ct)
+    {
+        try
+        {
+            var client = CreateClient(apiUrl, token);
+            // TODO: CancellationToken ct is declared in this method signature but not forwarded to GetAllRepositoriesForCurrent()
+            // because the Octokit overload that accepts a CancellationToken is not used here. This is a pre-existing gap
+            // (carried over from the original code), but the explicit ct parameter creates a misleading contract.
+            // Either pass ct to the Octokit call or remove the parameter from the signature to make the limitation explicit.
+            var response = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
+            return (true, $"✅ GitHub App credentials validated — {response.TotalCount} repository(ies) accessible");
+        }
+        catch (AuthorizationException)
+        {
+            return (false, "Authentication failed: installation token was rejected");
         }
         catch (Exception ex)
         {
             return (false, $"Connection failed: {ex.Message}");
         }
+    }
 
-        // Step 2: Verify the installation token works.
-        // If owner/repo are provided, go straight to repo validation (Step 3).
-        // Otherwise, list installation repos to confirm the token is accepted.
-        if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(repo))
-        {
-            try
-            {
-                var client = CreateClient(apiUrl, token);
-                var response = await client.GitHubApps.Installation.GetAllRepositoriesForCurrent();
-                return (true, $"✅ GitHub App credentials validated — {response.TotalCount} repository(ies) accessible");
-            }
-            catch (AuthorizationException)
-            {
-                return (false, "Authentication failed: installation token was rejected");
-            }
-            catch (Exception ex)
-            {
-                return (false, $"Connection failed: {ex.Message}");
-            }
-        }
-
-        // Step 3: owner/repo provided — verify repository access and permissions
-        // NOTE: [GH-06] Provider delegation (below) already validates credentials + repo access via provider.ValidateAsync. The subsequent Repository.Get call is redundant for access validation — only the permission extraction (read/write/admin) is needed. Refactor to skip the redundant API call.
-        // Delegate basic credential + repo access check to the provider's ValidateAsync when available
+    private async Task<(bool Success, string Message)> ValidateRepositoryPermissionsAsync(
+        string token, string apiUrl, string clientId, long installationId, string privateKeyBase64,
+        string owner, string repo, CancellationToken ct)
+    {
+        // NOTE: [GH-06] Provider delegation (below) already validates credentials + repo access via provider.ValidateAsync.
+        // The subsequent Repository.Get call is redundant for access validation — only the permission extraction
+        // (read/write/admin) is needed. Refactor to skip the redundant API call.
         if (_providerFactory is not null)
         {
             try
@@ -111,6 +132,10 @@ public class GitHubValidationService
         try
         {
             var client = CreateClient(apiUrl, token);
+            // TODO: CancellationToken ct is not forwarded to client.Repository.Get(owner, repo) because the Octokit
+            // overload that accepts a CancellationToken is not used here. This is a pre-existing gap surfaced by
+            // the extraction: a cancellation arriving after provider.ValidateAsync(ct) completes will be silently
+            // ignored and the second HTTP call will run to completion regardless. Pass ct to the Octokit call.
             var repository = await client.Repository.Get(owner, repo);
             var permissions = repository.Permissions;
 

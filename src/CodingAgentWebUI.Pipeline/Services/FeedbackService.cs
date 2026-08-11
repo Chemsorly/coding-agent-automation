@@ -385,21 +385,24 @@ public sealed class FeedbackService
         foreach (var name in propertyNames)
         {
             if (element.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.Array)
-            {
-                var list = new List<string>();
-                foreach (var item in prop.EnumerateArray())
-                {
-                    if (item.ValueKind == JsonValueKind.String)
-                    {
-                        var str = item.GetString();
-                        if (str is not null)
-                            list.Add(str);
-                    }
-                }
-                return list;
-            }
+                return ExtractStringArray(prop);
         }
         return [];
+    }
+
+    private static List<string> ExtractStringArray(JsonElement arrayElement)
+    {
+        var list = new List<string>();
+        foreach (var item in arrayElement.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                var str = item.GetString();
+                if (str is not null)
+                    list.Add(str);
+            }
+        }
+        return list;
     }
 
     /// <summary>

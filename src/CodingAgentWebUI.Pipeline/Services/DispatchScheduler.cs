@@ -655,11 +655,8 @@ internal sealed class DispatchScheduler
 
         foreach (var kvp in projectLevelDecompositionQueues.ToList())
         {
-            bool limitReached = ctx.RemainingBudget - consumed <= 0
-                || ct.IsCancellationRequested
-                || stoppingToken.IsCancellationRequested
-                || activeDecompositionCount + additionalDecompDispatches >= config.MaxConcurrentDecompositions;
-            if (limitReached) break;
+            if (IsProjectLevelDispatchLimitReached(ctx, consumed, activeDecompositionCount, additionalDecompDispatches, config, ct, stoppingToken))
+                break;
 
             // Fair alternation: TryDequeueValidProjectLevelEpic may drain multiple already-processing items
             // before returning the first valid candidate (or null). Combined with the snapshot ToList() above,
@@ -683,11 +680,31 @@ internal sealed class DispatchScheduler
             }
         }
 
-        // Remove empty project queues
-        foreach (var key in projectLevelDecompositionQueues.Where(kvp => kvp.Value.Count == 0).Select(kvp => kvp.Key).ToList())
-            projectLevelDecompositionQueues.Remove(key);
+        CleanupEmptyProjectQueues(projectLevelDecompositionQueues);
 
         return (madeProgress, consumed, processed, failed, additionalDecompDispatches);
+    }
+
+    private static bool IsProjectLevelDispatchLimitReached(
+        RoundDispatchContext ctx,
+        int consumed,
+        int activeDecompositionCount,
+        int additionalDecompDispatches,
+        PipelineConfiguration config,
+        CancellationToken ct,
+        CancellationToken stoppingToken)
+    {
+        return ctx.RemainingBudget - consumed <= 0
+            || ct.IsCancellationRequested
+            || stoppingToken.IsCancellationRequested
+            || activeDecompositionCount + additionalDecompDispatches >= config.MaxConcurrentDecompositions;
+    }
+
+    private static void CleanupEmptyProjectQueues(
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>> queues)
+    {
+        foreach (var key in queues.Where(kvp => kvp.Value.Count == 0).Select(kvp => kvp.Key).ToList())
+            queues.Remove(key);
     }
 
     /// <summary>

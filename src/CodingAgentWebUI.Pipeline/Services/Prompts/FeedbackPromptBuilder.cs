@@ -300,21 +300,8 @@ public static class FeedbackPromptBuilder
     private static void AppendQualityGateReport(StringBuilder sb, QualityGateReport report)
     {
         AppendGateResult(sb, "Compilation", report.Compilation.Passed, report.Compilation.Details);
-
-        sb.AppendLine($"- **Tests:** {(report.Tests.Passed ? "PASSED" : "FAILED")}");
-        if (!string.IsNullOrEmpty(report.Tests.Details))
-            sb.AppendLine($"  - Details: {report.Tests.Details}");
-        if (report.Tests.TestsPassed.HasValue || report.Tests.TestsFailed.HasValue)
-            sb.AppendLine($"  - Passed: {report.Tests.TestsPassed ?? 0}, Failed: {report.Tests.TestsFailed ?? 0}, Skipped: {report.Tests.TestsSkipped ?? 0}");
-
-        if (report.Coverage is not null)
-        {
-            sb.AppendLine($"- **Coverage:** {(report.Coverage.Passed ? "PASSED" : "FAILED")}");
-            if (report.Coverage.CoveragePercent.HasValue)
-                sb.AppendLine($"  - Coverage: {report.Coverage.CoveragePercent:F1}%");
-            if (!string.IsNullOrEmpty(report.Coverage.Details))
-                sb.AppendLine($"  - Details: {report.Coverage.Details}");
-        }
+        AppendTestsSection(sb, report.Tests);
+        AppendCoverageSection(sb, report.Coverage);
 
         if (report.SecurityScan is not null)
             AppendGateResult(sb, "Security Scan", report.SecurityScan.Passed, report.SecurityScan.Details);
@@ -322,12 +309,34 @@ public static class FeedbackPromptBuilder
         if (report.ExternalCi is not null)
             AppendGateResult(sb, "External CI", report.ExternalCi.Passed, report.ExternalCi.Details);
 
-        if (report.QgcResults.Count > 0)
-        {
-            sb.AppendLine("- **QGC Results:**");
-            foreach (var qgc in report.QgcResults)
-                sb.AppendLine($"  - {qgc.DisplayName}: {(qgc.Passed ? "PASSED" : "FAILED")}");
-        }
+        AppendQgcResultsSection(sb, report.QgcResults);
+    }
+
+    private static void AppendTestsSection(StringBuilder sb, GateResult tests)
+    {
+        sb.AppendLine($"- **Tests:** {(tests.Passed ? "PASSED" : "FAILED")}");
+        if (!string.IsNullOrEmpty(tests.Details))
+            sb.AppendLine($"  - Details: {tests.Details}");
+        if (tests.TestsPassed.HasValue || tests.TestsFailed.HasValue)
+            sb.AppendLine($"  - Passed: {tests.TestsPassed ?? 0}, Failed: {tests.TestsFailed ?? 0}, Skipped: {tests.TestsSkipped ?? 0}");
+    }
+
+    private static void AppendCoverageSection(StringBuilder sb, GateResult? coverage)
+    {
+        if (coverage is null) return;
+        sb.AppendLine($"- **Coverage:** {(coverage.Passed ? "PASSED" : "FAILED")}");
+        if (coverage.CoveragePercent.HasValue)
+            sb.AppendLine($"  - Coverage: {coverage.CoveragePercent:F1}%");
+        if (!string.IsNullOrEmpty(coverage.Details))
+            sb.AppendLine($"  - Details: {coverage.Details}");
+    }
+
+    private static void AppendQgcResultsSection(StringBuilder sb, IReadOnlyList<QgcExecutionResult> results)
+    {
+        if (results.Count == 0) return;
+        sb.AppendLine("- **QGC Results:**");
+        foreach (var qgc in results)
+            sb.AppendLine($"  - {qgc.DisplayName}: {(qgc.Passed ? "PASSED" : "FAILED")}");
     }
 
     private static void AppendGateResult(StringBuilder sb, string name, bool passed, string? details)

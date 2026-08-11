@@ -366,31 +366,9 @@
     {
         _formError = null;
 
-        if (string.IsNullOrWhiteSpace(_form.DisplayName))
-        {
-            _formError = "Display Name is required.";
-            return;
-        }
-
-        if (string.IsNullOrEmpty(_form.AgentProviderConfigId))
-        {
-            _formError = "Agent Provider Config is required.";
-            return;
-        }
-
         var labels = ParseLabels(_form.MatchLabels);
-
-        // Check for duplicate default profile
-        if (labels.Count == 0)
-        {
-            var existingDefault = _profiles.FirstOrDefault(p =>
-                p.MatchLabels.Count == 0 && (_editingProfile == null || p.Id != _editingProfile.Id));
-            if (existingDefault != null)
-            {
-                _formError = $"A default profile already exists: \"{existingDefault.DisplayName}\". Only one default (empty MatchLabels) is allowed.";
-                return;
-            }
-        }
+        _formError = ValidateProfileForm(labels);
+        if (_formError is not null) return;
 
         var profile = new AgentProfile
         {
@@ -400,29 +378,7 @@
             AgentProviderConfigId = _form.AgentProviderConfigId,
             Enabled = _form.Enabled,
             Priority = _form.Priority,
-            McpServers = _form.McpServers.Select(s =>
-            {
-                string? command;
-                if (s.Type == "http") command = null;
-                else if (string.IsNullOrWhiteSpace(s.Command)) command = null;
-                else command = s.Command.Trim();
-                return new McpServerConfig
-                {
-                    Name = s.Name.Trim(),
-                    Type = s.Type,
-                    Command = command,
-                    Args = string.IsNullOrWhiteSpace(s.Args) ? [] : s.Args.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList(),
-                    Url = s.Type == "http" ? s.Url.Trim() : null,
-                    Env = ParseEnvVars(s.EnvVars),
-                    // TODO: SSE servers also support headers (OpenCodeAgentProvider treats "http" and "sse" identically),
-                    // but this condition discards headers for SSE-type servers on save. A user who opens an existing
-                    // SSE server record with stored Headers, then saves without changes, will have those headers silently
-                    // cleared. Fix by extending the condition to also include "sse": s.Type is "http" or "sse".
-                    Headers = s.Type == "http" ? ParseEnvVars(s.Headers) : new Dictionary<string, string>(),
-                    Disabled = !s.Enabled,
-                    AutoApprove = []
-                };
-            }).ToList()
+            McpServers = _form.McpServers.Select(MapMcpServerFormToConfig).ToList()
         };
 
         try
@@ -436,6 +392,50 @@
         {
             _formError = $"Failed to save: {ex.Message}";
         }
+    }
+
+    private string? ValidateProfileForm(IReadOnlyList<string> labels)
+    {
+        if (string.IsNullOrWhiteSpace(_form.DisplayName))
+            return "Display Name is required.";
+
+        if (string.IsNullOrEmpty(_form.AgentProviderConfigId))
+            return "Agent Provider Config is required.";
+
+        if (labels.Count == 0)
+        {
+            var existingDefault = _profiles.FirstOrDefault(p =>
+                p.MatchLabels.Count == 0 && (_editingProfile == null || p.Id != _editingProfile.Id));
+            if (existingDefault != null)
+                return $"A default profile already exists: \"{existingDefault.DisplayName}\". Only one default (empty MatchLabels) is allowed.";
+        }
+
+        return null;
+    }
+
+    private McpServerConfig MapMcpServerFormToConfig(McpServerFormModel s)
+    {
+        string? command;
+        if (s.Type == "http") command = null;
+        else if (string.IsNullOrWhiteSpace(s.Command)) command = null;
+        else command = s.Command.Trim();
+
+        return new McpServerConfig
+        {
+            Name = s.Name.Trim(),
+            Type = s.Type,
+            Command = command,
+            Args = string.IsNullOrWhiteSpace(s.Args) ? [] : s.Args.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList(),
+            Url = s.Type == "http" ? s.Url.Trim() : null,
+            Env = ParseEnvVars(s.EnvVars),
+            // TODO: SSE servers also support headers (OpenCodeAgentProvider treats "http" and "sse" identically),
+            // but this condition discards headers for SSE-type servers on save. A user who opens an existing
+            // SSE server record with stored Headers, then saves without changes, will have those headers silently
+            // cleared. Fix by extending the condition to also include "sse": s.Type is "http" or "sse".
+            Headers = s.Type == "http" ? ParseEnvVars(s.Headers) : new Dictionary<string, string>(),
+            Disabled = !s.Enabled,
+            AutoApprove = []
+        };
     }
 
     private void ConfirmDelete(AgentProfile profile)
