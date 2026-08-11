@@ -164,6 +164,148 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
 
     // ── Consolidation filtering tests ───────────────────────────────────
 
+    // ── Fallback path: corrupt/null SummaryJson consolidation exclusion ──
+
+    [Fact]
+    public async Task GetRunHistory_ExcludesConsolidationRun_WhenSummaryJsonIsCorrupt()
+    {
+        // Insert a consolidation ghost entry with corrupt SummaryJson — triggers DeserializeSummary fallback.
+        // IssueProviderConfigId = ProviderConfigId signals this is consolidation in the fallback path.
+        // TODO: This test cannot distinguish between "fallback path reconstructed InitiatedBy=consolidation
+        // and it was excluded by the filter" vs "catch(JsonException) returned null and was excluded by
+        // the null-check in .Where(s => s is not null ...)". If the catch block were changed to return null
+        // (bypassing the column fallback entirely), this test would still pass. A stronger assertion would
+        // verify the reconstructed InitiatedBy value directly rather than only the side-effect (empty result).
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.NewGuid(),
+                IssueIdentifier = "consolidation-ghost",
+                IssueTitle = "Ghost",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow,
+                IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+                SummaryJson = "{ corrupt json" // invalid JSON — triggers catch(JsonException) fallback
+            });
+            db.SaveChanges();
+        }
+
+        var history = await _sut.GetRunHistoryAsync();
+
+        history.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetRunHistory_ExcludesConsolidationRun_WhenSummaryJsonIsNull()
+    {
+        // Insert a consolidation ghost entry with null SummaryJson — triggers DeserializeSummary fallback.
+        // TODO: This test (and the corrupt-JSON variant) assert only on the side-effect (empty result).
+        // Neither pins the reconstructed InitiatedBy value. If DeserializeSummary returned null for
+        // consolidation null-JSON rows (rather than a summary with InitiatedBy=consolidation), both
+        // tests would still pass because null is also filtered by .Where(s => s is not null ...).
+        // Adding an assertion that directly verifies the fallback sets InitiatedBy=consolidation
+        // would give a stronger regression signal.
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.NewGuid(),
+                IssueIdentifier = "consolidation-ghost-null",
+                IssueTitle = "Ghost null",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow,
+                IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+                SummaryJson = null
+            });
+            db.SaveChanges();
+        }
+
+        var history = await _sut.GetRunHistoryAsync();
+
+        history.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetRunHistoryPaged_ExcludesConsolidationRun_WhenSummaryJsonIsCorrupt()
+    {
+        // Insert one normal run and one consolidation ghost with corrupt SummaryJson.
+        // Verifies the second acceptance criterion: GetRunHistoryPaged excludes consolidation
+        // ghost entries when the fallback deserialization path is triggered.
+        // TODO: The normal run inserted here uses valid SummaryJson (JSON deserialization path),
+        // not the column-fallback path. The scenario where both the normal run AND the consolidation
+        // ghost use the fallback path simultaneously (both SummaryJson null/corrupt, normal run has
+        // IssueProviderConfigId=null) is not exercised in the paged variant. That scenario is
+        // covered by GetRunHistory_IncludesLegacyNormalRun_WhenSummaryJsonIsNull (non-paged only).
+        var normalRunId = Guid.NewGuid();
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = normalRunId,
+                IssueIdentifier = "org/repo#1",
+                IssueTitle = "Normal",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(
+                    new PipelineRunSummary
+                    {
+                        RunId = normalRunId.ToString(),
+                        IssueIdentifier = "org/repo#1",
+                        IssueTitle = "Normal",
+                        FinalStep = PipelineStep.Completed,
+                        StartedAtOffset = DateTimeOffset.UtcNow,
+                        InitiatedBy = "manual"
+                    }, PipelineJsonOptions.Default)
+            });
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.NewGuid(),
+                IssueIdentifier = "consolidation-ghost-paged",
+                IssueTitle = "Ghost paged",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+                SummaryJson = "{ corrupt json"
+            });
+            db.SaveChanges();
+        }
+
+        var result = await _sut.GetRunHistoryAsync(page: 1, pageSize: 10);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].IssueIdentifier.Should().Be("org/repo#1");
+    }
+
+    [Fact]
+    public async Task GetRunHistory_IncludesLegacyNormalRun_WhenSummaryJsonIsNull()
+    {
+        // Regression guard: a pre-migration row (IssueProviderConfigId = null, SummaryJson = null)
+        // must still appear in history after the fix — null IssueProviderConfigId reconstructs
+        // InitiatedBy as "manual" (the default), not "consolidation".
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.NewGuid(),
+                IssueIdentifier = "legacy-normal",
+                IssueTitle = "Legacy normal run",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = DateTimeOffset.UtcNow,
+                IssueProviderConfigId = null, // pre-migration row has no value
+                SummaryJson = null
+            });
+            db.SaveChanges();
+        }
+
+        var history = await _sut.GetRunHistoryAsync();
+
+        history.Should().HaveCount(1);
+        history[0].IssueIdentifier.Should().Be("legacy-normal");
+    }
+
+    // ── Consolidation filtering tests (valid SummaryJson) ───────────────
+
     [Fact]
     public async Task GetRunHistory_ExcludesConsolidationRuns()
     {

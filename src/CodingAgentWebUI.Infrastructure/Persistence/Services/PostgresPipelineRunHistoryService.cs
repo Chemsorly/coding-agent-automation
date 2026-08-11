@@ -172,11 +172,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             .Take(MaxHistorySize)
             .ToListAsync(ct).ConfigureAwait(false);
 
-        // TODO: Write guard uses IssueProviderConfigId to reject consolidation runs, but read-time
-        // filter uses InitiatedBy. If a consolidation run has the correct ProviderConfigId but
-        // missing/null InitiatedBy (e.g., code path that sets one without the other), it could
-        // leak through. Consider using the same discriminator for both write and read guards,
-        // or adding a test verifying their interaction under failure conditions.
+        // The read-time filter uses InitiatedBy (from SummaryJson). DeserializeSummary sets InitiatedBy
+        // from entity.IssueProviderConfigId in the column-fallback path, so this filter is correct
+        // even when SummaryJson is null or corrupt — consolidation ghost entries are excluded in both paths.
         return entities
             .Select(DeserializeSummary)
             .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
@@ -259,6 +257,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             existing.ProjectId = entity.ProjectId;
             existing.ProjectName = entity.ProjectName;
             existing.RunType = entity.RunType;
+            existing.IssueProviderConfigId = entity.IssueProviderConfigId;
             existing.SummaryJson = entity.SummaryJson;
         }
         else
@@ -290,6 +289,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
                 retry.ProjectId = entity.ProjectId;
                 retry.ProjectName = entity.ProjectName;
                 retry.RunType = entity.RunType;
+                retry.IssueProviderConfigId = entity.IssueProviderConfigId;
                 retry.SummaryJson = entity.SummaryJson;
                 await db.SaveChangesAsync(ct).ConfigureAwait(false);
             }
@@ -320,6 +320,16 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             ProjectId = summary.ProjectId,
             ProjectName = summary.ProjectName,
             RunType = summary.RunType,
+            // Derive IssueProviderConfigId from InitiatedBy: consolidation runs carry the sentinel,
+            // all other runs leave it null. Used by DeserializeSummary to reconstruct InitiatedBy
+            // when SummaryJson is null or corrupt.
+            // TODO: This mapping relies entirely on InitiatedBy being set correctly before AddRunToHistoryAsync
+            // is called. There is no validation at the API boundary. A PipelineRunSummary with
+            // InitiatedBy = "consolidation" that is NOT a consolidation run would be stored with the
+            // consolidation sentinel in IssueProviderConfigId and subsequently excluded from history.
+            IssueProviderConfigId = summary.InitiatedBy == ConsolidationConstants.InitiatedBy
+                ? ConsolidationConstants.ProviderConfigId
+                : null,
             SummaryJson = JsonSerializer.Serialize(summary, JsonOptions)
         };
     }
@@ -340,11 +350,10 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             }
         }
 
-        // Fallback: reconstruct from columns (for rows inserted before SummaryJson was added)
-        // TODO: InitiatedBy is not populated in this fallback path. If a consolidation ghost entry has
-        // corrupt/null SummaryJson, it will produce a summary with InitiatedBy=null that passes through
-        // the consolidation read-time filter (InitiatedBy != "consolidation"). Consider also checking
-        // IssueProviderConfigId or adding an InitiatedBy column to the entity for robust filtering.
+        // Fallback: reconstruct from columns (for rows inserted before SummaryJson was added,
+        // or when SummaryJson is corrupt). IssueProviderConfigId is set to
+        // ConsolidationConstants.ProviderConfigId for consolidation runs (see ToEntity), so we
+        // can reliably reconstruct InitiatedBy even without SummaryJson.
         return new PipelineRunSummary
         {
             RunId = entity.RunId.ToString(),
@@ -357,6 +366,20 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             PullRequestUrl = entity.PullRequestUrl,
             ModelName = entity.ModelName,
             AgentId = entity.AgentId,
+            // Reconstruct InitiatedBy from IssueProviderConfigId column:
+            // - consolidation sentinel → "consolidation" (excluded by read-time filter)
+            // - null (legacy rows or normal runs) → "manual" (default, passes read-time filter)
+            // TODO: Hard-coding "manual" for non-consolidation rows is a lossy approximation.
+            // Any run with a different original InitiatedBy value (e.g. "loop", a username) that
+            // loses its SummaryJson will silently surface as InitiatedBy="manual" via this path.
+            // This is a known semantic gap: the fallback path cannot reconstruct the original
+            // InitiatedBy without storing it in a dedicated column. For filtering purposes this
+            // is correct (non-consolidation rows must not be excluded), but callers that display
+            // or aggregate InitiatedBy should be aware of this lossy reconstruction.
+            // See: DotNetSpecialist review warning, issue #1918.
+            InitiatedBy = entity.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId
+                ? ConsolidationConstants.InitiatedBy
+                : "manual",
             // TODO: Add ProjectId = entity.ProjectId here for consistency — fallback path loses ProjectId when SummaryJson is null/corrupt
             ProjectName = entity.ProjectName,
             RunType = entity.RunType
