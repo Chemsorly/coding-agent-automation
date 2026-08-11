@@ -149,23 +149,20 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
     }
 
     /// <inheritdoc />
+    // Requires a live git remote — not unit-testable; core retry logic covered via PushWithTokenFactory tests.
     [ExcludeFromCodeCoverage]
     public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
         => PushBranchAsync(workspacePath, branchName, forcePush: false, ct);
 
     /// <inheritdoc />
-    // Excluded from coverage: delegates to RepositoryGitOperations.Push which requires
-    // a real git repository and network connection. Unit tests cover PushWithTokenFactory
-    // directly; integration coverage is provided by end-to-end pipeline runs.
+    // Token factory passed so each Polly retry fetches a fresh token (GitLab tokens can also
+    // be dynamically vended; stale tokens cause 403s in long pipeline runs).
     [ExcludeFromCodeCoverage]
     public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, bool forcePush, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
         ArgumentNullException.ThrowIfNull(branchName);
 
-        // Pass a token factory rather than a pre-fetched string so each Polly retry attempt
-        // can obtain a fresh token. GitLab personal/project access tokens may also be vended
-        // dynamically; fetching fresh on retry avoids 403s from stale tokens in long runs.
         return Task.Run(async () =>
         {
             try

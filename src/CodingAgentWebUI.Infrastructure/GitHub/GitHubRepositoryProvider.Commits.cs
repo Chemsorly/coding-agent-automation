@@ -1,5 +1,5 @@
-using CodingAgentWebUI.Infrastructure.Git;
 using System.Diagnostics.CodeAnalysis;
+using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
@@ -27,22 +27,19 @@ public partial class GitHubRepositoryProvider
         return Task.Run(() => RepositoryGitOperations.CommitAll(workspacePath, message, blacklistedPaths, allowEmpty, pipelineInjectedPaths), ct);
     }
 
-    // Excluded from coverage: delegates to RepositoryGitOperations.Push which requires
-    // a real git repository and network connection. Unit tests cover PushWithTokenFactory
-    // directly; integration coverage is provided by end-to-end pipeline runs.
+    // Requires a live git remote — not unit-testable; core retry logic covered via PushWithTokenFactory tests.
     [ExcludeFromCodeCoverage]
     public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
         => PushBranchAsync(workspacePath, branchName, forcePush: false, ct);
 
+    // Token factory passed so each Polly retry fetches a fresh GitHub App installation token
+    // (tokens expire after 1h; long pipeline runs exceed that window).
     [ExcludeFromCodeCoverage]
     public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, bool forcePush, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
         ArgumentNullException.ThrowIfNull(branchName);
 
-        // Pass a token factory rather than a pre-fetched string so each Polly retry attempt
-        // can obtain a fresh GitHub App installation token. Tokens expire after 1 hour; long
-        // pipeline runs (>1h) would otherwise fail on the first push retry with a stale 403.
         return Task.Run(() =>
             RepositoryGitOperations.Push(workspacePath, branchName, forcePush,
                 GitConstants.TokenUsername, tokenFactory: GetTokenAsync, _gitPipeline, ct), ct);
