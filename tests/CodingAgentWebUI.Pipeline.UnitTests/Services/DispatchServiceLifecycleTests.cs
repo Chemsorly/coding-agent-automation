@@ -667,6 +667,14 @@ public class DispatchServiceLifecycleTests : IDisposable
         // In the test environment no template file exists, so it throws FileNotFoundException —
         // but the key constructor code (DispatchServiceOptionsFactory.Create and the delegation
         // expression) is exercised before the throw.
+        // TODO: The FileNotFoundException assertion is a weak proxy — it only proves the constructor
+        // reached the file-load call, not that DispatchServiceOptionsFactory.Create or the delegation
+        // expression ran correctly. The test would pass equally if the constructor threw on its very
+        // first line from a different cause. If the test environment ever gains a matching template
+        // file (e.g. from a fixture change), Should().Throw<FileNotFoundException>() will start
+        // failing for an unrelated reason. Consider restructuring using the 3-arg overload with a
+        // pre-built JobTemplateStore to verify options and delegation directly without depending
+        // on a missing file. See TestQualityReviewer WARNING (Issue #1910).
         var configData = new Dictionary<string, string?>
         {
             ["WorkDistribution:Namespace"] = "default",

@@ -201,6 +201,13 @@ public sealed class DispatchService : BackgroundService
             }
         }
 
+        // TODO: DispatcherPollCount is now incremented unconditionally after every poll that found pending items
+        // (i.e. when state is non-null). Previously it was only incremented on the early-return path when
+        // pendingItems.Count == 0 (the "nothing to do" poll). This is a behavioral change: dashboards and
+        // alerts keyed on this counter will see higher values after deployment. If the intent is to count
+        // ALL polls (empty + non-empty), this is correct — but it should be documented. If the original
+        // intent was to count only empty polls, remove this call and leave it solely inside BuildStateAsync.
+        // See Correctness WARNING (Issue #1910).
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
 
