@@ -111,6 +111,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
                     InitiatedBy = request.InitiatedBy,
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = requiredLabels,
+                    RunType = PipelineRunType.Consolidation,
                     TaskType = WorkItemTaskType.Consolidation,
                     ConsolidationRunType = request.ConsolidationRunType,
                     ConsolidationTemplateId = request.ConsolidationTemplateId,

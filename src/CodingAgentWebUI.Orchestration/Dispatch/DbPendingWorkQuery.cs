@@ -75,16 +75,6 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
                     : null
             };
 
-            if (isConsolidation && !pendingJob.IsConsolidation)
-            {
-                // TaskType says Consolidation but payload parsing didn't produce a ConsolidationRunType.
-                // This would cause the UI filter (!IsConsolidation) to incorrectly include this item.
-                Serilog.Log.Warning(
-                    "DbPendingWorkQuery: WorkItem {WorkItemId} has TaskType=Consolidation but ConsolidationRunType is null " +
-                    "(payload extraction failed). IssueIdentifier={IssueIdentifier}",
-                    w.Id, w.IssueIdentifier);
-            }
-
             return pendingJob;
         }).ToList();
 
@@ -96,6 +86,7 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
     {
         if (taskType == WorkItemTaskType.Review) return PipelineRunType.Review;
         if (taskType == WorkItemTaskType.Decomposition) return PipelineRunType.DecompositionAnalysis;
+        if (taskType == WorkItemTaskType.Consolidation) return PipelineRunType.Consolidation;
         return PipelineRunType.Implementation;
     }
 

@@ -68,8 +68,9 @@ public sealed record PendingJob
 
     /// <summary>
     /// Whether this pending job is a consolidation job.
-    /// Uses TaskType as the primary discriminator (stored on the WorkItem row, always reliable),
-    /// with ConsolidationRunType.HasValue as a secondary indicator for legacy in-memory mode.
+    /// <see cref="RunType"/> is the single reliable discriminator — set to
+    /// <see cref="PipelineRunType.Consolidation"/> by both DB mode (<c>DbPendingWorkQuery.ResolveRunType</c>)
+    /// and legacy/in-memory mode (<c>LegacyWorkDistributor</c>).
     /// </summary>
-    public bool IsConsolidation => TaskType == WorkItemTaskType.Consolidation || ConsolidationRunType.HasValue;
+    public bool IsConsolidation => RunType == PipelineRunType.Consolidation;
 }

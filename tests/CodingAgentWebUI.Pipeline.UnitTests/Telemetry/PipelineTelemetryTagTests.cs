@@ -41,6 +41,7 @@ public class PipelineTelemetryTagTests : IDisposable
     [InlineData(PipelineRunType.Review, "review")]
     [InlineData(PipelineRunType.DecompositionAnalysis, "decompositionanalysis")]
     [InlineData(PipelineRunType.Decomposition, "decomposition")]
+    [InlineData(PipelineRunType.Consolidation, "consolidation")]
     public void JobsDispatched_Add_IncludesRunTypeTag(PipelineRunType runType, string expected)
     {
         // Verify the tag helper produces the correct value directly (avoids cross-test interference from static meter)

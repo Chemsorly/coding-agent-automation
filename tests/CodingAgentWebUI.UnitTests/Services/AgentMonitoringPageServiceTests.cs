@@ -140,7 +140,7 @@ public sealed class AgentMonitoringPageServiceTests
         var jobs = new[]
         {
             new PendingJob { IssueIdentifier = "1", IssueProviderId = "ip-1", RepoProviderId = "rp-1", EnqueuedAt = DateTimeOffset.UtcNow, InitiatedBy = "test" },
-            new PendingJob { IssueIdentifier = "c1", IssueProviderId = "ip-1", RepoProviderId = "rp-1", EnqueuedAt = DateTimeOffset.UtcNow, InitiatedBy = "test", ConsolidationRunType = ConsolidationRunType.BrainConsolidation }
+            new PendingJob { IssueIdentifier = "c1", IssueProviderId = "ip-1", RepoProviderId = "rp-1", EnqueuedAt = DateTimeOffset.UtcNow, InitiatedBy = "test", RunType = PipelineRunType.Consolidation, ConsolidationRunType = ConsolidationRunType.BrainConsolidation }
         };
         _mockPendingWorkQuery.Setup(s => s.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(jobs);
