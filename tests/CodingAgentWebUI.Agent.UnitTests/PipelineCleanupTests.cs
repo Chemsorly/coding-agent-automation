@@ -81,13 +81,19 @@ public class PipelineCleanupTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task RunAsync_ClearsInjectedSecretKeys()
+    public async Task RunAsync_WithInjectedSecrets_DoesNotModifyProcessEnvironment()
     {
+        // After issue #1913, PipelineCleanup no longer clears environment variables.
+        // Secrets are passed per-process via ProcessStartInfo.Environment and are
+        // never set on the parent process environment. This test verifies that:
+        // 1. PipelineCleanup.RunAsync completes without throwing.
+        // 2. A sentinel env var is NOT touched by the cleanup (no longer cleared).
         var run = CreateRun();
         var reporter = CreateReporter(run);
-        var uniqueKey = $"TEST_SECRET_{Guid.NewGuid():N}";
+        var uniqueKey = $"TEST_SENTINEL_{Guid.NewGuid():N}";
 
-        Environment.SetEnvironmentVariable(uniqueKey, "sensitive-value");
+        // Set a sentinel env var to verify cleanup does NOT touch it
+        Environment.SetEnvironmentVariable(uniqueKey, "sentinel-value");
 
         var stepContext = new PipelineStepContext
         {
@@ -107,17 +113,18 @@ public class PipelineCleanupTests : IAsyncDisposable
             PrOrchestrator = new PullRequestOrchestrator(_mockLogger.Object),
             Logger = _mockLogger.Object
         };
-        stepContext.InjectedSecretKeys = new List<string> { uniqueKey };
+        // InjectedSecrets is for masking only — no env var side effects
+        stepContext.InjectedSecrets = new Dictionary<string, string> { [uniqueKey] = "sentinel-value" };
 
         try
         {
             await PipelineCleanup.RunAsync(null, stepContext, run, reporter, _mockLogger.Object);
 
-            Environment.GetEnvironmentVariable(uniqueKey).Should().BeNull();
+            // The sentinel env var should still be set — cleanup no longer clears it
+            Environment.GetEnvironmentVariable(uniqueKey).Should().Be("sentinel-value");
         }
         finally
         {
-            // Ensure cleanup even if test fails
             Environment.SetEnvironmentVariable(uniqueKey, null);
         }
     }

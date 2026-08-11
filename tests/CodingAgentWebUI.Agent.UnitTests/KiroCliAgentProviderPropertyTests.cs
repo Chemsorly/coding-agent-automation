@@ -34,8 +34,8 @@ public class KiroCliAgentProviderPropertyTests
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (_, _, _, _, onOutput, _) =>
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, _, onOutput, _, _) =>
                 {
                     if (onOutput is not null)
                     {
@@ -135,8 +135,8 @@ public class KiroCliAgentProviderPropertyTests
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (_, _, resume, _, _, _) => capturedUseResume = resume)
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, resume, _, _, _, _) => capturedUseResume = resume)
             .ReturnsAsync(0);
 
         // When UseResume=false and no ResumeSessionId, the provider uses an ephemeral orchestrator
@@ -178,8 +178,8 @@ public class KiroCliAgentProviderPropertyTests
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (_, _, _, _, onOutput, _) =>
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, _, onOutput, _, _) =>
                 {
                     onOutput?.Invoke(input.Value);
                 })

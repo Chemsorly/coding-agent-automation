@@ -55,15 +55,26 @@ public class ResiliencePipelineFactoryTests
     [Theory]
     [InlineData("protected branch hook declined")]
     [InlineData("non-fast-forward update rejected")]
-    [InlineData("authentication required")]
-    [InlineData("invalid credentials")]
-    [InlineData("401 Unauthorized")]
-    [InlineData("403 Forbidden")]
     [InlineData("rejected by remote")]
     public void IsTransientGitException_NonTransientError_ReturnsFalse(string message)
     {
         var ex = new LibGit2SharpException(message);
         ResiliencePipelineFactory.IsTransientGitException(ex).Should().BeFalse();
+    }
+
+    // Auth errors (401/403/authentication/credentials) are now retryable at the Polly level
+    // because PushWithTokenFactory re-fetches a fresh token on each attempt. The permanent
+    // non-retryable throw path (InvalidOperationException) is handled inside PushWithTokenFactory
+    // before the exception reaches IsTransientGitException.
+    [Theory]
+    [InlineData("authentication required")]
+    [InlineData("invalid credentials")]
+    [InlineData("401 Unauthorized")]
+    [InlineData("403 Forbidden")]
+    public void IsTransientGitException_AuthError_ReturnsTrue(string message)
+    {
+        var ex = new LibGit2SharpException(message);
+        ResiliencePipelineFactory.IsTransientGitException(ex).Should().BeTrue();
     }
 
     [Fact]
@@ -373,11 +384,11 @@ public class ResiliencePipelineFactoryTests
         var pipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger, TimeSpan.FromSeconds(10));
         var callCount = 0;
 
-        // Act: throw a non-transient error (auth failure)
+        // Act: throw a non-transient error (branch protection — never retryable)
         var act = () => pipeline.ExecuteAsync(async _ =>
         {
             callCount++;
-            throw new LibGit2SharpException("authentication required");
+            throw new LibGit2SharpException("protected branch hook declined");
         }, CancellationToken.None).AsTask();
 
         // Assert: not retried — only 1 call

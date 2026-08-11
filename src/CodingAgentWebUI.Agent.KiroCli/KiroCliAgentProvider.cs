@@ -132,7 +132,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
                             onOutputLine?.Invoke(clean);
                             return Task.CompletedTask;
                         },
-                        resumeSessionId: request.ResumeSessionId);
+                        resumeSessionId: request.ResumeSessionId,
+                        environmentVariables: request.EnvironmentVariables);
 
                     return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
                 },

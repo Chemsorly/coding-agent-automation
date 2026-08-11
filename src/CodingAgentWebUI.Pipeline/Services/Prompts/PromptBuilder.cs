@@ -76,7 +76,7 @@ public static partial class PromptBuilder
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
     /// </summary>
     public static string BuildAnalysisPrompt(string analysisInstructions, IssueDetail issue, ParsedIssue parsed,
-        bool brainContextWritten = false, int imageCount = 0)
+        bool brainContextWritten = false, int imageCount = 0, AnalysisReworkContext? reworkContext = null)
     {
         ArgumentNullException.ThrowIfNull(analysisInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -86,6 +86,13 @@ public static partial class PromptBuilder
 
         // Scope fence (non-overridable, exploits primacy effect)
         sb.AppendLine(AnalysisScopeFence);
+
+        // Rework preamble injected after scope fence, before configurable instructions, when present.
+        // Gives the agent rework context with high primacy so it doesn't misapply the wont_do rule.
+        if (reworkContext is not null)
+        {
+            AppendReworkPreamble(sb, reworkContext);
+        }
 
         // Configurable instructions
         sb.AppendLine(analysisInstructions);
@@ -119,7 +126,18 @@ public static partial class PromptBuilder
         sb.AppendLine("Set `recommendation` to:");
         sb.AppendLine("- `\"ready\"` if the issue is clear, well-scoped, and you have a concrete implementation plan.");
         sb.AppendLine("- `\"not_ready\"` if the issue is too vague, contradictory, has hard blockers, requires information you can't determine from the codebase, OR if the scope is too broad for a single agent run (heuristic: changes affecting >30 files or spanning >3 distinct projects). When rejecting for scope, include splitting recommendations in `blockingIssues` (e.g., \"Split by concern: UI changes, data layer, test updates\"). Add any blocking issues to `blockingIssues`.");
-        sb.AppendLine("- `\"wont_do\"` if, after analyzing the codebase, you determine no code changes are needed. This includes: bugs that can't be reproduced, issues that are already fixed, features that are already implemented, or behavior that is working as designed. Explain your reasoning in `reason`. **Important:** if the production code fix described in the issue is already present on the branch, set `\"wont_do\"` — do NOT pivot to `\"ready\"` on the grounds that test coverage could still be added. Test-only follow-up work belongs in a separate issue.");
+
+        // wont_do clause is conditional: rework runs must never return wont_do.
+        // When reworkContext is null the original clause is emitted unchanged (backward compat AC).
+        if (reworkContext is not null)
+        {
+            sb.AppendLine("- `\"wont_do\"` if, after analyzing the codebase, you determine no code changes are needed AND this is not a rework run. In a rework run (indicated by the \"## Rework Context\" section above), finding the implementation already on the branch is expected — use `\"ready\"` with `plannedApproach` of \"No changes needed — implementation is complete and correct\" if the existing code fully satisfies all acceptance criteria, OR describe what still needs fixing. `\"wont_do\"` is never correct in a rework run.");
+        }
+        else
+        {
+            sb.AppendLine("- `\"wont_do\"` if, after analyzing the codebase, you determine no code changes are needed. This includes: bugs that can't be reproduced, issues that are already fixed, features that are already implemented, or behavior that is working as designed. Explain your reasoning in `reason`. **Important:** if the production code fix described in the issue is already present on the branch, set `\"wont_do\"` — do NOT pivot to `\"ready\"` on the grounds that test coverage could still be added. Test-only follow-up work belongs in a separate issue.");
+        }
+
         sb.AppendLine();
 
         if (brainContextWritten)
@@ -893,6 +911,49 @@ public static partial class PromptBuilder
         sb.AppendLine($"**Issue:** #{run.IssueIdentifier} — {run.IssueTitle}");
 
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Appends a rework context preamble to the analysis prompt.
+    /// Injected immediately after the scope fence and before configurable instructions so the
+    /// agent sees rework context with high primacy and cannot misapply the wont_do rule.
+    /// </summary>
+    private static void AppendReworkPreamble(StringBuilder sb, AnalysisReworkContext ctx)
+    {
+        sb.AppendLine("## Rework Context");
+        sb.AppendLine();
+        sb.AppendLine($"This is a **rework run**. A prior pipeline run already implemented this issue.");
+        sb.AppendLine($"Pull request #{ctx.PrNumber} exists on branch `{ctx.BranchName}` but has not been merged yet.");
+        sb.AppendLine();
+
+        if (ctx.ForceResolvedFiles.Count > 0)
+        {
+            sb.AppendLine("The branch was rebased onto main. The following files had merge conflicts that were");
+            sb.AppendLine("**force-resolved by accepting main's version** — your prior implementation for these");
+            sb.AppendLine("files was discarded:");
+            sb.AppendLine();
+            foreach (var file in ctx.ForceResolvedFiles)
+                sb.AppendLine($"- `{file}`");
+            sb.AppendLine();
+            sb.AppendLine("Your analysis must determine what needs to be re-implemented in those files on top of the current main state.");
+        }
+        else
+        {
+            sb.AppendLine("The branch was rebased onto main without conflicts.");
+        }
+
+        sb.AppendLine();
+
+        if (ctx.HasReviewFeedback)
+        {
+            sb.AppendLine($"The pull request has human review feedback. Read `{AgentWorkspacePaths.PrConversationContextFilePath}` to understand what was raised and what still needs to be addressed.");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("**Your task is to assess what remains to be done**, not to determine whether work is needed at all.");
+        sb.AppendLine("Set `recommendation` to `\"ready\"` with a concrete plan for what still needs fixing — or confirm");
+        sb.AppendLine("everything is correct (use `plannedApproach: \"No changes needed — implementation is complete and correct\"`) if nothing needs changing.");
+        sb.AppendLine();
     }
 
     /// <summary>

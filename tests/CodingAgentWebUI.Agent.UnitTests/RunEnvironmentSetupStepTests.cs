@@ -79,6 +79,37 @@ public class RunEnvironmentSetupStepTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_WithSecrets_DoesNotSetGlobalEnvironmentVariable()
+    {
+        // Issue #1913: Secrets must NOT be injected into the parent process environment.
+        // They are stored in context.InjectedSecrets for per-process delivery to child processes.
+        var secretKey = $"TEST_SECRET_GLOBAL_{Guid.NewGuid():N}";
+
+        var job = CreateJobWithRepoConfig(
+            secrets: new Dictionary<string, string> { [secretKey] = "secret-value-should-not-leak" },
+            setupSteps: null);
+        var step = new RunEnvironmentSetupStep(job);
+        var context = CreateTestContext();
+
+        try
+        {
+            await step.ExecuteAsync(context, CancellationToken.None);
+
+            // The secret must NOT appear in the global process environment
+            Environment.GetEnvironmentVariable(secretKey).Should().BeNull(
+                "secrets must be delivered per-process via ProcessStartInfo.Environment, not via the global process environment");
+
+            // But it IS stored on the context for per-process injection and masking
+            context.InjectedSecrets.Should().NotBeNull();
+            context.InjectedSecrets.Should().ContainKey(secretKey);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(secretKey, null);
+        }
+    }
+
+    [Fact]
     public async Task ExecuteAsync_NoMatchingRepoConfig_ReturnsContinueImmediately()
     {
         // Arrange — job with RepoProviderConfigId that doesn't match any config

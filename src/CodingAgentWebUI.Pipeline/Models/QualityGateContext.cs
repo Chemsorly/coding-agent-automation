@@ -37,4 +37,12 @@ public sealed record QualityGateContext : PipelineContextBase
     /// Used in commit messages and PR bodies. Falls back to <c>#{IssueIdentifier}</c> when null.
     /// </summary>
     public string? IssueReference { get; init; }
+
+    /// <summary>
+    /// Project secrets to inject into the child agent process via
+    /// <see cref="AgentRequest.EnvironmentVariables"/>. Populated from
+    /// <see cref="PipelineStepContext.InjectedSecrets"/> by <see cref="Steps.RunQualityGatesStep"/>.
+    /// Null when no secrets were configured for this pipeline run.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? InjectedSecrets { get; init; }
 }

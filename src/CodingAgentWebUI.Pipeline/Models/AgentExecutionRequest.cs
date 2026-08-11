@@ -17,4 +17,10 @@ internal sealed record AgentExecutionRequest
     public Action? OnChange { get; init; }
     public Action<string>? OnOutputLine { get; init; }
     public string? Phase { get; init; }
+
+    /// <summary>
+    /// Per-invocation environment variables forwarded to <see cref="AgentRequest.EnvironmentVariables"/>.
+    /// Null means the child process inherits the parent environment unchanged.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? EnvironmentVariables { get; init; }
 }

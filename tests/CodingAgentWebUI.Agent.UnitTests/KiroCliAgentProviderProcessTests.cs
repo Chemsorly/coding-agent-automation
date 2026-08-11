@@ -252,8 +252,8 @@ public class KiroCliAgentProviderProcessTests
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                async (_, _, _, ct, _, _) =>
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                async (_, _, _, ct, _, _, _) =>
                 {
                     await Task.Delay(Timeout.Infinite, ct);
                     return 0;

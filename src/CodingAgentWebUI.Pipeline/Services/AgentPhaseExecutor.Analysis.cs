@@ -201,7 +201,25 @@ public partial class AgentPhaseExecutor
 
         var brainContextWrittenForAnalysis = await WriteBrainContextIfNeededAsync(run, ct);
 
-        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, context.Issue, context.ParsedIssue, brainContextWrittenForAnalysis, imageCount: context.DownloadedImages?.Count ?? 0);
+        AnalysisReworkContext? reworkContext = null;
+        if (run.LinkedPullRequest is not null)
+        {
+            var prConversationPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.PrConversationContextFilePath);
+            var hasReviewFeedback = run.LinkedPullRequest.ReviewComments.Count > 0
+                || (File.Exists(prConversationPath) && new FileInfo(prConversationPath).Length > 100);
+
+            reworkContext = new AnalysisReworkContext(
+                PrNumber: run.LinkedPullRequest.Number,
+                BranchName: run.BranchName ?? run.LinkedPullRequest.BranchName,
+                ForceResolvedFiles: run.MergeForceResolved ? run.MergeConflictFiles : Array.Empty<string>(),
+                HasReviewFeedback: hasReviewFeedback);
+        }
+
+        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(
+            config.AnalysisPrompt, context.Issue, context.ParsedIssue,
+            brainContextWrittenForAnalysis,
+            imageCount: context.DownloadedImages?.Count ?? 0,
+            reworkContext: reworkContext);
         _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
         Activity.Current?.SetTag("pipeline.prompt_length_chars", analysisPrompt.Length);
 
@@ -213,7 +231,8 @@ public partial class AgentPhaseExecutor
                 WorkspacePath = run.WorkspacePath!,
                 Timeout = config.AgentTimeout,
                 UseResume = true,
-                ImagePaths = context.DownloadedImages?.Select(d => d.LocalPath).ToList()
+                ImagePaths = context.DownloadedImages?.Select(d => d.LocalPath).ToList(),
+                EnvironmentVariables = context.InjectedSecrets
             },
             run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
             line => context.Callbacks.EmitOutputLine(line));

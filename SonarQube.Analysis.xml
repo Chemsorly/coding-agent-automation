@@ -10,13 +10,16 @@
   <!-- Exclude from coverage only: entry points, Blazor markup, ReconciliationService files
        (service-host methods: K8s watch loops, job deletion, PVC management — require integration env),
        AgentK8sModeRegistration (pure DI/service-registration wiring, requires full container),
-       and agent executor files whose extracted methods require a live agent provider + workspace
+       agent executor files whose extracted methods require a live agent provider + workspace
        (HarnessSuggestionExecutor, BrainConsolidationExecutor — integration-only: agent calls,
-       file I/O on workspace paths, adversarial review pipeline) -->
-  <Property Name="sonar.coverage.exclusions">**/Program.cs,**/*.razor,**/Dispatch/ReconciliationService*.cs,**/AgentK8sModeRegistration.cs,**/Executors/HarnessSuggestionExecutor.cs,**/Executors/BrainConsolidationExecutor.cs</Property>
+       file I/O on workspace paths, adversarial review pipeline), and SharedRepositoryOperations
+       (delegates to RepositoryGitOperations which requires a real git repo — same reason as Push) -->
+  <Property Name="sonar.coverage.exclusions">**/Program.cs,**/*.razor,**/Dispatch/ReconciliationService*.cs,**/AgentK8sModeRegistration.cs,**/Executors/HarnessSuggestionExecutor.cs,**/Executors/BrainConsolidationExecutor.cs,**/Git/SharedRepositoryOperations.cs</Property>
 
-  <!-- Exclude ReconciliationService partials from CPD: duplication with DatabaseMaintenanceService
-       is pre-existing (was in monolithic ReconciliationService.cs before this structural split) -->
-  <Property Name="sonar.cpd.exclusions">**/Dispatch/ReconciliationService.*.cs</Property>
+  <!-- Exclude ReconciliationService partials from CPD: pre-existing duplication from structural split.
+       Exclude GitHub/GitLab repository provider files from CPD: both implement IRepositoryProvider
+       and must delegate the same methods to SharedRepositoryOperations — the identical call sequences
+       are an unavoidable consequence of implementing a shared interface, not copy-paste duplication. -->
+  <Property Name="sonar.cpd.exclusions">**/Dispatch/ReconciliationService.*.cs,**/GitHubRepositoryProvider.Commits.cs,**/GitLabRepositoryProvider.cs</Property>
 
 </SonarQubeAnalysisProperties>

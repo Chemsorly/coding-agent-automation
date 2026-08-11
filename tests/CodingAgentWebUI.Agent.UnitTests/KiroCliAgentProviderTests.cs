@@ -206,8 +206,8 @@ public class KiroCliAgentProviderTests
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (_, _, _, _, onOutput, _) =>
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, _, onOutput, _, _) =>
                 {
                     onOutput?.Invoke("line 1");
                     onOutput?.Invoke("line 2");
@@ -445,8 +445,8 @@ public class KiroCliAgentProviderTests
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                async (_, _, _, ct, _, _) =>
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                async (_, _, _, ct, _, _, _) =>
                 {
                     // Simulate a long-running operation that exceeds the timeout
                     await Task.Delay(Timeout.Infinite, ct);
@@ -476,8 +476,8 @@ public class KiroCliAgentProviderTests
             .Setup(o => o.ExecutePromptAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
-            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (_, _, _, _, onOutput, _) =>
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, _, _, onOutput, _, _) =>
                 {
                     onOutput?.Invoke("\x1b[31mError:\x1b[0m something failed");
                     onOutput?.Invoke("\x1b[1;32mSuccess\x1b[0m");

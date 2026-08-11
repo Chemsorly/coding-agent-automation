@@ -44,6 +44,36 @@ public class PipelineModelCoverageTests
     }
 
     [Fact]
+    public void AgentRequest_EnvironmentVariables_DefaultsToNull()
+    {
+        // Verifies the new EnvironmentVariables property (issue #1913) defaults to null.
+        var request = new AgentRequest { Prompt = "test", WorkspacePath = "/ws" };
+        request.EnvironmentVariables.Should().BeNull();
+    }
+
+    [Fact]
+    public void AgentRequest_EnvironmentVariables_CanBeSet()
+    {
+        // Verifies that EnvironmentVariables can be populated and read back correctly.
+        var envVars = new Dictionary<string, string>
+        {
+            ["SECRET_KEY"] = "secret-value-for-test",
+            ["OTHER_KEY"] = "other-value"
+        };
+
+        var request = new AgentRequest
+        {
+            Prompt = "test",
+            WorkspacePath = "/ws",
+            EnvironmentVariables = envVars
+        };
+
+        request.EnvironmentVariables.Should().NotBeNull();
+        request.EnvironmentVariables.Should().ContainKey("SECRET_KEY").WhoseValue.Should().Be("secret-value-for-test");
+        request.EnvironmentVariables.Should().HaveCount(2);
+    }
+
+    [Fact]
     public void GenerateBranchName_VeryLongTitle_TruncatesSlug()
     {
         var longTitle = new string('a', 200);
