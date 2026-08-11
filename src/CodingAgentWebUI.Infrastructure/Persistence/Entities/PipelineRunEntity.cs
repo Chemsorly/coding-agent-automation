@@ -25,6 +25,15 @@ public class PipelineRunEntity
     public string? ProjectName { get; set; }
     public PipelineRunType RunType { get; set; }
 
+    /// <summary>
+    /// Sentinel discriminator copied from <see cref="PipelineRunSummary.InitiatedBy"/> at write time.
+    /// Set to <see cref="ConsolidationConstants.ProviderConfigId"/> for consolidation runs, null otherwise.
+    /// Used by <see cref="Services.PostgresPipelineRunHistoryService"/> to correctly reconstruct
+    /// <see cref="PipelineRunSummary.InitiatedBy"/> in the column-fallback path when
+    /// <see cref="SummaryJson"/> is null or corrupt.
+    /// </summary>
+    public string? IssueProviderConfigId { get; set; }
+
     /// <summary>Full serialized PipelineRunSummary as JSONB for lossless round-trip.</summary>
     public string? SummaryJson { get; set; }
 
