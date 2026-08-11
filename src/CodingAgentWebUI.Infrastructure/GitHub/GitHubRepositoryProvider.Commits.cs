@@ -34,11 +34,12 @@ public partial class GitHubRepositoryProvider
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
         ArgumentNullException.ThrowIfNull(branchName);
 
-        return Task.Run(async () =>
-        {
-            var token = await GetTokenAsync(ct);
-            await RepositoryGitOperations.Push(workspacePath, branchName, forcePush, GitConstants.TokenUsername, token, _gitPipeline, ct);
-        }, ct);
+        // Pass a token factory rather than a pre-fetched string so each Polly retry attempt
+        // can obtain a fresh GitHub App installation token. Tokens expire after 1 hour; long
+        // pipeline runs (>1h) would otherwise fail on the first push retry with a stale 403.
+        return Task.Run(() =>
+            RepositoryGitOperations.Push(workspacePath, branchName, forcePush,
+                GitConstants.TokenUsername, tokenFactory: GetTokenAsync, _gitPipeline, ct), ct);
     }
 
     /// <inheritdoc />

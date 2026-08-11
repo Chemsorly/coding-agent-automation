@@ -157,16 +157,20 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
         ArgumentNullException.ThrowIfNull(branchName);
 
+        // Pass a token factory rather than a pre-fetched string so each Polly retry attempt
+        // can obtain a fresh token. GitLab personal/project access tokens may also be vended
+        // dynamically; fetching fresh on retry avoids 403s from stale tokens in long runs.
         return Task.Run(async () =>
         {
-            var token = await GetTokenAsync(ct);
-
             try
             {
-                await RepositoryGitOperations.Push(workspacePath, branchName, forcePush, GitConstants.GitLabTokenUsername, token, _gitPipeline, ct);
+                await RepositoryGitOperations.Push(workspacePath, branchName, forcePush,
+                    GitConstants.GitLabTokenUsername, tokenFactory: GetTokenAsync, _gitPipeline, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not InvalidOperationException)
             {
+                // Redact any token value that may have leaked into the exception message.
+                var token = await GetTokenAsync(ct);
                 throw RedactTokenFromException(ex, token);
             }
         }, ct);
