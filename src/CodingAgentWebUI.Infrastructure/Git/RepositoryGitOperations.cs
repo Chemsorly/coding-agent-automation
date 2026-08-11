@@ -1,4 +1,5 @@
 using LibGit2Sharp;
+using System.Diagnostics.CodeAnalysis;
 using Polly;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Models;
@@ -246,6 +247,11 @@ internal static class RepositoryGitOperations
         return unstaged.ToList();
     }
 
+    // Excluded from coverage: this method is a thin adapter over PushWithTokenFactory
+    // that opens a real LibGit2Sharp Repository and constructs push credentials.
+    // Unit tests cover PushWithTokenFactory directly via injected pushAction.
+    // Integration coverage is provided by end-to-end pipeline runs.
+    [ExcludeFromCodeCoverage]
     public static async Task Push(
         WorkspacePath workspacePath, string branchName, bool forcePush,
         string tokenUsername, Func<CancellationToken, Task<string>> tokenFactory,

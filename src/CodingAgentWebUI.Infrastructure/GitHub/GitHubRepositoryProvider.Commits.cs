@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure.Git;
+using System.Diagnostics.CodeAnalysis;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
@@ -26,9 +27,14 @@ public partial class GitHubRepositoryProvider
         return Task.Run(() => RepositoryGitOperations.CommitAll(workspacePath, message, blacklistedPaths, allowEmpty, pipelineInjectedPaths), ct);
     }
 
+    // Excluded from coverage: delegates to RepositoryGitOperations.Push which requires
+    // a real git repository and network connection. Unit tests cover PushWithTokenFactory
+    // directly; integration coverage is provided by end-to-end pipeline runs.
+    [ExcludeFromCodeCoverage]
     public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
         => PushBranchAsync(workspacePath, branchName, forcePush: false, ct);
 
+    [ExcludeFromCodeCoverage]
     public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, bool forcePush, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
