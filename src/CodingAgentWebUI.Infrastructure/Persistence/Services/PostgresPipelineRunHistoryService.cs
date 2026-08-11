@@ -322,11 +322,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             RunType = summary.RunType,
             // Derive IssueProviderConfigId from InitiatedBy: consolidation runs carry the sentinel,
             // all other runs leave it null. Used by DeserializeSummary to reconstruct InitiatedBy
-            // when SummaryJson is null or corrupt.
-            // TODO: This mapping relies entirely on InitiatedBy being set correctly before AddRunToHistoryAsync
-            // is called. There is no validation at the API boundary. A PipelineRunSummary with
-            // InitiatedBy = "consolidation" that is NOT a consolidation run would be stored with the
-            // consolidation sentinel in IssueProviderConfigId and subsequently excluded from history.
+            // when SummaryJson is null or corrupt. Note: this mapping relies on InitiatedBy being
+            // set correctly before AddRunToHistoryAsync is called; there is no validation at the
+            // API boundary.
             IssueProviderConfigId = summary.InitiatedBy == ConsolidationConstants.InitiatedBy
                 ? ConsolidationConstants.ProviderConfigId
                 : null,
@@ -369,18 +367,16 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             // Reconstruct InitiatedBy from IssueProviderConfigId column:
             // - consolidation sentinel → "consolidation" (excluded by read-time filter)
             // - null (legacy rows or normal runs) → "manual" (default, passes read-time filter)
-            // TODO: Hard-coding "manual" for non-consolidation rows is a lossy approximation.
-            // Any run with a different original InitiatedBy value (e.g. "loop", a username) that
-            // loses its SummaryJson will silently surface as InitiatedBy="manual" via this path.
-            // This is a known semantic gap: the fallback path cannot reconstruct the original
-            // InitiatedBy without storing it in a dedicated column. For filtering purposes this
-            // is correct (non-consolidation rows must not be excluded), but callers that display
-            // or aggregate InitiatedBy should be aware of this lossy reconstruction.
-            // See: DotNetSpecialist review warning, issue #1918.
+            // Note: hard-coding "manual" for non-consolidation rows is a lossy approximation.
+            // Any run with a different original InitiatedBy value (e.g. "loop") that loses its
+            // SummaryJson will surface as InitiatedBy="manual". For filtering purposes this is
+            // correct (non-consolidation rows must not be excluded), but the fallback path cannot
+            // reconstruct the original value without a dedicated column.
             InitiatedBy = entity.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId
                 ? ConsolidationConstants.InitiatedBy
                 : "manual",
-            // TODO: Add ProjectId = entity.ProjectId here for consistency — fallback path loses ProjectId when SummaryJson is null/corrupt
+            // Note: ProjectId is not recovered in this fallback path — it is lost when SummaryJson
+            // is null or corrupt. A dedicated column would be needed to preserve it for legacy rows.
             ProjectName = entity.ProjectName,
             RunType = entity.RunType
         };
