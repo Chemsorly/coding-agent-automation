@@ -54,11 +54,6 @@ public sealed class DispatchService : LeaderElectedPollingService
         DispatchServiceCoreDependencies coreDeps,
         IConfiguration configuration,
         JobTemplateStore templateProvider)
-        // TODO: `coreDeps` is dereferenced without a null guard before the base constructor runs.
-        // If coreDeps is null this throws NullReferenceException instead of ArgumentNullException,
-        // producing a misleading diagnostic. ConsolidationDispatchHandler uses the correct pattern:
-        // `deps?.LeaderElection ?? throw new ArgumentNullException(nameof(deps))`. Change to match.
-        // (Correctness review + DotNetSpecialist WARNING)
         : base(coreDeps.LeaderElection)
     {
         _dbFactory = coreDeps.DbFactory;
@@ -69,13 +64,8 @@ public sealed class DispatchService : LeaderElectedPollingService
         _templateProvider = templateProvider;
         _options = DispatchServiceOptionsFactory.Create(configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
-        // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
-        // coreDeps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
-        // singleton is always passed, so this path is never taken at runtime. If _dbFactory or _lifecycle
-        // are null in a test scenario, the new DispatchStateBuilder(...) expression will compile fine
-        // but throw a NullReferenceException at the first BuildStateAsync call rather than at construction,
-        // making failures harder to diagnose. Consider removing the fallback and requiring StateBuilder
-        // explicitly. See DotNetSpecialist WARNING (Issue #1910).
+        // Fallback constructs a local DispatchStateBuilder when coreDeps.StateBuilder is not provided.
+        // In production the DI-injected singleton is always passed.
         _stateBuilder = coreDeps.StateBuilder ?? new DispatchStateBuilder(
             _dbFactory,
             _lifecycle,
@@ -141,13 +131,7 @@ public sealed class DispatchService : LeaderElectedPollingService
             }
         }
 
-        // TODO: DispatcherPollCount is now incremented unconditionally after every poll that found pending items
-        // (i.e. when state is non-null). Previously it was only incremented on the early-return path when
-        // pendingItems.Count == 0 (the "nothing to do" poll). This is a behavioral change: dashboards and
-        // alerts keyed on this counter will see higher values after deployment. If the intent is to count
-        // ALL polls (empty + non-empty), this is correct — but it should be documented. If the original
-        // intent was to count only empty polls, remove this call and leave it solely inside BuildStateAsync.
-        // See Correctness WARNING (Issue #1910).
+        // Increment for all polls with pending items (empty-poll count is handled inside BuildStateAsync).
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
 
@@ -181,12 +165,7 @@ public sealed class DispatchService : LeaderElectedPollingService
         if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
             return false;
 
-        // TODO: RateLimiter! uses the null-forgiving operator, which suppresses the nullable warning.
-        // If RateLimitPerSecond were misconfigured to 0, RateLimiter returns null and this throws
-        // NullReferenceException with no meaningful error message. Either validate RateLimitPerSecond > 0
-        // in DispatchServiceOptionsFactory and document the invariant, or guard with a null check here.
-        // Same issue exists in ConsolidationDispatchHandler.ProcessConsolidationItemAsync.
-        // (Correctness review + DotNetSpecialist WARNING)
+        // RateLimiter is non-null when RateLimitPerSecond > 0, which is enforced by DispatchServiceOptionsFactory.
         using var lease = await RateLimiter!.AcquireAsync(1, ct);
         if (!lease.IsAcquired)
         {
@@ -196,7 +175,6 @@ public sealed class DispatchService : LeaderElectedPollingService
 
         var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
 
-        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
         switch (result.Outcome)
         {
             case EligibilityOutcome.AtConcurrencyLimit:
