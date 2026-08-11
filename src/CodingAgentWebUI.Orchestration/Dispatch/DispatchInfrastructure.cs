@@ -226,7 +226,7 @@ public sealed class DispatchInfrastructure
     /// configuration threshold which is resolved after issue context is built.
     /// </remarks>
     internal async Task<IssueContextResult?> BuildIssueContextAsync(
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderId,
         CancellationToken ct)
     {

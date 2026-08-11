@@ -18,7 +18,7 @@ public sealed partial class AgentJobDispatcher
         public required AgentEntry Agent { get; init; }
         public required PipelineRun Run { get; init; }
         public required AgentProfile Profile { get; init; }
-        public required string IssueIdentifier { get; init; }
+        public required IssueIdentifier IssueIdentifier { get; init; }
         public required IssueDetail IssueDetail { get; init; }
         public required ParsedIssue ParsedIssue { get; init; }
         public required IReadOnlyList<IssueComment> IssueComments { get; init; }
@@ -113,7 +113,7 @@ public sealed partial class AgentJobDispatcher
     /// and extracts the agent provider config ID. Returns <c>null</c> if profile resolution fails.
     /// </summary>
     private async Task<(PipelineProject Project, AgentProfile Profile, string AgentProviderId)?>
-        ResolveDispatchCoreAsync(AgentEntry agent, string identifier, string identifierType,
+        ResolveDispatchCoreAsync(AgentEntry agent, IssueIdentifier identifier, string identifierType,
                                   PipelineProject? project, CancellationToken ct)
     {
         project = EnsureProject(project, identifier, identifierType);
@@ -139,7 +139,7 @@ public sealed partial class AgentJobDispatcher
     private async Task<bool> SafeDispatchAsync(
         AgentEntry agent,
         ProviderConfigId revertProviderConfigId,
-        string identifier,
+        IssueIdentifier identifier,
         string revertLabel,
         string failureMessageTemplate,
         Func<Task<bool>> body,
@@ -185,7 +185,7 @@ public sealed partial class AgentJobDispatcher
     /// to reduce its parameter count (S107).
     /// </summary>
     private sealed record DispatchRoutingParams(
-        string Identifier,
+        IssueIdentifier Identifier,
         string IdentifierType,
         ProviderConfigId RevertProviderConfigId,
         string RevertLabel,
@@ -229,7 +229,7 @@ public sealed partial class AgentJobDispatcher
     /// </summary>
     internal async Task<bool> DispatchToAgentAsync(
         AgentEntry agent,
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderId,
         ProviderConfigId repoProviderId,
         string? brainProviderId,
@@ -292,7 +292,7 @@ public sealed partial class AgentJobDispatcher
     /// </summary>
     internal async Task<bool> DispatchDecompositionToAgentAsync(
         AgentEntry agent,
-        string epicIdentifier,
+        IssueIdentifier epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
         ProviderConfigId issueProviderId,
@@ -339,7 +339,7 @@ public sealed partial class AgentJobDispatcher
     /// Ensures a non-null project, falling back to the Default project with a warning log
     /// if the template has no parent project (data corruption case).
     /// </summary>
-    private PipelineProject EnsureProject(PipelineProject? project, string identifier, string identifierType)
+    private PipelineProject EnsureProject(PipelineProject? project, IssueIdentifier identifier, string identifierType)
     {
         if (project is not null)
             return project;
@@ -397,7 +397,7 @@ public sealed partial class AgentJobDispatcher
         Exception ex,
         string messageTemplate,
         ProviderConfigId providerConfigId,
-        string identifier,
+        IssueIdentifier identifier,
         string revertLabel,
         LabelTargetKind? targetKind = null)
     {

@@ -31,6 +31,10 @@ internal sealed record DecompositionDispatchRequest(
 /// Parameter object for <see cref="ImplementationDispatchPreparation"/> constructor.
 /// Groups the 11 dispatch-specific parameters to satisfy S107.
 /// </summary>
+// TODO: [WARNING] IssueIdentifier is still declared as `string` here while DispatchCoreRequest (below) and
+// the public interface callers now use the typed IssueIdentifier. The caller in AgentJobDispatcher.Execution.cs
+// passes an IssueIdentifier which silently downcasts via implicit conversion. A future refactor removing the
+// implicit conversion would break this path without a compile error. Migrate to IssueIdentifier IssueIdentifier.
 internal sealed record ImplementationDispatchRequest(
     DispatchInfrastructure Infra,
     IDispatchRunCreator Orchestration,
@@ -50,7 +54,7 @@ internal sealed record ImplementationDispatchRequest(
 /// </summary>
 internal sealed record DispatchCoreRequest(
     IReadOnlyList<string> RequiredLabels,
-    string IssueIdentifier,
+    IssueIdentifier IssueIdentifier,
     ProviderConfigId IssueProviderId,
     ProviderConfigId RepoProviderId,
     string AgentProviderId,
@@ -67,7 +71,7 @@ public sealed record StalenessEvaluationRequest(
     IssueComment AnalysisComment,
     IReadOnlyList<IssueComment> IssueComments,
     string IssueBody,
-    string IssueIdentifier,
+    IssueIdentifier IssueIdentifier,
     ProviderConfigId IssueProviderConfigId,
     int CommitThreshold,
     Func<DateTimeOffset, CancellationToken, Task<int>>? GetCommitCount);
@@ -105,6 +109,10 @@ internal sealed record DispatchLifecycleContext(
 /// and <see cref="DispatchOrchestrationService.PrepareCoreAsync"/>.
 /// Groups the 10 orchestration parameters to satisfy S107.
 /// </summary>
+// TODO: [WARNING] IssueIdentifier is still declared as `string` here while the adjacent DispatchCoreRequest
+// uses the typed IssueIdentifier. Callers in DispatchOrchestrationService.cs pass string values that silently
+// bypass the type-safety the migration aims to enforce. Migrate to IssueIdentifier IssueIdentifier for
+// consistency. This is a public record — changing the type is a breaking change for callers outside this assembly.
 public sealed record OrchestratorPreparationRequest(
     string IssueIdentifier,
     ProviderConfigId IssueProviderId,

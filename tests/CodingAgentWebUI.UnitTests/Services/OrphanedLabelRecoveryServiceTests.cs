@@ -69,6 +69,10 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             Labels = InProgressLabels
         });
 
+        // TODO: [WARNING] Raw string "42" is passed to IsIssueBeingProcessed whose signature now takes IssueIdentifier.
+        // Moq resolves this via the implicit string→IssueIdentifier conversion, so the test compiles and passes today.
+        // If the production code ever constructs the IssueIdentifier through a different path (e.g., factory/normalisation),
+        // this mock will silently miss and the test will produce a false positive. Use (IssueIdentifier)"42" explicitly.
         _mockRunService
             .Setup(r => r.IsIssueBeingProcessed("42", "provider-1"))
             .Returns(false);
@@ -105,6 +109,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             Labels = InProgressLabels
         });
 
+        // TODO: [WARNING] Raw string "42" passed to IsIssueBeingProcessed — same implicit-conversion concern
+        // as Sweep_SwapsOrphanedIssues above. Replace with (IssueIdentifier)"42" for explicit typing.
         _mockRunService
             .Setup(r => r.IsIssueBeingProcessed("42", "provider-1"))
             .Returns(true);
@@ -137,7 +143,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             new IssueSummary { Identifier = "2", Title = "Issue 2", Labels = new[] { "agent:in-progress" } });
 
         _mockRunService
-            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Returns(false);
 
         _mockLabelService
@@ -190,6 +196,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             Labels = InProgressLabels
         });
 
+        // TODO: [WARNING] Raw string "99" passed to IsIssueBeingProcessed — same implicit-conversion concern
+        // as the other setups in this file. Replace with (IssueIdentifier)"99" for explicit typing.
         _mockRunService
             .Setup(r => r.IsIssueBeingProcessed("99", "provider-2"))
             .Returns(false);
@@ -218,7 +226,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     {
         // Arrange: no templates configured (default mock returns empty)
         _mockRunService
-            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Returns(false);
 
         // Act: start and wait past grace period
@@ -264,7 +272,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         });
 
         _mockRunService
-            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Returns(false);
 
         var swapCount = 0;

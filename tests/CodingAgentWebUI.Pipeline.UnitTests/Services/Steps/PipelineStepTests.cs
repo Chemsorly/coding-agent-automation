@@ -813,8 +813,8 @@ public class PipelineStepTests
         public void NotifyChange() { }
         public Task AddRunToHistoryAsync(PipelineRun run) => Task.CompletedTask;
         public Task UpdateFileChangeStats(PipelineRun run) => Task.CompletedTask;
-        public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct) => Task.CompletedTask;
-        public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct) => Task.CompletedTask;
+        public Task SwapAgentLabel(IssueIdentifier issueIdentifier, string label, CancellationToken ct) => Task.CompletedTask;
+        public Task RemoveAllAgentLabels(IssueIdentifier issueIdentifier, CancellationToken ct) => Task.CompletedTask;
         public Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct) => Task.CompletedTask;
         public Task CreateDraftPrIfNotExists(PipelineRun run, CancellationToken ct) => Task.CompletedTask;
         public Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct) => Task.CompletedTask;

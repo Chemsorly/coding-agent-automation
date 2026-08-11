@@ -31,6 +31,10 @@ public class DispatchSchedulerTests
 
         _cacheManager = new ProviderCacheManager(mockFactory.Object, Serilog.Core.Logger.None);
 
+        // TODO: [WARNING] IDispatchRunCreator.IsIssueBeingProcessed still accepts string (not yet migrated),
+        // so this compiles. Once IDispatchRunCreator is migrated to IssueIdentifier, this setup will silently
+        // stop matching (It.IsAny<string>() won't match IssueIdentifier) and the dedup guard will appear
+        // always-bypassed in tests. Update to It.IsAny<IssueIdentifier>() when that migration lands.
         _mockOrchestration.Setup(o => o.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
             .Returns(false);
         _mockOrchestration.Setup(o => o.GetAllActiveRuns())
@@ -423,6 +427,8 @@ public class DispatchSchedulerTests
     public async Task FilterAll_AllItemsAlreadyProcessing_TerminatesWithZeroProcessed()
     {
         // Arrange: all issues are already being processed
+        // TODO: [WARNING] Same as constructor setup above — It.IsAny<string>() will stop matching after
+        // IDispatchRunCreator.IsIssueBeingProcessed is migrated to IssueIdentifier. Update when that lands.
         _mockOrchestration.Setup(o => o.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
             .Returns(true);
 

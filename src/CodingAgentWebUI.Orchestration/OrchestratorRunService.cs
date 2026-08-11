@@ -43,9 +43,13 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <summary>
     /// Checks whether the given issue identifier is being processed by any active run.
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier, ProviderConfigId issueProviderConfigId)
+    public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        // TODO: [WARNING] ArgumentNullException.ThrowIfNull(issueIdentifier.Value) reports ParamName as
+        // "issueIdentifier.Value" rather than "issueIdentifier", and does not catch empty-string values
+        // (which would produce a malformed composite key "provId:" and silently corrupt deduplication checks).
+        // Replace with: ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier))
+        ArgumentNullException.ThrowIfNull(issueIdentifier.Value);
         var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         return _activeRuns.Values.Any(r => $"{r.IssueProviderConfigId}:{r.IssueIdentifier}" == compositeKey);
     }
@@ -133,17 +137,21 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     public int ActiveRunCount => _activeRuns.Count;
 
     /// <inheritdoc />
-    public void MarkRecentlyCompleted(string issueIdentifier, ProviderConfigId issueProviderConfigId)
+    public void MarkRecentlyCompleted(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        // TODO: [WARNING] Same ThrowIfNull issue as IsIssueBeingProcessed — replace with
+        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier))
+        ArgumentNullException.ThrowIfNull(issueIdentifier.Value);
         var key = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         _recentlyCompleted[key] = _timeProvider.GetUtcNow();
     }
 
     /// <inheritdoc />
-    public bool WasRecentlyCompleted(string issueIdentifier, ProviderConfigId issueProviderConfigId)
+    public bool WasRecentlyCompleted(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        // TODO: [WARNING] Same ThrowIfNull issue as IsIssueBeingProcessed — replace with
+        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier))
+        ArgumentNullException.ThrowIfNull(issueIdentifier.Value);
         var key = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         if (_recentlyCompleted.TryGetValue(key, out var completedAt))
         {

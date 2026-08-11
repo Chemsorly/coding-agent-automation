@@ -58,7 +58,7 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
 
         // TODO: This mocks IsIssueBeingProcessed to always return false, so CreateDispatchedRunAsync_Success
         // would pass even if RegisterDispatchedRun was broken. Add a Verify call to confirm AddRun is invoked.
-        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>())).Returns(false);
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>())).Returns(false);
 
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>().AsReadOnly());
@@ -110,6 +110,10 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
     public async Task CreateDispatchedRunAsync_IssueAlreadyProcessed_ReturnsNull()
     {
         // Arrange
+        // TODO: [WARNING] Raw string "42" passed to IsIssueBeingProcessed whose signature now takes IssueIdentifier.
+        // Moq resolves via implicit conversion today, but a mismatch in the production construction path would
+        // cause this mock to silently miss — the guard would not fire and the test would return a non-null run
+        // instead of null, directly contradicting the test's intent. Replace with (IssueIdentifier)"42".
         _mockRunService.Setup(r => r.IsIssueBeingProcessed("42", It.IsAny<ProviderConfigId>())).Returns(true);
 
         // Act

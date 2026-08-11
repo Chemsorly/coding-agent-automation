@@ -128,7 +128,7 @@ public class PipelineRunLifecyclePropertyTests
         var localIssueId = input.LocalMatchesQuery ? input.QueryIssue : "other-issue";
 
         var runServiceMock = new Mock<IOrchestratorRunService>();
-        runServiceMock.Setup(r => r.IsIssueBeingProcessed(input.QueryIssue, It.IsAny<ProviderConfigId>())).Returns(input.RunServiceReports);
+        runServiceMock.Setup(r => r.IsIssueBeingProcessed((IssueIdentifier)input.QueryIssue, It.IsAny<ProviderConfigId>())).Returns(input.RunServiceReports);
 
         var service = CreateService(runServiceMock: runServiceMock);
         service.ActiveRun = CreateRun(issueId: localIssueId, step: input.LocalStep);

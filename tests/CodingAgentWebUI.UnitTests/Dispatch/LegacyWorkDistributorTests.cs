@@ -156,7 +156,7 @@ public class LegacyWorkDistributorTests
             It.IsAny<CancellationToken>(),
             It.IsAny<PipelineProject?>()), Times.Never);
         _mockJobDispatcher.Verify(d => d.TryDispatchDecompositionAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
+            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
             It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(), It.IsAny<string?>(),
             It.IsAny<string>(), It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<PipelineProject?>()), Times.Never);
@@ -185,6 +185,9 @@ public class LegacyWorkDistributorTests
     [Fact]
     public async Task IsIssueDistributedAsync_DelegatesToIsIssueBeingProcessedOrQueued()
     {
+        // TODO: [WARNING] Raw string "org/repo#1" passed to IsIssueBeingProcessedOrQueued whose signature now
+        // takes IssueIdentifier. Moq resolves via implicit conversion today, but if production code constructs
+        // IssueIdentifier via a different path the mock will silently miss. Use (IssueIdentifier)"org/repo#1".
         _mockJobDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued("org/repo#1", "ip-1"))
             .Returns(true);
 
@@ -196,6 +199,8 @@ public class LegacyWorkDistributorTests
     [Fact]
     public async Task IsIssueDistributedAsync_WhenNotActive_ReturnsFalse()
     {
+        // TODO: [WARNING] Same implicit-conversion concern as the true-case test above.
+        // Replace "org/repo#1" with (IssueIdentifier)"org/repo#1" for explicit typing.
         _mockJobDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued("org/repo#1", "ip-1"))
             .Returns(false);
 

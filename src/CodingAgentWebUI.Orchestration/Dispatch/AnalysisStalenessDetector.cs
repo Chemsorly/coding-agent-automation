@@ -56,7 +56,7 @@ public sealed class AnalysisStalenessDetector
 
         ArgumentNullException.ThrowIfNull(analysisComment);
         ArgumentNullException.ThrowIfNull(issueComments);
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
 
         // TODO: Validate issueBody with ArgumentNullException.ThrowIfNull for consistency
         // with other parameter validation in this method (AnalysisBodyHash.Compute handles null,
