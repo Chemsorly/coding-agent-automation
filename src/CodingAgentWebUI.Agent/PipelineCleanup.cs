@@ -23,14 +23,6 @@ internal static class PipelineCleanup
     {
         localCts?.Dispose();
 
-        // Clean up injected environment secrets
-        if (stepContext?.InjectedSecretKeys is { Count: > 0 })
-        {
-            foreach (var key in stepContext.InjectedSecretKeys)
-                Environment.SetEnvironmentVariable(key, null);
-            logger.Debug("Cleaned up {Count} injected secret keys", stepContext.InjectedSecretKeys.Count);
-        }
-
         // Workspace cleanup
         try
         {

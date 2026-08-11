@@ -168,4 +168,50 @@ public class RunQualityGatesStepIsolatedTests
                 qgc.Callbacks == _callbacks.Object),
             It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_PropagatesInjectedSecrets_ToQualityGateContext()
+    {
+        // Verifies that InjectedSecrets set on PipelineStepContext flow into QualityGateContext
+        // so the QualityGateExecutor can forward them to the fix agent (issue #1913).
+        var secrets = new Dictionary<string, string>
+        {
+            ["NUGET_KEY"] = "secret-nuget-value",
+            ["REGISTRY_TOKEN"] = "registry-token-value"
+        };
+
+        var context = BuildContext();
+        context.InjectedSecrets = secrets;
+        context.PreResolvedQualityGateConfigs = [];
+
+        QualityGateContext? capturedContext = null;
+        _qualityGates
+            .Setup(x => x.ProceedToQualityGatesAsync(It.IsAny<QualityGateContext>(), It.IsAny<CancellationToken>()))
+            .Callback<QualityGateContext, CancellationToken>((ctx, _) => capturedContext = ctx);
+
+        await new RunQualityGatesStep().ExecuteAsync(context, CancellationToken.None);
+
+        capturedContext.Should().NotBeNull();
+        capturedContext!.InjectedSecrets.Should().NotBeNull();
+        capturedContext.InjectedSecrets.Should().ContainKey("NUGET_KEY").WhoseValue.Should().Be("secret-nuget-value");
+        capturedContext.InjectedSecrets.Should().ContainKey("REGISTRY_TOKEN").WhoseValue.Should().Be("registry-token-value");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NullInjectedSecrets_PropagatesNullToQualityGateContext()
+    {
+        var context = BuildContext();
+        context.InjectedSecrets = null;
+        context.PreResolvedQualityGateConfigs = [];
+
+        QualityGateContext? capturedContext = null;
+        _qualityGates
+            .Setup(x => x.ProceedToQualityGatesAsync(It.IsAny<QualityGateContext>(), It.IsAny<CancellationToken>()))
+            .Callback<QualityGateContext, CancellationToken>((ctx, _) => capturedContext = ctx);
+
+        await new RunQualityGatesStep().ExecuteAsync(context, CancellationToken.None);
+
+        capturedContext.Should().NotBeNull();
+        capturedContext!.InjectedSecrets.Should().BeNull();
+    }
 }

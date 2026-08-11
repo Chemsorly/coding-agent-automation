@@ -23,7 +23,8 @@ public interface IKiroCliOrchestrator : IDisposable
         bool useResume,
         CancellationToken cancellationToken,
         Func<string, Task>? onOutputLine = null,
-        string? resumeSessionId = null);
+        string? resumeSessionId = null,
+        IReadOnlyDictionary<string, string>? environmentVariables = null);
 
     /// <summary>
     /// Forcefully terminates the currently running agent process.

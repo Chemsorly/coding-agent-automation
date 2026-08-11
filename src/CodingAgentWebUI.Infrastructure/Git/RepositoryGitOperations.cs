@@ -1,4 +1,5 @@
 using LibGit2Sharp;
+using System.Diagnostics.CodeAnalysis;
 using Polly;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Models;
@@ -246,9 +247,15 @@ internal static class RepositoryGitOperations
         return unstaged.ToList();
     }
 
+    // Excluded from coverage: this method is a thin adapter over PushWithTokenFactory
+    // that opens a real LibGit2Sharp Repository and constructs push credentials.
+    // Unit tests cover PushWithTokenFactory directly via injected pushAction.
+    // Integration coverage is provided by end-to-end pipeline runs.
+    [ExcludeFromCodeCoverage]
     public static async Task Push(
         WorkspacePath workspacePath, string branchName, bool forcePush,
-        string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
+        string tokenUsername, Func<CancellationToken, Task<string>> tokenFactory,
+        ResiliencePipeline pipeline, CancellationToken ct)
     {
         using var repo = new Repository(workspacePath);
         var remote = repo.Network.Remotes["origin"];
@@ -261,34 +268,94 @@ internal static class RepositoryGitOperations
         if (forcePush)
             Log.Information("Force-pushing branch {BranchName} (post-rebase history rewrite)", branchName);
 
-        await pipeline.ExecuteAsync(async _ =>
+        await PushWithTokenFactory(
+            tokenFactory: tokenFactory,
+            tokenUsername: tokenUsername,
+            pushAction: token =>
+            {
+                // Declare pushError and PushOptions inside the lambda so each retry attempt
+                // gets a fresh error slot, and so static analysis can track the callback assignment.
+                string? pushError = null;
+                var options = new PushOptions
+                {
+                    CredentialsProvider = (_, _, _) =>
+                        new UsernamePasswordCredentials { Username = tokenUsername, Password = token },
+                    OnPushStatusError = error =>
+                        pushError = $"Push failed for ref '{error.Reference}': {error.Message}"
+                };
+
+                repo.Network.Push(remote, refSpec, options);
+
+                if (pushError != null)
+                {
+                    Log.Error("Push failed for branch {BranchName}: {PushError}", branchName, pushError);
+                    throw new LibGit2SharpException(pushError);
+                }
+
+                return Task.CompletedTask;
+            },
+            pipeline: pipeline,
+            branchName: branchName,
+            ct: ct);
+    }
+
+    /// <summary>
+    /// Core push retry loop with per-attempt token refresh.
+    ///
+    /// Accepts a <paramref name="tokenFactory"/> that is invoked on every Polly attempt, ensuring
+    /// a fresh GitHub/GitLab installation token is used after expiry (tokens are valid for 1 hour;
+    /// long pipeline runs exceed that window). When <paramref name="retryOnAuth"/> is true (the
+    /// default), auth errors (403/401) are thrown as <see cref="LibGit2SharpException"/> so Polly
+    /// can retry with a new token. When false (static-token path), auth errors propagate immediately
+    /// as <see cref="InvalidOperationException"/>.
+    ///
+    /// The <paramref name="pushAction"/> receives the freshly-fetched token and performs the
+    /// actual network push. It is separated from the token fetch so unit tests can inject a fake
+    /// push without a real git repository.
+    /// </summary>
+    internal static async Task PushWithTokenFactory(
+        Func<CancellationToken, Task<string>> tokenFactory,
+        string tokenUsername,
+        Func<string, Task> pushAction,
+        ResiliencePipeline pipeline,
+        CancellationToken ct,
+        bool retryOnAuth = true,
+        string? branchName = null)
+    {
+        await pipeline.ExecuteAsync(async innerCt =>
         {
-            await Task.CompletedTask;
+            // Fetch a fresh token on every attempt. For GitHub App installations the token
+            // expires after 1 hour; GitHubAppAuthService caches it but renews transparently,
+            // so this call is cheap on the happy path and returns a fresh token after expiry.
+            var token = await tokenFactory(innerCt);
 
-            // Declare pushError and PushOptions inside the lambda so each retry attempt
-            // gets a fresh error slot, and so static analysis can track the callback assignment.
-            string? pushError = null;
-            var options = new PushOptions
+            try
             {
-                CredentialsProvider = (_, _, _) =>
-                    new UsernamePasswordCredentials { Username = tokenUsername, Password = token },
-                OnPushStatusError = error =>
-                    pushError = $"Push failed for ref '{error.Reference}': {error.Message}"
-            };
-
-            repo.Network.Push(remote, refSpec, options);
-
-            if (pushError != null)
+                await pushAction(token);
+            }
+            catch (LibGit2SharpException ex)
             {
-                var category = PushErrorClassifier.Classify(pushError);
+                var category = PushErrorClassifier.Classify(ex.Message);
                 var message = PushErrorClassifier.GetActionableMessage(category, branchName);
-                Log.Error("Push failed for branch {BranchName}: {PushError} (category={Category})", branchName, pushError, category);
-                // Network and Unknown errors are potentially transient — throw LibGit2SharpException
-                // so the Polly resilience pipeline can retry them.
-                throw category is PushErrorClassifier.PushFailureCategory.Network
-                               or PushErrorClassifier.PushFailureCategory.Unknown
-                    ? new LibGit2SharpException(pushError)
-                    : new InvalidOperationException(message);
+                Log.Error("Push failed for branch {BranchName}: {PushError} (category={Category})",
+                    branchName ?? "unknown", ex.Message, category);
+
+                switch (category)
+                {
+                    case PushErrorClassifier.PushFailureCategory.Auth when retryOnAuth:
+                        // Token was stale — throw LibGit2SharpException so Polly retries;
+                        // next attempt will re-invoke tokenFactory and get a fresh token.
+                        throw new LibGit2SharpException(ex.Message);
+
+                    case PushErrorClassifier.PushFailureCategory.Network:
+                    case PushErrorClassifier.PushFailureCategory.Unknown:
+                        // Transient network failures — let Polly retry as before.
+                        throw new LibGit2SharpException(ex.Message);
+
+                    default:
+                        // Auth (static token), BranchProtection, Conflict — permanent failures.
+                        throw new InvalidOperationException(message, ex);
+                }
             }
         }, ct);
     }

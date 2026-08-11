@@ -28,8 +28,9 @@ public interface IProcessWrapper : IDisposable
     /// <param name="useResume">Whether to use the --resume flag for conversation continuity.</param>
     /// <param name="cancellationToken">Token to cancel the operation.</param>
     /// <param name="resumeSessionId">Optional explicit session ID to resume via --resume-id flag. Takes precedence over useResume.</param>
+    /// <param name="environmentVariables">Optional additional environment variables to inject into the child process via <see cref="System.Diagnostics.ProcessStartInfo.Environment"/>. When null, the child process inherits the parent environment unchanged.</param>
     /// <returns>The process exit code.</returns>
-    Task<int> StartAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, string? resumeSessionId = null);
+    Task<int> StartAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, string? resumeSessionId = null, IReadOnlyDictionary<string, string>? environmentVariables = null);
 
     /// <summary>
     /// Forcefully terminates the running process and its process tree.

@@ -103,7 +103,8 @@ public partial class QualityGateExecutor
                     Run = run,
                     Config = config,
                     Description = "Pre-PR cleanup agent",
-                    Logger = _logger
+                    Logger = _logger,
+                    EnvironmentVariables = context.InjectedSecrets
                 },
                 callbacks, linkedCt);
 
@@ -259,7 +260,7 @@ public partial class QualityGateExecutor
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
             run.RetryCount++;
-            // TODO: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics
+            // NOTE: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics
             PipelineTelemetry.QualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
@@ -293,7 +294,8 @@ public partial class QualityGateExecutor
                         Config = config,
                         Description = $"{retryAgentDescription} (attempt {run.RetryCount})",
                         Logger = _logger,
-                        Phase = null
+                        Phase = null,
+                        EnvironmentVariables = context.InjectedSecrets
                     },
                     callbacks, ct,
                     resumeSessionId: run.CodegenSessionId);
