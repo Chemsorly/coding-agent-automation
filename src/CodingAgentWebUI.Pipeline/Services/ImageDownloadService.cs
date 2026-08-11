@@ -226,11 +226,11 @@ public sealed class ImageDownloadService : IDisposable
     private async Task<HttpResponseMessage?> SendRedirectRequestAsync(
         Uri url, string authToken, bool stripAuth, bool isGitLabRelative, CancellationToken ct)
     {
-        // TODO: HttpRequestMessage is disposed via `using var` when this method exits, which happens after
+        // Note: HttpRequestMessage is disposed via `using var` when this method exits, which happens after
         // SendAsync completes. In the original code the request was scoped to the loop body but disposed
         // before the response was inspected. The refactored version relies on HttpClient.SendAsync not needing
         // the request object alive after completion (safe with the default HttpClientHandler), but this is an
-        // implicit behavioral coupling worth tracking if the HttpClient configuration changes.
+        // implicit behavioral coupling worth noting if the HttpClient configuration changes.
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         if (!stripAuth)
             ApplyAuthHeaders(request, url, authToken, isGitLabRelative);
