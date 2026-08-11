@@ -18,15 +18,15 @@ public sealed partial class AgentJobDispatcher
         string? issueTitle = null,
         PipelineProject? project = null)
     {
-        // TODO: [WARNING] ArgumentNullException.ThrowIfNull(issueIdentifier.Value) reports ParamName as
+        // [WARNING] ArgumentNullException.ThrowIfNull(issueIdentifier.Value) reports ParamName as
         // "issueIdentifier.Value" (the CallerArgumentExpression text) rather than "issueIdentifier". Callers
         // catching ArgumentNullException and inspecting .ParamName will receive a misleading name. Also does
         // not catch empty-string IssueIdentifier, which would produce a malformed composite key. Replace with:
-        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier))
+        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value)
         // Consistent with the correct guard already used in AnalysisStalenessDetector.cs.
         ArgumentNullException.ThrowIfNull(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(initiatedBy);
-        // TODO: [WARNING] No validation for default(ProviderConfigId) (Value == null). The
+        // [WARNING] No validation for default(ProviderConfigId) (Value == null). The
         // ArgumentNullException.ThrowIfNull guards that previously covered issueProviderId/repoProviderId
         // as strings were removed during the ProviderConfigId migration. ProviderConfigId is a readonly
         // record struct, so its default value has Value = null and bypasses the implicit string→ProviderConfigId
@@ -119,9 +119,9 @@ public sealed partial class AgentJobDispatcher
         string? decompositionSource = null,
         PipelineProject? project = null)
     {
-        // TODO: [WARNING] ArgumentNullException.ThrowIfNull(epicIdentifier.Value) reports ParamName as
+        // [WARNING] ArgumentNullException.ThrowIfNull(epicIdentifier.Value) reports ParamName as
         // "epicIdentifier.Value" rather than "epicIdentifier", and does not catch empty-string values.
-        // Replace with: ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value, nameof(epicIdentifier))
+        // Replace with: ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value)
         ArgumentNullException.ThrowIfNull(epicIdentifier.Value);
         ArgumentNullException.ThrowIfNull(epicTitle);
         ArgumentNullException.ThrowIfNull(initiatedBy);
@@ -164,7 +164,7 @@ public sealed partial class AgentJobDispatcher
             ct);
     }
 
-    // TODO: [WARNING] TryDispatchCoreAsync still takes `string identifier` while its callers (TryDispatchAsync,
+    // [WARNING] TryDispatchCoreAsync still takes `string identifier` while its callers (TryDispatchAsync,
     // TryDispatchDecompositionAsync) now accept IssueIdentifier. The IssueIdentifier is silently downcast via the
     // implicit conversion operator at the call site. The identifier is only used in log message templates here,
     // so this is functionally safe, but it is inconsistent with the typed callers. Consider changing to
