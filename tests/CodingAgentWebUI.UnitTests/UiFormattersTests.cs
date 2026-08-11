@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.UnitTests;
 
@@ -82,5 +83,14 @@ public class UiFormattersTests
     {
         var timestamp = DateTimeOffset.UtcNow.AddHours(-3);
         UiFormatters.FormatTimeAgo(timestamp).Should().Be("3h ago");
+    }
+
+    [Fact]
+    public void FormatRunType_Consolidation_ReturnsConsolidationString()
+    {
+        // Acceptance criterion: FormatRunType(PipelineRunType.Consolidation) must NOT return "Implementation"
+        var result = UiFormatters.FormatRunType(PipelineRunType.Consolidation);
+        result.Should().Be("Consolidation",
+            because: "Consolidation is a distinct run type and must not fall through to the Implementation default");
     }
 }

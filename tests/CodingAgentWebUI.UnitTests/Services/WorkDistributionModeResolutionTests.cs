@@ -291,6 +291,46 @@ public class WorkDistributionModeResolutionTests
             "Legacy mode must resolve the in-memory PipelineRunHistoryService from AddPipelineCoreServices, not a mock or other implementation");
     }
 
+    // ── Kubernetes registration coverage ────────────────────────────────
+
+    [Fact]
+    public void RegisterKubernetesMode_ViaReflection_RegistersDispatchStateBuilderAndRelatedServices()
+    {
+        // Calls the private static RegisterKubernetesMode method directly via reflection
+        // to exercise the DI registration lambdas (lines 70-83, 93-94, 112-113) without
+        // requiring a real Kubernetes cluster (which is blocked by AddWorkDistribution's
+        // IsRunningInKubernetesCluster() guard).
+        //
+        // This test only verifies that the registrations are ADDED to the container —
+        // it does NOT resolve any service (which would require a live cluster and real DB).
+        var configData = new Dictionary<string, string?>
+        {
+            ["WorkDistribution:Namespace"] = "default",
+            ["WorkDistribution:OrchestratorUrl"] = "http://orchestrator:8080",
+            ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key",
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        var method = typeof(WorkDistributionRegistration)
+            .GetMethod("RegisterKubernetesMode",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        method.Should().NotBeNull("RegisterKubernetesMode must exist as a private static method");
+
+        // Invoke the registration — this adds all lambdas to the container without executing them
+        method!.Invoke(null, [services, config]);
+
+        // Verify DispatchStateBuilder was registered (the new registration added by this PR)
+        var dispatchStateBuilderDescriptor = services.FirstOrDefault(
+            d => d.ServiceType == typeof(DispatchStateBuilder));
+        dispatchStateBuilderDescriptor.Should().NotBeNull(
+            "RegisterKubernetesMode must register DispatchStateBuilder as a singleton");
+        dispatchStateBuilderDescriptor!.Lifetime.Should().Be(ServiceLifetime.Singleton);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private static IConfiguration BuildConfig(string? dbHost, string? mode)

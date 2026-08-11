@@ -154,8 +154,13 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
     {
         WorkItemTaskType.Implementation => PipelineRunType.Implementation,
         WorkItemTaskType.Review => PipelineRunType.Review,
+        // TODO: [WARNING] Pre-existing mapping inconsistency: this service maps WorkItemTaskType.Decomposition →
+        // PipelineRunType.Decomposition, while DbPendingWorkQuery.ResolveRunType maps the same input to
+        // PipelineRunType.DecompositionAnalysis. A WorkItem with TaskType=Decomposition will resolve to different
+        // RunType values depending on which code path queries it. This predates issue #1932 and should be
+        // reconciled — one of these mappings is incorrect. See DbPendingWorkQuery.ResolveRunType for comparison.
         WorkItemTaskType.Decomposition => PipelineRunType.Decomposition,
-        WorkItemTaskType.Consolidation => PipelineRunType.Implementation, // best-effort fallback
+        WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
         _ => PipelineRunType.Implementation
     };
 
