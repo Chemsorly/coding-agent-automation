@@ -76,7 +76,7 @@ public sealed record StalenessEvaluationRequest(
 /// Groups the mandatory constructor dependencies of <see cref="PendingWorkItemDrainService"/>
 /// to reduce constructor parameter count (S107).
 /// <see cref="IOrchestratorRunService"/> and <see cref="ILabelService"/> are no longer included
-/// here — they moved to <see cref="DispatchRevertHandler"/> and <see cref="LabelSwapService"/>
+/// here — they moved to <see cref="DispatchRevertService"/> and <see cref="LabelSwapService"/>
 /// respectively (#1871).
 /// </summary>
 public sealed record DrainServiceDependencies(

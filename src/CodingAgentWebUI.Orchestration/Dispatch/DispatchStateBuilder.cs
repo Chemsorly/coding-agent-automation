@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Lightweight projection of pending work items (no Payload loaded).
-/// Shared between <see cref="DispatchService"/>, <see cref="ConsolidationDispatchHandler"/>,
+/// Shared between <see cref="DispatchService"/>, <see cref="ConsolidationWorkItemDispatchService"/>,
 /// and <see cref="DispatchLifecycleService"/>.
 /// </summary>
 internal sealed record PendingWorkItemProjection
@@ -51,7 +51,7 @@ internal sealed record DispatchCandidate(
 /// <summary>
 /// Encapsulates the shared dispatch state-building prologue and per-item gating logic
 /// that was previously duplicated between <see cref="DispatchService"/> and
-/// <see cref="ConsolidationDispatchHandler"/>. Builds the dispatch state (pending items,
+/// <see cref="ConsolidationWorkItemDispatchService"/>. Builds the dispatch state (pending items,
 /// concurrency map, PVC availability) and yields eligible candidates lazily via
 /// <see cref="GetEligibleCandidatesAsync"/>.
 /// </summary>
@@ -85,7 +85,7 @@ internal sealed class DispatchStateBuilder
     /// <param name="taskTypeFilter">
     /// Filter expression for the TaskType column.
     /// DispatchService: w.TaskType != WorkItemTaskType.Consolidation
-    /// ConsolidationDispatchHandler: w.TaskType == WorkItemTaskType.Consolidation
+    /// ConsolidationWorkItemDispatchService: w.TaskType == WorkItemTaskType.Consolidation
     /// </param>
     /// <param name="recordTelemetry">Whether to record poll telemetry (only DispatchService does this).</param>
     /// <param name="ct">Cancellation token.</param>

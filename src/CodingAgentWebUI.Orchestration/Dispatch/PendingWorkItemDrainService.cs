@@ -25,7 +25,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly WorkItemTransitionService _transitionService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly LabelSwapService _labelSwapService;
-    private readonly DispatchRevertHandler _dispatchRevertHandler;
+    private readonly DispatchRevertService _dispatchRevertHandler;
     private readonly DispatchAttemptService _dispatchAttemptService;
     private readonly IProjectStore? _projectStore;
     private readonly IConsolidationDispatchService? _consolidationDispatcher;
@@ -39,7 +39,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     public PendingWorkItemDrainService(
         DrainServiceDependencies deps,
         LabelSwapService labelSwapService,
-        DispatchRevertHandler dispatchRevertHandler,
+        DispatchRevertService dispatchRevertHandler,
         DispatchAttemptService dispatchAttemptService,
         IProjectStore? projectStore = null,
         IConsolidationDispatchService? consolidationDispatcher = null,

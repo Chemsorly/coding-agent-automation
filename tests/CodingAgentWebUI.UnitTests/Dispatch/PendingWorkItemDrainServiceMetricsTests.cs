@@ -191,8 +191,8 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
                 _mockPendingWork.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance),
             new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
-            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance),
-            new DispatchAttemptService(_transitionService, new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance)),
+            new DispatchRevertService(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertService>.Instance),
+            new DispatchAttemptService(_transitionService, new DispatchRevertService(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertService>.Instance)),
             _mockProjectStore.Object);
     }
 
@@ -207,8 +207,8 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
                 _mockPendingWork.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance),
             new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
-            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance),
-            new DispatchAttemptService(_transitionService, new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance)),
+            new DispatchRevertService(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertService>.Instance),
+            new DispatchAttemptService(_transitionService, new DispatchRevertService(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertService>.Instance)),
             _mockProjectStore.Object,
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);

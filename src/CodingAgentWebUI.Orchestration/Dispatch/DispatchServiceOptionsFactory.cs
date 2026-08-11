@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// <summary>
 /// Static factory for building <see cref="DispatchServiceOptions"/> from <see cref="IConfiguration"/>.
 /// Eliminates the duplicated InitializeOptions logic across DispatchService,
-/// ConsolidationDispatchHandler, and WorkDistributionRegistration.Kubernetes.cs.
+/// ConsolidationWorkItemDispatchService, and WorkDistributionRegistration.Kubernetes.cs.
 /// </summary>
 internal static class DispatchServiceOptionsFactory
 {
