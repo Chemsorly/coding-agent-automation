@@ -25,7 +25,6 @@ public sealed class DispatchService : LeaderElectedPollingService
     /// <summary>Default path for job templates ConfigMap mount.</summary>
     internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
 
-    private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateStore _templateProvider;
@@ -56,7 +55,6 @@ public sealed class DispatchService : LeaderElectedPollingService
         JobTemplateStore templateProvider)
         : base(coreDeps.LeaderElection)
     {
-        _dbFactory = coreDeps.DbFactory;
         _lifecycle = coreDeps.Lifecycle;
         _labelService = coreDeps.LabelService;
         _agentProfileStore = coreDeps.AgentProfileStore;
@@ -67,7 +65,7 @@ public sealed class DispatchService : LeaderElectedPollingService
         // Fallback constructs a local DispatchStateBuilder when coreDeps.StateBuilder is not provided.
         // In production the DI-injected singleton is always passed.
         _stateBuilder = coreDeps.StateBuilder ?? new DispatchStateBuilder(
-            _dbFactory,
+            coreDeps.DbFactory,
             _lifecycle,
             _templateProvider,
             new DispatchTemplateResolver(_agentProfileStore, _templateProvider),
@@ -165,8 +163,9 @@ public sealed class DispatchService : LeaderElectedPollingService
         if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
             return false;
 
-        // RateLimiter is non-null when RateLimitPerSecond > 0, which is enforced by DispatchServiceOptionsFactory.
-        using var lease = await RateLimiter!.AcquireAsync(1, ct);
+        if (RateLimiter is not { } rateLimiter)
+            return true;
+        using var lease = await rateLimiter.AcquireAsync(1, ct);
         if (!lease.IsAcquired)
         {
             Log.Warning("DispatchService: rate limit hit, stopping dispatch cycle");

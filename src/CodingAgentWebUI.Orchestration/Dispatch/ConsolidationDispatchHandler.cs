@@ -21,7 +21,6 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<ConsolidationDispatchHandler>();
 
-    private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly WorkItemTransitionService _transitionService;
@@ -40,7 +39,6 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
     public ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps)
         : base(deps?.LeaderElection ?? throw new ArgumentNullException(nameof(deps)))
     {
-        _dbFactory = deps.DbFactory;
         _lifecycle = deps.Lifecycle;
         _transitionService = deps.TransitionService;
         _consolidationRunStore = deps.ConsolidationRunStore;
@@ -53,7 +51,7 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         // Fallback constructs a local DispatchStateBuilder when deps.StateBuilder is not provided.
         // In production the DI-injected singleton is always passed.
         _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
-            _dbFactory,
+            deps.DbFactory,
             _lifecycle,
             deps.TemplateProvider,
             new DispatchTemplateResolver(deps.AgentProfileStore, deps.TemplateProvider),
@@ -69,7 +67,6 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         : base(deps?.LeaderElection ?? throw new ArgumentNullException(nameof(deps)))
     {
         ArgumentNullException.ThrowIfNull(options);
-        _dbFactory = deps.DbFactory;
         _lifecycle = deps.Lifecycle;
         _transitionService = deps.TransitionService;
         _consolidationRunStore = deps.ConsolidationRunStore;
@@ -82,7 +79,7 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         // Fallback constructs a local DispatchStateBuilder when deps.StateBuilder is not provided.
         // In production the DI-injected singleton is always passed.
         _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
-            _dbFactory,
+            deps.DbFactory,
             _lifecycle,
             deps.TemplateProvider,
             new DispatchTemplateResolver(deps.AgentProfileStore, deps.TemplateProvider),
@@ -130,8 +127,9 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         List<string> availablePvcs,
         CancellationToken ct)
     {
-        // RateLimiter is non-null when RateLimitPerSecond > 0, which is enforced by DispatchServiceOptionsFactory.
-        using var lease = await RateLimiter!.AcquireAsync(1, ct);
+        if (RateLimiter is not { } rateLimiter)
+            return true;
+        using var lease = await rateLimiter.AcquireAsync(1, ct);
         if (!lease.IsAcquired)
         {
             Log.Warning("ConsolidationDispatchHandler: rate limit hit, stopping dispatch cycle");
@@ -390,9 +388,9 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
                     ct);
                 Log.Information("ConsolidationDispatchHandler: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException oce)
             {
-                Log.Debug("ConsolidationDispatchHandler: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
+                Log.Debug(oce, "ConsolidationDispatchHandler: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
             }
             catch (Exception ex)
             {
@@ -420,9 +418,9 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
                 Log.Information("ConsolidationDispatchHandler: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException oce)
         {
-            Log.Debug("ConsolidationDispatchHandler: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
+            Log.Debug(oce, "ConsolidationDispatchHandler: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
         }
         catch (Exception ex)
         {
