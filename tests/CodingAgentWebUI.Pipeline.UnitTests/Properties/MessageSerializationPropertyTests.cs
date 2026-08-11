@@ -232,6 +232,7 @@ public class MessageSerializationPropertyTests
     [InlineData(PipelineRunType.Review)]
     [InlineData(PipelineRunType.DecompositionAnalysis)]
     [InlineData(PipelineRunType.Decomposition)]
+    [InlineData(PipelineRunType.Consolidation)]
     public void JobAssignmentMessage_RoundTrip_AllRunTypes(PipelineRunType runType)
     {
         var original = CreateMinimalJobAssignmentMessage(runType);

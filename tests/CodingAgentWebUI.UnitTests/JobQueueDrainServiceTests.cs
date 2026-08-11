@@ -438,6 +438,7 @@ public class JobQueueDrainServiceTests
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
             ConsolidationTemplateId = null,
             ConsolidationWorkspacePath = "/tmp/ws"
@@ -466,6 +467,7 @@ public class JobQueueDrainServiceTests
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.HarnessSuggestions,
             ConsolidationTemplateId = "t-1",
             ConsolidationWorkspacePath = "/tmp/ws"
@@ -503,6 +505,7 @@ public class JobQueueDrainServiceTests
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.RefactoringDetection,
             ConsolidationWorkspacePath = "/tmp/ws"
         });
@@ -530,6 +533,7 @@ public class JobQueueDrainServiceTests
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
             ConsolidationWorkspacePath = "/tmp/ws"
         });
@@ -587,6 +591,7 @@ public class JobQueueDrainServiceTests
                     InitiatedBy = "consolidation",
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = Array.Empty<string>(),
+                    RunType = PipelineRunType.Consolidation,
                     ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
                     ConsolidationWorkspacePath = "/tmp/ws"
                 });
@@ -652,6 +657,7 @@ public class JobQueueDrainServiceTests
                     InitiatedBy = "consolidation",
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = Array.Empty<string>(),
+                    RunType = PipelineRunType.Consolidation,
                     ConsolidationRunType = ConsolidationRunType.RefactoringDetection,
                     ConsolidationWorkspacePath = "/tmp/ws"
                 });
@@ -697,6 +703,7 @@ public class JobQueueDrainServiceTests
             InitiatedBy = "consolidation",
             EnqueuedAt = DateTimeOffset.UtcNow,
             RequiredLabels = Array.Empty<string>(),
+            RunType = PipelineRunType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
             ConsolidationWorkspacePath = "/tmp/ws"
         });
@@ -762,6 +769,7 @@ public class JobQueueDrainServiceTests
                     InitiatedBy = "consolidation",
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     RequiredLabels = Array.Empty<string>(),
+                    RunType = PipelineRunType.Consolidation,
                     ConsolidationRunType = ConsolidationRunType.HarnessSuggestions,
                     ConsolidationWorkspacePath = "/tmp/ws"
                 });
