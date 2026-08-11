@@ -61,6 +61,27 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<JobTemplateStore>(sp =>
             DispatchService.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
 
+        // DispatchStateBuilder — shared state-building logic for DispatchService and ConsolidationDispatchHandler.
+        // TODO: DispatchServiceOptionsFactory.Create() is called once here and separately when DispatchLifecycleService
+        // is registered, producing two distinct DispatchServiceOptions instances. Configuration is static at startup
+        // (K8s rolling restarts pick up ConfigMap changes), so the instances will be identical in practice. If options
+        // ever become mutable or need to stay in sync, pass the already-registered DispatchLifecycleService's options
+        // instance instead of calling Create() again.
+        services.AddSingleton<DispatchStateBuilder>(sp => new DispatchStateBuilder(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<DispatchLifecycleService>(),
+            sp.GetRequiredService<JobTemplateStore>(),
+            new DispatchTemplateResolver(
+                // TODO: sp.GetService<IAgentProfileStore>() returns null if IAgentProfileStore is not
+                // registered (e.g. in a non-Kubernetes deployment variant). DispatchTemplateResolver
+                // accepts a nullable store and silently suppresses agent-profile lookups when it is null,
+                // rather than failing at startup. This is consistent with the existing pattern in
+                // DispatchService and ConsolidationDispatchHandler, but the explicit singleton registration
+                // here is the natural place to tighten it. See DotNetSpecialist WARNING (Issue #1910).
+                sp.GetService<IAgentProfileStore>(),
+                sp.GetRequiredService<JobTemplateStore>()),
+            DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>())));
+
         // DispatchService — handles regular (non-consolidation) work items
         services.AddHostedService(sp => new DispatchService(
             new DispatchServiceCoreDependencies(
@@ -69,7 +90,8 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<DispatchLifecycleService>(),
                 sp.GetService<ILabelService>(),
                 sp.GetService<IAgentProfileStore>(),
-                sp.GetService<IOrchestratorRunService>()),
+                sp.GetService<IOrchestratorRunService>(),
+                sp.GetRequiredService<DispatchStateBuilder>()),
             sp.GetRequiredService<IConfiguration>(),
             sp.GetRequiredService<JobTemplateStore>()));
 
@@ -87,7 +109,8 @@ public static partial class WorkDistributionRegistration
                 sp.GetService<IConsolidationJobPreparationService>(),
                 sp.GetService<IPipelineConfigStore>(),
                 sp.GetService<IProjectStore>(),
-                sp.GetService<IAgentProfileStore>())));
+                sp.GetService<IAgentProfileStore>(),
+                sp.GetRequiredService<DispatchStateBuilder>())));
 
         services.AddHostedService(sp => new ReconciliationService(
             new ReconciliationServiceDependencies(

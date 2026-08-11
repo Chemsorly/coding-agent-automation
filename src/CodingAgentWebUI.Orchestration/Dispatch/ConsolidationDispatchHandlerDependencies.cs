@@ -25,4 +25,5 @@ internal sealed record ConsolidationDispatchHandlerDependencies(
     IConsolidationJobPreparationService? ConsolidationJobPreparer = null,
     IPipelineConfigStore? PipelineConfigStore = null,
     IProjectStore? ProjectStore = null,
-    IAgentProfileStore? AgentProfileStore = null);
+    IAgentProfileStore? AgentProfileStore = null,
+    DispatchStateBuilder? StateBuilder = null);

@@ -34,6 +34,12 @@ internal sealed record PendingWorkItemProjection
 internal sealed class DispatchState
 {
     public required PipelineDbContext Db { get; init; }
+    // TODO: PendingItems, ConcurrencyBySelector, and AvailablePvcs are mutable collection types
+    // (List<T> and Dictionary<K,V>) on init-only properties. Callers that retain a reference to
+    // DispatchState after the dispatch loop could mutate these collections unintentionally. Prefer
+    // IReadOnlyList<PendingWorkItemProjection>, IReadOnlyDictionary<string,int>, and
+    // IReadOnlyList<string> respectively to express the intent that state is read-only after
+    // construction. See DotNetSpecialist WARNING (Issue #1910).
     public required List<PendingWorkItemProjection> PendingItems { get; init; }
     public required Dictionary<string, int> ConcurrencyBySelector { get; init; }
     public required List<string> AvailablePvcs { get; init; }
@@ -72,6 +78,12 @@ internal sealed class DispatchStateBuilder
         DispatchServiceOptions options)
     {
         ArgumentNullException.ThrowIfNull(lifecycle); // validated but not stored — used only for DI wiring
+        // TODO: ArgumentNullException.ThrowIfNull is only applied to `lifecycle`. The other four parameters
+        // (dbFactory, templateProvider, templateResolver, options) are not validated, so a null argument
+        // produces a NullReferenceException at the first use rather than an ArgumentNullException at
+        // construction with a clear parameter name. For an internal DI-injected class this is low-severity,
+        // but it is inconsistent with the explicit guard on `lifecycle`. Consider adding ThrowIfNull for
+        // all non-nullable parameters. See DotNetSpecialist WARNING (Issue #1910).
         _dbFactory = dbFactory;
         _templateProvider = templateProvider;
         _templateResolver = templateResolver;
@@ -89,70 +101,85 @@ internal sealed class DispatchStateBuilder
     /// </param>
     /// <param name="recordTelemetry">Whether to record poll telemetry (only DispatchService does this).</param>
     /// <param name="ct">Cancellation token.</param>
-    // TODO: DbContext leak on exception path — if an exception (e.g., OperationCanceledException)
-    // propagates from the activeCounts query, QueryAvailablePvcsAsync, or telemetry call after
-    // the pendingItems.Count == 0 guard, the DbContext is never disposed. Wrap in try/catch that
-    // disposes db on exception, or use a pattern where db is always in a using scope and transferred
-    // to the caller only on success.
     public async Task<DispatchState?> BuildStateAsync(
         System.Linq.Expressions.Expression<Func<WorkItemEntity, bool>> taskTypeFilter,
         bool recordTelemetry,
         CancellationToken ct)
     {
         var db = await _dbFactory.CreateDbContextAsync(ct);
-
-        // Column projection — no Payload loading.
-        var pendingItems = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Pending)
-            .Where(taskTypeFilter)
-            .OrderBy(w => w.CreatedAt)
-            .Select(w => new PendingWorkItemProjection
-            {
-                Id = w.Id,
-                AgentSelector = w.AgentSelector,
-                CreatedAt = w.CreatedAt,
-                TimeoutSeconds = w.TimeoutSeconds,
-                ProjectId = w.ProjectId,
-                IssueIdentifier = w.IssueIdentifier,
-                IssueProviderConfigId = w.IssueProviderConfigId,
-                TaskType = w.TaskType
-            })
-            .ToListAsync(ct);
-
-        if (recordTelemetry)
-            WorkDistributionTelemetry.RecordLastPollEpoch();
-
-        if (pendingItems.Count == 0)
+        try
         {
+            // Column projection — no Payload loading.
+            var pendingItems = await db.WorkItems
+                .Where(w => w.Status == WorkItemStatus.Pending)
+                .Where(taskTypeFilter)
+                .OrderBy(w => w.CreatedAt)
+                .Select(w => new PendingWorkItemProjection
+                {
+                    Id = w.Id,
+                    AgentSelector = w.AgentSelector,
+                    CreatedAt = w.CreatedAt,
+                    TimeoutSeconds = w.TimeoutSeconds,
+                    ProjectId = w.ProjectId,
+                    IssueIdentifier = w.IssueIdentifier,
+                    IssueProviderConfigId = w.IssueProviderConfigId,
+                    TaskType = w.TaskType
+                })
+                .ToListAsync(ct);
+
             if (recordTelemetry)
-                WorkDistributionTelemetry.DispatcherPollCount.Add(1);
-            await db.DisposeAsync();
-            return null;
+                WorkDistributionTelemetry.RecordLastPollEpoch();
+
+            if (pendingItems.Count == 0)
+            {
+                if (recordTelemetry)
+                    WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+                // TODO: Manual DisposeAsync() on the early-return path is slightly fragile: if this
+                // call itself throws (unlikely but possible with a misbehaving provider), the catch
+                // block will call DisposeAsync a second time on an already-disposed context. The
+                // double-dispose is benign for EF Core's DbContext, but the more idiomatic pattern
+                // would be to use an unconditional `await using` scope around `db` and early-return
+                // via a flag or restructure, letting the using clause handle disposal in all cases.
+                // See DotNetSpecialist WARNING (Issue #1910).
+                await db.DisposeAsync();
+                return null;
+            }
+
+            // Build concurrency state: count running/dispatched per selector group
+            // TODO: This uses an inline status filter instead of the .WhereActive() extension method from
+            // WorkItemQueryExtensions.cs. Both the old DispatchService.BuildDispatchStateAsync and
+            // ConsolidationDispatchHandler.BuildDispatchStateAsync used .WhereActive(). If WhereActive()
+            // is ever updated to include additional statuses (e.g. a new Paused or Retrying state),
+            // this inline filter will silently diverge and undercount active items. Replace with
+            // .WhereActive() to restore the single-definition-of-active contract. See Correctness WARNING (Issue #1910).
+            var activeCounts = await db.WorkItems
+                .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+                .GroupBy(w => w.AgentSelector)
+                .Select(g => new { Selector = g.Key, Count = g.Count() })
+                .ToListAsync(ct);
+
+            var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
+
+            // PVC pool: determine available PVCs for kiro agents
+            var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
+            var availablePvcs = pvcResult.AvailablePvcs;
+
+            if (recordTelemetry)
+                WorkDistributionTelemetry.UpdateCredentialPoolMetrics(availablePvcs.Count, pvcResult.ClaimedCount);
+
+            return new DispatchState
+            {
+                Db = db,
+                PendingItems = pendingItems,
+                ConcurrencyBySelector = concurrencyBySelector,
+                AvailablePvcs = availablePvcs
+            };
         }
-
-        // Build concurrency state: count running/dispatched per selector group
-        var activeCounts = await db.WorkItems
-            .WhereActive()
-            .GroupBy(w => w.AgentSelector)
-            .Select(g => new { Selector = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-
-        var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
-
-        // PVC pool: determine available PVCs for kiro agents
-        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
-        var availablePvcs = pvcResult.AvailablePvcs;
-
-        if (recordTelemetry)
-            WorkDistributionTelemetry.UpdateCredentialPoolMetrics(availablePvcs.Count, pvcResult.ClaimedCount);
-
-        return new DispatchState
+        catch
         {
-            Db = db,
-            PendingItems = pendingItems,
-            ConcurrencyBySelector = concurrencyBySelector,
-            AvailablePvcs = availablePvcs
-        };
+            await db.DisposeAsync();
+            throw;
+        }
     }
 
     /// <summary>
@@ -194,10 +221,7 @@ internal sealed class DispatchStateBuilder
             var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
             if (IsAtConcurrencyLimit(item.AgentSelector, state.ConcurrencyBySelector, maxConcurrent))
             {
-                // TODO: Restore {Current}/{Max} structured log properties stripped during complexity refactoring.
-                // These are useful for diagnosing why items are stuck at a concurrency limit.
-                // Restore: Log.Debug("{CallerName}: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                //     callerName, item.AgentSelector, state.ConcurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0), maxConcurrent, item.Id);
+                // TODO: Restore {Current}/{Max} structured log properties stripped during complexity refactoring (useful for diagnosing stuck items).
                 Log.Debug("{CallerName}: selector {Selector} at concurrency limit, skipping {WorkItemId}",
                     callerName, item.AgentSelector, item.Id);
                 continue;
