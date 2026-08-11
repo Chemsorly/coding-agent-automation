@@ -103,7 +103,8 @@ public partial class QualityGateExecutor
                     Run = run,
                     Config = config,
                     Description = "Pre-PR cleanup agent",
-                    Logger = _logger
+                    Logger = _logger,
+                    EnvironmentVariables = context.InjectedSecrets
                 },
                 callbacks, linkedCt);
 
@@ -293,7 +294,8 @@ public partial class QualityGateExecutor
                         Config = config,
                         Description = $"{retryAgentDescription} (attempt {run.RetryCount})",
                         Logger = _logger,
-                        Phase = null
+                        Phase = null,
+                        EnvironmentVariables = context.InjectedSecrets
                     },
                     callbacks, ct,
                     resumeSessionId: run.CodegenSessionId);

@@ -9,8 +9,9 @@ namespace CodingAgentWebUI.Agent;
 /// <summary>
 /// Pipeline step that executes per-repository environment setup commands (e.g., configuring
 /// private NuGet feeds, installing tools) after clone but before the coding agent starts.
-/// Merges project-level and repo-level secrets (repo wins on key collision) and injects them
-/// as process-wide environment variables for the entire run. Also injects into each setup step process.
+/// Merges project-level and repo-level secrets (repo wins on key collision) and stores them
+/// in <see cref="PipelineStepContext.InjectedSecrets"/> for per-process injection into the
+/// agent subprocess and for pipeline-wide output masking. Also injects into each setup step process.
 /// </summary>
 internal sealed class RunEnvironmentSetupStep : IPipelineStep
 {
@@ -41,25 +42,18 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
 
         context.Callbacks.TransitionTo(PipelineStep.RunningEnvironmentSetup);
 
-        // Inject merged secrets as process-wide environment variables
+        // Store secrets in context for per-process injection into the agent subprocess
+        // and for pipeline-wide output masking. Do NOT set process-wide environment variables.
         if (hasSecrets)
         {
-            var injectedKeys = new List<string>(effectiveSecrets.Count);
-            foreach (var (key, value) in effectiveSecrets)
-            {
-                Environment.SetEnvironmentVariable(key, value);
-                injectedKeys.Add(key);
-            }
-
-            context.InjectedSecretKeys = injectedKeys;
             context.InjectedSecrets = effectiveSecrets;
 
-            _logger.Information("Pipeline {RunId} injected {Count} environment secrets (keys: {Keys})",
-                context.Run.RunId, injectedKeys.Count, string.Join(", ", injectedKeys));
+            var keyList = string.Join(", ", effectiveSecrets.Keys);
+            _logger.Information("Pipeline {RunId} stored {Count} environment secrets for per-process injection (keys: {Keys})",
+                context.Run.RunId, effectiveSecrets.Count, keyList);
 
-            var keyList = string.Join(", ", injectedKeys);
             context.Callbacks.EmitOutputLine(
-                SecretMasker.Mask($"🔐 Injected {injectedKeys.Count} environment secrets (keys: {keyList})", effectiveSecrets));
+                SecretMasker.Mask($"🔐 Injected {effectiveSecrets.Count} environment secrets (keys: {keyList})", effectiveSecrets));
 
             if (supersededKeys.Count > 0)
             {

@@ -313,8 +313,8 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Func<string, Task>?>(),
                 It.IsAny<string?>()))
-            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (prompt, workspace, _, _, _, _) =>
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (prompt, workspace, _, _, _, _, _) =>
                 {
                     workspaceCapture.Add(workspace);
                     return Task.FromResult(0);
@@ -385,8 +385,8 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
                 It.IsAny<CancellationToken>(),
                 It.IsAny<Func<string, Task>?>(),
                 It.IsAny<string?>()))
-            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?>(
-                (prompt, workspace, _, _, _, _) =>
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (prompt, workspace, _, _, _, _, _) =>
                 {
                     workspaceCapture.Add(workspace);
                     return Task.FromResult(0);

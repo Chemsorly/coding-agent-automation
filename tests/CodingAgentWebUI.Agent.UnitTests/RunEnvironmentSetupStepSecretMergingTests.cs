@@ -252,12 +252,12 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // CLEANUP TESTS — InjectedSecretKeys populated on context for finally block
+    // CLEANUP TESTS — InjectedSecrets populated on context for per-process injection
     // ══════════════════════════════════════════════════════════════════════
 
     [Fact]
     [Trait("Platform", "Linux")]
-    public async Task ExecuteAsync_InjectedSecretKeys_PopulatedOnContextForCleanup()
+    public async Task ExecuteAsync_InjectedSecrets_ContainsAllMergedKeys()
     {
         if (!OperatingSystem.IsLinux()) return;
 
@@ -279,10 +279,10 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
         // Act
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Assert — InjectedSecretKeys should list all merged keys
-        context.InjectedSecretKeys.Should().NotBeNull();
-        context.InjectedSecretKeys.Should().Contain("PROJ_A");
-        context.InjectedSecretKeys.Should().Contain("REPO_B");
+        // Assert — InjectedSecrets should contain all merged keys
+        context.InjectedSecrets.Should().NotBeNull();
+        context.InjectedSecrets.Should().ContainKey("PROJ_A");
+        context.InjectedSecrets.Should().ContainKey("REPO_B");
     }
 
     [Fact]
@@ -316,24 +316,37 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
     }
 
     [Fact]
-    public void CleanupLogic_InjectedSecretKeysCanBeUnsetFromEnvironment()
+    public async Task SecretsAreInjectedPerProcess_NotGlobally()
     {
-        // Arrange — simulate what the executor's finally block does
-        var keys = new List<string> { "TEST_KEY_1", "TEST_KEY_2" };
-        foreach (var key in keys)
-            Environment.SetEnvironmentVariable(key, "some-secret-value");
+        // Issue #1913: RunEnvironmentSetupStep must NOT inject secrets into the parent process
+        // environment. Secrets are stored in context.InjectedSecrets for per-process delivery
+        // to child processes via ProcessStartInfo.Environment.
+        var secretKey = $"TEST_PER_PROCESS_{Guid.NewGuid():N}";
 
-        // Verify they're set
-        Environment.GetEnvironmentVariable("TEST_KEY_1").Should().Be("some-secret-value");
-        Environment.GetEnvironmentVariable("TEST_KEY_2").Should().Be("some-secret-value");
+        var job = CreateJobWithProjectAndRepoSecrets(
+            projectSecrets: new Dictionary<string, string> { [secretKey] = "should-not-appear-globally" },
+            repoSecrets: null,
+            setupSteps: null);
 
-        // Act — simulate cleanup
-        foreach (var key in keys)
-            Environment.SetEnvironmentVariable(key, null);
+        var step = new RunEnvironmentSetupStep(job);
+        var context = CreateTestContext();
 
-        // Assert — they're removed
-        Environment.GetEnvironmentVariable("TEST_KEY_1").Should().BeNull();
-        Environment.GetEnvironmentVariable("TEST_KEY_2").Should().BeNull();
+        try
+        {
+            await step.ExecuteAsync(context, CancellationToken.None);
+
+            // Secret must NOT appear in the global process environment
+            Environment.GetEnvironmentVariable(secretKey).Should().BeNull(
+                "secrets must be delivered per-process via ProcessStartInfo.Environment, not via the global process environment");
+
+            // Secret IS stored on the context for per-process injection and masking
+            context.InjectedSecrets.Should().NotBeNull();
+            context.InjectedSecrets.Should().ContainKey(secretKey);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(secretKey, null);
+        }
     }
 
     [Fact]
@@ -356,7 +369,6 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
 
         // Assert — no secrets injected, step skipped entirely
         result.Should().Be(StepResult.Continue);
-        context.InjectedSecretKeys.Should().BeNull();
         context.InjectedSecrets.Should().BeNull();
         _mockCallbacks.Verify(c => c.TransitionTo(It.IsAny<PipelineStep>()), Times.Never);
     }
@@ -381,7 +393,6 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
 
         // Assert — step still runs (has setup steps), but no secrets injected
         result.Should().Be(StepResult.Continue);
-        context.InjectedSecretKeys.Should().BeNull();
         context.InjectedSecrets.Should().BeNull();
     }
 

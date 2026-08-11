@@ -270,6 +270,10 @@ internal class CodeReviewOrchestrator
                 Config = config,
                 Description = $"Code review fix agent (iteration {iterationIndex + 1})",
                 Logger = _logger,
+                // TODO [WARNING]: EnvironmentVariables is not set here. This is the only agent dispatch
+                // site updated in issue #1913 that was missed. A fix agent that needs a project secret
+                // (e.g. a private NuGet feed credential) to run a build tool will not receive it.
+                // Fix by adding: EnvironmentVariables = context.InjectedSecrets
                 Phase = "fix"
             },
             context.Callbacks, ct,

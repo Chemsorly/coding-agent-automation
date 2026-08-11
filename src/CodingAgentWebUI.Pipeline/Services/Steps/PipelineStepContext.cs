@@ -158,16 +158,16 @@ public sealed class PipelineStepContext
     public IReadOnlyList<QualityGateConfiguration>? PreResolvedQualityGateConfigs { get; set; }
 
     /// <summary>
-    /// Keys of environment variables injected by <see cref="RunEnvironmentSetupStep"/> as process-wide
-    /// secrets. Tracked so that the executor's finally block can unset them after the run completes.
-    /// </summary>
-    public List<string>? InjectedSecretKeys { get; set; }
-
-    /// <summary>
     /// Key→value pairs of secrets injected by <see cref="RunEnvironmentSetupStep"/>.
     /// Used by the executor to mask secret values in ALL pipeline output (not just the setup step).
     /// Values shorter than 4 characters are not masked to avoid excessive false-positive redaction.
     /// </summary>
+    // TODO [WARNING]: InjectedSecrets is a mutable Dictionary<string, string> while all downstream
+    // consumers (AgentPhaseContext, QualityGateContext, AgentExecutionRequest, AgentRequest) expose it
+    // as IReadOnlyDictionary<string, string>. A caller could cast it back to Dictionary and mutate the
+    // shared reference, silently affecting subsequent steps. Consider changing the property type to
+    // IReadOnlyDictionary<string, string> and assigning at the call site, consistent with the
+    // read-only surface established everywhere else in this change.
     public Dictionary<string, string>? InjectedSecrets { get; set; }
 
     // Mutable state set by earlier steps, read by later steps
@@ -237,7 +237,8 @@ public sealed class PipelineStepContext
             OrchestratorCts = Cts,
             Issue = Issue,
             ParsedIssue = ParsedIssue,
-            DownloadedImages = DownloadedImages
+            DownloadedImages = DownloadedImages,
+            InjectedSecrets = InjectedSecrets
         };
     }
 
