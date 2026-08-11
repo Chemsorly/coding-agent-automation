@@ -207,46 +207,64 @@ public sealed class ImageDownloadService : IDisposable
                 return (null, null);
             }
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, currentUrl);
-            if (!stripAuth)
-                ApplyAuthHeaders(request, currentUrl, authToken, isGitLabRelative);
-
-            HttpResponseMessage response;
-            try
-            {
-                response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
-                    .ConfigureAwait(false);
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger?.LogDebug(ex, "HTTP request failed for {Url}", currentUrl);
-                return (null, null);
-            }
+            var response = await SendRedirectRequestAsync(currentUrl, authToken, stripAuth, isGitLabRelative, ct);
+            if (response is null) return (null, null);
 
             if (!IsRedirect(response.StatusCode))
                 return (response, currentUrl);
 
-            var location = response.Headers.Location;
+            var (nextUrl, abort) = ProcessRedirectLocation(response, currentUrl, ref stripAuth);
             response.Dispose();
 
-            if (location is null)
-                return (null, null);
-
-            var redirectUri = location.IsAbsoluteUri ? location : new Uri(currentUrl, location);
-
-            if (!string.Equals(redirectUri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger?.LogDebug("Redirect to non-HTTPS blocked: {Url}", redirectUri);
-                return (null, null);
-            }
-
-            if (!IsSameOrigin(currentUrl, redirectUri))
-                stripAuth = true;
-
-            currentUrl = redirectUri;
+            if (abort || nextUrl is null) return (null, null);
+            currentUrl = nextUrl;
         }
 
         return (null, null);
+    }
+
+    private async Task<HttpResponseMessage?> SendRedirectRequestAsync(
+        Uri url, string authToken, bool stripAuth, bool isGitLabRelative, CancellationToken ct)
+    {
+        // Note: HttpRequestMessage is disposed via `using var` when this method exits, which happens after
+        // SendAsync completes. In the original code the request was scoped to the loop body but disposed
+        // before the response was inspected. The refactored version relies on HttpClient.SendAsync not needing
+        // the request object alive after completion (safe with the default HttpClientHandler), but this is an
+        // implicit behavioral coupling worth noting if the HttpClient configuration changes.
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        if (!stripAuth)
+            ApplyAuthHeaders(request, url, authToken, isGitLabRelative);
+
+        try
+        {
+            return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+                .ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger?.LogDebug(ex, "HTTP request failed for {Url}", url);
+            return null;
+        }
+    }
+
+    private (Uri? nextUrl, bool abort) ProcessRedirectLocation(
+        HttpResponseMessage response, Uri currentUrl, ref bool stripAuth)
+    {
+        var location = response.Headers.Location;
+        if (location is null) return (null, true);
+
+        var redirectUri = location.IsAbsoluteUri ? location : new Uri(currentUrl, location);
+
+        if (!string.Equals(redirectUri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger?.LogDebug("Redirect to non-HTTPS blocked: {Url}", redirectUri);
+            return (null, true);
+        }
+
+        if (!IsSameOrigin(currentUrl, redirectUri))
+            stripAuth = true;
+
+        return (redirectUri, false);
     }
 
     /// <summary>
