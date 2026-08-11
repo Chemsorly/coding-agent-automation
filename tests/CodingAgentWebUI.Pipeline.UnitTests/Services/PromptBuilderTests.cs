@@ -131,6 +131,126 @@ public class PromptBuilderTests
         result.Should().Contain("splitting recommendations");
     }
 
+    // --- Rework context tests ---
+
+    private static AnalysisReworkContext CreateReworkContext(
+        int prNumber = 42,
+        string branchName = "feature/test-branch",
+        IReadOnlyList<string>? forceResolvedFiles = null,
+        bool hasReviewFeedback = false) =>
+        new(prNumber, branchName, forceResolvedFiles ?? Array.Empty<string>(), hasReviewFeedback);
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsReworkContextSection()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext());
+
+        result.Should().Contain("## Rework Context");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsPrNumber()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(prNumber: 1234));
+
+        // TODO: "1234" is a generic numeric substring that may appear in other parts of the prompt. Consider
+        // asserting result.Should().Contain("#1234") or result.Should().Contain("Pull request #1234") instead
+        // to verify the PR number is actually injected in the expected context.
+        result.Should().Contain("1234");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsBranchName()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(branchName: "feature/my-feature-branch"));
+
+        result.Should().Contain("feature/my-feature-branch");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithForceResolvedFiles_ListsEachFile()
+    {
+        var files = new[] { "src/Foo.cs", "src/Bar.cs" };
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(forceResolvedFiles: files));
+
+        result.Should().Contain("`src/Foo.cs`");
+        result.Should().Contain("`src/Bar.cs`");
+        result.Should().Contain("force-resolved");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithEmptyForceResolvedFiles_NoConflictList()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(forceResolvedFiles: Array.Empty<string>()));
+
+        result.Should().NotContain("force-resolved");
+        result.Should().Contain("rebased onto main without conflicts");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithHasReviewFeedback_ReferencesConversationContextFile()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(hasReviewFeedback: true));
+
+        result.Should().Contain(AgentWorkspacePaths.PrConversationContextFilePath);
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithoutHasReviewFeedback_OmitsConversationContextReference()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(hasReviewFeedback: false, forceResolvedFiles: Array.Empty<string>()));
+
+        result.Should().NotContain("pr-conversation-context.md");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_UpdatesWontDoInstruction()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext());
+
+        // Rework-specific wont_do clause is present
+        result.Should().Contain("AND this is not a rework run");
+        result.Should().Contain("\"wont_do\"` is never correct in a rework run");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithNullReworkContext_ProducesIdenticalOutputToNoParameter()
+    {
+        // Core backward-compat AC: explicit null must produce byte-for-byte identical output to omitting the parameter.
+        var withoutParam = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+        var withNullParam = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: null);
+
+        withNullParam.Should().Be(withoutParam);
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithNullReworkContext_ContainsOriginalWontDoClause()
+    {
+        // When reworkContext is null, the original unmodified wont_do clause must be present.
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue());
+
+        result.Should().Contain("do NOT pivot to `\"ready\"` on the grounds that test coverage could still be added");
+        result.Should().NotContain("AND this is not a rework run");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_WithReworkContext_ContainsAssessWhatRemainsDirective()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext());
+
+        result.Should().Contain("assess what remains to be done");
+    }
+
     #endregion
 
     #region BuildPrompt

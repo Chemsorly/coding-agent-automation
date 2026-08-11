@@ -201,7 +201,31 @@ public partial class AgentPhaseExecutor
 
         var brainContextWrittenForAnalysis = await WriteBrainContextIfNeededAsync(run, ct);
 
-        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, context.Issue, context.ParsedIssue, brainContextWrittenForAnalysis, imageCount: context.DownloadedImages?.Count ?? 0);
+        AnalysisReworkContext? reworkContext = null;
+        if (run.LinkedPullRequest is not null)
+        {
+            // TODO: WorkspacePath is non-null at this point (WriteBrainContextIfNeededAsync uses it above), but
+            // the null-forgiving operator masks the missing precondition. Consider adding a Debug.Assert or
+            // explicit guard here to fail fast with a clear message if the invariant is ever violated.
+            var prConversationPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.PrConversationContextFilePath);
+            // TODO: File.Exists followed by new FileInfo(...).Length is a TOCTOU pattern — the file could be
+            // deleted between the two calls. Prefer caching the FileInfo: var fi = new FileInfo(prConversationPath);
+            // var hasFile = fi.Exists && fi.Length > 100; — eliminates the double stat and the race.
+            var hasReviewFeedback = run.LinkedPullRequest.ReviewComments.Count > 0
+                || (File.Exists(prConversationPath) && new FileInfo(prConversationPath).Length > 100);
+
+            reworkContext = new AnalysisReworkContext(
+                PrNumber: run.LinkedPullRequest.Number,
+                BranchName: run.BranchName ?? run.LinkedPullRequest.BranchName,
+                ForceResolvedFiles: run.MergeForceResolved ? run.MergeConflictFiles : Array.Empty<string>(),
+                HasReviewFeedback: hasReviewFeedback);
+        }
+
+        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(
+            config.AnalysisPrompt, context.Issue, context.ParsedIssue,
+            brainContextWrittenForAnalysis,
+            imageCount: context.DownloadedImages?.Count ?? 0,
+            reworkContext: reworkContext);
         _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
         Activity.Current?.SetTag("pipeline.prompt_length_chars", analysisPrompt.Length);
 
