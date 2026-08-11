@@ -42,7 +42,7 @@ public class ProcessWrapper : IProcessWrapper
         _useWsl = config.UseWsl && OperatingSystem.IsWindows();
     }
 
-    public async Task<int> StartAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, string? resumeSessionId = null)
+    public async Task<int> StartAsync(string prompt, string workspaceDirectory, bool useResume, CancellationToken cancellationToken, string? resumeSessionId = null, IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(workspaceDirectory);
@@ -91,6 +91,14 @@ public class ProcessWrapper : IProcessWrapper
             UseShellExecute = false,
             CreateNoWindow = true
         };
+
+        // Inject per-invocation environment variables into the child process.
+        // These are isolated to this process launch and do not affect the parent process.
+        if (environmentVariables is { Count: > 0 })
+        {
+            foreach (var (key, value) in environmentVariables)
+                startInfo.Environment[key] = value;
+        }
 
         _logger.Debug("Starting Kiro CLI: {FileName} {Arguments} (prompt written to {PromptFile}, {Length} chars)",
             startInfo.FileName, startInfo.Arguments, promptFile, prompt.Length);

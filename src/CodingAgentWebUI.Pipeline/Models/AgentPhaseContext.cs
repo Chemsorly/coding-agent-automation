@@ -16,4 +16,13 @@ public sealed record AgentPhaseContext : PipelineContextBase
 
     /// <summary>Downloaded issue/PR images for native vision delivery to agents.</summary>
     public IReadOnlyList<DownloadedImage>? DownloadedImages { get; init; }
+
+    /// <summary>
+    /// Project secrets to inject into the child agent process via
+    /// <see cref="AgentRequest.EnvironmentVariables"/>. Populated from
+    /// <see cref="PipelineStepContext.InjectedSecrets"/> by
+    /// <see cref="PipelineStepContext.BuildAgentPhaseContext"/>. Null when no secrets
+    /// were configured for this pipeline run.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? InjectedSecrets { get; init; }
 }

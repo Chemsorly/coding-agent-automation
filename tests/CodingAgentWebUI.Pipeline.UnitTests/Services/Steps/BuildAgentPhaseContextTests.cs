@@ -201,4 +201,45 @@ public class BuildAgentPhaseContextImageTests
 
         result.DownloadedImages.Should().BeNull();
     }
+
+    [Fact]
+    public void BuildAgentPhaseContext_WithInjectedSecrets_PropagatesSecrets()
+    {
+        // Verifies that InjectedSecrets set on the PipelineStepContext flows through
+        // to the AgentPhaseContext produced by BuildAgentPhaseContext (issue #1913).
+        var context = BuildContext();
+        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        var parsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
+        context.Issue = issue;
+        context.ParsedIssue = parsedIssue;
+
+        var secrets = new Dictionary<string, string>
+        {
+            ["NUGET_API_KEY"] = "test-nuget-key-abc",
+            ["GITHUB_TOKEN"] = "ghp_test123"
+        };
+        context.InjectedSecrets = secrets;
+
+        var result = context.BuildAgentPhaseContext();
+
+        result.InjectedSecrets.Should().NotBeNull();
+        result.InjectedSecrets.Should().ContainKey("NUGET_API_KEY").WhoseValue.Should().Be("test-nuget-key-abc");
+        result.InjectedSecrets.Should().ContainKey("GITHUB_TOKEN").WhoseValue.Should().Be("ghp_test123");
+    }
+
+    [Fact]
+    public void BuildAgentPhaseContext_WithNullInjectedSecrets_PropagatesNull()
+    {
+        // Verifies that null InjectedSecrets produces null in the resulting context.
+        var context = BuildContext();
+        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        var parsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
+        context.Issue = issue;
+        context.ParsedIssue = parsedIssue;
+        context.InjectedSecrets = null;
+
+        var result = context.BuildAgentPhaseContext();
+
+        result.InjectedSecrets.Should().BeNull();
+    }
 }
