@@ -31,7 +31,7 @@ public class DispatchSchedulerTests
 
         _cacheManager = new ProviderCacheManager(mockFactory.Object, Serilog.Core.Logger.None);
 
-        _mockOrchestration.Setup(o => o.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+        _mockOrchestration.Setup(o => o.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Returns(false);
         _mockOrchestration.Setup(o => o.GetAllActiveRuns())
             .Returns(new List<PipelineRun>());
@@ -423,7 +423,7 @@ public class DispatchSchedulerTests
     public async Task FilterAll_AllItemsAlreadyProcessing_TerminatesWithZeroProcessed()
     {
         // Arrange: all issues are already being processed
-        _mockOrchestration.Setup(o => o.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+        _mockOrchestration.Setup(o => o.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Returns(true);
 
         // TODO: [WARNING] The test below only exercises IsIssueAlreadyActive branch (1):

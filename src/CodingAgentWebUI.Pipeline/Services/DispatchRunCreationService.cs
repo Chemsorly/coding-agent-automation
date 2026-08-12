@@ -47,14 +47,14 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     public IReadOnlyList<PipelineRun> GetAllActiveRuns() => _lifecycle.GetAllActiveRuns();
 
     /// <inheritdoc />
-    public bool IsIssueBeingProcessed(string issueIdentifier, ProviderConfigId issueProviderConfigId) =>
+    public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId) =>
         _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId);
 
     /// <inheritdoc />
     public async Task<PipelineRun?> CreateDispatchedRunAsync(DispatchRunRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value, nameof(request.IssueIdentifier));
         ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
         ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
         ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);
@@ -73,7 +73,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
 
         try
         {
-            if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
+            if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId))
             {
                 _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping dispatch", issueIdentifier);
                 return null;
@@ -104,7 +104,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     public async Task<RunReservation?> ReserveRunIdAsync(DispatchRunRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value, nameof(request.IssueIdentifier));
         ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
         ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
         ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);
@@ -123,7 +123,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
 
         try
         {
-            if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
+            if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId))
             {
                 _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping reservation", issueIdentifier);
                 return null;

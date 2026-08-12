@@ -25,7 +25,7 @@ public class DispatchRequestRecordTests
 
         req.IssueProviderId.Value.Should().Be("issue-cfg");
         req.RepoProviderId.Value.Should().Be("repo-cfg");
-        req.IssueIdentifier.Should().Be("owner/repo#99");
+        req.IssueIdentifier.Value.Should().Be("owner/repo#99");
         req.AgentProviderId.Value.Should().Be("agent-cfg");
         req.AgentId.Should().BeNull();
         req.BrainProviderId.Should().BeNull();
@@ -73,7 +73,7 @@ public class DispatchRequestRecordTests
             Project          = project,
         };
 
-        req.IssueIdentifier.Should().Be("owner/repo#5");
+        req.IssueIdentifier.Value.Should().Be("owner/repo#5");
         req.IssueProviderId.Value.Should().Be("issue-cfg");
         req.RepoProviderId.Value.Should().Be("repo-cfg");
         req.InitiatedBy.Should().Be("user");
@@ -102,7 +102,7 @@ public class DispatchRequestRecordTests
             Project          = project,
         };
 
-        req.EpicIdentifier.Should().Be("owner/repo#100");
+        req.EpicIdentifier.Value.Should().Be("owner/repo#100");
         req.EpicTitle.Should().Be("Build the thing");
         req.PhaseType.Should().Be(PipelineRunType.Decomposition);
         req.BrainProviderId.Should().BeNull();

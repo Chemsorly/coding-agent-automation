@@ -36,7 +36,7 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
             .Setup(c => c.EmitOutputLine(It.IsAny<string>()))
             .Callback<string>(line => _emittedLines.Add(line));
         _mockCallbacks
-            .Setup(c => c.SwapAgentLabel(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 

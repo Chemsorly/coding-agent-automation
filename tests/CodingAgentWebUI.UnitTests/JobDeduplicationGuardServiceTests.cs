@@ -285,7 +285,7 @@ public class JobDeduplicationGuardServiceTests
 
         var job = service.DequeueForAgent(agent);
         job.Should().NotBeNull();
-        job!.IssueIdentifier.Should().Be("issue-1");
+        job!.IssueIdentifier.Value.Should().Be("issue-1");
     }
 
     [Fact]
@@ -318,7 +318,7 @@ public class JobDeduplicationGuardServiceTests
 
         var job = service.DequeueForAgent(agent);
         job.Should().NotBeNull();
-        job!.IssueIdentifier.Should().Be("issue-dotnet");
+        job!.IssueIdentifier.Value.Should().Be("issue-dotnet");
 
         // The incompatible job should still be in the queue
         service.QueueLength.Should().Be(1);

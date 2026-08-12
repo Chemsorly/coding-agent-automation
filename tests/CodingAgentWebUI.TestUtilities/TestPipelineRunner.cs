@@ -310,7 +310,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         public Task UpdateFileChangeStats(PipelineRun run)
             => prOrchestrator.UpdateFileChangeStatsAsync(run, providerManager.ActiveRepoProvider!);
 
-        public async Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
+        public async Task SwapAgentLabel(IssueIdentifier issueIdentifier, string label, CancellationToken ct)
         {
             try
             {
@@ -322,7 +322,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             catch { /* match production: swallow label failures */ }
         }
 
-        public async Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
+        public async Task RemoveAllAgentLabels(IssueIdentifier issueIdentifier, CancellationToken ct)
         {
             try
             {

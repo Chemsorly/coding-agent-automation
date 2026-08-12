@@ -14,8 +14,8 @@ public sealed class PipelineRunCreationParams
     /// <summary>Unique run identifier.</summary>
     public required string RunId { get; init; }
 
-    /// <summary>Issue identifier (e.g., "owner/repo#123"). Uses string to match factory method signatures; implicit conversion to <see cref="Models.IssueIdentifier"/> occurs in CreateCore.</summary>
-    public required string IssueIdentifier { get; init; }
+    /// <summary>Issue identifier (e.g., "owner/repo#123").</summary>
+    public required IssueIdentifier IssueIdentifier { get; init; }
 
     /// <summary>Issue title for display.</summary>
     public required string IssueTitle { get; init; }

@@ -69,7 +69,7 @@ public interface IRunLifecycleManager
     /// to ensure label swap timing is consistent across modes: labels only change when
     /// an agent actually starts working on the issue.
     /// </summary>
-    Task AgentAcceptedRunAsync(RunId runId, AgentId agentId, string issueIdentifier,
+    Task AgentAcceptedRunAsync(RunId runId, AgentId agentId, IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderConfigId, ProviderConfigId repoProviderConfigId,
         PipelineRunType runType, CancellationToken ct);
 

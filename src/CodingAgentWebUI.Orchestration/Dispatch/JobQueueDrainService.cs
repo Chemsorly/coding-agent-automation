@@ -228,7 +228,7 @@ public sealed class JobQueueDrainService : BackgroundService
             // Cancel-during-dispatch race guard
             if (_consolidationRunStore is not null)
             {
-                var run = await _consolidationRunStore.GetByIdAsync(pendingJob.IssueIdentifier, ct);
+                var run = await _consolidationRunStore.GetByIdAsync((RunId)pendingJob.IssueIdentifier.Value, ct);
                 if (run is null ||
                     run.Status == Pipeline.Models.ConsolidationRunStatus.Cancelled ||
                     run.Status == Pipeline.Models.ConsolidationRunStatus.Failed)

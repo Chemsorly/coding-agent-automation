@@ -11,7 +11,7 @@ public sealed record PendingJob
     /// </summary>
     public string? WorkItemId { get; init; }
 
-    public required string IssueIdentifier { get; init; }
+    public required IssueIdentifier IssueIdentifier { get; init; }
     public string? IssueTitle { get; init; }
     public required ProviderConfigId IssueProviderId { get; init; }
     public required ProviderConfigId RepoProviderId { get; init; }

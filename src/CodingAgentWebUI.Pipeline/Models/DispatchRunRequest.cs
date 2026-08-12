@@ -17,7 +17,7 @@ public sealed record DispatchRunRequest
     public required ProviderConfigId RepoProviderId { get; init; }
 
     /// <summary>Issue identifier being dispatched.</summary>
-    public required string IssueIdentifier { get; init; }
+    public required IssueIdentifier IssueIdentifier { get; init; }
 
     /// <summary>Provider config ID for the agent that will execute the run.</summary>
     public required ProviderConfigId AgentProviderId { get; init; }

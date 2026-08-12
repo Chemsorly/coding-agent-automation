@@ -351,9 +351,9 @@ internal sealed class PipelineExecutionContextBuilder
         public override Task AddRunToHistoryAsync(PipelineRun run) => Task.CompletedTask;
         public override Task UpdateFileChangeStats(PipelineRun run)
             => context.PrOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
-        public override Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
+        public override Task SwapAgentLabel(IssueIdentifier issueIdentifier, string label, CancellationToken ct)
             => context.IssueOps.SwapLabelAsync(issueIdentifier, label, GetLabelTargetKind(), ct);
-        public override Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
+        public override Task RemoveAllAgentLabels(IssueIdentifier issueIdentifier, CancellationToken ct)
             => context.IssueOps.SwapLabelAsync(issueIdentifier, string.Empty, GetLabelTargetKind(), ct);
         public override Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {

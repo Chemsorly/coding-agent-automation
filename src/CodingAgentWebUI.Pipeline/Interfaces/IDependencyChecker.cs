@@ -16,7 +16,7 @@ public interface IDependencyChecker
     /// <param name="stateCache">Shared cache for issue state lookups within a poll cycle.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<DependencyCheckResult> CheckAsync(
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         string? issueBody,
         IIssueProvider issueProvider,
         Dictionary<int, bool> stateCache,

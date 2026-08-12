@@ -58,7 +58,7 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
 
         // TODO: This mocks IsIssueBeingProcessed to always return false, so CreateDispatchedRunAsync_Success
         // would pass even if RegisterDispatchedRun was broken. Add a Verify call to confirm AddRun is invoked.
-        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>())).Returns(false);
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>())).Returns(false);
 
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>().AsReadOnly());
@@ -122,12 +122,22 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task CreateDispatchedRunAsync_NullIssueIdentifier_ThrowsArgumentNullException()
+    public async Task CreateDispatchedRunAsync_NullIssueIdentifier_ThrowsArgumentException()
     {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+        // Act & Assert — IssueIdentifier is now a struct; default(IssueIdentifier) with null Value
+        // throws ArgumentNullException (from ThrowIfNullOrEmpty with null argument), which derives from ArgumentException
+        // TODO: [WARNING] ThrowsAnyAsync<ArgumentException> is weaker than necessary — use
+        // Assert.ThrowsAsync<ArgumentNullException> since default(IssueIdentifier).Value is null,
+        // which specifically triggers ArgumentNullException. ThrowsAnyAsync would also pass if an
+        // unrelated ArgumentException fired first (e.g., a provider ID validation), masking guard order regressions.
+        // TODO: [WARNING] No test covers the new empty-string rejection path. The guard changed from
+        // ArgumentNullException.ThrowIfNull(issueIdentifier) (catches null only) to
+        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value) (catches null AND empty string).
+        // Add a test case using new IssueIdentifier("") (empty Value) to cover the empty-string path
+        // across all migrated entry points (TryDispatchAsync, IsIssueQueued, MarkIssueComplete, etc.).
+        await Assert.ThrowsAnyAsync<ArgumentException>(() =>
             _service.CreateDispatchedRunAsync(
-                new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = null!, AgentProviderId = "agent-1", AgentId = "agent-container-1" },
+                new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = default, AgentProviderId = "agent-1", AgentId = "agent-container-1" },
                 CancellationToken.None));
     }
 

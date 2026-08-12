@@ -137,7 +137,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             new IssueSummary { Identifier = "2", Title = "Issue 2", Labels = new[] { "agent:in-progress" } });
 
         _mockRunService
-            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Returns(false);
 
         _mockLabelService
@@ -218,7 +218,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     {
         // Arrange: no templates configured (default mock returns empty)
         _mockRunService
-            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Returns(false);
 
         // Act: start and wait past grace period
@@ -264,7 +264,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         });
 
         _mockRunService
-            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+            .Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Returns(false);
 
         var swapCount = 0;
