@@ -71,6 +71,7 @@ These control in-memory bounded data structures for each pipeline run. Rarely ne
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `maxDecompositionSubIssues` | 10 | Maximum sub-issues the decomposition agent may propose per epic (range: 1–20) |
+| `maxDecompositionSubIssueFiles` | 12 | Maximum files a single decomposition sub-issue may create or modify (range: 1–30). Controls scope per sub-issue to keep each one within single-agent capacity |
 | `maxConcurrentDecompositions` | 2 | Maximum decomposition runs (across both phases) executing simultaneously |
 | `decompositionTimeout` | 00:15:00 | Timeout for decomposition phases (separate from `agentTimeout`) |
 | `maxOpenIssuesForContext` | 50 | Maximum open issues downloaded for deduplication context |
@@ -193,7 +194,7 @@ For full request/response examples, authentication details, and query parameters
 | `AGENT_API_KEY` | Shared secret for authenticating agent connections. Each agent derives its actual auth key via HMAC(master_key, agent_id). Legacy agents without an ID fall back to raw key comparison. |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) — also applies to the orchestrator |
 | `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 90, range: 0–600). Prevents dispatching to agents mid-termination during rolling updates. |
-| `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15). Used for zero-downtime rolling updates. |
+| `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
 | `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. |
 
 ### SignalR Backplane (DB mode)
@@ -207,6 +208,19 @@ For full request/response examples, authentication details, and query parameters
 | Variable | Description |
 |----------|-------------|
 | `WorkDistribution__Mode` | Dispatch mode: `SignalR` (default) or `Kubernetes`. Only applicable in DB mode. |
+
+### Database Maintenance (DB mode)
+
+In DB mode, a background `DatabaseMaintenanceService` periodically deletes terminal records to prevent unbounded table growth. Configuration is in the `WorkDistribution:Reconciliation` section (same section used by `ReconciliationService` in K8s mode):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `WorkDistribution:Reconciliation:PipelineRunRetentionDays` | 90 | Days to retain `PipelineRuns` after completion before deletion |
+| `WorkDistribution:Reconciliation:ConsolidationRunRetentionDays` | 90 | Days to retain `ConsolidationRuns` after completion before deletion |
+| `WorkDistribution:Reconciliation:StaleRetentionDays` | 7 | Days to retain terminal `WorkItems` (`Succeeded`, `Failed`, `Cancelled`) before deletion |
+| `WorkDistribution:Reconciliation:MaintenanceIntervalHours` | 6 | Hours between maintenance cycles |
+
+The maintenance service runs immediately on startup and then on the configured interval. In multi-replica deployments it gates behind leader election so only one replica runs cleanup at a time.
 
 ### OpenTelemetry
 
@@ -312,3 +326,38 @@ Configure MCP servers in the agent's settings directory (written at runtime by `
 ```
 
 The agent CLI automatically discovers and starts configured MCP servers during pipeline runs. The `.agent/` directory is in the pipeline's blacklisted paths, so MCP config and any credentials it contains are never committed.
+
+### HTTP-Type MCP Servers
+
+For HTTP-based MCP servers, use `"type": "http"` with a `url` field instead of `command`/`args`:
+
+```json
+{
+  "mcpServers": {
+    "my-remote-mcp": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      },
+      "disabled": false
+    }
+  }
+}
+```
+
+The `headers` field passes HTTP request headers to the remote server (e.g., `Authorization` for authenticated endpoints). It is only used for `http` transport — ignored for `stdio` servers.
+
+### Project-Level MCP Servers
+
+MCP servers can be configured at the **agent profile level** (global) or at the **project level** (per-project override). Both are managed in the Settings UI.
+
+**Merge semantics**: At dispatch time, project-level MCP servers are merged with the resolved agent profile's MCP servers:
+- A project server with the same `Name` (case-insensitive) as a profile server **replaces** it
+- Project servers with new names are **appended** to the profile list
+- `null` project servers = inherit profile list unchanged
+
+This allows projects to selectively override or augment the profile's MCP configuration without having to redefine the entire list.
+
+**Chat session isolation**: MCP servers, project secrets, and steering content are **not** passed to interactive chat sessions. Chat sessions use the agent's own runtime environment. This is by design and is not configurable.
+

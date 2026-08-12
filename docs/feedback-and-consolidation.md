@@ -98,9 +98,9 @@ Each suggestion includes:
 
 Configuration: `HarnessSuggestionsReviewEnabled` (default: `true`) controls the adversarial review step.
 
-### Consolidation Queue
+### Consolidation Dispatch
 
-Consolidation jobs are dispatched via a queue (`ConsolidationQueueService`). The queue has no hard size limit, but enforces:
+Consolidation jobs are dispatched via `ConsolidationDispatchService` (implements `IConsolidationDispatchService`). The service enforces:
 
 - **Time-based expiry:** Jobs queued longer than 24 hours are expired and transitioned to `Failed` status
 - **Deduplication:** The same `RunId` cannot be enqueued twice
@@ -116,3 +116,7 @@ The sidebar shows a "Consolidation" nav item with a badge count (new issues + su
 - Per-template cards with trigger buttons and last-run status
 - Global harness suggestions section
 - Run history table across all consolidation types
+
+### Retention
+
+In DB mode, consolidation run history is automatically pruned by `DatabaseMaintenanceService`. The default retention period is **90 days** after completion. Configure via `WorkDistribution:Reconciliation:ConsolidationRunRetentionDays`. See [Configuration — Database Maintenance](configuration.md#database-maintenance-db-mode) for details.

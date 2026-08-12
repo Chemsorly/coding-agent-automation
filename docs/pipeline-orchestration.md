@@ -1,12 +1,13 @@
 # Pipeline Orchestration
 
-The pipeline is a state machine that progresses through a fixed sequence of steps, with decision points that can branch to terminal states. There are three pipeline workflows:
+The pipeline is a state machine that progresses through a fixed sequence of steps, with decision points that can branch to terminal states. There are four pipeline workflows:
 
 1. **Implementation pipeline** — Processes issues through analysis, code generation, quality gates, and PR creation
 2. **PR review pipeline** — Processes pull requests through code review and posts findings (see [PR Review Pipeline](#pr-review-pipeline) below)
 3. **Epic decomposition pipeline** — Processes epics through a two-phase workflow producing implementation-ready sub-issues (see [Epic Decomposition Pipeline](#epic-decomposition-pipeline) below)
+4. **Consolidation pipeline** — Brain consolidation, refactoring detection, and harness suggestion runs. Dispatched on-demand via the Consolidation page, not by the label-based loop. See [Feedback & Consolidation](feedback-and-consolidation.md) for details.
 
-All three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure.
+The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are dispatched by a separate `ConsolidationDispatchHandler` and do not go through the label loop.
 
 ## Dispatch Modes
 
@@ -229,7 +230,7 @@ The `OrphanedLabelRecoveryService` is a background service that detects issues s
 
 1. **Grace period** — On startup, waits 60 seconds before the first sweep to allow agents to reconnect after a pod restart
 2. **Initial sweep** — Runs immediately after the grace period
-3. **Periodic sweeps** — Repeats at the configured `orphanedLabelSweepIntervalMinutes` interval (default: 30 min, minimum: 5 min)
+3. **Periodic sweeps** — Repeats at the configured `orphanedLabelSweepIntervalMinutes` interval (default: 30 min)
 
 ### Sweep Logic
 
@@ -250,7 +251,7 @@ Each sweep:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `orphanedLabelSweepIntervalMinutes` | 30 | Minutes between recovery sweeps (minimum: 5) |
+| `orphanedLabelSweepIntervalMinutes` | 30 | Minutes between recovery sweeps |
 
 See [Configuration](configuration.md) for the full settings reference.
 
@@ -398,9 +399,21 @@ The existing `Enabled` property acts as a master switch — when `false`, all wo
 
 Settings are read at the start of each poll cycle, allowing runtime changes via the configuration UI without restarting the loop.
 
+### Dispatch Priority
+
+When multiple work types are active in the same cycle, the scheduler uses a fixed priority order — not round-robin — to decide which queue to serve first:
+
+| Priority | Work Type | Notes |
+|----------|-----------|-------|
+| 1 (highest) | Pull Requests (Review) | Dispatched first each cycle |
+| 2 | Decomposition | Phase 1 and Phase 2 epics |
+| 3 | Issues (Implementation) | Dispatched last |
+
+The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs (brain consolidation, refactoring detection, harness suggestions) are handled by a separate `ConsolidationDispatchHandler` and do not participate in this scheduler.
+
 ### Dispatch Budget Sharing
 
-When multiple work type loops are active, they share the `ClosedLoopMaxRunsPerCycle` budget. The pipeline alternates fairly between issue, PR, and decomposition queues (round-robin) to prevent starvation of any work type.
+All active queues share the `ClosedLoopMaxRunsPerCycle` budget.
 
 - Total dispatches per cycle never exceed `ClosedLoopMaxRunsPerCycle`
 - All active queues get at least one dispatch when budget allows
@@ -588,6 +601,7 @@ stateDiagram-v2
 |----------|------|---------|-------------|
 | `DecompositionEnabled` | `bool` | `false` | Enable decomposition polling for this template |
 | `MaxDecompositionSubIssues` | `int` | `10` | Maximum sub-issues per epic (range: 1–20) |
+| `MaxDecompositionSubIssueFiles` | `int` | `12` | Maximum files a single sub-issue may create or modify (range: 1–30) |
 | `MaxConcurrentDecompositions` | `int` | `2` | Maximum simultaneous decomposition runs |
 | `DecompositionTimeout` | `TimeSpan` | `15 min` | Timeout for each decomposition phase |
 | `MaxOpenIssuesForContext` | `int` | `50` | Open issues downloaded for deduplication context |

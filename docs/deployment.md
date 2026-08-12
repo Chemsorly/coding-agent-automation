@@ -159,6 +159,10 @@ Each agent derives its own auth key via `HMAC(master_key, agent_id)`, enabling p
 
 The orchestrator generates short-lived GitHub installation tokens for agents on demand. Private keys never leave the orchestrator container — agents receive time-limited tokens for API calls.
 
+### Per-Process Environment Variables
+
+Secrets and environment variables injected for a pipeline run (via setup steps or project secrets) are scoped to the **child agent process only**. They are set on `ProcessStartInfo.Environment` before the process launches and do not affect the orchestrator process or any other running agent. This means there is no risk of secret leakage between concurrent runs or into the orchestrator's own environment.
+
 ---
 
 ## Helm Chart (Kubernetes)

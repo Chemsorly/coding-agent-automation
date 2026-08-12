@@ -22,6 +22,8 @@ Approve: swap to agent:epic-approved → Phase 2: Clone → Brain sync
   → Post summary comment → Label: agent:done
 ```
 
+> **Context for the agent:** Both phases download existing issues for deduplication context. In addition to open issues (up to `MaxOpenIssuesForContext`), decomposition runs also include recently-closed sibling issues (up to ~25% of the context budget, lookback 30 days). This helps the agent avoid creating sub-issues that duplicate recently completed work.
+
 ## Label State Machine
 
 | Current Label | Trigger | Next Label |
@@ -50,6 +52,7 @@ After Phase 1 posts the decomposition plan:
 |----------|------|---------|-------------|
 | `DecompositionEnabled` | `bool` | `false` | Enable decomposition polling for this template |
 | `MaxDecompositionSubIssues` | `int` | `10` | Maximum sub-issues per epic (range: 1–20) |
+| `MaxDecompositionSubIssueFiles` | `int` | `12` | Maximum files a single sub-issue may create or modify (range: 1–30). Keeps each sub-issue within single-agent capacity |
 | `MaxConcurrentDecompositions` | `int` | `2` | Maximum simultaneous decomposition runs |
 | `DecompositionTimeout` | `TimeSpan` | `15 min` | Timeout for each decomposition phase |
 | `MaxOpenIssuesForContext` | `int` | `50` | Open issues downloaded for deduplication context |
