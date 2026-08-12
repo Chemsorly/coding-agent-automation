@@ -134,12 +134,14 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
         var agentId = "agent-42";
         var connectionId = "conn-abc";
 
-        var existingRun = PipelineRun.CreateImplementation(
-            runId: runId,
-            issueIdentifier: "owner/repo#10",
-            issueTitle: "Existing",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1");
+        var existingRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#10",
+            IssueTitle = "Existing",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        });
 
         var request = new JobDistributionRequest
         {
