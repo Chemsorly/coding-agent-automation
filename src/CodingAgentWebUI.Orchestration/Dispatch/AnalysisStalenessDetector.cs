@@ -56,7 +56,11 @@ public sealed class AnalysisStalenessDetector
 
         ArgumentNullException.ThrowIfNull(analysisComment);
         ArgumentNullException.ThrowIfNull(issueComments);
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        // TODO: [WARNING] ThrowIfNullOrEmpty(issueIdentifier.Value) reports the parameter name as
+        // "issueIdentifier.Value" (via CallerArgumentExpression) rather than "issueIdentifier".
+        // Pass the explicit name to improve debuggability:
+        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
 
         // TODO: Validate issueBody with ArgumentNullException.ThrowIfNull for consistency
         // with other parameter validation in this method (AnalysisBodyHash.Compute handles null,

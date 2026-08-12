@@ -309,7 +309,7 @@ public class AgentCodingPageServiceTests
         _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
 
         _mockDependencyChecker.Setup(d => d.CheckAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IIssueProvider>(),
+            It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
             It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
 
@@ -359,7 +359,7 @@ public class AgentCodingPageServiceTests
         _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
 
         _mockDependencyChecker.Setup(d => d.CheckAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IIssueProvider>(),
+            It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
             It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
 
@@ -494,7 +494,7 @@ public class AgentCodingPageServiceTests
             });
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockIssueProvider.Object);
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
 
         await _service.LoadDrawerIssuesAsync(template, 1);
@@ -526,8 +526,8 @@ public class AgentCodingPageServiceTests
             .Returns(mockIssueProvider.Object);
 
         var callCount = 0;
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .Returns<string, string?, IIssueProvider, Dictionary<int, bool>, CancellationToken>((id, _, _, _, _) =>
+        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .Returns<IssueIdentifier, string?, IIssueProvider, Dictionary<int, bool>, CancellationToken>((id, _, _, _, _) =>
             {
                 if (++callCount == 2) throw new InvalidOperationException("provider error");
                 return Task.FromResult(DependencyCheckResult.NoDependencies);
@@ -961,7 +961,7 @@ public class AgentCodingPageServiceTests
         await _service.OpenIssueDrawerAsync("t-1");
         Assert.True(_service.IsIssueDrawerOpen);
 
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
         _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
             It.IsAny<ImplementationDispatchOrchestrationRequest>(),
@@ -987,7 +987,7 @@ public class AgentCodingPageServiceTests
 
         await _service.OpenIssueDrawerAsync("t-1");
 
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DependencyCheckResult { IsReady = false, BlockedBy = [10], TotalDependencies = 1 });
 
         var (success, error, msg) = await _service.DispatchFromIssueDrawerAsync(MakeIssue());
@@ -1034,7 +1034,7 @@ public class AgentCodingPageServiceTests
         await _service.OpenEpicDrawerAsync("t-1");
         Assert.True(_service.IsEpicDrawerOpen);
 
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
         _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(
             It.IsAny<DecompositionDispatchOrchestrationRequest>(),
@@ -1380,7 +1380,7 @@ public class AgentCodingPageServiceTests
         _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
 
         _mockDependencyChecker.Setup(d => d.CheckAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IIssueProvider>(),
+            It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
             It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
 

@@ -3663,7 +3663,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var dedupCount = 0;
         var mockDedup = new Mock<IJobDeduplicationGuard>();
         mockDedup
-            .Setup(d => d.MarkIssueComplete(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+            .Setup(d => d.MarkIssueComplete(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Callback(() => dedupCount++);
 
         var service = new PipelineOrchestrationService(
@@ -3793,7 +3793,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var dedupCallCount = 0;
         var mockDedup = new Mock<IJobDeduplicationGuard>();
         mockDedup
-            .Setup(d => d.MarkIssueComplete(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+            .Setup(d => d.MarkIssueComplete(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Callback(() => dedupCallCount++);
 
         var service = new PipelineOrchestrationService(

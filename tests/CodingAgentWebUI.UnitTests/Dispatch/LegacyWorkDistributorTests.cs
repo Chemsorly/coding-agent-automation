@@ -156,7 +156,7 @@ public class LegacyWorkDistributorTests
             It.IsAny<CancellationToken>(),
             It.IsAny<PipelineProject?>()), Times.Never);
         _mockJobDispatcher.Verify(d => d.TryDispatchDecompositionAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
+            It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
             It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(), It.IsAny<string?>(),
             It.IsAny<string>(), It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<PipelineProject?>()), Times.Never);
@@ -309,7 +309,7 @@ public class LegacyWorkDistributorTests
         var queuedJobs = _dispatcherService.GetQueuedJobs();
         queuedJobs.Should().HaveCount(1);
         var job = queuedJobs[0];
-        job.IssueIdentifier.Should().Be("crun-123");
+        job.IssueIdentifier.Value.Should().Be("crun-123");
         job.IssueProviderId.Value.Should().Be("consolidation");
         job.RepoProviderId.Value.Should().Be("consolidation"); // falls back to IssueProviderId since RepoProviderConfigId was empty
         job.InitiatedBy.Should().Be("consolidation");

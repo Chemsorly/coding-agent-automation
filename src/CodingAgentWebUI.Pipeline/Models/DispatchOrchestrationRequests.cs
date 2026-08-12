@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 public sealed record ImplementationDispatchOrchestrationRequest
 {
     /// <summary>The issue to dispatch.</summary>
-    public required string IssueIdentifier { get; init; }
+    public required IssueIdentifier IssueIdentifier { get; init; }
 
     /// <summary>Issue provider config ID.</summary>
     public required ProviderConfigId IssueProviderId { get; init; }
@@ -43,7 +43,7 @@ public sealed record ImplementationDispatchOrchestrationRequest
 public sealed record DecompositionDispatchOrchestrationRequest
 {
     /// <summary>Epic issue identifier.</summary>
-    public required string EpicIdentifier { get; init; }
+    public required IssueIdentifier EpicIdentifier { get; init; }
 
     /// <summary>Epic issue title.</summary>
     public required string EpicTitle { get; init; }

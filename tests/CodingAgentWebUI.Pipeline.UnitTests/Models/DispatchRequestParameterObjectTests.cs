@@ -26,7 +26,7 @@ public class DispatchRequestParameterObjectTests
 
         req.IssueProviderId.Value.Should().Be("ip-1");
         req.RepoProviderId.Value.Should().Be("rp-1");
-        req.IssueIdentifier.Should().Be("owner/repo#42");
+        req.IssueIdentifier.Value.Should().Be("owner/repo#42");
         req.AgentProviderId.Value.Should().Be("ap-1");
     }
 
@@ -104,7 +104,7 @@ public class DispatchRequestParameterObjectTests
             Project = project
         };
 
-        req.IssueIdentifier.Should().Be("owner/repo#10");
+        req.IssueIdentifier.Value.Should().Be("owner/repo#10");
         req.IssueProviderId.Value.Should().Be("ip-1");
         req.RepoProviderId.Value.Should().Be("rp-1");
         req.InitiatedBy.Should().Be("loop");
@@ -168,7 +168,7 @@ public class DispatchRequestParameterObjectTests
             Project = project
         };
 
-        req.EpicIdentifier.Should().Be("owner/repo#100");
+        req.EpicIdentifier.Value.Should().Be("owner/repo#100");
         req.EpicTitle.Should().Be("Big Epic");
         req.PhaseType.Should().Be(PipelineRunType.DecompositionAnalysis);
         req.IssueProviderId.Value.Should().Be("ip-1");

@@ -20,13 +20,17 @@ public sealed class DependencyChecker : IDependencyChecker
     }
 
     public async Task<DependencyCheckResult> CheckAsync(
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         string? issueBody,
         IIssueProvider issueProvider,
         Dictionary<int, bool> stateCache,
         CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        // TODO: [WARNING] ThrowIfNullOrEmpty(issueIdentifier.Value) reports the parameter name as
+        // "issueIdentifier.Value" (via CallerArgumentExpression) rather than "issueIdentifier".
+        // Pass the explicit name to improve debuggability:
+        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(issueProvider);
         ArgumentNullException.ThrowIfNull(stateCache);
 

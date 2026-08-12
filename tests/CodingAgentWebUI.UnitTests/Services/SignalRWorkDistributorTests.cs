@@ -791,7 +791,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         // Arrange: agent available, lifecycle manager throws — dispatch should still succeed
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         mockLifecycle
-            .Setup(l => l.AgentAcceptedRunAsync(It.IsAny<RunId>(), It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
+            .Setup(l => l.AgentAcceptedRunAsync(It.IsAny<RunId>(), It.IsAny<AgentId>(), It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("GitHub API error"));
 
         var sut = new SignalRWorkDistributor(

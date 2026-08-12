@@ -8,7 +8,7 @@ public sealed partial class AgentJobDispatcher
 {
     /// <inheritdoc />
     public async Task<bool> TryDispatchAsync(
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderId,
         ProviderConfigId repoProviderId,
         string? brainProviderId,
@@ -18,7 +18,11 @@ public sealed partial class AgentJobDispatcher
         string? issueTitle = null,
         PipelineProject? project = null)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        // TODO: [WARNING] ThrowIfNullOrEmpty(issueIdentifier.Value) reports the parameter name as
+        // "issueIdentifier.Value" (via CallerArgumentExpression) rather than "issueIdentifier".
+        // Pass the explicit name to improve debuggability:
+        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(initiatedBy);
         // TODO: [WARNING] No validation for default(ProviderConfigId) (Value == null). The
         // ArgumentNullException.ThrowIfNull guards that previously covered issueProviderId/repoProviderId
@@ -30,7 +34,7 @@ public sealed partial class AgentJobDispatcher
         // and the equivalent for repoProviderId at the entry point of each public dispatch method.
 
         // Check if already being processed
-        if (_orchestration.IsIssueBeingProcessed(issueIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(issueIdentifier, issueProviderId.Value))
+        if (_orchestration.IsIssueBeingProcessed(issueIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(issueIdentifier, issueProviderId))
         {
             _logger.Information("Issue {IssueIdentifier} already being processed or queued, skipping dispatch", issueIdentifier);
             return false;
@@ -102,7 +106,7 @@ public sealed partial class AgentJobDispatcher
 
     /// <inheritdoc />
     public async Task<bool> TryDispatchDecompositionAsync(
-        string epicIdentifier,
+        IssueIdentifier epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
         ProviderConfigId issueProviderId,
@@ -113,7 +117,11 @@ public sealed partial class AgentJobDispatcher
         string? decompositionSource = null,
         PipelineProject? project = null)
     {
-        ArgumentNullException.ThrowIfNull(epicIdentifier);
+        // TODO: [WARNING] ThrowIfNullOrEmpty(epicIdentifier.Value) reports the parameter name as
+        // "epicIdentifier.Value" (via CallerArgumentExpression) rather than "epicIdentifier".
+        // Pass the explicit name to improve debuggability:
+        // ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value, nameof(epicIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value);
         ArgumentNullException.ThrowIfNull(epicTitle);
         ArgumentNullException.ThrowIfNull(initiatedBy);
 
@@ -121,7 +129,7 @@ public sealed partial class AgentJobDispatcher
             throw new ArgumentOutOfRangeException(nameof(phaseType), phaseType, "Must be DecompositionAnalysis or Decomposition");
 
         // Check if already being processed
-        if (_orchestration.IsIssueBeingProcessed(epicIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(epicIdentifier, issueProviderId.Value))
+        if (_orchestration.IsIssueBeingProcessed(epicIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(epicIdentifier, issueProviderId))
         {
             _logger.Information("Epic {EpicIdentifier} already being processed or queued, skipping decomposition dispatch", epicIdentifier);
             return false;

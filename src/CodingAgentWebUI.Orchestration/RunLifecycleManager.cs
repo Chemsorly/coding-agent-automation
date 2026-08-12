@@ -212,7 +212,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task AgentAcceptedRunAsync(RunId runId, AgentId agentId, string issueIdentifier,
+    public async Task AgentAcceptedRunAsync(RunId runId, AgentId agentId, IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderConfigId, ProviderConfigId repoProviderConfigId,
         PipelineRunType runType, CancellationToken ct)
     {

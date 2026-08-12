@@ -148,7 +148,7 @@ public sealed class AgentMonitoringPageServiceTests
         await _sut.RefreshDataAsync();
 
         _sut.QueuedJobs.Should().HaveCount(1);
-        _sut.QueuedJobs[0].IssueIdentifier.Should().Be("1");
+        _sut.QueuedJobs[0].IssueIdentifier.Value.Should().Be("1");
     }
 
     // ── CancelAgentRunAsync — Agent not found ──

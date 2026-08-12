@@ -18,7 +18,7 @@ public sealed partial class AgentJobDispatcher
         public required AgentEntry Agent { get; init; }
         public required PipelineRun Run { get; init; }
         public required AgentProfile Profile { get; init; }
-        public required string IssueIdentifier { get; init; }
+        public required IssueIdentifier IssueIdentifier { get; init; }
         public required IssueDetail IssueDetail { get; init; }
         public required ParsedIssue ParsedIssue { get; init; }
         public required IReadOnlyList<IssueComment> IssueComments { get; init; }
@@ -229,7 +229,7 @@ public sealed partial class AgentJobDispatcher
     /// </summary>
     internal async Task<bool> DispatchToAgentAsync(
         AgentEntry agent,
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderId,
         ProviderConfigId repoProviderId,
         string? brainProviderId,
@@ -292,7 +292,7 @@ public sealed partial class AgentJobDispatcher
     /// </summary>
     internal async Task<bool> DispatchDecompositionToAgentAsync(
         AgentEntry agent,
-        string epicIdentifier,
+        IssueIdentifier epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
         ProviderConfigId issueProviderId,

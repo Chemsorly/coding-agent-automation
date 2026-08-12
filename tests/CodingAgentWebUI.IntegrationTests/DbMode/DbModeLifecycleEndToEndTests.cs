@@ -430,7 +430,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         var pendingQuery = new DbPendingWorkQuery(_dbFactory);
         var pendingJobs = await pendingQuery.GetPendingJobsAsync(CancellationToken.None);
         pendingJobs.Should().HaveCount(1);
-        pendingJobs[0].IssueIdentifier.Should().Be("owner/repo#6");
+        pendingJobs[0].IssueIdentifier.Value.Should().Be("owner/repo#6");
 
         // Simulate creating the run from drain
         var restoredRun = new PipelineRun
@@ -927,7 +927,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         jobs.Should().HaveCount(1);
         jobs[0].IssueTitle.Should().Be("Payload Round-Trip Title");
         jobs[0].RepoProviderId.Value.Should().Be("rp-17");
-        jobs[0].IssueIdentifier.Should().Be("owner/repo#17");
+        jobs[0].IssueIdentifier.Value.Should().Be("owner/repo#17");
         jobs[0].IssueProviderId.Value.Should().Be("ip-17");
         jobs[0].RequiredLabels.Should().Contain("dotnet");
     }

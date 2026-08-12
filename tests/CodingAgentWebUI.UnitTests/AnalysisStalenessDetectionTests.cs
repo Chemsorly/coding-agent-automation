@@ -27,9 +27,9 @@ public class AnalysisStalenessDetectorTests
     {
         _detector = new AnalysisStalenessDetector(_mockQuery.Object, _mockLogger.Object);
         // Default: no successes, no errors
-        _mockQuery.Setup(q => q.GetLastSuccessfulCompletionAsync(It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<CancellationToken>()))
+        _mockQuery.Setup(q => q.GetLastSuccessfulCompletionAsync(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DateTimeOffset?)null);
-        _mockQuery.Setup(q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+        _mockQuery.Setup(q => q.HasAgentErrorSinceAsync(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
     }
 
@@ -105,7 +105,7 @@ public class AnalysisStalenessDetectorTests
         // Same weakness applies to InfrastructureFailure and TokenRefreshFailure tests below.
         // Consider adding integration tests against WorkItemTransitionService.HasAgentErrorSinceAsync
         // with actual WorkItems of each FailureReason type.
-        _mockQuery.Setup(q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<ProviderConfigId>(),
+        _mockQuery.Setup(q => q.HasAgentErrorSinceAsync(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(),
             It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
@@ -121,7 +121,12 @@ public class AnalysisStalenessDetectorTests
     public async Task Signal1_InfrastructureFailureAfterAnalysis_NoForceRefresh()
     {
         // InfrastructureFailure does NOT trigger HasAgentErrorSinceAsync (it only returns true for AgentError)
-        _mockQuery.Setup(q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<ProviderConfigId>(),
+        // TODO: [WARNING] This test is structurally identical to Signal1_TimeoutAfterAnalysis_NoForceRefresh and
+        // Signal1_TokenRefreshFailureAfterAnalysis_NoForceRefresh — all three set up HasAgentErrorSinceAsync to
+        // return false unconditionally. None of them verify that the respective failure type actually bypasses
+        // the DB call. Add a Times.Never verify on HasAgentErrorSinceAsync to confirm the intended behavior:
+        // _mockQuery.Verify(q => q.HasAgentErrorSinceAsync(...), Times.Never);
+        _mockQuery.Setup(q => q.HasAgentErrorSinceAsync(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(),
             It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
@@ -137,7 +142,12 @@ public class AnalysisStalenessDetectorTests
     public async Task Signal1_TokenRefreshFailureAfterAnalysis_NoForceRefresh()
     {
         // TokenRefreshFailure does NOT trigger HasAgentErrorSinceAsync (it only returns true for AgentError)
-        _mockQuery.Setup(q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<ProviderConfigId>(),
+        // TODO: [WARNING] This test is structurally identical to Signal1_TimeoutAfterAnalysis_NoForceRefresh and
+        // Signal1_InfrastructureFailureAfterAnalysis_NoForceRefresh — all three set up HasAgentErrorSinceAsync to
+        // return false unconditionally. None of them verify that the respective failure type actually bypasses
+        // the DB call. Add a Times.Never verify on HasAgentErrorSinceAsync to confirm the intended behavior:
+        // _mockQuery.Verify(q => q.HasAgentErrorSinceAsync(...), Times.Never);
+        _mockQuery.Setup(q => q.HasAgentErrorSinceAsync(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(),
             It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
@@ -277,7 +287,7 @@ public class AnalysisStalenessDetectorTests
         result.ForceRefresh.Should().BeTrue();
         result.Signal.Should().Be("body_changed");
         // HasAgentErrorSinceAsync should not have been called since body_changed fired first
-        _mockQuery.Verify(q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<ProviderConfigId>(),
+        _mockQuery.Verify(q => q.HasAgentErrorSinceAsync(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(),
             It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

@@ -59,10 +59,14 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
     public bool HasRegisteredAgents => _registry.GetAllAgents().Count > 0;
 
     /// <inheritdoc />
-    public bool IsIssueBeingProcessedOrQueued(string issueIdentifier, ProviderConfigId issueProviderConfigId)
+    public bool IsIssueBeingProcessedOrQueued(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
-        return _dispatcher.IsIssueQueued(issueIdentifier, issueProviderConfigId.Value)
+        // TODO: [WARNING] ThrowIfNullOrEmpty(issueIdentifier.Value) reports the parameter name as
+        // "issueIdentifier.Value" (via CallerArgumentExpression) rather than "issueIdentifier".
+        // Pass the explicit name to improve debuggability:
+        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
+        return _dispatcher.IsIssueQueued(issueIdentifier, issueProviderConfigId)
             || _runService.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId);
     }
 }

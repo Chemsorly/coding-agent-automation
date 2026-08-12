@@ -40,10 +40,10 @@ public interface IPipelineCallbacks
     Task UpdateFileChangeStats(PipelineRun run);
 
     /// <summary>Swaps the agent label on the issue (removes all agent labels, adds the new one).</summary>
-    Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct);
+    Task SwapAgentLabel(IssueIdentifier issueIdentifier, string label, CancellationToken ct);
 
     /// <summary>Removes all agent labels from the issue.</summary>
-    Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct);
+    Task RemoveAllAgentLabels(IssueIdentifier issueIdentifier, CancellationToken ct);
 
     /// <summary>Creates a pull request for the completed pipeline run.</summary>
     Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct);
