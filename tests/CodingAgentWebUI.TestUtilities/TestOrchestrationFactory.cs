@@ -13,14 +13,38 @@ public static class TestOrchestrationFactory
     /// <summary>
     /// Creates a <see cref="PipelineOrchestrationService"/> with no-op/null defaults for all facade parameters.
     /// Tests should provide specific implementations only for the dependencies they exercise.
+    /// <para>
+    /// When <see cref="CreateMinimalOptions.OrchestrationService"/> is set, that instance is returned
+    /// directly without constructing the concrete class — allowing tests to inject a
+    /// <c>Mock&lt;IPipelineOrchestrationService&gt;</c> without the 6-parameter concrete constructor.
+    /// </para>
     /// </summary>
-    public static PipelineOrchestrationService CreateMinimal(CreateMinimalOptions? options = null)
+    // TODO: [WARNING] This overload now returns IPipelineOrchestrationService instead of the concrete
+    // PipelineOrchestrationService. This is a source-breaking change for any caller that previously used
+    // the concrete return type to access IDisposable.Dispose, IAsyncDisposable.DisposeAsync, or
+    // IOrchestrationShutdownAction.ReleaseActiveAgentRunsAsync. Callers using `var` will silently lose
+    // access to those members. The named-parameter overload (below) still returns PipelineOrchestrationService,
+    // making the two overloads inconsistent. Consider whether callers that need disposal should explicitly
+    // use the named-parameter overload or cast the result.
+    public static IPipelineOrchestrationService CreateMinimal(CreateMinimalOptions? options = null)
     {
         var o = options ?? new CreateMinimalOptions();
+
+        // Short-circuit: if the caller supplied a pre-built IPipelineOrchestrationService (e.g. a mock),
+        // return it directly so tests only need the interface, not the 6-parameter concrete class.
+        if (o.OrchestrationService is not null)
+            return o.OrchestrationService;
+
         var logger = o.Logger ?? Serilog.Log.Logger;
         var historyService = o.HistoryService ?? new NullHistoryService();
 
         var store = o.ConfigStore ?? throw new ArgumentNullException(nameof(options), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object");
+        // TODO: [WARNING] The ArgumentNullException above (and the one below) use nameof(options) as the
+        // paramName, but the missing value is ConfigStore/ProviderFactory within the options object —
+        // not options itself. This makes diagnostics misleading when a caller passes a populated
+        // CreateMinimalOptions with only one field missing. The named-parameter overload correctly uses
+        // nameof(configStore). Consider throwing ArgumentException with a message pointing to the specific
+        // field, or using nameof(o.ConfigStore), to align with the named-parameter overload's behaviour.
         // TODO: Passing the same store object as both IPipelineConfigStore and IProviderConfigStore prevents tests
         // from verifying that calls are routed to the correct sub-interface. Consider accepting separate parameters.
         return new PipelineOrchestrationService(
@@ -45,17 +69,39 @@ public static class TestOrchestrationFactory
         Serilog.ILogger? logger = null,
         IPipelineRunHistoryService? historyService = null,
         IOrchestratorRunService? runService = null)
-        => CreateMinimal(new CreateMinimalOptions
-        {
-            ConfigStore = configStore,
-            ProviderFactory = providerFactory,
-            CancellationFacade = cancellationFacade,
-            Lifecycle = lifecycle,
-            LabelService = labelService,
-            Logger = logger,
-            HistoryService = historyService,
-            RunService = runService
-        });
+    {
+        logger ??= Serilog.Log.Logger;
+        historyService ??= new NullHistoryService();
+        var store = configStore ?? throw new ArgumentNullException(nameof(configStore), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object");
+        return new PipelineOrchestrationService(
+            store,
+            providerFactory ?? throw new ArgumentNullException(nameof(providerFactory), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
+            cancellationFacade ?? new PipelineCancellationFacade(null, null),
+            lifecycle ?? new PipelineRunLifecycleService(historyService, runService, logger),
+            labelService ?? NoOpLabelService.Instance,
+            logger);
+    }
+
+    /// <summary>
+    /// Returns an <see cref="IPipelineOrchestrationService"/> for tests that only need to verify
+    /// cancel interactions and do not require the full concrete <see cref="PipelineOrchestrationService"/>
+    /// with its 6-parameter constructor.
+    /// <para>
+    /// Pass a <c>Mock&lt;IPipelineOrchestrationService&gt;().Object</c> to inject a verifiable mock,
+    /// or omit the argument to receive a lightweight no-op implementation.
+    /// </para>
+    /// </summary>
+    /// <param name="orchestrationService">
+    /// Optional pre-built implementation. When <c>null</c>, a no-op is returned.
+    /// </param>
+    public static IPipelineOrchestrationService CreateMinimalInterface(
+        IPipelineOrchestrationService? orchestrationService = null)
+        => orchestrationService ?? new NoOpOrchestrationService();
+
+    private sealed class NoOpOrchestrationService : IPipelineOrchestrationService
+    {
+        public Task CancelPipelineAsync() => Task.CompletedTask;
+    }
 
     /// <summary>
     /// Creates a <see cref="DispatchRunCreationService"/> with the same lifecycle as a companion
