@@ -52,13 +52,6 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         _options = DispatchServiceOptionsFactory.Create(deps.Configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
         InitializeRateLimiter(_options.RateLimitPerSecond);
-        // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
-        // deps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
-        // singleton is always passed, so this path is never taken at runtime. However, a test that
-        // accidentally omits StateBuilder will get a second live builder instance instead of a fast-fail,
-        // making missing DI wiring invisible. Consider removing the fallback and requiring StateBuilder
-        // explicitly, or asserting that deps.StateBuilder is non-null in production paths.
-        // See DotNetSpecialist WARNING (Issue #1910).
         _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
             _dbFactory,
             _lifecycle,
@@ -88,8 +81,6 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         _options = options;
         _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
         InitializeRateLimiter(_options.RateLimitPerSecond);
-        // TODO: Same null-coalescing fallback as in the primary constructor — silently constructs a live
-        // DispatchStateBuilder when deps.StateBuilder is not provided. See DotNetSpecialist WARNING (Issue #1910).
         _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
             _dbFactory,
             _lifecycle,
@@ -104,15 +95,6 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
 
     internal async Task PollAndDispatchConsolidationAsync(CancellationToken ct)
     {
-        // TODO: recordTelemetry:false means RecordLastPollEpoch() and UpdateCredentialPoolMetrics() are
-        // not called for consolidation polls. This IS a behavioral change from the old private
-        // BuildDispatchStateAsync in this class, which unconditionally called
-        // WorkDistributionTelemetry.UpdateCredentialPoolMetrics(...) on every consolidation poll.
-        // Credential pool gauge metrics (available PVC count, claimed count) will no longer be updated
-        // during consolidation polls. If this handler is the only active poller at a given moment,
-        // dashboards may show stale or zero values until a regular DispatchService poll runs.
-        // To restore the original behaviour, switch to recordTelemetry:true or introduce a separate
-        // consolidation-specific metric path. See CorrectnesReviewer WARNING (Issue #1910).
         var state = await _stateBuilder.BuildStateAsync(
             w => w.TaskType == WorkItemTaskType.Consolidation,
             recordTelemetry: false,
@@ -145,13 +127,8 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         List<string> availablePvcs,
         CancellationToken ct)
     {
-        // TODO: RateLimiter is nullable (protected TokenBucketRateLimiter? RateLimiter) but accessed with the
-        // null-forgiving operator (!). Both constructors call InitializeRateLimiter, so it is never null in
-        // production, but the ! suppresses the compiler's null-safety check. A future subclass or test subclass
-        // that omits InitializeRateLimiter will get a NullReferenceException here rather than a clear diagnostic.
-        // Consider adding ArgumentNullException.ThrowIfNull(RateLimiter) before AcquireAsync, or making the
-        // base-class field non-nullable by requiring InitializeRateLimiter in the constructor chain.
-        using var lease = await RateLimiter!.AcquireAsync(1, ct);
+        ArgumentNullException.ThrowIfNull(RateLimiter);
+        using var lease = await RateLimiter.AcquireAsync(1, ct);
         if (!lease.IsAcquired)
         {
             Log.Warning("ConsolidationDispatchHandler: rate limit hit, stopping dispatch cycle");
@@ -160,7 +137,6 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
 
         var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
 
-        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
         switch (result.Outcome)
         {
             case EligibilityOutcome.AtConcurrencyLimit:
@@ -336,9 +312,6 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         if (_consolidationJobPreparer is null)
         {
             Log.Error("ConsolidationDispatchHandler: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
-            // Throw without calling FailConsolidationWorkItemAsync here: the caller's catch (Exception ex) block
-            // will call FailConsolidationWorkItemAsync exactly once. Calling it here AND throwing would cause a
-            // double-fail — the same work item would be transitioned to Failed twice with two different messages.
             throw new InvalidOperationException("IConsolidationJobPreparationService not registered");
         }
 

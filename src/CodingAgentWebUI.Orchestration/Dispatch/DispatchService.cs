@@ -68,13 +68,6 @@ public sealed class DispatchService : LeaderElectedPollingService
         _options = DispatchServiceOptionsFactory.Create(configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
         InitializeRateLimiter(_options.RateLimitPerSecond);
-        // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
-        // coreDeps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
-        // singleton is always passed, so this path is never taken at runtime. If _dbFactory or _lifecycle
-        // are null in a test scenario, the new DispatchStateBuilder(...) expression will compile fine
-        // but throw a NullReferenceException at the first BuildStateAsync call rather than at construction,
-        // making failures harder to diagnose. Consider removing the fallback and requiring StateBuilder
-        // explicitly. See DotNetSpecialist WARNING (Issue #1910).
         _stateBuilder = coreDeps.StateBuilder ?? new DispatchStateBuilder(
             _dbFactory,
             _lifecycle,
@@ -137,13 +130,6 @@ public sealed class DispatchService : LeaderElectedPollingService
             }
         }
 
-        // TODO: DispatcherPollCount is now incremented unconditionally after every poll that found pending items
-        // (i.e. when state is non-null). Previously it was only incremented on the early-return path when
-        // pendingItems.Count == 0 (the "nothing to do" poll). This is a behavioral change: dashboards and
-        // alerts keyed on this counter will see higher values after deployment. If the intent is to count
-        // ALL polls (empty + non-empty), this is correct — but it should be documented. If the original
-        // intent was to count only empty polls, remove this call and leave it solely inside BuildStateAsync.
-        // See Correctness WARNING (Issue #1910).
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
 
@@ -177,13 +163,8 @@ public sealed class DispatchService : LeaderElectedPollingService
         if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
             return false;
 
-        // TODO: RateLimiter is nullable (protected TokenBucketRateLimiter? RateLimiter) but accessed with the
-        // null-forgiving operator (!). Both constructors call InitializeRateLimiter, so it is never null in
-        // production, but the ! suppresses the compiler's null-safety check. A future subclass or test subclass
-        // that omits InitializeRateLimiter will get a NullReferenceException here rather than a clear diagnostic.
-        // Consider adding ArgumentNullException.ThrowIfNull(RateLimiter) before AcquireAsync, or making the
-        // base-class field non-nullable by requiring InitializeRateLimiter in the constructor chain.
-        using var lease = await RateLimiter!.AcquireAsync(1, ct);
+        ArgumentNullException.ThrowIfNull(RateLimiter);
+        using var lease = await RateLimiter.AcquireAsync(1, ct);
         if (!lease.IsAcquired)
         {
             Log.Warning("DispatchService: rate limit hit, stopping dispatch cycle");
@@ -192,7 +173,6 @@ public sealed class DispatchService : LeaderElectedPollingService
 
         var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
 
-        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
         switch (result.Outcome)
         {
             case EligibilityOutcome.AtConcurrencyLimit:

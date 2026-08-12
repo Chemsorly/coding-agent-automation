@@ -82,12 +82,6 @@ public abstract class LeaderElectedPollingService : BackgroundService
             // Wait for leadership (2s poll)
             while (!stoppingToken.IsCancellationRequested && !LeaderElection.IsLeader)
             {
-                // TODO: This Task.Delay is not wrapped in a try/catch. When the host stops while waiting
-                // for leadership (before this instance ever acquires it), stoppingToken fires and the
-                // OperationCanceledException propagates out of ExecuteAsync, bypassing the
-                // Log.Information("{ServiceName}: exiting (stopping)") line below. BackgroundService
-                // swallows the exception so there is no crash, but the graceful-shutdown log is silently
-                // skipped. Consider wrapping in try/catch(OperationCanceledException) and breaking here.
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
             }
 
@@ -105,14 +99,6 @@ public abstract class LeaderElectedPollingService : BackgroundService
             catch (OperationCanceledException) when (ct.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
             {
                 // Leadership lost — fall through to re-enter wait loop
-                // TODO: This catch filter does not match when both ct and stoppingToken are cancelled
-                // simultaneously (e.g., host shuts down at the exact moment leadership is lost). In that
-                // case the OCE escapes ExecuteAsync uncaught. With the current default RunLeadershipTermAsync
-                // this is unreachable (the inner loop swallows OCE and returns normally), but a future
-                // subclass that overrides RunLeadershipTermAsync without calling base and allows an OCE to
-                // propagate will silently bypass this catch on simultaneous cancellation. BackgroundService
-                // swallows the exception, but the "{ServiceName}: exiting (stopping)" log is never emitted.
-                // Consider broadening the filter to: when (ct.IsCancellationRequested)
             }
 
             if (!stoppingToken.IsCancellationRequested)
