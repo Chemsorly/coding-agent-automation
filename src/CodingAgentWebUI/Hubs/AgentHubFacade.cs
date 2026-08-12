@@ -86,14 +86,14 @@ public sealed class AgentHubFacade : IAgentHubFacade
     // ── Run state operations ────────────────────────────────────────────
 
     /// <inheritdoc />
-    public PipelineRun? GetRun(string jobId)
-        => _runService.GetRun(jobId);
+    public PipelineRun? GetRun(JobId jobId)
+        => _runService.GetRun(jobId.Value);
 
     /// <inheritdoc />
-    public async Task TransitionWorkItemAsync(string jobId, WorkItemStatus status, CancellationToken ct,
+    public async Task TransitionWorkItemAsync(JobId jobId, WorkItemStatus status, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null)
     {
-        if (_workItemTransition is null || !Guid.TryParse(jobId, out var workItemId))
+        if (_workItemTransition is null || !Guid.TryParse(jobId.Value, out var workItemId))
             return;
 
         // Single retry with longer backoff — acts as a safety net above the Polly pipeline
@@ -226,12 +226,12 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _runService.AddRun(run);
 
     /// <inheritdoc />
-    public OutputRingBuffer GetOutputBuffer(string jobId)
-        => _runService.GetOutputBuffer(jobId);
+    public OutputRingBuffer GetOutputBuffer(JobId jobId)
+        => _runService.GetOutputBuffer(jobId.Value);
 
     /// <inheritdoc />
-    public void RemoveRun(string jobId)
-        => _runService.RemoveRun(jobId);
+    public void RemoveRun(JobId jobId)
+        => _runService.RemoveRun(jobId.Value);
 
     /// <inheritdoc />
     public IReadOnlyList<PipelineRun> GetActiveRunsByAgent(AgentId agentId)
@@ -251,9 +251,9 @@ public sealed class AgentHubFacade : IAgentHubFacade
     }
 
     /// <inheritdoc />
-    public async Task<int> GetWorkItemRetryCountAsync(string jobId, CancellationToken ct)
+    public async Task<int> GetWorkItemRetryCountAsync(JobId jobId, CancellationToken ct)
     {
-        if (_workItemTransition is null || !Guid.TryParse(jobId, out var workItemId))
+        if (_workItemTransition is null || !Guid.TryParse(jobId.Value, out var workItemId))
             return 0;
 
         try
@@ -268,9 +268,9 @@ public sealed class AgentHubFacade : IAgentHubFacade
     }
 
     /// <inheritdoc />
-    public async Task RequeueWorkItemAsync(string jobId, CancellationToken ct)
+    public async Task RequeueWorkItemAsync(JobId jobId, CancellationToken ct)
     {
-        if (_workItemTransition is null || !Guid.TryParse(jobId, out var workItemId))
+        if (_workItemTransition is null || !Guid.TryParse(jobId.Value, out var workItemId))
             return;
 
         await _workItemTransition.RequeueAsync(workItemId, ct);
@@ -279,9 +279,9 @@ public sealed class AgentHubFacade : IAgentHubFacade
 
     /// <inheritdoc />
     public async Task<(string? RepoProviderConfigId, string? BrainProviderConfigId)?> GetWorkItemProviderConfigIdsAsync(
-        string workItemId, CancellationToken ct)
+        JobId jobId, CancellationToken ct)
     {
-        if (_dbFactory is null || !Guid.TryParse(workItemId, out var id))
+        if (_dbFactory is null || !Guid.TryParse(jobId.Value, out var id))
             return null;
 
         try
@@ -307,7 +307,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to resolve provider config IDs from WorkItem {WorkItemId}", workItemId);
+            _logger.LogWarning(ex, "Failed to resolve provider config IDs from WorkItem {WorkItemId}", jobId.Value);
             return null;
         }
     }
@@ -349,9 +349,9 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private static readonly TimeSpan ProgressWriteThrottle = TimeSpan.FromMinutes(5);
 
     /// <inheritdoc />
-    public async Task TouchLastProgressAsync(string jobId, DateTimeOffset timestamp, CancellationToken ct)
+    public async Task TouchLastProgressAsync(JobId jobId, DateTimeOffset timestamp, CancellationToken ct)
     {
-        if (_dbFactory is null || !Guid.TryParse(jobId, out var workItemId))
+        if (_dbFactory is null || !Guid.TryParse(jobId.Value, out var workItemId))
             return;
 
         try
@@ -380,9 +380,9 @@ public sealed class AgentHubFacade : IAgentHubFacade
 
     /// <inheritdoc />
     public async Task<(string IssueIdentifier, string IssueProviderConfigId)?> GetWorkItemIssueMetadataAsync(
-        string workItemId, CancellationToken ct)
+        JobId jobId, CancellationToken ct)
     {
-        if (_dbFactory is null || !Guid.TryParse(workItemId, out var id))
+        if (_dbFactory is null || !Guid.TryParse(jobId.Value, out var id))
             return null;
 
         try
@@ -401,7 +401,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to read issue metadata from WorkItem {WorkItemId}", workItemId);
+            _logger.LogWarning(ex, "Failed to read issue metadata from WorkItem {WorkItemId}", jobId.Value);
             return null;
         }
     }

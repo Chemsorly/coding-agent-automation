@@ -31,20 +31,21 @@ public class AgentWorkerServiceJobSlotTests
 
         result.Should().BeTrue();
         busyWith.Should().BeNull();
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("job-1");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"job-1");
     }
 
     [Fact]
     public void TryAcquireJobSlot_AtCapacity_ActiveJob_Rejects()
     {
         var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "existing-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
 
         var result = InvokeTryAcquireJobSlot(service, "new-job", out var busyWith);
 
         result.Should().BeFalse();
         busyWith.Should().Be("existing-job");
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("existing-job");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"existing-job");
     }
 
     [Fact]
@@ -57,7 +58,7 @@ public class AgentWorkerServiceJobSlotTests
 
         result.Should().BeFalse();
         busyWith.Should().Be("chat:session-42");
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
     }
 
     [Fact]
@@ -67,7 +68,8 @@ public class AgentWorkerServiceJobSlotTests
         // ReleaseJobSlotAndSignalReadyAsync. If the _signalReady() call were accidentally
         // removed, this test would still pass. Add assertion on callback invocation.
         var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "old-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"old-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         await GetSlotManager(service).ReleaseJobSlotAndSignalReadyAsync();
@@ -76,7 +78,7 @@ public class AgentWorkerServiceJobSlotTests
 
         result.Should().BeTrue();
         busyWith.Should().BeNull();
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("new-job");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"new-job");
     }
 
     // ── Rejection Notification ───────────────────────────────────────────
@@ -85,7 +87,8 @@ public class AgentWorkerServiceJobSlotTests
     public async Task HandleAssignJob_WhenBusy_RejectionPathCompletes()
     {
         var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "existing-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
 
         var message = CreateTestJobAssignment("rejected-job");
         var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
@@ -93,14 +96,15 @@ public class AgentWorkerServiceJobSlotTests
         await task;
 
         // Handler completes without throwing; active job unchanged
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("existing-job");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"existing-job");
     }
 
     [Fact]
     public async Task HandleAssignConsolidationJob_WhenBusy_RejectionPathCompletes()
     {
         var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "existing-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
 
         var message = new ConsolidationJobMessage
         {
@@ -115,7 +119,7 @@ public class AgentWorkerServiceJobSlotTests
         await task;
 
         // Handler completes without throwing; active job unchanged
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("existing-job");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"existing-job");
     }
 
     // ── Concurrency Race ─────────────────────────────────────────────────
@@ -145,9 +149,9 @@ public class AgentWorkerServiceJobSlotTests
         var successes = new[] { result1, result2 }.Count(r => r == true);
         successes.Should().Be(1);
 
-        var activeJobId = GetPrivateField<string?>(GetSlotManager(service), "_activeJobId");
+        var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
         activeJobId.Should().NotBeNull();
-        activeJobId.Should().Match<string>(id => id == "race-job-1" || id == "race-job-2");
+        activeJobId!.Value.Value.Should().BeOneOf("race-job-1", "race-job-2");
     }
 
     [Fact]
@@ -191,7 +195,8 @@ public class AgentWorkerServiceJobSlotTests
     public void Heartbeat_JobActive_CurrentStepReflectsBusy()
     {
         var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "busy-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"busy-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_currentStep", (int)PipelineStep.AnalyzingCode);
 
         service.CurrentStep.Should().Be(PipelineStep.AnalyzingCode);
@@ -201,14 +206,15 @@ public class AgentWorkerServiceJobSlotTests
     public async Task Heartbeat_AfterRelease_CurrentStepReturnsToNull()
     {
         var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "finishing-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"finishing-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_currentStep", (int)PipelineStep.GeneratingCode);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         await GetSlotManager(service).ReleaseJobSlotAndSignalReadyAsync();
 
         service.CurrentStep.Should().BeNull();
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

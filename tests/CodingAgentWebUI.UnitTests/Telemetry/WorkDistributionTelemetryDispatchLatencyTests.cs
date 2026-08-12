@@ -121,17 +121,24 @@ public sealed class WorkDistributionTelemetryDispatchLatencyTests : IDisposable
     {
         // Arrange
         var now = DateTimeOffset.UtcNow;
+        // Count the number of dispatch_latency_seconds entries with an empty tag BEFORE this
+        // test's Act. _recordings is a shared ConcurrentBag that accumulates across all tests
+        // in this class; using AllSatisfy on the full bag causes spurious failures when prior
+        // tests recorded entries with non-empty agentSelector values.
+        var emptyTagCountBefore = _recordings
+            .Count(r => r.InstrumentName == "workdistribution.dispatch_latency_seconds"
+                        && r.TagValue == "");
 
         // Act
         WorkDistributionTelemetry.RecordDispatchLatency(now, null, now.AddSeconds(-5), agentSelector: null);
 
-        // Assert: tag value should be "" not null
-        var latencyRecordings = _recordings
-            .Where(r => r.InstrumentName == "workdistribution.dispatch_latency_seconds")
-            .ToList();
-        latencyRecordings.Should().NotBeEmpty();
-        latencyRecordings.Should().AllSatisfy(r =>
-            r.TagValue.Should().Be("", "null agentSelector should be coalesced to empty string"));
+        // Assert: at least one new dispatch_latency_seconds entry with TagValue="" must have been added
+        var emptyTagCountAfter = _recordings
+            .Count(r => r.InstrumentName == "workdistribution.dispatch_latency_seconds"
+                        && r.TagValue == "");
+
+        emptyTagCountAfter.Should().BeGreaterThan(emptyTagCountBefore,
+            "RecordDispatchLatency with null agentSelector should add a dispatch_latency_seconds entry with empty-string tag");
     }
 
     [Fact]

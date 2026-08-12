@@ -158,9 +158,9 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     // ── Shared: Cancel ────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public virtual async Task<bool> CancelJobAsync(string jobId, CancellationToken ct)
+    public virtual async Task<bool> CancelJobAsync(JobId jobId, CancellationToken ct)
     {
-        if (!Guid.TryParse(jobId, out var workItemId))
+        if (!Guid.TryParse(jobId.Value, out var workItemId))
             return false;
 
         return await _transitionService.TransitionAsync(
@@ -173,9 +173,9 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     // ── Shared: Status Query ──────────────────────────────────────────────
 
     /// <inheritdoc />
-    public virtual async Task<JobDistributionStatus> GetJobStatusAsync(string jobId, CancellationToken ct)
+    public virtual async Task<JobDistributionStatus> GetJobStatusAsync(JobId jobId, CancellationToken ct)
     {
-        if (!Guid.TryParse(jobId, out var workItemId))
+        if (!Guid.TryParse(jobId.Value, out var workItemId))
             return JobDistributionStatus.Unknown;
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);

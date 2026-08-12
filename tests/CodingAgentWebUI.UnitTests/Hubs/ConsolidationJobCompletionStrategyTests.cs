@@ -125,7 +125,7 @@ public sealed class ConsolidationJobCompletionStrategyTests
         var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
 
         _facade
-            .Setup(f => f.TransitionWorkItemAsync(It.IsAny<string>(), It.IsAny<WorkItemStatus>(),
+            .Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(),
                 It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
             .ThrowsAsync(new InvalidOperationException("DB failure"));
 

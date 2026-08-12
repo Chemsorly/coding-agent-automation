@@ -61,6 +61,10 @@ public sealed class AgentJobLifecycleServiceCompletionTests
 
     // ── Consolidation path ────────────────────────────────────────────────────
 
+    // TODO: [WARNING] Mock Setup/Verify calls in this file use raw string literals (e.g., "job-1") for JobId
+    // parameters, relying on the implicit string→JobId conversion. While this works at runtime via Moq's
+    // value-equality matching (record struct equals compares .Value), consider updating to use
+    // new JobId("job-1") for explicitness and to make the type constraint visible in tests.
     [Fact]
     public async Task Consolidation_completed_step_transitions_WorkItem_to_Succeeded()
     {
@@ -294,6 +298,9 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
 
         // Return null metadata — label swap will be skipped (best-effort)
+        // TODO: [WARNING] GetWorkItemIssueMetadataAsync setup uses raw string "job-1" while the Verify
+        // at line ~358 uses It.IsAny<JobId>(). Inconsistent style across this file; prefer new JobId("job-1")
+        // in both Setup and Verify for clarity.
         _facade.Setup(f => f.GetWorkItemIssueMetadataAsync("job-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(((string, string)?)null);
 
@@ -342,7 +349,7 @@ public sealed class AgentJobLifecycleServiceCompletionTests
             "job-1", WorkItemStatus.Cancelled, It.IsAny<CancellationToken>(), null, null), Times.Once);
 
         // Label swap is only attempted on Succeeded in the orphaned path
-        _facade.Verify(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _facade.Verify(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Post-completion bookkeeping contract ──────────────────────────────────
