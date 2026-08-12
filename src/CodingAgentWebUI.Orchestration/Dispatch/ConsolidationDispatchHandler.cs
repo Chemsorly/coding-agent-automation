@@ -3,13 +3,11 @@ using System.Threading.RateLimiting;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
-using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Serilog;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
@@ -20,12 +18,11 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Extracted from DispatchService to separate consolidation-specific concerns (run status transitions,
 /// provider config resolution, cascade failure) from regular issue dispatch.
 /// </summary>
-internal sealed class ConsolidationDispatchHandler : BackgroundService
+internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<ConsolidationDispatchHandler>();
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly WorkItemTransitionService _transitionService;
@@ -35,14 +32,16 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly IPipelineConfigStore? _pipelineConfigStore;
     private readonly IProjectStore? _projectStore;
     private readonly DispatchEligibilityChecker _eligibilityChecker;
-    private readonly TokenBucketRateLimiter _rateLimiter;
     private readonly DispatchStateBuilder _stateBuilder;
 
+    protected override string ServiceName => "ConsolidationDispatchHandler";
+    protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
+
     public ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps)
+        : base(deps.LeaderElection)
     {
         ArgumentNullException.ThrowIfNull(deps);
         _dbFactory = deps.DbFactory;
-        _leaderElection = deps.LeaderElection;
         _lifecycle = deps.Lifecycle;
         _transitionService = deps.TransitionService;
         _consolidationRunStore = deps.ConsolidationRunStore;
@@ -52,7 +51,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _projectStore = deps.ProjectStore;
         _options = DispatchServiceOptionsFactory.Create(deps.Configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
-        _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
+        InitializeRateLimiter(_options.RateLimitPerSecond);
         // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
         // deps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
         // singleton is always passed, so this path is never taken at runtime. However, a test that
@@ -74,11 +73,11 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     /// well within the S107 threshold.
     /// </summary>
     internal ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps, DispatchServiceOptions options)
+        : base(deps.LeaderElection)
     {
         ArgumentNullException.ThrowIfNull(deps);
         ArgumentNullException.ThrowIfNull(options);
         _dbFactory = deps.DbFactory;
-        _leaderElection = deps.LeaderElection;
         _lifecycle = deps.Lifecycle;
         _transitionService = deps.TransitionService;
         _consolidationRunStore = deps.ConsolidationRunStore;
@@ -88,7 +87,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _projectStore = deps.ProjectStore;
         _options = options;
         _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
-        _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
+        InitializeRateLimiter(_options.RateLimitPerSecond);
         // TODO: Same null-coalescing fallback as in the primary constructor — silently constructs a live
         // DispatchStateBuilder when deps.StateBuilder is not provided. See DotNetSpecialist WARNING (Issue #1910).
         _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
@@ -99,76 +98,9 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
             _options);
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        Log.Information("ConsolidationDispatchHandler started — waiting for leader election");
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            // Wait for leadership
-            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-            }
-
-            if (stoppingToken.IsCancellationRequested) break;
-
-            Log.Information("ConsolidationDispatchHandler: leader acquired, entering poll loop");
-
-            await RunLeaderPollLoopAsync(stoppingToken);
-
-            if (!stoppingToken.IsCancellationRequested)
-            {
-                Log.Information("ConsolidationDispatchHandler: leadership lost, re-entering wait loop");
-            }
-        }
-
-        Log.Information("ConsolidationDispatchHandler: exiting (stopping)");
-    }
-
-    /// <summary>
-    /// Runs the poll loop while the current node holds leadership.
-    /// Returns when either the host stopping token fires or leadership is lost.
-    /// </summary>
-    private async Task RunLeaderPollLoopAsync(CancellationToken stoppingToken)
-    {
-        // Create linked token: cancels on EITHER host stop OR leadership loss
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-            stoppingToken, _leaderElection.LeaderToken);
-        var ct = linked.Token;
-
-        while (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                await PollAndDispatchConsolidationAsync(ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "ConsolidationDispatchHandler: unhandled error in poll cycle");
-            }
-
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-        }
-    }
-
     /// <inheritdoc/>
-    public override void Dispose()
-    {
-        _rateLimiter.Dispose();
-        base.Dispose();
-    }
+    protected override Task OnPollCycleAsync(CancellationToken ct)
+        => PollAndDispatchConsolidationAsync(ct);
 
     internal async Task PollAndDispatchConsolidationAsync(CancellationToken ct)
     {
@@ -192,7 +124,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         {
             foreach (var item in state.PendingItems)
             {
-                if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
+                if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
                     break;
 
                 if (!await ProcessConsolidationItemAsync(state.Db, item,
@@ -213,7 +145,13 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         List<string> availablePvcs,
         CancellationToken ct)
     {
-        using var lease = await _rateLimiter.AcquireAsync(1, ct);
+        // TODO: RateLimiter is nullable (protected TokenBucketRateLimiter? RateLimiter) but accessed with the
+        // null-forgiving operator (!). Both constructors call InitializeRateLimiter, so it is never null in
+        // production, but the ! suppresses the compiler's null-safety check. A future subclass or test subclass
+        // that omits InitializeRateLimiter will get a NullReferenceException here rather than a clear diagnostic.
+        // Consider adding ArgumentNullException.ThrowIfNull(RateLimiter) before AcquireAsync, or making the
+        // base-class field non-nullable by requiring InitializeRateLimiter in the constructor chain.
+        using var lease = await RateLimiter!.AcquireAsync(1, ct);
         if (!lease.IsAcquired)
         {
             Log.Warning("ConsolidationDispatchHandler: rate limit hit, stopping dispatch cycle");
