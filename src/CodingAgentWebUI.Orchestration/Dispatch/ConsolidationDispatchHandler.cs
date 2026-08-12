@@ -461,7 +461,7 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
 
     // ── Run Status Transitions ──────────────────────────────────────────
 
-    private async Task TransitionConsolidationRunToRunningAsync(JobDistributionRequest request, CancellationToken ct)
+    internal async Task TransitionConsolidationRunToRunningAsync(JobDistributionRequest request, CancellationToken ct)
     {
         var runId = request.RunId ?? request.IssueIdentifier;
         if (string.IsNullOrEmpty(runId))

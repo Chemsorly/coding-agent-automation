@@ -326,6 +326,216 @@ public class ConsolidationDispatchHandlerTests
 
     // ── Constructor coverage ─────────────────────────────────────────────
 
+    // ── Dispose / base-class coverage ────────────────────────────────────
+
+    [Fact]
+    public void Dispose_WithRateLimiter_DisposesWithoutThrowing()
+    {
+        // Exercises LeaderElectedPollingService.Dispose() which calls RateLimiter?.Dispose()
+        // (lines 65-68 of LeaderElectedPollingService.cs).
+        var handler = CreateHandler();
+        // Must not throw — Dispose is called once and cleans up the TokenBucketRateLimiter.
+        handler.Invoking(h => h.Dispose())
+            .Should().NotThrow("Dispose must not throw regardless of RateLimiter state");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OnPollCycleThrowsUnhandledException_SwallowsAndContinues()
+    {
+        // Exercises the catch (Exception ex) path in LeaderElectedPollingService.RunLeadershipTermAsync
+        // (lines 135-137) where an unhandled error in a poll cycle is logged and swallowed.
+        var leaderCts = new CancellationTokenSource();
+        var leaderElectionMock = new Mock<ILeaderElectionService>();
+        leaderElectionMock.SetupGet(l => l.IsLeader).Returns(true);
+        leaderElectionMock.SetupGet(l => l.LeaderToken).Returns(leaderCts.Token);
+
+        var callCount = 0;
+        var secondCallTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var dbFactoryMock = new Mock<IDbContextFactory<PipelineDbContext>>();
+        dbFactoryMock
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken ct) =>
+            {
+                var count = Interlocked.Increment(ref callCount);
+                if (count == 1)
+                {
+                    // First poll: throw a non-cancellation exception to exercise the swallow path
+                    throw new InvalidOperationException("simulated poll error");
+                }
+                // Second poll: signal and block to prevent further loops
+                secondCallTcs.TrySetResult(true);
+                await Task.Delay(Timeout.Infinite, ct);
+                return null!;
+            });
+
+        var handler = CreateHandlerWithLeaderElection(leaderElectionMock.Object, dbFactoryMock.Object);
+
+        var hostStopCts = new CancellationTokenSource();
+        var executeTask = InvokeExecuteAsync(handler, hostStopCts.Token);
+
+        // Wait for the second poll — proves the service continued after swallowing the first exception
+        var secondPoll = await Task.WhenAny(secondCallTcs.Task, Task.Delay(5000));
+        secondPoll.Should().Be(secondCallTcs.Task, "handler must continue polling after swallowing an unhandled poll exception");
+
+        hostStopCts.Cancel();
+        await WaitForTaskCompletion(executeTask);
+    }
+
+    // ── TransitionConsolidationRunToRunningAsync coverage ────────────────
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenServiceAvailable_DelegatesToService()
+    {
+        // Happy path: IConsolidationService is present; should call TransitionToRunningAsync.
+        var mockService = new Mock<IConsolidationService>();
+        mockService
+            .Setup(s => s.TransitionToRunningAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var handler = CreateHandler(consolidationService: mockService.Object);
+
+        var request = CreateMinimalRequest(runId: "run-tx-001");
+        await handler.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None);
+
+        mockService.Verify(s => s.TransitionToRunningAsync(
+            (RunId)"run-tx-001", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenServiceThrows_IsNonFatal()
+    {
+        // Error path: IConsolidationService throws a non-cancellation exception; should be swallowed.
+        var mockService = new Mock<IConsolidationService>();
+        mockService
+            .Setup(s => s.TransitionToRunningAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
+
+        var handler = CreateHandler(consolidationService: mockService.Object);
+        var request = CreateMinimalRequest(runId: "run-tx-err");
+
+        await handler.Invoking(h => h.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None))
+            .Should().NotThrowAsync("TransitionConsolidationRunToRunningAsync must swallow non-cancellation exceptions");
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenNoRunId_IsNoOp()
+    {
+        // Edge case: request has no RunId and no IssueIdentifier — method returns early without calling anything.
+        var mockService = new Mock<IConsolidationService>();
+        var handler = CreateHandler(consolidationService: mockService.Object);
+
+        var request = CreateMinimalRequest(runId: null, issueIdentifier: null);
+        await handler.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None);
+
+        mockService.Verify(s => s.TransitionToRunningAsync(
+            It.IsAny<RunId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenServiceUnavailable_UsesDirectStoreWrite()
+    {
+        // Fallback path: no IConsolidationService; should transition run from Queued to Running via store.
+        var existingRun = new ConsolidationRun
+        {
+            RunId = "run-tx-002",
+            Status = ConsolidationRunStatus.Queued,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5)
+        };
+
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync((RunId)"run-tx-002", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingRun);
+        mockStore
+            .Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object); // no consolidationService
+
+        var request = CreateMinimalRequest(runId: "run-tx-002");
+        await handler.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None);
+
+        mockStore.Verify(s => s.SaveRunAsync(
+            It.Is<ConsolidationRun>(r =>
+                r.RunId == "run-tx-002" &&
+                r.Status == ConsolidationRunStatus.Running),
+            CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenStoreRunNotQueued_DoesNotOverwrite()
+    {
+        // Direct-store path: run already Running; should not overwrite status.
+        var existingRun = new ConsolidationRun
+        {
+            RunId = "run-tx-003",
+            Status = ConsolidationRunStatus.Running, // already Running — not Queued
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync((RunId)"run-tx-003", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingRun);
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object);
+        var request = CreateMinimalRequest(runId: "run-tx-003");
+
+        await handler.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None);
+
+        mockStore.Verify(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never, "should not overwrite a run that is already in Running state");
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenStoreThrows_IsNonFatal()
+    {
+        // Direct-store path: store throws; should be swallowed.
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("store failure"));
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object);
+        var request = CreateMinimalRequest(runId: "run-tx-err2");
+
+        await handler.Invoking(h => h.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None))
+            .Should().NotThrowAsync("must swallow exceptions from the direct-store fallback path");
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenNoServiceAndNoStore_IsNoOp()
+    {
+        // No service, no store — method should return early without throwing.
+        var handler = CreateHandler(); // both null
+        var request = CreateMinimalRequest(runId: "run-tx-004");
+
+        await handler.Invoking(h => h.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None))
+            .Should().NotThrowAsync("must be a silent no-op when neither service nor store registered");
+    }
+
+    /// <summary>
+    /// Creates a minimal <see cref="JobDistributionRequest"/> for transition tests.
+    /// Allows overriding <paramref name="runId"/> and <paramref name="issueIdentifier"/>.
+    /// </summary>
+    private static JobDistributionRequest CreateMinimalRequest(string? runId = "run-test", string? issueIdentifier = "owner/repo#1")
+    {
+        return new JobDistributionRequest
+        {
+            IssueIdentifier = issueIdentifier ?? string.Empty,
+            IssueProviderConfigId = "provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "kiro",
+            TimeoutSeconds = 300,
+            RunId = runId
+        };
+    }
+
     [Fact]
     public void Constructor_PublicDepsOnly_ConstructsWithoutThrowing()
     {
