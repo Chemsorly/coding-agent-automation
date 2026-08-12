@@ -767,14 +767,14 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
                 _mockPendingWork.Object,
                 _mockLabelSwapper.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance,
-                new DispatchRevertHandler(
+                new DispatchRevertService(
                     _dbFactory,
                     _mockResolver.Object,
                     _runService,
                     new WorkItemTransitionService(
                         new CancellationAwareDbContextFactory(_dbOptions),
                         NullLogger<WorkItemTransitionService>.Instance),
-                    NullLogger<DispatchRevertHandler>.Instance)),
+                    NullLogger<DispatchRevertService>.Instance)),
             _mockProjectStore.Object);
 
         // Act: start with the CTS that will be cancelled inside the mock
@@ -813,12 +813,12 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
                 _mockPendingWork.Object,
                 _mockLabelSwapper.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance,
-                new DispatchRevertHandler(
+                new DispatchRevertService(
                     _dbFactory,
                     _mockResolver.Object,
                     _runService,
                     _transitionService,
-                    NullLogger<DispatchRevertHandler>.Instance)),
+                    NullLogger<DispatchRevertService>.Instance)),
             _mockProjectStore.Object);
     }
 
@@ -1060,12 +1060,12 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
                 _mockPendingWork.Object,
                 _mockLabelSwapper.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance,
-                new DispatchRevertHandler(
+                new DispatchRevertService(
                     normalFactory,
                     _mockResolver.Object,
                     _runService,
                     transitionService,
-                    NullLogger<DispatchRevertHandler>.Instance)),
+                    NullLogger<DispatchRevertService>.Instance)),
             _mockProjectStore.Object);
 
         // Act
@@ -1300,9 +1300,9 @@ public sealed class DispatchPipelineItemAsyncTests : IDisposable
                 normalFactory, _mockResolver.Object, _mockAgentComm.Object,
                 _runService, failingTransition, _mockPendingWork.Object,
                 _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
-                new DispatchRevertHandler(
+                new DispatchRevertService(
                     normalFactory, _mockResolver.Object, _runService, failingTransition,
-                    NullLogger<DispatchRevertHandler>.Instance)),
+                    NullLogger<DispatchRevertService>.Instance)),
             _mockProjectStore.Object);
 
         var item = new WorkItemEntity
@@ -1344,9 +1344,9 @@ public sealed class DispatchPipelineItemAsyncTests : IDisposable
             _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
             _runService, _transitionService, _mockPendingWork.Object,
             _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
-            new DispatchRevertHandler(
+            new DispatchRevertService(
                 _dbFactory, _mockResolver.Object, _runService, _transitionService,
-                NullLogger<DispatchRevertHandler>.Instance)),
+                NullLogger<DispatchRevertService>.Instance)),
             _mockProjectStore.Object);
 
     private async Task<(WorkItemEntity item, JobDistributionRequest request)> InsertAndBuildItem(Guid workItemId, string agentId)
