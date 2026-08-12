@@ -26,7 +26,6 @@ public sealed class DispatchService : LeaderElectedPollingService
     /// <summary>Default path for job templates ConfigMap mount.</summary>
     internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
 
-    private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateStore _templateProvider;
@@ -59,7 +58,6 @@ public sealed class DispatchService : LeaderElectedPollingService
         JobTemplateStore templateProvider)
         : base(coreDeps.LeaderElection)
     {
-        _dbFactory = coreDeps.DbFactory;
         _lifecycle = coreDeps.Lifecycle;
         _labelService = coreDeps.LabelService;
         _agentProfileStore = coreDeps.AgentProfileStore;
@@ -69,7 +67,7 @@ public sealed class DispatchService : LeaderElectedPollingService
         _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
         InitializeRateLimiter(_options.RateLimitPerSecond);
         _stateBuilder = coreDeps.StateBuilder ?? new DispatchStateBuilder(
-            _dbFactory,
+            coreDeps.DbFactory,
             _lifecycle,
             _templateProvider,
             new DispatchTemplateResolver(_agentProfileStore, _templateProvider),
