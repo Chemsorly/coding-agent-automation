@@ -68,6 +68,12 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<LabelSwapService>>(),
             maxAttempts: 3));
+        services.AddSingleton<DispatchRevertHandler>(sp => new DispatchRevertHandler(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DispatchRevertHandler>>()));
         services.AddSingleton<PendingWorkItemDrainService>(sp => new PendingWorkItemDrainService(
             new DrainServiceDependencies(
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
@@ -77,7 +83,8 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<WorkItemTransitionService>(),
                 sp.GetRequiredService<IPendingWorkQuery>(),
                 sp.GetRequiredService<ILabelSwapService>(),
-                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>()),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>(),
+                sp.GetRequiredService<DispatchRevertHandler>()),
             sp.GetService<IProjectStore>(),
             sp.GetRequiredService<IConsolidationDispatchService>(),
             sp.GetRequiredService<IConsolidationRunStore>()));

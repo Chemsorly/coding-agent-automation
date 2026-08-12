@@ -22,10 +22,10 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly ISignalRWorkDistributorAgentResolver _agentResolver;
     private readonly IAgentCommunication _agentComm;
-    private readonly IOrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly ILabelSwapService _labelSwapper;
+    private readonly DispatchRevertHandler _revertHandler;
     private readonly IProjectStore? _projectStore;
     private readonly IConsolidationDispatchService? _consolidationDispatcher;
     private readonly IConsolidationRunStore? _consolidationRunStore;
@@ -43,18 +43,18 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     {
         // TODO: Add ArgumentNullException.ThrowIfNull (or null-checks) for the mandatory
         // DrainServiceDependencies fields now stored in fields used unconditionally on the hot path:
-        //   - deps.RunService  → _runService  (used in EnsureInMemoryRunRegistered and HandlePipelineDispatchFailureAsync)
-        //   - deps.TransitionService → _transitionService (used in TryRevertToPendingAsync)
+        //   - deps.TransitionService → _transitionService (used in DispatchConsolidationItemAsync)
         //   - deps.LabelSwapper → _labelSwapper (used in ProcessPendingItemAsync)
+        //   - deps.RevertHandler → _revertHandler (used in DispatchPipelineItemAsync and DispatchConsolidationItemAsync)
         // A null _labelSwapper (e.g. DrainServiceDependencies constructed with default null) produces
         // an NRE at ~line 170 on the first drain cycle rather than at construction time.
         _dbFactory = deps.DbFactory;
         _agentResolver = deps.AgentResolver;
         _agentComm = deps.AgentComm;
-        _runService = deps.RunService;
         _transitionService = deps.TransitionService;
         _pendingWorkQuery = deps.PendingWorkQuery;
         _labelSwapper = deps.LabelSwapper;
+        _revertHandler = deps.RevertHandler;
         _logger = deps.Logger;
         _projectStore = projectStore;
         _consolidationDispatcher = consolidationDispatcher;
@@ -317,7 +317,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 // ReleaseAgent is idempotent (safe to call more than once for the same agentId),
                 // so a double-release via the catch block below is not a correctness risk.
                 _agentResolver.ReleaseAgent(agentId);
-                await TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: ct);
+                await _revertHandler.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: ct);
                 return false;
             }
         }
@@ -329,7 +329,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             _agentResolver.ReleaseAgent(agentId);
             // Revert WorkItem from Dispatched to Pending so it's available for the next drain cycle.
             // Uses CancellationToken.None explicitly: graceful shutdown must not prevent the revert.
-            await TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: CancellationToken.None);
+            await _revertHandler.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: CancellationToken.None);
             return false;
         }
     }
@@ -359,7 +359,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
             dispatchedSuccessfully = true;
 
-            EnsureInMemoryRunRegistered(request, agentId.Value, dispatchTime, item);
+            _revertHandler.EnsureInMemoryRunRegistered(request, agentId.Value, dispatchTime, item);
 
             var message = DbWorkDistributorBase.BuildJobAssignmentMessage(item.Id, request);
 
@@ -381,139 +381,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         }
         catch (Exception ex)
         {
-            await HandlePipelineDispatchFailureAsync(item, request, agentId, dispatchedSuccessfully, ex);
+            await _revertHandler.HandlePipelineDispatchFailureAsync(item, request, agentId, dispatchedSuccessfully, ex);
             return false;
         }
     }
 
-    /// <summary>
-    /// Updates or re-creates the in-memory <see cref="PipelineRun"/> after the DB transition to
-    /// Dispatched has succeeded. Handles the orchestrator-restart recovery case where the run was
-    /// lost from memory and must be re-created from the distribution request.
-    /// </summary>
-    private void EnsureInMemoryRunRegistered(
-        JobDistributionRequest request,
-        string agentId,
-        DateTimeOffset dispatchTime,
-        WorkItemEntity item)
-    {
-        if (string.IsNullOrEmpty(request.RunId))
-            return;
-
-        var run = _runService.GetRun(request.RunId);
-        if (run is not null)
-        {
-            run.AgentId = agentId;
-        }
-        else
-        {
-            // Orchestrator restarted — in-memory PipelineRun was lost.
-            // Re-create it from the serialized request payload.
-            var recreatedRun = PipelineRunFactory.FromDistributionRequest(
-                request, agentId, startedAt: item.DispatchedAt ?? item.CreatedAt);
-            _runService.AddRun(recreatedRun);
-            _logger.LogInformation(
-                "PendingWorkItemDrainService: re-created in-memory PipelineRun {RunId} for issue {IssueIdentifier} (orchestrator restart recovery)",
-                request.RunId, request.IssueIdentifier);
-        }
-
-        // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14).
-        // Without this, StartedAt reflects preparation/enqueue time which can be
-        // hours earlier for queued work, inflating the Duration shown in the UI.
-        _runService.GetRun(request.RunId)?.ResetStartedAt(dispatchTime);
-    }
-
-    /// <summary>
-    /// Handles a pipeline dispatch failure: releases the reserved agent, optionally removes the
-    /// in-memory run (if the DB transition had succeeded), reverts to Pending, and performs a
-    /// direct RetryCount increment if the DB transition itself failed.
-    /// <paramref name="dispatchedSuccessfully"/> must be the value captured inside the <c>try</c>
-    /// block — passed explicitly to avoid stale-closure risk.
-    /// </summary>
-    private async Task HandlePipelineDispatchFailureAsync(
-        WorkItemEntity item,
-        JobDistributionRequest request,
-        AgentId agentId,
-        bool dispatchedSuccessfully,
-        Exception ex)
-    {
-        _logger.LogError(ex,
-            "PendingWorkItemDrainService: dispatch failed for WorkItem {WorkItemId}",
-            item.Id);
-        _agentResolver.ReleaseAgent(agentId);
-
-        // Clean up in-memory PipelineRun only if it was actually registered
-        // (DB transition succeeded, so in-memory registration happened).
-        // If TransitionAsync failed, the run was never added — no cleanup needed.
-        if (dispatchedSuccessfully && !string.IsNullOrEmpty(request.RunId))
-            _runService.RemoveRun(request.RunId);
-
-        // Revert to Pending for retry on next drain cycle.
-        // Safe regardless of where the exception occurred:
-        // - If TransitionAsync(Dispatched) itself failed, item is still Pending → TransitionAsync
-        //   returns true idempotently (already at target).
-        // - If exception was after Dispatched transition, item reverts Dispatched → Pending (valid).
-        await TryRevertToPendingAsync(item.Id, incrementRetryCount: true);
-
-        // If TransitionAsync(Dispatched) itself failed, the item was already Pending and the
-        // idempotent path above skipped the mutate callback — RetryCount was NOT incremented.
-        // Perform a direct DB update to prevent infinite retry loops.
-        if (!dispatchedSuccessfully)
-        {
-            try
-            {
-                await using var retryDb = await _dbFactory.CreateDbContextAsync(CancellationToken.None);
-                var entity = await retryDb.WorkItems.FindAsync([item.Id], CancellationToken.None);
-                if (entity is not null)
-                {
-                    entity.RetryCount++;
-                    await retryDb.SaveChangesAsync(CancellationToken.None);
-                }
-            }
-            catch (Exception retryEx)
-            {
-                _logger.LogWarning(retryEx,
-                    "PendingWorkItemDrainService: failed to increment RetryCount for WorkItem {WorkItemId} after dispatch-transition failure",
-                    item.Id);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Attempts to revert a work item from Dispatched back to Pending after a dispatch failure.
-    /// Swallows any exception from the transition and logs a warning — the stuck-item
-    /// detector will handle items that could not be reverted.
-    /// </summary>
-    /// <param name="workItemId">The work item to revert.</param>
-    /// <param name="incrementRetryCount">
-    /// <c>true</c> for pipeline dispatch failures (RetryCount must increment to prevent infinite loops);
-    /// <c>false</c> for consolidation dispatch failures (RetryCount is not incremented).
-    /// </param>
-    /// <param name="ct">
-    /// Token to use for the transition. Defaults to <see cref="CancellationToken.None"/> so that
-    /// catch-block callers are not affected by an already-cancelled token during graceful shutdown.
-    /// Pass the caller's token when the revert should respect the caller's cancellation state
-    /// (e.g., the consolidation false-return path).
-    /// </param>
-    private async Task TryRevertToPendingAsync(Guid workItemId, bool incrementRetryCount,
-        CancellationToken ct = default)
-    {
-        try
-        {
-            await _transitionService.TransitionAsync(
-                workItemId, WorkItemStatus.Pending,
-                entity =>
-                {
-                    entity.DispatchedAt = null;
-                    entity.AssignedAgentId = null;
-                    if (incrementRetryCount) entity.RetryCount++;
-                }, ct: ct);
-        }
-        catch (Exception revertEx)
-        {
-            _logger.LogWarning(revertEx,
-                "PendingWorkItemDrainService: failed to revert WorkItem {WorkItemId} to Pending after dispatch failure — stuck-item detector will handle",
-                workItemId);
-        }
-    }
 }

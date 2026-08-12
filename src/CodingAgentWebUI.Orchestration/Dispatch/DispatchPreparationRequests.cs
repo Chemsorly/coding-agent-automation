@@ -84,7 +84,8 @@ public sealed record DrainServiceDependencies(
     WorkItemTransitionService TransitionService,
     IPendingWorkQuery PendingWorkQuery,
     ILabelSwapService LabelSwapper,
-    Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService> Logger);
+    Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService> Logger,
+    DispatchRevertHandler RevertHandler);
 
 /// <summary>
 /// Parameter object for <see cref="DispatchLifecycleService.ExecuteDispatchLifecycleAsync"/>.

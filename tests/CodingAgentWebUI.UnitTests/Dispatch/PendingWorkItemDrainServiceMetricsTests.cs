@@ -191,7 +191,10 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
                 _transitionService,
                 _mockPendingWork.Object,
                 _mockLabelSwapper.Object,
-                NullLogger<PendingWorkItemDrainService>.Instance),
+                NullLogger<PendingWorkItemDrainService>.Instance,
+                new DispatchRevertHandler(
+                    _dbFactory, _mockResolver.Object, _runService, _transitionService,
+                    NullLogger<DispatchRevertHandler>.Instance)),
             _mockProjectStore.Object);
     }
 
@@ -206,7 +209,10 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
                 _transitionService,
                 _mockPendingWork.Object,
                 _mockLabelSwapper.Object,
-                NullLogger<PendingWorkItemDrainService>.Instance),
+                NullLogger<PendingWorkItemDrainService>.Instance,
+                new DispatchRevertHandler(
+                    _dbFactory, _mockResolver.Object, _runService, _transitionService,
+                    NullLogger<DispatchRevertHandler>.Instance)),
             _mockProjectStore.Object,
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
