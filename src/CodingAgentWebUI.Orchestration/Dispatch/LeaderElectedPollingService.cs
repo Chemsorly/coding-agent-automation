@@ -1,3 +1,4 @@
+using System.Threading.RateLimiting;
 using CodingAgentWebUI.Orchestration.LeaderElection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
@@ -11,6 +12,12 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// <see cref="OnPollCycleAsync"/> for simple poll loops, or
 /// <see cref="RunLeadershipTermAsync"/> for full control during the leadership term
 /// (e.g., concurrent Watch + Poll loops in <see cref="ReconciliationService"/>).
+/// <para>
+/// Optionally manages a <see cref="TokenBucketRateLimiter"/> for subclasses that need
+/// per-second dispatch rate limiting (pass <paramref name="rateLimitPerSecond"/> to opt in).
+/// Services that do not need a rate limiter (e.g. <see cref="ReconciliationService"/>) omit
+/// the parameter; the base class then leaves <see cref="RateLimiter"/> as <c>null</c>.
+/// </para>
 /// </summary>
 public abstract class LeaderElectedPollingService : BackgroundService
 {
@@ -20,6 +27,12 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// The leader election service used to determine if this instance holds the leader lease.
     /// </summary>
     protected ILeaderElectionService LeaderElection { get; }
+
+    /// <summary>
+    /// The rate limiter created from <c>rateLimitPerSecond</c> passed to the constructor,
+    /// or <c>null</c> if the subclass did not request one.
+    /// </summary>
+    protected TokenBucketRateLimiter? RateLimiter { get; }
 
     /// <summary>
     /// Display name used in log messages. Each subclass provides its own name.
@@ -32,9 +45,26 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// </summary>
     protected abstract int PollIntervalSeconds { get; }
 
-    protected LeaderElectedPollingService(ILeaderElectionService leaderElection)
+    /// <param name="leaderElection">Leader election service. Must not be null.</param>
+    /// <param name="rateLimitPerSecond">
+    /// When provided, creates a <see cref="TokenBucketRateLimiter"/> owned and disposed by this
+    /// base class. Subclasses access it via <see cref="RateLimiter"/>.
+    /// Omit for services that do not require rate limiting.
+    /// </param>
+    protected LeaderElectedPollingService(ILeaderElectionService leaderElection, int? rateLimitPerSecond = null)
     {
+        // TODO: Add ArgumentNullException.ThrowIfNull(leaderElection) — see DotNetSpecialist WARNING (Issue #1912).
         LeaderElection = leaderElection;
+        RateLimiter = rateLimitPerSecond.HasValue
+            ? RateLimiterFactory.CreateTokenBucket(rateLimitPerSecond.Value)
+            : null;
+    }
+
+    /// <inheritdoc/>
+    public override void Dispose()
+    {
+        RateLimiter?.Dispose();
+        base.Dispose();
     }
 
     /// <summary>
@@ -68,6 +98,12 @@ public abstract class LeaderElectedPollingService : BackgroundService
             catch (OperationCanceledException) when (ct.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
             {
                 // Leadership lost — fall through to re-enter wait loop
+                // TODO: When host stop and leadership loss occur simultaneously, both ct and stoppingToken are
+                // cancelled at the same time. The filter evaluates to false (!stoppingToken.IsCancellationRequested
+                // is false), so the OCE propagates uncaught and BackgroundService logs it as an unhandled exception.
+                // This causes a spurious error log on clean shutdown with concurrent leadership loss.
+                // Consider catching the OCE unconditionally and checking stoppingToken after the catch to decide
+                // whether to re-enter the wait loop or exit. See DotNetSpecialist WARNING (Issue #1912).
             }
 
             if (!stoppingToken.IsCancellationRequested)
