@@ -161,7 +161,7 @@ public class JobDeduplicationGuardServiceExtendedTests
         var result = _dispatcher.DequeueForAgent(entry);
 
         result.Should().NotBeNull();
-        result!.IssueIdentifier.Should().Be("org/repo#1");
+        result!.IssueIdentifier.Value.Should().Be("org/repo#1");
     }
 
     [Fact]

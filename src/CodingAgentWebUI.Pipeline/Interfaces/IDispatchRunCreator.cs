@@ -27,7 +27,7 @@ public interface IDispatchRunCreator
     /// <param name="issueIdentifier">The issue identifier to check.</param>
     /// <param name="issueProviderConfigId">The issue provider config ID.</param>
     /// <returns><c>true</c> if the issue is currently being processed.</returns>
-    bool IsIssueBeingProcessed(string issueIdentifier, ProviderConfigId issueProviderConfigId);
+    bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
 
     /// <summary>
     /// Creates a <see cref="PipelineRun"/> for dispatch to a remote agent.

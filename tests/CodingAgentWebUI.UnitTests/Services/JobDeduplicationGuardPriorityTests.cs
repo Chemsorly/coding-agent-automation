@@ -62,7 +62,7 @@ public class JobDeduplicationGuardPriorityTests
         var job = service.DequeueForAgent(agent);
 
         job.Should().NotBeNull();
-        job!.IssueIdentifier.Should().Be("review-1", "Review has higher priority than Implementation");
+        job!.IssueIdentifier.Value.Should().Be("review-1", "Review has higher priority than Implementation");
         job.RunType.Should().Be(PipelineRunType.Review);
     }
 
@@ -83,7 +83,7 @@ public class JobDeduplicationGuardPriorityTests
         var job = service.DequeueForAgent(agent);
 
         job.Should().NotBeNull();
-        job!.IssueIdentifier.Should().Be("decomp-1", "DecompositionAnalysis has higher priority than Implementation");
+        job!.IssueIdentifier.Value.Should().Be("decomp-1", "DecompositionAnalysis has higher priority than Implementation");
         job.RunType.Should().Be(PipelineRunType.DecompositionAnalysis);
         // TODO: add a parallel test using PipelineRunType.Decomposition (not DecompositionAnalysis)
         // vs. Implementation to confirm both Decomposition enum values share priority=1. If a future
@@ -105,10 +105,10 @@ public class JobDeduplicationGuardPriorityTests
         service.EnqueueJob(CreateJob("impl-2", PipelineRunType.Implementation, enqueuedAt: t0.AddSeconds(1)));
 
         var first = service.DequeueForAgent(agent);
-        first!.IssueIdentifier.Should().Be("impl-1", "FIFO: first enqueued should be returned first within the same priority tier");
+        first!.IssueIdentifier.Value.Should().Be("impl-1", "FIFO: first enqueued should be returned first within the same priority tier");
 
         var second = service.DequeueForAgent(agent);
-        second!.IssueIdentifier.Should().Be("impl-2");
+        second!.IssueIdentifier.Value.Should().Be("impl-2");
         // TODO: assert service.QueueLength == 0 here to catch bugs that silently re-enqueue a job
         // and leave the queue non-empty after both dequeues.
     }
@@ -128,10 +128,10 @@ public class JobDeduplicationGuardPriorityTests
         service.EnqueueJob(CreateJob("impl-1", PipelineRunType.Implementation, enqueuedAt: t0.AddSeconds(1)));
 
         var first = service.DequeueForAgent(agent);
-        first!.IssueIdentifier.Should().Be("impl-1", "Implementation has higher priority than Consolidation");
+        first!.IssueIdentifier.Value.Should().Be("impl-1", "Implementation has higher priority than Consolidation");
 
         var second = service.DequeueForAgent(agent);
-        second!.IssueIdentifier.Should().Be("consol-1");
+        second!.IssueIdentifier.Value.Should().Be("consol-1");
         // TODO: add a variant of this test that also queues Review and Decomposition jobs alongside
         // Consolidation, to guard against a regression that accidentally assigns Consolidation the
         // same priority as Implementation (priority=2). The current test only covers Consolidation
@@ -165,23 +165,23 @@ public class JobDeduplicationGuardPriorityTests
 
         // 1st dequeue: Review (priority 0)
         var job1 = service.DequeueForAgent(agent);
-        job1!.IssueIdentifier.Should().Be("review-1");
+        job1!.IssueIdentifier.Value.Should().Be("review-1");
 
         // 2nd dequeue: DecompositionAnalysis (priority 1, earlier EnqueuedAt than Decomposition)
         var job2 = service.DequeueForAgent(agent);
-        job2!.IssueIdentifier.Should().Be("decomp-analysis-1");
+        job2!.IssueIdentifier.Value.Should().Be("decomp-analysis-1");
 
         // 3rd dequeue: Decomposition (priority 1)
         var job3 = service.DequeueForAgent(agent);
-        job3!.IssueIdentifier.Should().Be("decomp-1");
+        job3!.IssueIdentifier.Value.Should().Be("decomp-1");
 
         // 4th dequeue: Implementation (priority 2)
         var job4 = service.DequeueForAgent(agent);
-        job4!.IssueIdentifier.Should().Be("impl-1");
+        job4!.IssueIdentifier.Value.Should().Be("impl-1");
 
         // 5th dequeue: Consolidation (priority 3)
         var job5 = service.DequeueForAgent(agent);
-        job5!.IssueIdentifier.Should().Be("consol-1");
+        job5!.IssueIdentifier.Value.Should().Be("consol-1");
 
         service.QueueLength.Should().Be(0);
     }
@@ -207,7 +207,7 @@ public class JobDeduplicationGuardPriorityTests
         var job = service.DequeueForAgent(agent);
 
         job.Should().NotBeNull();
-        job!.IssueIdentifier.Should().Be("impl-1",
+        job!.IssueIdentifier.Value.Should().Be("impl-1",
             "label-incompatible Review job must be skipped; compatible Implementation job must be returned");
 
         // The Review job must remain in the queue
@@ -233,16 +233,16 @@ public class JobDeduplicationGuardPriorityTests
 
         // First dequeue: Review is selected (highest priority), impl-1/2/3 re-enqueued in original order
         var first = service.DequeueForAgent(agent);
-        first!.IssueIdentifier.Should().Be("review-1");
+        first!.IssueIdentifier.Value.Should().Be("review-1");
 
         // Second dequeue: impl-1 (first of the remaining Implementation jobs — FIFO preserved)
         var second = service.DequeueForAgent(agent);
-        second!.IssueIdentifier.Should().Be("impl-1", "FIFO within tier must be preserved after re-enqueue");
+        second!.IssueIdentifier.Value.Should().Be("impl-1", "FIFO within tier must be preserved after re-enqueue");
 
         var third = service.DequeueForAgent(agent);
-        third!.IssueIdentifier.Should().Be("impl-2");
+        third!.IssueIdentifier.Value.Should().Be("impl-2");
 
         var fourth = service.DequeueForAgent(agent);
-        fourth!.IssueIdentifier.Should().Be("impl-3");
+        fourth!.IssueIdentifier.Value.Should().Be("impl-3");
     }
 }

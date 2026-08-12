@@ -58,9 +58,9 @@ public class QualityGateCancellationLabelTests
             _mockLogger.Object);
 
         // Default: callbacks complete successfully
-        _mockCallbacks.Setup(c => c.SwapAgentLabel(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockCallbacks.Setup(c => c.RemoveAllAgentLabels(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockCallbacks.Setup(c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.UpdateFileChangeStats(It.IsAny<PipelineRun>()))
             .Returns(Task.CompletedTask);
@@ -94,7 +94,7 @@ public class QualityGateCancellationLabelTests
 
         // Assert: RemoveAllAgentLabels is NOT called (this was the bug)
         _mockCallbacks.Verify(
-            c => c.RemoveAllAgentLabels(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -173,7 +173,7 @@ public class QualityGateCancellationLabelTests
 
         // Assert: RemoveAllAgentLabels is NOT called
         _mockCallbacks.Verify(
-            c => c.RemoveAllAgentLabels(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -196,7 +196,7 @@ public class QualityGateCancellationLabelTests
 
         // Assert: SwapAgentLabel is NOT called (guard condition prevents double-labeling)
         _mockCallbacks.Verify(
-            c => c.SwapAgentLabel(It.IsAny<string>(), AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
+            c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Assert: TransitionTo(Cancelled) is NOT called again

@@ -20,13 +20,13 @@ public sealed class DependencyChecker : IDependencyChecker
     }
 
     public async Task<DependencyCheckResult> CheckAsync(
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         string? issueBody,
         IIssueProvider issueProvider,
         Dictionary<int, bool> stateCache,
         CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         ArgumentNullException.ThrowIfNull(issueProvider);
         ArgumentNullException.ThrowIfNull(stateCache);
 

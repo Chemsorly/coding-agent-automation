@@ -225,9 +225,9 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
     /// <summary>
     /// Checks whether the given issue identifier is already queued for processing.
     /// </summary>
-    public bool IsIssueQueued(string issueIdentifier, ProviderConfigId issueProviderConfigId)
+    public bool IsIssueQueued(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         ArgumentException.ThrowIfNullOrEmpty(issueProviderConfigId.Value);
         var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         return _processingIssues.ContainsKey(compositeKey);
@@ -249,9 +249,9 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
     /// Removes a queued issue (e.g., when the UI cancels a pending job).
     /// Removes from both the dedup dictionary and the queue.
     /// </summary>
-    public bool RemoveFromQueue(string issueIdentifier, ProviderConfigId issueProviderConfigId)
+    public bool RemoveFromQueue(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         ArgumentException.ThrowIfNullOrEmpty(issueProviderConfigId.Value);
 
         var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
@@ -290,9 +290,9 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
     /// <summary>
     /// Marks an issue as no longer being processed (call after job completion or failure).
     /// </summary>
-    public void MarkIssueComplete(string issueIdentifier, ProviderConfigId issueProviderConfigId)
+    public void MarkIssueComplete(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         ArgumentException.ThrowIfNullOrEmpty(issueProviderConfigId.Value);
         var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         _processingIssues.TryRemove(compositeKey, out _);

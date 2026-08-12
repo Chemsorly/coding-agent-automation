@@ -237,7 +237,7 @@ public class PrReviewStatePropertyTests
         };
 
         var callbacks = new Mock<IPipelineCallbacks>();
-        callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         // Simulate production behavior: TransitionTo updates CurrentStep
         callbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()))
@@ -308,7 +308,7 @@ public class PrReviewStatePropertyTests
         };
 
         var callbacks = new Mock<IPipelineCallbacks>();
-        callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         callbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()))
             .Callback<PipelineStep>(step => run.CurrentStep = step);
@@ -362,7 +362,7 @@ public class PrReviewStatePropertyTests
         };
 
         var callbacks = new Mock<IPipelineCallbacks>();
-        callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         callbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()))
             .Callback<PipelineStep>(step => run.CurrentStep = step);

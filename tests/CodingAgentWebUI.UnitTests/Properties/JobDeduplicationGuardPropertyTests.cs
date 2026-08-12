@@ -89,7 +89,7 @@ public class JobDeduplicationGuardPropertyTests
 
         var first = dispatcher.DequeueForAgent(agent);
         first.Should().NotBeNull();
-        first!.IssueIdentifier.Should().Be("issue-0"); // FIFO: first enqueued
+        first!.IssueIdentifier.Value.Should().Be("issue-0"); // FIFO: first enqueued
     }
 
     /// <summary>
@@ -191,7 +191,7 @@ public class JobDeduplicationGuardPropertyTests
         var job = dispatcher.DequeueForAgent(agent);
 
         job.Should().NotBeNull();
-        job!.IssueIdentifier.Should().Be(issueId.Get);
+        job!.IssueIdentifier.Value.Should().Be(issueId.Get);
     }
 
     /// <summary>

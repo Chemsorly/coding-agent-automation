@@ -139,18 +139,18 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
         // validating request data flows correctly or correct overload is called. Consider stricter argument matching.
         _mockJobDispatcher
             .Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(),
+                It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(),
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<PipelineProject?>()))
             .ReturnsAsync(true)
-            .Callback<string, ProviderConfigId, ProviderConfigId, string?, string?, string, CancellationToken, string?, PipelineProject?>(
-                (issueId, provId, _, _, _, _, _, _, _) => _distributedIssues.Add((issueId, provId.Value)));
+            .Callback<IssueIdentifier, ProviderConfigId, ProviderConfigId, string?, string?, string, CancellationToken, string?, PipelineProject?>(
+                (issueId, provId, _, _, _, _, _, _, _) => _distributedIssues.Add((issueId.Value, provId.Value)));
 
         // TODO: IsIssueBeingProcessedOrQueued uses It.IsAny<ProviderConfigId>() matchers — incorrect argument
         // forwarding by LegacyWorkDistributor would go undetected. Consider matching specific values.
         _mockJobDispatcher
-            .Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
-            .Returns<string, ProviderConfigId>((issueId, provId) => _distributedIssues.Contains((issueId, provId.Value)));
+            .Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
+            .Returns<IssueIdentifier, ProviderConfigId>((issueId, provId) => _distributedIssues.Contains((issueId.Value, provId.Value)));
 
         _mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun>());
     }
@@ -442,7 +442,7 @@ public class WorkDistributorAdditionalTests
     private static LegacyWorkDistributor CreateLegacy()
     {
         var mockJobDispatcher = new Mock<IJobDispatcher>();
-        mockJobDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
+        mockJobDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Returns(false);
         var logger = Mock.Of<ILogger>();
         var registry = new AgentRegistryService(logger);
