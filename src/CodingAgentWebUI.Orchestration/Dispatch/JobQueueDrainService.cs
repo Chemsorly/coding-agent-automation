@@ -228,13 +228,7 @@ public sealed class JobQueueDrainService : BackgroundService
             // Cancel-during-dispatch race guard
             if (_consolidationRunStore is not null)
             {
-                // TODO: [WARNING] The null-forgiving operator (!) on pendingJob.IssueIdentifier.Value
-                // suppresses the nullable warning but does not add a runtime null guard. If a consolidation
-                // PendingJob is enqueued with default(IssueIdentifier) (Value == null), the cast passes
-                // null into GetByIdAsync, which may silently skip the cancellation guard or throw.
-                // Consider: ArgumentException.ThrowIfNullOrEmpty(pendingJob.IssueIdentifier.Value)
-                // or: if (string.IsNullOrEmpty(pendingJob.IssueIdentifier.Value)) continue;
-                var run = await _consolidationRunStore.GetByIdAsync((RunId)pendingJob.IssueIdentifier.Value!, ct);
+                var run = await _consolidationRunStore.GetByIdAsync((RunId)pendingJob.IssueIdentifier.Value, ct);
                 if (run is null ||
                     run.Status == Pipeline.Models.ConsolidationRunStatus.Cancelled ||
                     run.Status == Pipeline.Models.ConsolidationRunStatus.Failed)

@@ -26,11 +26,7 @@ public sealed class DependencyChecker : IDependencyChecker
         Dictionary<int, bool> stateCache,
         CancellationToken ct)
     {
-        // TODO: [WARNING] ThrowIfNullOrEmpty(issueIdentifier.Value) reports the parameter name as
-        // "issueIdentifier.Value" (via CallerArgumentExpression) rather than "issueIdentifier".
-        // Pass the explicit name to improve debuggability:
-        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         ArgumentNullException.ThrowIfNull(issueProvider);
         ArgumentNullException.ThrowIfNull(stateCache);
 

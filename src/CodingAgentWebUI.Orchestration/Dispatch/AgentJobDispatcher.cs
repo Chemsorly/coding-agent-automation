@@ -61,11 +61,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
     /// <inheritdoc />
     public bool IsIssueBeingProcessedOrQueued(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        // TODO: [WARNING] ThrowIfNullOrEmpty(issueIdentifier.Value) reports the parameter name as
-        // "issueIdentifier.Value" (via CallerArgumentExpression) rather than "issueIdentifier".
-        // Pass the explicit name to improve debuggability:
-        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         return _dispatcher.IsIssueQueued(issueIdentifier, issueProviderConfigId)
             || _runService.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId);
     }

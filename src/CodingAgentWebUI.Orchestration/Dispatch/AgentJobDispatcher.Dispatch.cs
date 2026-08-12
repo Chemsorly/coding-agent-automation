@@ -18,11 +18,7 @@ public sealed partial class AgentJobDispatcher
         string? issueTitle = null,
         PipelineProject? project = null)
     {
-        // TODO: [WARNING] ThrowIfNullOrEmpty(issueIdentifier.Value) reports the parameter name as
-        // "issueIdentifier.Value" (via CallerArgumentExpression) rather than "issueIdentifier".
-        // Pass the explicit name to improve debuggability:
-        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         ArgumentNullException.ThrowIfNull(initiatedBy);
         // TODO: [WARNING] No validation for default(ProviderConfigId) (Value == null). The
         // ArgumentNullException.ThrowIfNull guards that previously covered issueProviderId/repoProviderId
@@ -117,11 +113,7 @@ public sealed partial class AgentJobDispatcher
         string? decompositionSource = null,
         PipelineProject? project = null)
     {
-        // TODO: [WARNING] ThrowIfNullOrEmpty(epicIdentifier.Value) reports the parameter name as
-        // "epicIdentifier.Value" (via CallerArgumentExpression) rather than "epicIdentifier".
-        // Pass the explicit name to improve debuggability:
-        // ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value, nameof(epicIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value);
+        ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value, nameof(epicIdentifier));
         ArgumentNullException.ThrowIfNull(epicTitle);
         ArgumentNullException.ThrowIfNull(initiatedBy);
 

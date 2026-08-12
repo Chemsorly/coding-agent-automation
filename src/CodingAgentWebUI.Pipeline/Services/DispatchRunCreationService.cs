@@ -54,11 +54,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     public async Task<PipelineRun?> CreateDispatchedRunAsync(DispatchRunRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
-        // TODO: [WARNING] ThrowIfNullOrEmpty(request.IssueIdentifier.Value) reports the parameter name as
-        // "request.IssueIdentifier.Value" (via CallerArgumentExpression) rather than "IssueIdentifier".
-        // Pass the explicit name to improve debuggability:
-        // ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value, nameof(request.IssueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value, nameof(request.IssueIdentifier));
         ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
         ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
         ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);
@@ -108,11 +104,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     public async Task<RunReservation?> ReserveRunIdAsync(DispatchRunRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
-        // TODO: [WARNING] ThrowIfNullOrEmpty(request.IssueIdentifier.Value) reports the parameter name as
-        // "request.IssueIdentifier.Value" (via CallerArgumentExpression) rather than "IssueIdentifier".
-        // Pass the explicit name to improve debuggability:
-        // ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value, nameof(request.IssueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value, nameof(request.IssueIdentifier));
         ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
         ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
         ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);

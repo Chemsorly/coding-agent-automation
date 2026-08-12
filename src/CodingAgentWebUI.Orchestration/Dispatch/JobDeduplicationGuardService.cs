@@ -227,11 +227,7 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
     /// </summary>
     public bool IsIssueQueued(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        // TODO: [WARNING] ThrowIfNullOrEmpty(issueIdentifier.Value) reports the parameter name as
-        // "issueIdentifier.Value" (via CallerArgumentExpression) rather than "issueIdentifier".
-        // Pass the explicit name to improve debuggability:
-        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         ArgumentException.ThrowIfNullOrEmpty(issueProviderConfigId.Value);
         var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         return _processingIssues.ContainsKey(compositeKey);
@@ -255,11 +251,7 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
     /// </summary>
     public bool RemoveFromQueue(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        // TODO: [WARNING] ThrowIfNullOrEmpty(issueIdentifier.Value) reports the parameter name as
-        // "issueIdentifier.Value" (via CallerArgumentExpression) rather than "issueIdentifier".
-        // Pass the explicit name to improve debuggability:
-        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         ArgumentException.ThrowIfNullOrEmpty(issueProviderConfigId.Value);
 
         var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
@@ -300,11 +292,7 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
     /// </summary>
     public void MarkIssueComplete(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        // TODO: [WARNING] ThrowIfNullOrEmpty(issueIdentifier.Value) reports the parameter name as
-        // "issueIdentifier.Value" (via CallerArgumentExpression) rather than "issueIdentifier".
-        // Pass the explicit name to improve debuggability:
-        // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         ArgumentException.ThrowIfNullOrEmpty(issueProviderConfigId.Value);
         var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         _processingIssues.TryRemove(compositeKey, out _);
