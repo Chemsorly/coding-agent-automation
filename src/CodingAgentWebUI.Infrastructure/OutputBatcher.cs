@@ -54,7 +54,15 @@ public sealed class ManualFlushTrigger : IFlushTrigger
 
     public async ValueTask<bool> WaitForNextTickAsync(CancellationToken ct)
     {
-        await _gate.WaitAsync(ct);
+        try
+        {
+            await _gate.WaitAsync(ct);
+        }
+        catch (ObjectDisposedException)
+        {
+            // _gate was disposed concurrently with DisposeAsync — treat as stopped
+            return false;
+        }
         return !_stopped;
     }
 
