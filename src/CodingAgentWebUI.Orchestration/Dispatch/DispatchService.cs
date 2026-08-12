@@ -32,7 +32,7 @@ public sealed class DispatchService : BackgroundService
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateStore _templateProvider;
-    private readonly ILabelService? _labelService;
+    private readonly ILabelSwapService? _labelSwapper;
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IOrchestratorRunService? _runService;
     private readonly DispatchEligibilityChecker _eligibilityChecker;
@@ -58,7 +58,7 @@ public sealed class DispatchService : BackgroundService
         _dbFactory = coreDeps.DbFactory;
         _leaderElection = coreDeps.LeaderElection;
         _lifecycle = coreDeps.Lifecycle;
-        _labelService = coreDeps.LabelService;
+        _labelSwapper = coreDeps.LabelSwapper;
         _agentProfileStore = coreDeps.AgentProfileStore;
         _runService = coreDeps.RunService;
         _templateProvider = templateProvider;
@@ -293,22 +293,30 @@ public sealed class DispatchService : BackgroundService
                 // hours earlier for queued work, inflating the Duration shown in the UI.
                 _runService?.GetRun(item.Id.ToString())?.ResetStartedAt(workItem.DispatchedAt!.Value);
 
-                // Swap issue label to agent:in-progress (non-fatal — best effort)
-                if (_labelService is not null &&
+                // Swap issue label to agent:in-progress — delegates to shared LabelSwapService
+                // which handles retry and reconciliation flagging on failure. (#1868)
+                // Note: unlike the previous fire-and-forget, SwapLabelWithRetryAsync can propagate
+                // OperationCanceledException during shutdown. The item is already persisted as
+                // Dispatched before this runs, so OCE only interrupts the label swap. The outer
+                // poll loop handles OCE gracefully (breaks the loop).
+                if (_labelSwapper is not null &&
                     !string.IsNullOrEmpty(item.IssueIdentifier) &&
                     !string.IsNullOrEmpty(item.IssueProviderConfigId))
                 {
-                    try
-                    {
-                        await _labelService.SwapLabelAsync(
-                            item.IssueProviderConfigId, item.IssueIdentifier, AgentLabels.InProgress, ct);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Warning(ex,
-                            "DispatchService: failed to swap label to agent:in-progress for {IssueIdentifier}",
-                            item.IssueIdentifier);
-                    }
+                    // TODO: LabelTargetKind.Issue is hardcoded here, but Review (PR) work items
+                    // dispatched in K8s mode should use LabelTargetKind.PullRequest with
+                    // item.RepoProviderConfigId (matching PendingWorkItemDrainService's run-type
+                    // branching logic). This is NOT a regression — the old code also defaulted to
+                    // LabelTargetKind.Issue unconditionally — but if K8s mode is intended to handle
+                    // PR review work items, this should branch on item.TaskType == WorkItemTaskType.Review
+                    // (or a serialized RunType from the payload) and select RepoProviderConfigId +
+                    // LabelTargetKind.PullRequest accordingly. Track as follow-up to #1868.
+                    await _labelSwapper.SwapLabelWithRetryAsync(
+                        item.Id,
+                        item.IssueProviderConfigId,
+                        item.IssueIdentifier,
+                        LabelTargetKind.Issue,
+                        ct);
                 }
             },
             ct);
