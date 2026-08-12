@@ -143,11 +143,6 @@ public class TestOrchestrationFactoryTests
     [Fact]
     public void CreateMinimalOptions_DefaultsAllNull()
     {
-        // TODO: [WARNING] OrchestrationService is not asserted here. If a future change accidentally
-        // initialises CreateMinimalOptions.OrchestrationService to a non-null value, the short-circuit
-        // branch in CreateMinimal(CreateMinimalOptions) would silently return that instance instead of
-        // the concrete PipelineOrchestrationService, and no existing test would detect the regression.
-        // Add: opts.OrchestrationService.Should().BeNull();
         var opts = new CreateMinimalOptions();
         opts.ConfigStore.Should().BeNull();
         opts.ProviderFactory.Should().BeNull();
@@ -157,6 +152,7 @@ public class TestOrchestrationFactoryTests
         opts.Logger.Should().BeNull();
         opts.HistoryService.Should().BeNull();
         opts.RunService.Should().BeNull();
+        opts.OrchestrationService.Should().BeNull();
     }
 
     [Fact]

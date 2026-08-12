@@ -19,13 +19,6 @@ public static class TestOrchestrationFactory
     /// <c>Mock&lt;IPipelineOrchestrationService&gt;</c> without the 6-parameter concrete constructor.
     /// </para>
     /// </summary>
-    // TODO: [WARNING] This overload now returns IPipelineOrchestrationService instead of the concrete
-    // PipelineOrchestrationService. This is a source-breaking change for any caller that previously used
-    // the concrete return type to access IDisposable.Dispose, IAsyncDisposable.DisposeAsync, or
-    // IOrchestrationShutdownAction.ReleaseActiveAgentRunsAsync. Callers using `var` will silently lose
-    // access to those members. The named-parameter overload (below) still returns PipelineOrchestrationService,
-    // making the two overloads inconsistent. Consider whether callers that need disposal should explicitly
-    // use the named-parameter overload or cast the result.
     public static IPipelineOrchestrationService CreateMinimal(CreateMinimalOptions? options = null)
     {
         var o = options ?? new CreateMinimalOptions();
@@ -39,12 +32,6 @@ public static class TestOrchestrationFactory
         var historyService = o.HistoryService ?? new NullHistoryService();
 
         var store = o.ConfigStore ?? throw new ArgumentNullException(nameof(options), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object");
-        // TODO: [WARNING] The ArgumentNullException above (and the one below) use nameof(options) as the
-        // paramName, but the missing value is ConfigStore/ProviderFactory within the options object —
-        // not options itself. This makes diagnostics misleading when a caller passes a populated
-        // CreateMinimalOptions with only one field missing. The named-parameter overload correctly uses
-        // nameof(configStore). Consider throwing ArgumentException with a message pointing to the specific
-        // field, or using nameof(o.ConfigStore), to align with the named-parameter overload's behaviour.
         // TODO: Passing the same store object as both IPipelineConfigStore and IProviderConfigStore prevents tests
         // from verifying that calls are routed to the correct sub-interface. Consider accepting separate parameters.
         return new PipelineOrchestrationService(
