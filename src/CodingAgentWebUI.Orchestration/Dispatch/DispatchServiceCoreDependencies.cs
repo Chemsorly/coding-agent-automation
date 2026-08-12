@@ -12,7 +12,7 @@ internal sealed record DispatchServiceCoreDependencies(
     IDbContextFactory<PipelineDbContext> DbFactory,
     LeaderElection.ILeaderElectionService LeaderElection,
     DispatchLifecycleService Lifecycle,
-    ILabelService? LabelService = null,
+    ILabelSwapService? LabelSwapper = null,
     IAgentProfileStore? AgentProfileStore = null,
     IOrchestratorRunService? RunService = null,
     DispatchStateBuilder? StateBuilder = null);

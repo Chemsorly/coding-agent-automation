@@ -26,7 +26,16 @@ public sealed class AgentJobSlotManager
 
     private volatile CancellationTokenSource? _jobCts;
     private Task? _activeJobTask;
-    private volatile string? _activeJobId;
+    // TODO: [WARNING] _activeJobId and _isBusy are two separate fields that must stay in sync.
+    // _isBusy is volatile for lockless IsBusy reads; _activeJobId is guarded by _busyLock.
+    // Both are set/cleared together inside lock(_busyLock), but a narrow window exists:
+    // on acquire, _activeJobId is written before _isBusy=true; on release, _activeJobId=null
+    // is written before _isBusy=false. A lockless IsBusy read can therefore briefly lag behind
+    // the lock-protected _activeJobId. On x86/.NET TSO this is benign; on ARM-hosted containers
+    // a memory fence between the two writes would be needed for strict ordering guarantees.
+    // If ARM deployment is planned, reconsider using a single lock-guarded bool or a fence.
+    private JobId? _activeJobId;      // guarded by _busyLock; JobId? instead of string? to satisfy the strong-type storage requirement
+    private volatile bool _isBusy;    // lightweight sentinel for the lockless IsBusy property read
     private JobAssignmentMessage? _activeJobAssignment;
     private DateTimeOffset? _activeJobStartedAt;
     private int _currentStep = NullStep;
@@ -53,10 +62,12 @@ public sealed class AgentJobSlotManager
 
     // NOTE: Thread-safety contract — ActiveChatSessionId acquires _busyLock for its read because
     // it participates in TOCTOU-sensitive operations (CancelChatIfSession, GetChatSlotSnapshot).
-    // ActiveJobId uses volatile; CurrentStep uses Volatile.Read; IsBusy reads the volatile _activeJobId.
+    // ActiveJobId and IsBusy use a volatile bool _isBusy sentinel for lightweight lockless reads;
+    // _activeJobId (JobId?) itself is only read/written under _busyLock.
+    // CurrentStep uses Volatile.Read.
     // This is intentional: single-field reads use lightweight barriers, multi-field consistency uses locks.
     /// <summary>Whether the agent is currently executing a job.</summary>
-    public bool IsBusy => _activeJobId is not null;
+    public bool IsBusy => _isBusy;
 
     /// <summary>The current pipeline step being executed, or null if idle.</summary>
     public PipelineStep? CurrentStep
@@ -69,7 +80,10 @@ public sealed class AgentJobSlotManager
     }
 
     /// <summary>The active job ID, or null if idle.</summary>
-    public string? ActiveJobId => _activeJobId;
+    public JobId? ActiveJobId
+    {
+        get { lock (_busyLock) { return _activeJobId; } }
+    }
 
     /// <summary>The active chat session ID, or null if no chat is in progress.</summary>
     public string? ActiveChatSessionId
@@ -161,7 +175,7 @@ public sealed class AgentJobSlotManager
     /// <see cref="ActiveJobId"/> and then call <see cref="CancelCurrentJob"/>, during
     /// which time the job could have been released and a new one acquired.
     /// </remarks>
-    public bool CancelJobIfMatch(string jobId)
+    public bool CancelJobIfMatch(JobId jobId)
     {
         lock (_busyLock)
         {
@@ -182,17 +196,22 @@ public sealed class AgentJobSlotManager
     /// <param name="jobId">The job ID to acquire the slot for.</param>
     /// <param name="busyWith">If rejected, describes what the agent is busy with.</param>
     /// <returns><c>true</c> if the slot was acquired; <c>false</c> otherwise.</returns>
-    public bool TryAcquireJobSlot(string jobId, out string? busyWith)
+    // TODO: [WARNING] Add ArgumentNullException.ThrowIfNull(jobId.Value) guard here and in CancelJobIfMatch
+    // to prevent default(JobId) (which has Value=null) from being stored in _activeJobId.
+    // A default JobId bypasses the implicit operator's null guard and would cause _activeJobId?.Value
+    // to return null, breaking busyWith reporting and BuildActiveJobState downstream.
+    public bool TryAcquireJobSlot(JobId jobId, out string? busyWith)
     {
         lock (_busyLock)
         {
             if (_activeJobId is not null || _activeChatSessionId is not null)
             {
-                busyWith = _activeJobId ?? $"chat:{_activeChatSessionId}";
+                busyWith = _activeJobId?.Value ?? $"chat:{_activeChatSessionId}";
                 return false;
             }
 
             _activeJobId = jobId;
+            _isBusy = true;
             _activeJobStartedAt = DateTimeOffset.UtcNow;
             _jobCts = new CancellationTokenSource();
             Interlocked.Exchange(ref _jobReleased, 0); // Reset guard for new job
@@ -214,7 +233,7 @@ public sealed class AgentJobSlotManager
         {
             if (_activeJobId is not null || _activeChatSessionId is not null)
             {
-                busyWith = _activeJobId ?? $"chat:{_activeChatSessionId}";
+                busyWith = _activeJobId?.Value ?? $"chat:{_activeChatSessionId}";
                 return false;
             }
 
@@ -275,6 +294,7 @@ public sealed class AgentJobSlotManager
         lock (_busyLock)
         {
             _activeJobId = null;
+            _isBusy = false;
             _activeJobAssignment = null;
             _activeJobStartedAt = null;
             _currentStep = NullStep;
@@ -339,6 +359,7 @@ public sealed class AgentJobSlotManager
         lock (_busyLock)
         {
             _activeJobId = null;
+            _isBusy = false;
             _activeJobAssignment = null;
             _activeJobStartedAt = null;
             _currentStep = NullStep;
@@ -363,7 +384,11 @@ public sealed class AgentJobSlotManager
 
             var step = Volatile.Read(ref _currentStep);
             return ActiveJobStateFactory.Create(
-                _activeJobId, _activeJobAssignment,
+                // TODO: [WARNING] _activeJobId.Value.Value: first .Value unwraps Nullable<JobId>, second .Value
+                // accesses the inner string. Safe here because the null guard above prevents a null Nullable<JobId>,
+                // but JobId.Value can still be null if a default(JobId) was ever stored (bypassing the implicit
+                // operator guard). Consider adding an ArgumentNullException guard in TryAcquireJobSlot(JobId).
+                _activeJobId.Value.Value, _activeJobAssignment,
                 step == NullStep ? PipelineStep.GeneratingCode : (PipelineStep)step,
                 _activeJobStartedAt ?? DateTimeOffset.UtcNow);
         }

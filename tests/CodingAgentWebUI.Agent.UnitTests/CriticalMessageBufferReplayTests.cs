@@ -42,7 +42,8 @@ public class CriticalMessageBufferReplayTests
         var buffer = GetBuffer(service);
 
         // Set up state as if a job completed and ReportJobCompleted failed
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "job-buffer-1");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"job-buffer-1");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         var completion = new JobCompletionPayload
@@ -76,7 +77,7 @@ public class CriticalMessageBufferReplayTests
         rebuffered.JobId.Should().Be("job-buffer-1");
 
         // Verify: slot is held (production conditional: buffer has pending → don't release)
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("job-buffer-1",
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"job-buffer-1",
             "job slot should be held when buffer has pending messages");
     }
 
@@ -91,7 +92,8 @@ public class CriticalMessageBufferReplayTests
         var buffer = GetBuffer(service);
 
         // Simulate: job completed but ReportJobCompleted failed → message buffered
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "held-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"held-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         // Buffer a message that will fail to replay (connection not started)
@@ -106,7 +108,7 @@ public class CriticalMessageBufferReplayTests
 
         // Production code: after drain, if buffer still has pending messages, slot is NOT released
         buffer.HasPendingMessages.Should().BeTrue("message should be re-buffered after failed replay");
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("held-job",
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"held-job",
             "job slot should remain held when buffer has pending messages (production conditional)");
     }
 
@@ -119,7 +121,8 @@ public class CriticalMessageBufferReplayTests
         var service = CreateService();
         var buffer = GetBuffer(service);
 
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "drain-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"drain-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         // Buffer is empty — DrainBufferAsync should be a no-op (early return)
@@ -132,7 +135,7 @@ public class CriticalMessageBufferReplayTests
 
         // Slot is NOT released by DrainBufferAsync when buffer was already empty
         // (DrainBufferAsync returns early — the release logic only fires after actual drain)
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("drain-job");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"drain-job");
         // TODO(#1776): Add assertion that buffer.HasPendingMessages is still false after
         // DrainBufferAsync completes, to catch any regression where DrainBufferAsync mistakenly
         // enqueues a message on the empty-buffer early-return path.
@@ -182,7 +185,8 @@ public class CriticalMessageBufferReplayTests
         var service = CreateService();
         var buffer = GetBuffer(service);
 
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "expired-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"expired-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         // Enqueue a message that has already exhausted its retry limit
@@ -195,7 +199,7 @@ public class CriticalMessageBufferReplayTests
         // Buffer should be empty (message was dropped, not re-buffered)
         buffer.HasPendingMessages.Should().BeFalse();
         // After drain with empty buffer, slot should be released
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
     }
 
     [Fact]
@@ -211,7 +215,8 @@ public class CriticalMessageBufferReplayTests
         var service = CreateService();
         var buffer = GetBuffer(service);
 
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "non-standard-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"non-standard-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         // Enqueue a non-BufferedJobCompleted subtype with exhausted drain attempts.
@@ -227,7 +232,7 @@ public class CriticalMessageBufferReplayTests
 
         // Message should be dropped (DrainAttempts >= maxDrainAttempts) — no infinite retry
         buffer.HasPendingMessages.Should().BeFalse("non-BufferedJobCompleted subtype with exhausted attempts should be dropped");
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().BeNull("slot should be released after buffer is empty");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().BeNull("slot should be released after buffer is empty");
     }
 
     // TODO(#1776): Add integration test exercising DrainBufferAsync with a non-BufferedJobCompleted
@@ -251,7 +256,8 @@ public class CriticalMessageBufferReplayTests
         var service = CreateService();
         var buffer = GetBuffer(service);
 
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "replay-fail-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"replay-fail-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         buffer.Enqueue(new BufferedJobCompleted("replay-fail-job", CreatePayload(), DateTimeOffset.UtcNow, DrainAttempts: 0));
@@ -279,7 +285,8 @@ public class CriticalMessageBufferReplayTests
         var service = CreateService();
         var buffer = GetBuffer(service);
 
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "multi-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"multi-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         buffer.Enqueue(new BufferedJobCompleted("job-A", CreatePayload(), DateTimeOffset.UtcNow));
@@ -316,7 +323,8 @@ public class CriticalMessageBufferReplayTests
         var slotManager = GetSlotManager(service);
 
         // Simulate: job completed, ReportJobCompleted failed, slot held
-        SetPrivateField(slotManager, "_activeJobId", "pending-job");
+        SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"pending-job");
+        SetPrivateField(slotManager, "_isBusy", true);
         SetPrivateField(slotManager, "_activeJobAssignment", CreateTestJobAssignment("pending-job"));
         SetPrivateField(slotManager, "_activeJobStartedAt", DateTimeOffset.UtcNow);
         buffer.Enqueue(new BufferedJobCompleted("pending-job", CreatePayload(), DateTimeOffset.UtcNow));
@@ -347,7 +355,8 @@ public class CriticalMessageBufferReplayTests
         var buffer = GetBuffer(service);
         // DrainBufferAsync is internal on AgentConnectionLifecycle
 
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "lifecycle-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"lifecycle-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         // Step 2: Buffer the message
@@ -360,7 +369,7 @@ public class CriticalMessageBufferReplayTests
             await task;
             // Should still be pending (re-buffered with incremented attempts)
             buffer.HasPendingMessages.Should().BeTrue($"after drain attempt {i + 1}, message should be re-buffered");
-            GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().NotBeNull($"slot should remain held after drain attempt {i + 1}");
+            GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().NotBeNull($"slot should remain held after drain attempt {i + 1}");
         }
 
         // Verify attempt count reached max
@@ -376,14 +385,15 @@ public class CriticalMessageBufferReplayTests
         // Need to reset _activeJobId since previous drain may have cleared it
         // Actually, DrainBufferAsync only releases slot when buffer is empty.
         // The buffer still had pending messages, so slot was not released.
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "lifecycle-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"lifecycle-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         var finalDrain = GetLifecycle(service).DrainBufferAsync();
         await finalDrain;
 
         buffer.HasPendingMessages.Should().BeFalse("exhausted message should be dropped");
-        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().BeNull("slot should be released after buffer is empty");
+        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().BeNull("slot should be released after buffer is empty");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

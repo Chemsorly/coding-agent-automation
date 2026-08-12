@@ -62,7 +62,7 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            transitionService,
+            WorkItemTransition: transitionService,
             DbFactory: _dbFactory));
     }
 
@@ -79,7 +79,7 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
         await InsertWorkItem(workItemId);
 
         var now = DateTimeOffset.UtcNow;
-        await _facade.TouchLastProgressAsync(workItemId.ToString(), now, CancellationToken.None);
+        await _facade.TouchLastProgressAsync(new JobId(workItemId.ToString()), now, CancellationToken.None);
 
         await using var db = _dbFactory.CreateDbContext();
         var item = await db.WorkItems.FindAsync(workItemId);
@@ -95,7 +95,7 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
         await InsertWorkItem(workItemId, lastProgressAt: recentProgress);
 
         var newTimestamp = DateTimeOffset.UtcNow;
-        await _facade.TouchLastProgressAsync(workItemId.ToString(), newTimestamp, CancellationToken.None);
+        await _facade.TouchLastProgressAsync(new JobId(workItemId.ToString()), newTimestamp, CancellationToken.None);
 
         await using var db = _dbFactory.CreateDbContext();
         var item = await db.WorkItems.FindAsync(workItemId);
@@ -111,7 +111,7 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
         await InsertWorkItem(workItemId, lastProgressAt: staleProgress);
 
         var newTimestamp = DateTimeOffset.UtcNow;
-        await _facade.TouchLastProgressAsync(workItemId.ToString(), newTimestamp, CancellationToken.None);
+        await _facade.TouchLastProgressAsync(new JobId(workItemId.ToString()), newTimestamp, CancellationToken.None);
 
         await using var db = _dbFactory.CreateDbContext();
         var item = await db.WorkItems.FindAsync(workItemId);
@@ -122,7 +122,7 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
     public async Task TouchLastProgressAsync_InvalidJobId_NoOp()
     {
         var exception = await Record.ExceptionAsync(async () =>
-            await _facade.TouchLastProgressAsync("not-a-guid", DateTimeOffset.UtcNow, CancellationToken.None));
+            await _facade.TouchLastProgressAsync(new JobId("not-a-guid"), DateTimeOffset.UtcNow, CancellationToken.None));
 
         exception.Should().BeNull();
 
@@ -135,10 +135,10 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
     [Fact]
     public async Task TouchLastProgressAsync_NonexistentWorkItem_NoOp()
     {
-        var nonexistent = Guid.NewGuid().ToString();
+        var nonexistent = Guid.NewGuid();
 
         var exception = await Record.ExceptionAsync(async () =>
-            await _facade.TouchLastProgressAsync(nonexistent, DateTimeOffset.UtcNow, CancellationToken.None));
+            await _facade.TouchLastProgressAsync(new JobId(nonexistent.ToString()), DateTimeOffset.UtcNow, CancellationToken.None));
 
         exception.Should().BeNull();
 
@@ -155,7 +155,7 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
         await InsertWorkItem(workItemId, lastProgressAt: null); // No previous progress
 
         var now = DateTimeOffset.UtcNow;
-        await _facade.TouchLastProgressAsync(workItemId.ToString(), now, CancellationToken.None);
+        await _facade.TouchLastProgressAsync(new JobId(workItemId.ToString()), now, CancellationToken.None);
 
         await using var db = _dbFactory.CreateDbContext();
         var item = await db.WorkItems.FindAsync(workItemId);

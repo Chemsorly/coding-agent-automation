@@ -72,7 +72,7 @@ public sealed partial class AgentHub
     [RequiresActiveJob]
     public Task ReportBrainSyncResult(JobId jobId, bool contextLoaded, int knowledgeFileCount)
     {
-        var run = _facade.GetRun(jobId.Value);
+        var run = _facade.GetRun(jobId);
         if (run is not null)
         {
             run.BrainContextLoaded = contextLoaded;
@@ -93,11 +93,11 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(lines);
 
-        var buffer = _facade.GetOutputBuffer(jobId.Value);
+        var buffer = _facade.GetOutputBuffer(jobId);
         buffer.AddRange(lines);
 
         // Also add to the run's OutputLines for UI streaming
-        var run = _facade.GetRun(jobId.Value);
+        var run = _facade.GetRun(jobId);
         if (run is not null)
         {
             foreach (var line in lines)
@@ -117,7 +117,7 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(content);
 
-        var run = _facade.GetRun(jobId.Value);
+        var run = _facade.GetRun(jobId);
         run?.ChatHistory.Enqueue(new ChatEntry { Role = role, Content = content, Timestamp = DateTime.UtcNow });
 
         return Task.CompletedTask;
@@ -131,7 +131,7 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(report);
 
-        var run = _facade.GetRun(jobId.Value);
+        var run = _facade.GetRun(jobId);
         if (run is not null)
         {
             run.LatestQualityReport = report;
@@ -153,7 +153,7 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(payload);
 
-        var run = _facade.GetRun(jobId.Value);
+        var run = _facade.GetRun(jobId);
         if (run is null)
         {
             _logger.Warning("RequestPostComment for unknown run {JobId}", jobId.Value);
@@ -192,7 +192,7 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(newLabel);
 
-        var run = _facade.GetRun(jobId.Value);
+        var run = _facade.GetRun(jobId);
         if (run is null)
         {
             _logger.Warning("RequestLabelChange for unknown run {JobId}", jobId.Value);
@@ -257,7 +257,7 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
 
-        var run = _facade.GetRun(jobId.Value);
+        var run = _facade.GetRun(jobId);
         if (run is null)
             throw new HubException($"No active run found for job {jobId.Value}");
 

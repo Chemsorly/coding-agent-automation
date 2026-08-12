@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
 
@@ -377,4 +378,118 @@ public class AgentJobSlotManagerCancellationTests
     {
         return new AgentJobSlotManager(() => Task.CompletedTask);
     }
+
+    // ── CancelJobIfMatch(JobId) — strong-typed parameter ────────────────
+
+    // TODO: [WARNING] These tests acquire the slot via the implicit string overload (TryAcquireJobSlot("job-1", out _))
+    // then cancel via the JobId overload. Consider also adding a symmetric test that acquires via
+    // TryAcquireJobSlot(new JobId("job-1"), out _) and cancels via the string path, to verify
+    // the round-trip through _activeJobId is correct in both directions.
+    [Fact]
+    public void CancelJobIfMatch_WithJobId_WhenJobMatches_CancelsAndReturnsTrue()
+    {
+        var slotManager = CreateSlotManager();
+        slotManager.TryAcquireJobSlot("job-1", out _);
+        var token = slotManager.JobCancellationToken!.Value;
+
+        var result = slotManager.CancelJobIfMatch(new JobId("job-1"));
+
+        result.Should().BeTrue();
+        token.IsCancellationRequested.Should().BeTrue();
+    }
+
+    [Fact]
+    public void CancelJobIfMatch_WithJobId_WhenJobDoesNotMatch_ReturnsFalse()
+    {
+        var slotManager = CreateSlotManager();
+        slotManager.TryAcquireJobSlot("job-1", out _);
+        var token = slotManager.JobCancellationToken!.Value;
+
+        var result = slotManager.CancelJobIfMatch(new JobId("job-other"));
+
+        result.Should().BeFalse();
+        token.IsCancellationRequested.Should().BeFalse();
+    }
+
+    [Fact]
+    public void CancelJobIfMatch_WithJobId_WhenNoJobActive_ReturnsFalse()
+    {
+        var slotManager = CreateSlotManager();
+
+        var result = slotManager.CancelJobIfMatch(new JobId("job-1"));
+
+        result.Should().BeFalse();
+    }
+
+    // ── ActiveJobId returns JobId? ───────────────────────────────────────
+
+    [Fact]
+    public void ActiveJobId_AfterAcquireJobSlot_ReturnsMatchingJobId()
+    {
+        var slotManager = CreateSlotManager();
+        slotManager.TryAcquireJobSlot("job-123", out _);
+
+        slotManager.ActiveJobId.Should().Be(new JobId("job-123"));
+    }
+
+    [Fact]
+    public void ActiveJobId_WhenNoJobActive_ReturnsNull()
+    {
+        var slotManager = CreateSlotManager();
+
+        slotManager.ActiveJobId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ActiveJobId_AfterReleaseJobSlot_ReturnsNull()
+    {
+        var slotManager = CreateSlotManager();
+        slotManager.TryAcquireJobSlot("job-456", out _);
+
+        await slotManager.ReleaseJobSlotAndSignalReadyAsync();
+
+        slotManager.ActiveJobId.Should().BeNull();
+    }
+
+    // ── TryAcquireJobSlot(JobId) — strong-typed parameter ───────────────
+
+    // TODO: [WARNING] The ActiveJobId assertion tests (lines above) acquire via the string overload.
+    // Add a test that acquires via new JobId("...") and reads back ActiveJobId to exercise the
+    // full JobId→_activeJobId→ActiveJobId round-trip on the new strong-typed path.
+    // Also consider a test for TryAcquireJobSlot(default(JobId), out _) to verify behavior
+    // when a default JobId (Value=null) is passed.
+    [Fact]
+    public void TryAcquireJobSlot_WithJobId_AcquiresSlotAndSetsActiveJobId()
+    {
+        var slotManager = CreateSlotManager();
+
+        var acquired = slotManager.TryAcquireJobSlot(new JobId("strong-job-1"), out var busyWith);
+
+        acquired.Should().BeTrue();
+        busyWith.Should().BeNull();
+        slotManager.ActiveJobId.Should().Be(new JobId("strong-job-1"));
+        slotManager.IsBusy.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TryAcquireJobSlot_WithJobId_WhenBusy_ReturnsFalse()
+    {
+        var slotManager = CreateSlotManager();
+        slotManager.TryAcquireJobSlot(new JobId("first-job"), out _);
+
+        var acquired = slotManager.TryAcquireJobSlot(new JobId("second-job"), out var busyWith);
+
+        acquired.Should().BeFalse();
+        busyWith.Should().Be("first-job");
+    }
+
+    // TODO: [WARNING] Missing test: acquire a slot via TryAcquireJobSlot(new JobId(...)), then call
+    // ReleaseJobSlotAndSignalReadyAsync(), and assert IsBusy == false. The existing tests only verify
+    // IsBusy == true on the acquire path; the _isBusy = false reset in the release path is not exercised
+    // by any dedicated test for the JobId overload.
+
+    // TODO: [WARNING] Missing test: acquire via TryAcquireJobSlot("job-x", out _) (string/implicit path),
+    // then cancel via CancelJobIfMatch("job-x") (string implicit conversion) after verifying the
+    // round-trip through _activeJobId stored as JobId? is symmetric. Complements the existing tests
+    // which only exercise acquire-via-string / cancel-via-JobId.
 }

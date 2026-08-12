@@ -26,7 +26,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
@@ -68,7 +68,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         // DrainPendingItems_ConsolidationItem_ShutdownDuringDispatch_RevertsWorkItemToPending and to avoid
         // silent breakage if Moq changes how it resolves implicit conversions in argument matching.
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var service = CreateService();
@@ -78,7 +78,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 
         // Assert: TryDispatchToAgentAsync was called (token vending occurs within)
         _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()),
+            d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()),
             Times.Once);
 
         // Assert: WorkItem transitioned to Dispatched
@@ -101,7 +101,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.RefactoringDetection, StartedAtUtc = DateTime.UtcNow });
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.RefactoringDetection, null, "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.RefactoringDetection, null, "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(false); // Dispatch failed
 
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
@@ -168,10 +168,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 
         // Create service WITHOUT consolidation dependencies
         var service = new PendingWorkItemDrainService(
-            MakeDeps(),
-            MakeLabelSwapService(),
-            MakeDispatchRevertHandler(),
-            MakeDispatchAttemptService());
+            MakeDeps());
 
         // Act
         await InvokeDrainAsync(service);
@@ -256,9 +253,6 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     {
         return new PendingWorkItemDrainService(
             MakeDeps(),
-            MakeLabelSwapService(),
-            MakeDispatchRevertHandler(),
-            MakeDispatchAttemptService(),
             null, // IProjectStore
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -266,17 +260,11 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 
     private DrainServiceDependencies MakeDeps() =>
         new(_dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-            _transitionService, _mockPendingWork.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance);
-
-    private LabelSwapService MakeLabelSwapService() =>
-        new(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance);
-
-    private DispatchRevertHandler MakeDispatchRevertHandler() =>
-        new(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance);
-
-    private DispatchAttemptService MakeDispatchAttemptService() =>
-        new(_transitionService, MakeDispatchRevertHandler());
+            _runService, _transitionService, _mockPendingWork.Object,
+            _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
+            new DispatchRevertHandler(
+                _dbFactory, _mockResolver.Object, _runService, _transitionService,
+                NullLogger<DispatchRevertHandler>.Instance));
 
     private async Task InsertConsolidationWorkItem(
         Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath,
@@ -363,7 +351,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
@@ -402,7 +390,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
 
         // Setup: dispatch THROWS an exception
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Token vending failed"));
 
         var service = CreateService();
@@ -448,19 +436,24 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
                 throw new OperationCanceledException(cts.Token);
             });
 
-        var cancellationAwareFactory = new CancellationAwareDbContextFactory(_dbOptions);
-        var cancellingTransitionService = new WorkItemTransitionService(cancellationAwareFactory, NullLogger<WorkItemTransitionService>.Instance);
         var service = new PendingWorkItemDrainService(
             new DrainServiceDependencies(
                 _dbFactory,
                 _mockResolver.Object,
                 _mockAgentComm.Object,
-                cancellingTransitionService,
+                _runService,
+                new WorkItemTransitionService(
+                    new CancellationAwareDbContextFactory(_dbOptions),
+                    NullLogger<WorkItemTransitionService>.Instance),
                 _mockPendingWork.Object,
-                NullLogger<PendingWorkItemDrainService>.Instance),
-            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
-            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, cancellingTransitionService, NullLogger<DispatchRevertHandler>.Instance),
-            new DispatchAttemptService(cancellingTransitionService, new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, cancellingTransitionService, NullLogger<DispatchRevertHandler>.Instance)),
+                _mockLabelSwapper.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance,
+                new DispatchRevertHandler(
+                    _dbFactory, _mockResolver.Object, _runService,
+                    new WorkItemTransitionService(
+                        new CancellationAwareDbContextFactory(_dbOptions),
+                        NullLogger<WorkItemTransitionService>.Instance),
+                    NullLogger<DispatchRevertHandler>.Instance)),
             null, // IProjectStore
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -492,9 +485,6 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
     {
         return new PendingWorkItemDrainService(
             MakeDeps(),
-            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
-            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance),
-            new DispatchAttemptService(_transitionService, new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance)),
             null, // IProjectStore
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -502,8 +492,11 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
 
     private DrainServiceDependencies MakeDeps() =>
         new(_dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-            _transitionService, _mockPendingWork.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance);
+            _runService, _transitionService, _mockPendingWork.Object,
+            _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
+            new DispatchRevertHandler(
+                _dbFactory, _mockResolver.Object, _runService, _transitionService,
+                NullLogger<DispatchRevertHandler>.Instance));
 
     private async Task InsertConsolidationWorkItem(
         Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath)
@@ -607,7 +600,7 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
@@ -642,7 +635,7 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "tpl-1", "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "tpl-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         _mockResolver.Setup(r => r.AssignJob("agent-1", workItemId.ToString()));
 
@@ -676,7 +669,7 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         // _mockConsolidationDispatchService.Verify(d => d.TryDispatchToAgentAsync(...), Times.Once)
         // to close this gap and confirm the dispatch path was actually exercised.
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
 
@@ -799,11 +792,11 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         var service = new PendingWorkItemDrainService(
             new DrainServiceDependencies(
                 _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-                cancellingTransitionService, _mockPendingWork.Object,
-                NullLogger<PendingWorkItemDrainService>.Instance),
-            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
-            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, cancellingTransitionService, NullLogger<DispatchRevertHandler>.Instance),
-            new DispatchAttemptService(cancellingTransitionService, new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, cancellingTransitionService, NullLogger<DispatchRevertHandler>.Instance)),
+                _runService, cancellingTransitionService, _mockPendingWork.Object,
+                _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
+                new DispatchRevertHandler(
+                    _dbFactory, _mockResolver.Object, _runService, cancellingTransitionService,
+                    NullLogger<DispatchRevertHandler>.Instance)),
             null,
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -830,11 +823,11 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
     private PendingWorkItemDrainService CreateService() =>
         new(new DrainServiceDependencies(
                 _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-                _transitionService, _mockPendingWork.Object,
-                NullLogger<PendingWorkItemDrainService>.Instance),
-            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
-            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance),
-            new DispatchAttemptService(_transitionService, new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance)),
+                _runService, _transitionService, _mockPendingWork.Object,
+                _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
+                new DispatchRevertHandler(
+                    _dbFactory, _mockResolver.Object, _runService, _transitionService,
+                    NullLogger<DispatchRevertHandler>.Instance)),
             null,
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -926,6 +919,8 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
 /// Direct-invocation tests for the extracted <c>TryRevertToPendingAsync</c> private method.
 /// Verifies that the <paramref name="incrementRetryCount"/> parameter correctly controls RetryCount
 /// and that exceptions from the transition are swallowed (stuck-item detector fallback).
+/// Now tests <see cref="DispatchRevertHandler.TryRevertToPendingAsync"/> directly since the
+/// method was moved there from <see cref="PendingWorkItemDrainService"/>.
 /// </summary>
 public sealed class TryRevertToPendingAsyncTests : IDisposable
 {
@@ -933,7 +928,7 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly OrchestratorRunService _runService;
 
@@ -1041,8 +1036,10 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
     }
 
     private DispatchRevertHandler CreateHandlerWithTransition(WorkItemTransitionService transitionService) =>
-        new(_dbFactory, _mockResolver.Object, _runService, transitionService, NullLogger<DispatchRevertHandler>.Instance);
+        new(_dbFactory, _mockResolver.Object, _runService, transitionService,
+            NullLogger<DispatchRevertHandler>.Instance);
 
+    // Keep CreateService/CreateServiceWithTransition for any remaining references
     private PendingWorkItemDrainService CreateService()
     {
         var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
@@ -1052,11 +1049,11 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
     private PendingWorkItemDrainService CreateServiceWithTransition(WorkItemTransitionService transitionService) =>
         new(new DrainServiceDependencies(
             _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-            transitionService, _mockPendingWork.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance),
-            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
-            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, transitionService, NullLogger<DispatchRevertHandler>.Instance),
-            new DispatchAttemptService(transitionService, new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, transitionService, NullLogger<DispatchRevertHandler>.Instance)));
+            _runService, transitionService, _mockPendingWork.Object,
+            _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
+            new DispatchRevertHandler(
+                _dbFactory, _mockResolver.Object, _runService, transitionService,
+                NullLogger<DispatchRevertHandler>.Instance)));
 
     private async Task<Guid> InsertDispatchedWorkItem(int initialRetryCount)
     {

@@ -10,6 +10,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using k8s;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Serilog;
 
 namespace CodingAgentWebUI;
@@ -83,12 +84,21 @@ public static partial class WorkDistributionRegistration
             DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>())));
 
         // DispatchService — handles regular (non-consolidation) work items
+        // ILabelSwapService is built inline (not registered as a named singleton) because it is optional:
+        // when ILabelService is not configured, LabelSwapper is null and DispatchService skips label swap.
+        // maxAttempts=1: single attempt + reconciliation flag on failure (no retry in K8s mode). (#1868)
         services.AddHostedService(sp => new DispatchService(
             new DispatchServiceCoreDependencies(
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
                 sp.GetRequiredService<ILeaderElectionService>(),
                 sp.GetRequiredService<DispatchLifecycleService>(),
-                sp.GetService<ILabelService>(),
+                LabelSwapper: sp.GetService<ILabelService>() is { } ls
+                    ? new LabelSwapService(
+                        ls,
+                        sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                        sp.GetRequiredService<ILogger<LabelSwapService>>(),
+                        maxAttempts: 1)
+                    : null,
                 sp.GetService<IAgentProfileStore>(),
                 sp.GetService<IOrchestratorRunService>(),
                 sp.GetRequiredService<DispatchStateBuilder>()),

@@ -62,7 +62,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // because Dispatched → Succeeded is not a valid state transition.
         try
         {
-            await _facade.TransitionWorkItemAsync(jobId.Value, WorkItemStatus.Running, ct);
+            await _facade.TransitionWorkItemAsync(jobId, WorkItemStatus.Running, ct);
         }
         catch (Exception ex)
         {
@@ -76,10 +76,10 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         _logger.Warning("Agent {AgentId} rejected job {JobId}: {Reason}", agent?.AgentId, jobId.Value, reason);
 
         // Clean up the orphaned run so the issue can be re-dispatched
-        var run = _facade.GetRun(jobId.Value);
+        var run = _facade.GetRun(jobId);
         if (run is not null)
         {
-            _facade.RemoveRun(jobId.Value);
+            _facade.RemoveRun(jobId);
             await HandleRejectedRunCleanupAsync(jobId, run, reason, ct);
         }
         else
@@ -103,7 +103,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     {
         // Check retry count to decide: re-queue or permanently fail
         const int maxRejectionRetries = 3;
-        var retryCount = await _facade.GetWorkItemRetryCountAsync(jobId.Value, ct);
+        var retryCount = await _facade.GetWorkItemRetryCountAsync(jobId, ct);
         var shouldRequeue = retryCount < maxRejectionRetries;
 
         if (shouldRequeue)
@@ -131,7 +131,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
         try
         {
-            await _facade.RequeueWorkItemAsync(jobId.Value, ct);
+            await _facade.RequeueWorkItemAsync(jobId, ct);
             _logger.Information(
                 "JobRejected: re-queued job {JobId} for issue {IssueIdentifier} (retry {RetryCount}/{MaxRetries})",
                 jobId.Value, run.IssueIdentifier, retryCount + 1, maxRejectionRetries);
@@ -152,7 +152,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         try
         {
             var rejectionError = $"Job rejected by agent after {maxRejectionRetries} attempts: {reason}";
-            await _facade.TransitionWorkItemAsync(jobId.Value, WorkItemStatus.Failed, ct,
+            await _facade.TransitionWorkItemAsync(jobId, WorkItemStatus.Failed, ct,
                 rejectionError, FailureReason.InfrastructureFailure);
         }
         catch (Exception ex)
@@ -179,7 +179,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Hub.ReportJobCompleted");
         activity?.SetTag("job_id", jobId.Value);
 
-        var run = _facade.GetRun(jobId.Value);
+        var run = _facade.GetRun(jobId);
 
         if (run is not null)
         {
@@ -238,7 +238,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             "ReportJobCompleted for job {JobId} — run not found, attempting DB recovery (finalStep={FinalStep})",
             jobId.Value, payload.FinalStep);
 
-        await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, recoveryErrorMsg, recoveryFailureEnum);
+        await _facade.TransitionWorkItemAsync(jobId, workItemStatus, ct, recoveryErrorMsg, recoveryFailureEnum);
 
         // TODO: Call _facade.MarkIssueComplete() after successful recovery to update the in-memory dedup tracker.
         // Without it, the closed-loop poll could re-dispatch this issue if the label swap below fails.
@@ -254,7 +254,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     {
         try
         {
-            var metadata = await _facade.GetWorkItemIssueMetadataAsync(jobId.Value, ct);
+            var metadata = await _facade.GetWorkItemIssueMetadataAsync(jobId, ct);
             if (metadata.HasValue)
             {
                 await _labelService.SwapLabelAsync(
@@ -306,7 +306,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     /// <inheritdoc />
     public void HandleStepTransition(JobId jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata)
     {
-        var run = _facade.GetRun(jobId.Value);
+        var run = _facade.GetRun(jobId);
         if (run is not null)
         {
             run.CurrentStep = step;
@@ -316,7 +316,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             run.LastStepChangeAt = clampedTimestamp;
 
             // Persist progress to DB for cross-replica timeout enforcement (throttled)
-            _ = _facade.TouchLastProgressAsync(jobId.Value, clampedTimestamp, CancellationToken.None);
+            _ = _facade.TouchLastProgressAsync(jobId, clampedTimestamp, CancellationToken.None);
 
             // Update HighWaterMark — only advance, never go backward
             // Uses StepOrder.GetOrder (logical execution order) — NOT enum ordinals.
