@@ -213,7 +213,7 @@ public sealed class DispatchService : LeaderElectedPollingService
                 // hours earlier for queued work, inflating the Duration shown in the UI.
                 _runService?.GetRun(item.Id.ToString())?.ResetStartedAt(workItem.DispatchedAt!.Value);
 
-                // Swap issue label to agent:in-progress (non-fatal — best effort)
+                // Swap issue label to agent:in-progress (non-fatal — best effort).
                 if (_labelService is not null &&
                     !string.IsNullOrEmpty(item.IssueIdentifier) &&
                     !string.IsNullOrEmpty(item.IssueProviderConfigId))
