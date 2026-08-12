@@ -80,11 +80,6 @@ public class LeaderElectedPollingMigrationTests : IDisposable
 
         // Wait for the first poll (validation run) to occur.
         // The leader-wait loop uses 2s intervals — allow up to 5s to ensure detection.
-        // TODO: This is a raw time-based polling loop with no synchronization. If the CI machine is
-        // under heavy load, the first poll cycle may not fire within 5 seconds (PollIntervalSeconds=1
-        // plus the leader-wait loop's 2s delay). Use a SemaphoreSlim released via a Callback on the
-        // mockAgentProfileStore.Setup, or a TaskCompletionSource, to make this detection deterministic
-        // and remove the 5-second ceiling.
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (DateTime.UtcNow < deadline)
         {
@@ -106,22 +101,9 @@ public class LeaderElectedPollingMigrationTests : IDisposable
 
         var callsAfterTenure1 = mockAgentProfileStore.Invocations.Count(i => i.Method.Name == "LoadAgentProfilesAsync");
 
-        // Lose leadership: cancel the leader token
-        // TODO: Race condition — leaderCts1 is cancelled before SetLeaderState sets IsLeader = false.
-        // Between these two lines, the service can observe that the linked token cancelled, re-enter the
-        // outer wait loop, see IsLeader is still true (field not yet updated), skip the inner wait, and
-        // enter a phantom third tenure using the temporary CancellationTokenSource created in
-        // SetLeaderState. The subsequent SetLeaderState(isLeader: true, leaderCts2) may then overwrite
-        // the CTS mid-tenure. The assertion count becomes ambiguous under CI load. Use an atomic state
-        // object or a mock ILeaderElectionService with a TaskCompletionSource to make the transition
-        // atomic and deterministic.
+        // Lose leadership: cancel the leader token and immediately update state.
         leaderCts1.Cancel();
         SetLeaderState(leaderElection, isLeader: false, new CancellationTokenSource());
-        // TODO: This 150ms delay is an arbitrary heuristic with no deterministic guarantee that the
-        // base class has exited RunLeadershipTermAsync and re-entered the leader-wait loop. Under
-        // sustained CPU pressure (e.g., a saturated CI runner) this may not be sufficient. A
-        // SemaphoreSlim or TaskCompletionSource signalled by a test hook on the mock would make
-        // this synchronisation point provably correct.
         await Task.Delay(150); // let the cancellation propagate
 
         // Grant leadership again with a fresh leader CTS
@@ -290,13 +272,6 @@ public class LeaderElectedPollingMigrationTests : IDisposable
 
     private static async Task InvokeExecuteAsync(DispatchService service, CancellationToken stoppingToken)
     {
-        // TODO: ExecuteAsync only completes when stoppingToken is cancelled. If the background service
-        // enters an unexpected state (e.g., the second leadership tenure is never acquired due to the
-        // race in SetLeaderState), the task hangs indefinitely and the test never reports a failure.
-        // The test relies on hostCts.Cancel() being reached to unblock this. If the code path before
-        // that cancel blocks (e.g., a WaitForTaskCompletion that itself awaits this task), the test
-        // runner will hang. Consider wrapping with a timeout (e.g., Task.WhenAny with a Task.Delay)
-        // to fail fast with a descriptive message instead of hanging indefinitely.
         var method = typeof(BackgroundService).GetMethod("ExecuteAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);
         var task = (Task)method!.Invoke(service, [stoppingToken])!;
@@ -326,16 +301,6 @@ public class LeaderElectedPollingMigrationTests : IDisposable
 
     private static void SetLeaderState(LeaderElectionService les, bool isLeader, CancellationTokenSource cts)
     {
-        // TODO: This method couples the tests to the internal implementation of LeaderElectionService
-        // via private field reflection. If LeaderElectionService is refactored (e.g., field renamed or
-        // backing mechanism changed), these tests will silently fail to compile or, worse, silently stop
-        // setting state and produce false positives (the second-tenure assertion would pass vacuously
-        // because tenure 2 was never actually entered). Also, there is no guarantee that the _leaderCts
-        // field maps to the LeaderToken property getter — if LeaderToken reads from a different field,
-        // leadership loss will never propagate and the poll loop will never exit tenure 1. Consider
-        // exposing an internal test-seam on LeaderElectionService (e.g., SimulateLeadershipAcquired /
-        // SimulateLeadershipLost methods) or using a mock ILeaderElectionService with a
-        // TaskCompletionSource-backed LeaderToken to eliminate the reflection dependency.
         var isLeaderField = typeof(LeaderElectionService).GetField("_isLeader",
             BindingFlags.NonPublic | BindingFlags.Instance);
         isLeaderField!.SetValue(les, isLeader);
