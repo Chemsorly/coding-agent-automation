@@ -59,7 +59,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            transitionService));
+            WorkItemTransition: transitionService));
     }
 
     public void Dispose()
@@ -88,7 +88,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
         }
 
         // Act: transition to Running (non-terminal)
-        await _facade.TransitionWorkItemAsync(workItemId.ToString(), WorkItemStatus.Running, CancellationToken.None);
+        await _facade.TransitionWorkItemAsync(new JobId(workItemId.ToString()), WorkItemStatus.Running, CancellationToken.None);
 
         // Assert: CompletedAt should NOT be set
         using (var db = new TestPipelineDbContext(_dbOptions))
@@ -119,7 +119,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
         }
 
         // Act: transition to Succeeded (terminal)
-        await _facade.TransitionWorkItemAsync(workItemId.ToString(), WorkItemStatus.Succeeded, CancellationToken.None);
+        await _facade.TransitionWorkItemAsync(new JobId(workItemId.ToString()), WorkItemStatus.Succeeded, CancellationToken.None);
 
         // Assert: CompletedAt should be set
         using (var db = new TestPipelineDbContext(_dbOptions))
@@ -150,7 +150,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
         }
 
         // Act
-        await _facade.TransitionWorkItemAsync(workItemId.ToString(), WorkItemStatus.Failed, CancellationToken.None);
+        await _facade.TransitionWorkItemAsync(new JobId(workItemId.ToString()), WorkItemStatus.Failed, CancellationToken.None);
 
         // Assert
         using (var db = new TestPipelineDbContext(_dbOptions))

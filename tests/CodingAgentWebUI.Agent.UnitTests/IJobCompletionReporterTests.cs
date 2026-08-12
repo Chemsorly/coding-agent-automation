@@ -33,8 +33,8 @@ public class IJobCompletionReporterTests
         var sourceCode = File.ReadAllText(
             Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IJobCompletionReporter.cs"));
 
-        sourceCode.Should().Contain("string jobId",
-            "ReportCompletionAsync must accept a jobId parameter");
+        sourceCode.Should().Contain("JobId jobId",
+            "ReportCompletionAsync must accept a JobId jobId parameter");
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public class IJobCompletionReporterTests
     {
         var mock = new Mock<IJobCompletionReporter>();
         mock.Setup(x => x.ReportCompletionAsync(
-                It.IsAny<string>(),
+                It.IsAny<JobId>(),
                 It.IsAny<JobCompletionPayload>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -103,7 +103,7 @@ public class IJobCompletionReporterTests
 
         await mock.Object.ReportCompletionAsync("job-123", payload, CancellationToken.None);
 
-        mock.Verify(x => x.ReportCompletionAsync("job-123", payload, CancellationToken.None), Times.Once);
+        mock.Verify(x => x.ReportCompletionAsync(new JobId("job-123"), payload, CancellationToken.None), Times.Once);
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class IJobCompletionReporterTests
     {
         var mock = new Mock<IJobCompletionReporter>();
         mock.Setup(x => x.ReportCompletionAsync(
-                It.IsAny<string>(),
+                It.IsAny<JobId>(),
                 It.IsAny<JobCompletionPayload>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -126,7 +126,7 @@ public class IJobCompletionReporterTests
         await mock.Object.ReportCompletionAsync("job-fail", payload, CancellationToken.None);
 
         mock.Verify(x => x.ReportCompletionAsync(
-            "job-fail",
+            new JobId("job-fail"),
             It.Is<JobCompletionPayload>(p => p.FinalStep == PipelineStep.Failed && p.FailureReason == "Quality gates failed"),
             It.IsAny<CancellationToken>()), Times.Once);
     }

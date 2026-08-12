@@ -306,7 +306,7 @@ public sealed class AgentMonitoringPageServiceTests
 
         // No WorkDistributor call in legacy mode
         _mockWorkDistributor.Verify(
-            w => w.CancelJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            w => w.CancelJobAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 

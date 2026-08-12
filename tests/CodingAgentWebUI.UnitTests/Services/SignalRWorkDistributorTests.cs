@@ -164,6 +164,9 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         }
 
         // Act
+        // TODO: [WARNING] Pass new JobId(workItemId.ToString()) instead of workItemId.ToString() to make
+        // the JobId type constraint load-bearing. The implicit conversion makes this test pass even if
+        // CancelJobAsync reverted to string — update to new JobId(...) so a type regression would fail to compile.
         var result = await _sut.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
 
         // Assert
@@ -177,6 +180,8 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     [Fact]
     public async Task CancelJobAsync_InvalidGuid_ReturnsFalse()
     {
+        // TODO: [WARNING] Also add a test for CancelJobAsync(new JobId(null), ...) or default(JobId) to verify
+        // that Guid.TryParse(null, ...) returns false gracefully on the null-Value path.
         var result = await _sut.CancelJobAsync("not-a-guid", CancellationToken.None);
         result.Should().BeFalse();
     }
@@ -202,6 +207,8 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         }
 
         // Act
+        // TODO: [WARNING] Pass new JobId(workItemId.ToString()) to make the JobId type constraint load-bearing.
+        // Raw string implicit conversion means this test would pass even if GetJobStatusAsync reverted to string.
         var status = await _sut.GetJobStatusAsync(workItemId.ToString(), CancellationToken.None);
 
         // Assert
@@ -211,6 +218,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     [Fact]
     public async Task GetJobStatusAsync_NonexistentId_ReturnsUnknown()
     {
+        // TODO: [WARNING] Pass new JobId(Guid.NewGuid().ToString()) to make the JobId type constraint load-bearing.
         var status = await _sut.GetJobStatusAsync(Guid.NewGuid().ToString(), CancellationToken.None);
         status.Should().Be(JobDistributionStatus.Unknown);
     }
@@ -218,6 +226,8 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     [Fact]
     public async Task GetJobStatusAsync_InvalidGuid_ReturnsUnknown()
     {
+        // TODO: [WARNING] Also add a test for GetJobStatusAsync(new JobId(null), ...) or default(JobId) to verify
+        // the null-Value path in Guid.TryParse returns Unknown gracefully.
         var status = await _sut.GetJobStatusAsync("not-a-guid", CancellationToken.None);
         status.Should().Be(JobDistributionStatus.Unknown);
     }

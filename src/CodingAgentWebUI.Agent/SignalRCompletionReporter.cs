@@ -48,13 +48,19 @@ public sealed class SignalRCompletionReporter : IJobCompletionReporter
     public CriticalMessageBuffer Buffer => _criticalMessageBuffer;
 
     /// <inheritdoc/>
-    public async Task ReportCompletionAsync(string jobId, JobCompletionPayload payload, CancellationToken ct)
+    public async Task ReportCompletionAsync(JobId jobId, JobCompletionPayload payload, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(jobId);
         ArgumentNullException.ThrowIfNull(payload);
+        // TODO: [WARNING] Add ArgumentException.ThrowIfNullOrEmpty(jobId.Value) guard here.
+        // ThrowIfNull(jobId) was removed because JobId is a value type, but default(JobId)
+        // (where Value is null) can still be passed. If that occurs, jobId.Value is null and
+        // activity?.SetTag("job_id", jobId.Value) sets a null tag, _logger.Error logs a null
+        // job ID, and _criticalMessageBuffer.Enqueue stores a null JobId in BufferedJobCompleted,
+        // silently corrupting the replay buffer. A guard makes the contract explicit.
+        // See: review-findings.md [WARNING] SignalRCompletionReporter.cs:59
 
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReportCompletion");
-        activity?.SetTag("job_id", jobId);
+        activity?.SetTag("job_id", jobId.Value);
         activity?.SetTag("success", payload.FinalStep is not (PipelineStep.Failed or PipelineStep.Cancelled));
 
         try
@@ -67,8 +73,8 @@ public sealed class SignalRCompletionReporter : IJobCompletionReporter
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
-            _logger.Error(ex, "Failed to report job completion for {JobId}, buffering for replay", jobId);
-            _criticalMessageBuffer.Enqueue(new BufferedJobCompleted(jobId, payload, DateTimeOffset.UtcNow));
+            _logger.Error(ex, "Failed to report job completion for {JobId}, buffering for replay", jobId.Value);
+            _criticalMessageBuffer.Enqueue(new BufferedJobCompleted(jobId.Value, payload, DateTimeOffset.UtcNow));
         }
     }
 }

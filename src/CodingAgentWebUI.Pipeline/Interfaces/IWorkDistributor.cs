@@ -31,7 +31,7 @@ public interface IWorkDistributor
     /// <param name="jobId">The work item ID to cancel.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if the job was successfully cancelled; <c>false</c> if not found or already terminal.</returns>
-    Task<bool> CancelJobAsync(string jobId, CancellationToken ct);
+    Task<bool> CancelJobAsync(JobId jobId, CancellationToken ct);
 
     /// <summary>
     /// Gets the current status of a distributed job.
@@ -40,7 +40,7 @@ public interface IWorkDistributor
     /// <param name="jobId">The work item ID to query.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The current <see cref="JobDistributionStatus"/> of the work item.</returns>
-    Task<JobDistributionStatus> GetJobStatusAsync(string jobId, CancellationToken ct);
+    Task<JobDistributionStatus> GetJobStatusAsync(JobId jobId, CancellationToken ct);
 
     /// <summary>
     /// Checks whether a specific issue is currently distributed (Pending, Dispatched, or Running).

@@ -1723,7 +1723,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         await hub.Heartbeat(heartbeat);
 
         // Hub short-circuits before fetching a run when no job is active
-        _mockFacade.Verify(f => f.GetRun(It.IsAny<string>()), Times.Never);
+        _mockFacade.Verify(f => f.GetRun(It.IsAny<JobId>()), Times.Never);
     }
 
     [Fact]

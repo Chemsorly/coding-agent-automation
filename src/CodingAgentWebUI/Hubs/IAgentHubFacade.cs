@@ -64,14 +64,14 @@ public interface IAgentHubFacade
     /// <summary>
     /// Gets a specific run by its RunId.
     /// </summary>
-    PipelineRun? GetRun(string jobId);
+    PipelineRun? GetRun(JobId jobId);
 
     /// <summary>
     /// Transitions the WorkItem row in Postgres to the given terminal status.
     /// Called from ReportJobCompleted to ensure DB state matches in-memory state.
     /// No-op if no DB-backed work distribution is configured.
     /// </summary>
-    Task TransitionWorkItemAsync(string jobId, WorkItemStatus status, CancellationToken ct,
+    Task TransitionWorkItemAsync(JobId jobId, WorkItemStatus status, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null);
 
     /// <summary>
@@ -82,12 +82,12 @@ public interface IAgentHubFacade
     /// <summary>
     /// Gets or creates the per-run output ring buffer.
     /// </summary>
-    OutputRingBuffer GetOutputBuffer(string jobId);
+    OutputRingBuffer GetOutputBuffer(JobId jobId);
 
     /// <summary>
     /// Removes a pipeline run from the active runs collection.
     /// </summary>
-    void RemoveRun(string jobId);
+    void RemoveRun(JobId jobId);
 
     /// <summary>
     /// Returns all active runs assigned to the specified agent.
@@ -110,14 +110,14 @@ public interface IAgentHubFacade
     /// Gets the current retry count for a work item (how many times it has been rejected and re-queued).
     /// Returns 0 if the work item doesn't exist or has no retries.
     /// </summary>
-    Task<int> GetWorkItemRetryCountAsync(string jobId, CancellationToken ct);
+    Task<int> GetWorkItemRetryCountAsync(JobId jobId, CancellationToken ct);
 
     /// <summary>
     /// Re-queues a rejected work item: transitions it back to Pending status,
     /// increments RetryCount, clears DispatchedAt and AssignedAgentId.
     /// The drain service will pick it up again on the next cycle.
     /// </summary>
-    Task RequeueWorkItemAsync(string jobId, CancellationToken ct);
+    Task RequeueWorkItemAsync(JobId jobId, CancellationToken ct);
 
     /// <summary>
     /// Resolves provider config IDs from a WorkItem's payload (K8s mode fallback).
@@ -125,7 +125,7 @@ public interface IAgentHubFacade
     /// Used by token vending when no in-memory PipelineRun exists.
     /// </summary>
     Task<(string? RepoProviderConfigId, string? BrainProviderConfigId)?> GetWorkItemProviderConfigIdsAsync(
-        string workItemId, CancellationToken ct);
+        JobId jobId, CancellationToken ct);
 
     // ── History ─────────────────────────────────────────────────────────
 
@@ -167,7 +167,7 @@ public interface IAgentHubFacade
     /// Called from ReportStepTransition and Heartbeat to persist progress evidence for
     /// timeout enforcement across replicas.
     /// </summary>
-    Task TouchLastProgressAsync(string jobId, DateTimeOffset timestamp, CancellationToken ct);
+    Task TouchLastProgressAsync(JobId jobId, DateTimeOffset timestamp, CancellationToken ct);
 
     /// <summary>
     /// Reads IssueIdentifier and IssueProviderConfigId from a WorkItem in the database.
@@ -175,5 +175,5 @@ public interface IAgentHubFacade
     /// Returns null if the work item doesn't exist or DB is not configured.
     /// </summary>
     Task<(string IssueIdentifier, string IssueProviderConfigId)?> GetWorkItemIssueMetadataAsync(
-        string workItemId, CancellationToken ct);
+        JobId jobId, CancellationToken ct);
 }

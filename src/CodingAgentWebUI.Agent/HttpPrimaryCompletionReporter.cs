@@ -44,10 +44,16 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
     }
 
     /// <inheritdoc/>
-    public async Task ReportCompletionAsync(string jobId, JobCompletionPayload payload, CancellationToken ct)
+    public async Task ReportCompletionAsync(JobId jobId, JobCompletionPayload payload, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(jobId);
         ArgumentNullException.ThrowIfNull(payload);
+        // TODO: [WARNING] Add ArgumentException.ThrowIfNullOrEmpty(jobId.Value) guard here.
+        // ThrowIfNull(jobId) was removed because JobId is a value type, but default(JobId)
+        // (where Value is null) can still be passed. If that occurs, InvokeAsync below will
+        // forward a null jobId to the SignalR secondary channel, which will fail in
+        // JobIdFormatter.Serialize with a MessagePackSerializationException (non-fatal here,
+        // but confusing). A guard makes the contract explicit and gives a clear error message.
+        // See: review-findings.md [WARNING] HttpPrimaryCompletionReporter.cs:47
 
         // Primary channel: HTTP POST terminal status (durable)
         var terminalStatus = payload.FinalStep switch
