@@ -58,7 +58,8 @@ public static class WorkItemEndpoints
     /// </summary>
     internal static async Task<IResult> GetAssignment(
         Guid id,
-        IDbContextFactory<PipelineDbContext> dbFactory)
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IProjectStore projectStore)
     {
         await using var db = await dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems
@@ -82,6 +83,18 @@ public static class WorkItemEndpoints
             return TypedResults.NotFound();
 
         var message = Orchestration.Dispatch.DbWorkDistributorBase.BuildJobAssignmentMessage(id, request);
+
+        // Inject project secrets at delivery time (not serialized in WorkItem payload for security)
+        if (!string.IsNullOrEmpty(request.ProjectId))
+        {
+            // TODO: Add a CancellationToken parameter to GetAssignment and forward it here instead of
+            // CancellationToken.None so that aborted/timed-out HTTP requests cancel the IProjectStore I/O.
+            // All EF Core calls in this handler would also benefit from the same token.
+            var project = await projectStore.GetProjectByIdAsync(request.ProjectId, CancellationToken.None);
+            if (project?.Secrets is { Count: > 0 })
+                message = message with { ProjectSecrets = project.Secrets };
+        }
+
         return TypedResults.Ok(message);
     }
 
