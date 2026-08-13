@@ -86,18 +86,14 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         _facade.RemoveRun(jobId.Value);
         _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
-        try
-        {
-            var (_, errorMsg, failureEnum) =
-                CompletionOutcomeResolver.Resolve(payload.FinalStep, run.FailureReason, payload.FailureCategory,
-                    "Agent reported failure (defensive cleanup after exception)");
-            // workItemStatus (from caller) is authoritative for the state transition.
-            // The resolver's returned Status is discarded — we call Resolve only for the error strings.
-            await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
-        }
-        catch (Exception innerEx)
-        {
-            _logger.Warning(innerEx, "Failed to transition WorkItem {JobId} to {Status} during defensive cleanup", jobId.Value, workItemStatus);
-        }
+        var (_, errorMsg, failureEnum) =
+            CompletionOutcomeResolver.Resolve(payload.FinalStep, run.FailureReason, payload.FailureCategory,
+                "Agent reported failure (defensive cleanup after exception)");
+        // workItemStatus (from caller) is authoritative for the state transition.
+        // The resolver's returned Status is discarded — we call Resolve only for the error strings.
+
+        // intentional: ct may already be cancelled (e.g., during host shutdown — that is exactly when
+        // this defensive path fires). Passing ct would short-circuit the transition silently.
+        await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, CancellationToken.None, errorMsg, failureEnum);
     }
 }
