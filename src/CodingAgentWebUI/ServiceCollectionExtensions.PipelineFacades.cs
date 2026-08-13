@@ -25,6 +25,8 @@ public static partial class ServiceCollectionExtensions
             Log.Logger));
         services.AddSingleton<IOrchestrationShutdownAction>(sp =>
             sp.GetRequiredService<PipelineOrchestrationService>());
+        services.AddSingleton<IPipelineOrchestrationService>(sp =>
+            sp.GetRequiredService<PipelineOrchestrationService>());
 
         // Concrete-first registration: container owns the instance and calls DisposeAsync on shutdown.
         services.AddSingleton(sp =>

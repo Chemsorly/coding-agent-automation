@@ -34,7 +34,8 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<ITokenVendingService>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<DispatchResolutionService>()));
+            sp.GetRequiredService<DispatchResolutionService>(),
+            sp.GetService<AnalysisStalenessDetector>()));  // null in Legacy mode
 
         services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
             sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));

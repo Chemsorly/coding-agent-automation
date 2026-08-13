@@ -1,9 +1,7 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
-@using CodingAgentWebUI.Services
 @using System.Text.RegularExpressions
 @implements IAsyncDisposable
-@inject ProjectChangeNotifier ProjectNotifier
 
 <section class="settings-section">
     <h2>@_project.Name</h2>
@@ -522,7 +520,6 @@
             _selectedTemplateToAdd = null;
             await LoadDataAsync();
             await OnProjectSaved.InvokeAsync();
-            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Template added to project.", false));
         }
         catch (OperationCanceledException)
@@ -586,7 +583,6 @@
             await ConfigStore.MoveTemplateAsync(_project.Id, targetProjectId, templateId, CancellationToken.None);
             await LoadDataAsync();
             await OnProjectSaved.InvokeAsync();
-            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Template moved to another project.", false));
         }
         catch (Exception ex)
@@ -609,7 +605,6 @@
 
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
-            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Project overview saved.", false));
         }
         catch (Exception ex)
@@ -676,7 +671,6 @@
 
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
-            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Project settings saved.", false));
         }
         catch (Exception ex)
@@ -691,7 +685,6 @@
         {
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
-            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Project updated.", false));
         }
         catch (Exception ex)
@@ -1028,7 +1021,6 @@
             _project = _project with { McpServers = servers.Count > 0 ? servers : null };
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
-            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Project MCP servers saved.", false));
         }
         catch (Exception ex)
