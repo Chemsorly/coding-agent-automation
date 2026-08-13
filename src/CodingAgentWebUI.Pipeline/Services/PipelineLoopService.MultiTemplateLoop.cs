@@ -38,7 +38,7 @@ public sealed partial class PipelineLoopService
     {
         var failuresBefore = BuildTemplateFailureBaseline(snapshot.PollableTemplates);
 
-        var (issueQueues, prQueues, decompositionQueues) = await _poller.PollTemplateQueuesAsync(
+        var (issueQueues, prQueues, decompositionQueues, agentDonePrQueues) = await _poller.PollTemplateQueuesAsync(
             snapshot.PollableTemplates, snapshot.MaxPagesToFetch, _templateStatuses,
             i => CurrentCycleTemplateIndex = i,
             msg => { lock (_lock) { StatusMessage = msg; } },
@@ -78,6 +78,25 @@ public sealed partial class PipelineLoopService
         ProcessedCount += dispatchResult.ProcessedCount;
         FailedCount += dispatchResult.FailedCount;
         CurrentIssueIdentifier = null;
+
+        // Auto-update step: trigger server-side branch updates on eligible agent:done PRs.
+        // Called even when agentDonePrQueues is empty — eviction pass must run to free slots.
+        // agentDonePrQueues not counted in EmitCyclePollMetrics — not dispatched work items.
+        if (_autoUpdateService is { } autoUpdateService)
+        {
+            foreach (var template in snapshot.PollableTemplates)
+            {
+                if (!template.AutoUpdatePrBranches) continue;
+                if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId, out var repoProvider)) continue;
+                if (!repoProvider.SupportsServerSideBranchUpdate) continue;
+
+                var donePrs = agentDonePrQueues.TryGetValue(template.Id, out var d) ? d : [];
+                var limit = Math.Max(1,
+                    template.AutoUpdatePrBranchConcurrencyLimit ?? snapshot.Config.AutoUpdatePrBranchConcurrencyLimit);
+
+                await autoUpdateService.ExecuteAsync(repoProvider, template.RepoProviderId, donePrs, limit, ct);
+            }
+        }
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
@@ -223,7 +242,7 @@ public sealed partial class PipelineLoopService
     private async Task ReconcileRepoProviderCacheAsync(List<PipelineJobTemplate> enabledTemplates, CancellationToken ct)
     {
         var neededRepoIds = enabledTemplates
-            .Where(t => t.ReviewEnabled || t.DecompositionEnabled)
+            .Where(t => t.ReviewEnabled || t.DecompositionEnabled || t.AutoUpdatePrBranches)
             .Select(t => t.RepoProviderId)
             .ToHashSet();
         if (neededRepoIds.Count == 0) return;

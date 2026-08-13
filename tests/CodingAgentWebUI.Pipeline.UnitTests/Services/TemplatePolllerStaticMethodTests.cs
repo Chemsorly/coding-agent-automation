@@ -98,7 +98,8 @@ public class TemplatePolllerStaticMethodTests
             [templateId.Value] = [(MakeIssue("epic1"), PipelineRunType.DecompositionAnalysis)]
         };
 
-        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues);
+        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues,
+            new Dictionary<string, List<PullRequestSummary>>());
 
         issueQueues[templateId.Value].Should().BeEmpty();
         prQueues[templateId.Value].Should().BeEmpty();
@@ -113,7 +114,8 @@ public class TemplatePolllerStaticMethodTests
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
         var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
 
-        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues);
+        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues,
+            new Dictionary<string, List<PullRequestSummary>>());
 
         issueQueues.Should().ContainKey(templateId.Value);
         prQueues.Should().ContainKey(templateId.Value);
@@ -144,7 +146,8 @@ public class TemplatePolllerStaticMethodTests
             [otherId] = []
         };
 
-        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues);
+        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues,
+            new Dictionary<string, List<PullRequestSummary>>());
 
         issueQueues[otherId].Should().HaveCount(1, "other template's queue must be untouched");
         prQueues[otherId].Should().HaveCount(1, "other template's PR queue must be untouched");

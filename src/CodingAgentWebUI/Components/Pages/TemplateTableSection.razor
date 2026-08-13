@@ -37,6 +37,7 @@
                                 <th>Decomp</th>
                                 <th>Impl</th>
                                 <th>Review</th>
+                                <th title="Auto-Update PR Branches (agent:done)">Auto-Update</th>
                                 <th>Enabled</th>
                                 <th>Status</th>
                                 <th>Actions</th>
@@ -87,6 +88,13 @@
                                         <label class="toggle-switch">
                                             <input type="checkbox" checked="@template.ReviewEnabled"
                                                    @onchange="e => OnToggleReview.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                            <span class="toggle-slider"></span>
+                                        </label>
+                                    </td>
+                                    <td>
+                                        <label class="toggle-switch" title="Auto-update agent:done PR branches when behind base">
+                                            <input type="checkbox" checked="@template.AutoUpdatePrBranches"
+                                                   @onchange="e => OnToggleAutoUpdatePrBranches.InvokeAsync((template, (bool)(e.Value ?? false)))" />
                                             <span class="toggle-slider"></span>
                                         </label>
                                     </td>
@@ -166,7 +174,7 @@
                                 @if (_expandedPreviewTemplateId == template.Id)
                                 {
                                     <tr class="label-preview-row">
-                                        <td colspan="11">
+                                        <td colspan="12">
                                             <LabelPreviewInline Preview="previewLabels" />
                                         </td>
                                     </tr>

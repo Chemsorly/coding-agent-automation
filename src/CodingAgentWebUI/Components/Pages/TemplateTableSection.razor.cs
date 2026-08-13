@@ -36,6 +36,7 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleImplementation { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleReview { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleDecomposition { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleAutoUpdatePrBranches { get; set; }
     [Parameter] public EventCallback<PipelineJobTemplate> OnConfirmRemove { get; set; }
     [Parameter] public EventCallback<(TemplateId TemplateId, string SourceProjectId, string TargetProjectId)> OnMoveTemplate { get; set; }
     [Parameter] public EventCallback OnShowAddForm { get; set; }
@@ -160,6 +161,8 @@ public partial class TemplateTableSection
         public string RepoProviderId { get; set; } = "";
         public string BrainProviderId { get; set; } = "";
         public string PipelineProviderId { get; set; } = "";
+        public bool AutoUpdatePrBranches { get; set; } = false;
+        public int? AutoUpdatePrBranchConcurrencyLimit { get; set; } = null;
         public bool BrainReadOnly { get; set; }
         public bool ImplementationEnabled { get; set; } = true;
         public bool ReviewEnabled { get; set; } = true;

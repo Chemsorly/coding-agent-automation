@@ -111,6 +111,7 @@ public class PipelineConfigurationTests
             EnableNativeImageParts = false,
             ImageDownloadTimeoutSeconds = 60,
             ModelFetchTimeoutSeconds = 180,
+            AutoUpdatePrBranchConcurrencyLimit = 2,
         };
 
         // Act
@@ -130,7 +131,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(65,
+        keyPropertyCount.Should().Be(66,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -216,6 +217,7 @@ public class PipelineConfigurationTests
         config.EnableNativeImageParts.Should().BeTrue();
         config.ImageDownloadTimeoutSeconds.Should().Be(30);
         config.ModelFetchTimeoutSeconds.Should().Be(120);
+        config.AutoUpdatePrBranchConcurrencyLimit.Should().Be(1);
 
         // CodeReview defaults
         config.CodeReview.Should().NotBeNull();
