@@ -159,4 +159,27 @@ public sealed class LabelSwapServiceTests
         act.Should().Throw<ArgumentNullException>()
             .WithParameterName("logger");
     }
+
+    // ── Exhausted retries tests ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task SwapLabel_AllAttemptsExhausted_CompletesWithoutThrowingAndCallsSwapMaxTimes()
+    {
+        // Covers the else-branch in TrySwapLabelOnceAsync when attempt == _maxAttempts
+        // (i.e., the "exhausted all attempts" log path, lines 98–102 in LabelSwapService).
+        _mockLabelService
+            .Setup(l => l.SwapLabelStrictAsync(Provider, Identifier, AgentLabels.InProgress, Kind, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("persistent failure"));
+
+        var service = CreateService(maxAttempts: 3);
+
+        var act = async () => await service.SwapLabelWithRetryAsync(
+            WorkItemId, Provider, Identifier, Kind, CancellationToken.None);
+
+        await act.Should().NotThrowAsync("exhausted retries should complete without propagating non-OCE exceptions");
+
+        _mockLabelService.Verify(
+            l => l.SwapLabelStrictAsync(Provider, Identifier, AgentLabels.InProgress, Kind, It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+    }
 }
