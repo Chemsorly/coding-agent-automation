@@ -112,6 +112,7 @@ public class PipelineConfigurationTests
             ImageDownloadTimeoutSeconds = 60,
             ModelFetchTimeoutSeconds = 180,
             HousekeepingConcurrencyLimit = 2,
+            HousekeepingBranchCleanupIntervalMinutes = 90,
         };
 
         // Act
@@ -131,7 +132,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(66,
+        keyPropertyCount.Should().Be(67,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
