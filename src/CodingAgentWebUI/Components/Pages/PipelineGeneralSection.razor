@@ -35,10 +35,10 @@
         </div>
         <div class="form-group">
             <div class="label-with-hint">
-                <label>PR Branch Auto-Update Concurrency Limit</label>
+                <label>Housekeeping Concurrency Limit</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Maximum number of PRs allowed in the 'update triggered, CI running' state per repository at once. Prevents CI runner starvation. Default: 1">?</span>
             </div>
-            <input type="number" @bind="_autoUpdatePrBranchConcurrencyLimit" min="1" max="20" />
+            <input type="number" @bind="_housekeepingConcurrencyLimit" min="1" max="20" />
             <span class="form-hint">Per-repository limit for automatic branch updates (spec 040). Can be overridden per template.</span>
         </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
@@ -120,7 +120,7 @@
     private int _issuePageSize = 25;
     private string _blacklistedPathsText = ".kiro,.github,.brain";
     private bool _showAdvanced;
-    private int _autoUpdatePrBranchConcurrencyLimit = 1;
+    private int _housekeepingConcurrencyLimit = 1;
 
     protected override async Task OnInitializedAsync()
     {
@@ -136,7 +136,7 @@
         _workspaceBaseDirectory = config.WorkspaceBaseDirectory;
         _issuePageSize = config.IssuePageSize;
         _blacklistedPathsText = string.Join(",", config.BlacklistedPaths);
-        _autoUpdatePrBranchConcurrencyLimit = config.AutoUpdatePrBranchConcurrencyLimit;
+        _housekeepingConcurrencyLimit = config.HousekeepingConcurrencyLimit;
     }
 
     private async Task SaveAsync()
@@ -161,7 +161,7 @@
                     WorkspaceBaseDirectory = _workspaceBaseDirectory,
                     IssuePageSize = _issuePageSize,
                     BlacklistedPaths = blacklistedPaths,
-                    AutoUpdatePrBranchConcurrencyLimit = Math.Max(1, _autoUpdatePrBranchConcurrencyLimit)
+                    HousekeepingConcurrencyLimit = Math.Max(1, _housekeepingConcurrencyLimit)
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("General settings saved.", false));

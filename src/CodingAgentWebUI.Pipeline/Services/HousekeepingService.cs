@@ -19,7 +19,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// If multi-template parallelism is ever introduced, replace the inner HashSet with
 /// <c>ConcurrentDictionary&lt;int, byte&gt;</c>.
 /// </remarks>
-public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
+public sealed class HousekeepingService : IHousekeepingService
 {
     private readonly IOrchestratorRunService _runService;
     private readonly ILogger _logger;
@@ -37,7 +37,7 @@ public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
     /// </summary>
     private readonly ConcurrentDictionary<string, HashSet<int>> _inFlight = new();
 
-    public AutoUpdatePrBranchService(IOrchestratorRunService runService, ILogger logger)
+    public HousekeepingService(IOrchestratorRunService runService, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(logger);
@@ -79,7 +79,7 @@ public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
             {
                 // PR merged or agent:done label removed — free slot
                 inFlight.Remove(prNumber);
-                PipelineTelemetry.AutoUpdateEvicted.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
             else if (mergeabilityMap[prNumber] != null)
             {
@@ -89,7 +89,7 @@ public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
                 // re-selected as a candidate in step 6 because inFlight.Contains
                 // is now false. No special handling needed.
                 inFlight.Remove(prNumber);
-                PipelineTelemetry.AutoUpdateEvicted.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
             // else: null → CI still running → keep in set
         }
@@ -106,7 +106,7 @@ public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
         catch (Exception ex)
         {
             _logger.Warning(ex,
-                "AutoUpdatePrBranchService: failed to get active runs for branch exclusion; proceeding without exclusion");
+                "HousekeepingService: failed to get active runs for branch exclusion; proceeding without exclusion");
             activeRunBranches = [];
         }
 
@@ -121,19 +121,19 @@ public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
 
             if (pr.IsDraft)
             {
-                PipelineTelemetry.AutoUpdateSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
 
             if (activeRunBranches.Contains(pr.BranchName))
             {
-                PipelineTelemetry.AutoUpdateSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
 
             if (inFlight.Contains(pr.Number))
             {
-                PipelineTelemetry.AutoUpdateSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
 
@@ -141,19 +141,19 @@ public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
             if (mergeability == null)
             {
                 // null = CI running or computing — skip this tick, re-evaluate next
-                PipelineTelemetry.AutoUpdateSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
 
             if (mergeability == false)
             {
-                PipelineTelemetry.AutoUpdateSkipped.Add(1, repoTag);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
 
             // mergeability == true → add to in-flight and fire update
             inFlight.Add(pr.Number);
-            PipelineTelemetry.AutoUpdateTriggered.Add(1, repoTag);
+            PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
             await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));
         }
     }
@@ -174,16 +174,16 @@ public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
         try
         {
             await repoProvider.UpdatePullRequestBranchAsync(prNumber, CancellationToken.None);
-            PipelineTelemetry.AutoUpdateSucceeded.Add(1, repoTag);
+            PipelineTelemetry.HousekeepingSucceeded.Add(1, repoTag);
             _logger.Information(
-                "Auto-updated branch for PR #{PrNumber} on repo {RepoProviderId}",
+                "Housekeeping: updated branch for PR #{PrNumber} on repo {RepoProviderId}",
                 prNumber, repoProviderId);
         }
         catch (Exception ex)
         {
-            PipelineTelemetry.AutoUpdateFailed.Add(1, repoTag);
+            PipelineTelemetry.HousekeepingFailed.Add(1, repoTag);
             _logger.Warning(ex,
-                "Failed to auto-update branch for PR #{PrNumber} on {RepoProviderId}: {Error}",
+                "Housekeeping: failed to update branch for PR #{PrNumber} on {RepoProviderId}: {Error}",
                 prNumber, repoProviderId, ex.Message);
             // PR stays in inFlight — eviction pass frees the slot next tick when mergeability resolves.
         }

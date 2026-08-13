@@ -17,7 +17,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProjectStore _projectStore;
     private readonly IWorkDistributor? _workDistributor;
-    private readonly IAutoUpdatePrBranchService? _autoUpdateService;
+    private readonly IHousekeepingService? _housekeepingService;
     private readonly Serilog.ILogger _logger;
 
     private TaskCompletionSource _activationSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -95,10 +95,10 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
         _projectStore = deps.ProjectStore;
         _logger = deps.Logger;
         _workDistributor = deps.WorkDistributor;
-        _autoUpdateService = deps.AutoUpdateService;
+        _housekeepingService = deps.HousekeepingService;
 
         _cacheManager = new ProviderCacheManager(deps.ProviderFactory, deps.Logger);
-        _poller = new TemplatePoller(_cacheManager, deps.Logger, deps.AutoUpdateService);
+        _poller = new TemplatePoller(_cacheManager, deps.Logger, deps.HousekeepingService);
         _dispatcher = new DispatchScheduler(deps.Orchestration, deps.DispatchOrchestration, deps.WorkDistributor, deps.DependencyChecker, _cacheManager, deps.Logger);
     }
 

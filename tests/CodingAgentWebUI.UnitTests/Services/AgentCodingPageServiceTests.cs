@@ -58,7 +58,7 @@ public class AgentCodingPageServiceTests
             WorkDistributor = null,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            AutoUpdateService = null
+            HousekeepingService = null
         });
 
         var mockAgentRegistry = new AgentRegistryService(mockLogger.Object);

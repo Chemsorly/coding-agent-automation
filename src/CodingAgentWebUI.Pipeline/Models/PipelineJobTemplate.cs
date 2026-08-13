@@ -57,7 +57,7 @@ public sealed record PipelineJobTemplate
     [Key(10)]
     public bool ReviewEnabled { get; init; } = true;
 
-    // ── PR branch auto-update settings ─────────────────────────────────
+    // ── Housekeeping settings ─────────────────────────────────────────────
 
     /// <summary>
     /// When true, the poll cycle automatically triggers server-side branch updates on
@@ -66,13 +66,13 @@ public sealed record PipelineJobTemplate
     /// on the template; project-level override has no meaningful semantics here.
     /// </summary>
     [Key(11)]
-    public bool AutoUpdatePrBranches { get; init; } = false;
+    public bool HousekeepingEnabled { get; init; } = false;
 
     /// <summary>
     /// Per-template override for the concurrency limit on branch update operations.
-    /// When null, inherits <see cref="PipelineConfiguration.AutoUpdatePrBranchConcurrencyLimit"/>.
+    /// When null, inherits <see cref="PipelineConfiguration.HousekeepingConcurrencyLimit"/>.
     /// The limit is enforced per repository (RepoProviderId), not per template.
     /// </summary>
     [Key(12)]
-    public int? AutoUpdatePrBranchConcurrencyLimit { get; init; } = null;
+    public int? HousekeepingConcurrencyLimit { get; init; } = null;
 }

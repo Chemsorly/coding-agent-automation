@@ -54,7 +54,7 @@ public class MainLayoutComponentTests : BunitContext
             WorkDistributor = null,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            AutoUpdateService = null
+            HousekeepingService = null
         }));
         Services.AddSingleton(new ConsolidationBadgeService());
         Services.AddSingleton(_jsMock.Object);

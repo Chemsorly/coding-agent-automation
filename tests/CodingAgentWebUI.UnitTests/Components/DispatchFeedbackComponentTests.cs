@@ -69,7 +69,7 @@ public class DispatchFeedbackComponentTests : BunitContext
             WorkDistributor = null,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            AutoUpdateService = null
+            HousekeepingService = null
         }));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 

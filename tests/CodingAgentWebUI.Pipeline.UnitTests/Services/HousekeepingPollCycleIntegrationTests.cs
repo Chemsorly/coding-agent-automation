@@ -10,11 +10,11 @@ using Xunit;
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Integration tests for the auto-branch-updater poll cycle additions (spec 040, task 7.5).
-/// Tests that AutoUpdatePrBranches flag correctly controls agent:done PR fetching and
-/// AutoUpdatePrBranchService.ExecuteAsync invocation.
+/// Integration tests for the housekeeping poll cycle additions (spec 040, task 7.5).
+/// Tests that HousekeepingEnabled flag correctly controls agent:done PR fetching and
+/// HousekeepingService.ExecuteAsync invocation.
 /// </summary>
-public class AutoUpdatePollCycleIntegrationTests
+public class HousekeepingPollCycleIntegrationTests
 {
     private const string RepoProviderId = "rp-auto";
 
@@ -22,8 +22,8 @@ public class AutoUpdatePollCycleIntegrationTests
 
     private static (TemplatePoller Poller,
                     Mock<IRepositoryProvider> RepoProviderMock,
-                    Mock<IAutoUpdatePrBranchService> AutoUpdateMock)
-        CreatePoller(bool supportsUpdate = true, bool autoUpdatePrBranches = true)
+                    Mock<IHousekeepingService> HousekeepingMock)
+        CreatePoller(bool supportsUpdate = true, bool housekeepingEnabled = true)
     {
         var repoProviderMock = new Mock<IRepositoryProvider>();
         repoProviderMock.Setup(r => r.SupportsServerSideBranchUpdate).Returns(supportsUpdate);
@@ -42,31 +42,31 @@ public class AutoUpdatePollCycleIntegrationTests
         var cacheManager = new ProviderCacheManager(mockFactory.Object, logger);
         cacheManager.RepoProviders[RepoProviderId] = repoProviderMock.Object;
 
-        var autoUpdateMock = new Mock<IAutoUpdatePrBranchService>();
-        autoUpdateMock.Setup(s => s.ExecuteAsync(
+        var housekeepingMock = new Mock<IHousekeepingService>();
+        housekeepingMock.Setup(s => s.ExecuteAsync(
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var poller = new TemplatePoller(cacheManager, logger, autoUpdateMock.Object);
-        return (poller, repoProviderMock, autoUpdateMock);
+        var poller = new TemplatePoller(cacheManager, logger, housekeepingMock.Object);
+        return (poller, repoProviderMock, housekeepingMock);
     }
 
     private static PipelineJobTemplate MakeTemplate(
-        bool autoUpdatePrBranches = true,
+        bool housekeepingEnabled = true,
         bool reviewEnabled = false,
         int? concurrencyLimit = null) =>
         new()
         {
             Id = "t-auto",
-            Name = "AutoUpdate Template",
+            Name = "Housekeeping Template",
             IssueProviderId = "ip-1",
             RepoProviderId = RepoProviderId,
             Enabled = true,
             ReviewEnabled = reviewEnabled,
-            AutoUpdatePrBranches = autoUpdatePrBranches,
-            AutoUpdatePrBranchConcurrencyLimit = concurrencyLimit
+            HousekeepingEnabled = housekeepingEnabled,
+            HousekeepingConcurrencyLimit = concurrencyLimit
         };
 
     private static (ConcurrentDictionary<string, ConfigStatusSnapshot> Statuses,
@@ -79,13 +79,13 @@ public class AutoUpdatePollCycleIntegrationTests
         return (statuses, _ => { }, _ => { }, () => { });
     }
 
-    // ── AutoUpdatePrBranches = false → agent:done fetch NOT called ────────────
+    // ── HousekeepingEnabled = false → agent:done fetch NOT called ─────────────
 
     [Fact]
-    public async Task PollTemplateQueuesAsync_AutoUpdateDisabled_DoesNotFetchAgentDonePrs()
+    public async Task PollTemplateQueuesAsync_HousekeepingDisabled_DoesNotFetchAgentDonePrs()
     {
         var (poller, repoProviderMock, _) = CreatePoller();
-        var template = MakeTemplate(autoUpdatePrBranches: false);
+        var template = MakeTemplate(housekeepingEnabled: false);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
         await poller.PollTemplateQueuesAsync(
@@ -104,7 +104,7 @@ public class AutoUpdatePollCycleIntegrationTests
     public async Task PollTemplateQueuesAsync_ProviderNotSupported_DoesNotFetchAgentDonePrs()
     {
         var (poller, repoProviderMock, _) = CreatePoller(supportsUpdate: false);
-        var template = MakeTemplate(autoUpdatePrBranches: true);
+        var template = MakeTemplate(housekeepingEnabled: true);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
         await poller.PollTemplateQueuesAsync(
@@ -117,14 +117,14 @@ public class AutoUpdatePollCycleIntegrationTests
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── ReviewEnabled = false but AutoUpdatePrBranches = true → fetch IS called
+    // ── ReviewEnabled = false but HousekeepingEnabled = true → fetch IS called
 
     [Fact]
-    public async Task PollTemplateQueuesAsync_ReviewDisabledButAutoUpdateEnabled_FetchesAgentDonePrs()
+    public async Task PollTemplateQueuesAsync_ReviewDisabledButHousekeepingEnabled_FetchesAgentDonePrs()
     {
         var (poller, repoProviderMock, _) = CreatePoller();
-        // ReviewEnabled = false, AutoUpdatePrBranches = true
-        var template = MakeTemplate(autoUpdatePrBranches: true, reviewEnabled: false);
+        // ReviewEnabled = false, HousekeepingEnabled = true
+        var template = MakeTemplate(housekeepingEnabled: true, reviewEnabled: false);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
         await poller.PollTemplateQueuesAsync(
@@ -143,7 +143,7 @@ public class AutoUpdatePollCycleIntegrationTests
     public async Task PollTemplateQueuesAsync_ReturnsAgentDonePrQueues_AsFourthTupleElement()
     {
         var (poller, _, _) = CreatePoller();
-        var template = MakeTemplate(autoUpdatePrBranches: true);
+        var template = MakeTemplate(housekeepingEnabled: true);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
         var (_, _, _, agentDonePrQueues) = await poller.PollTemplateQueuesAsync(
@@ -153,13 +153,13 @@ public class AutoUpdatePollCycleIntegrationTests
         agentDonePrQueues.Should().ContainKey("t-auto");
     }
 
-    // ── AutoUpdatePrBranches = false → agentDonePrQueues returns empty list ──
+    // ── HousekeepingEnabled = false → agentDonePrQueues returns empty list ──
 
     [Fact]
-    public async Task PollTemplateQueuesAsync_AutoUpdateDisabled_AgentDonePrQueuesIsEmpty()
+    public async Task PollTemplateQueuesAsync_HousekeepingDisabled_AgentDonePrQueuesIsEmpty()
     {
         var (poller, _, _) = CreatePoller();
-        var template = MakeTemplate(autoUpdatePrBranches: false);
+        var template = MakeTemplate(housekeepingEnabled: false);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
         var (_, _, _, agentDonePrQueues) = await poller.PollTemplateQueuesAsync(

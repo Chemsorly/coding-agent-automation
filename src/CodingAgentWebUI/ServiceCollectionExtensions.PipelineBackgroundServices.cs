@@ -25,7 +25,7 @@ public static partial class ServiceCollectionExtensions
             Log.Logger));
 
         services.AddSingleton<IDependencyChecker>(sp => new DependencyChecker(Log.Logger));
-        services.AddSingleton<IAutoUpdatePrBranchService>(sp => new AutoUpdatePrBranchService(
+        services.AddSingleton<IHousekeepingService>(sp => new HousekeepingService(
             sp.GetRequiredService<IOrchestratorRunService>(),
             Log.Logger));
         services.AddSingleton<PipelineLoopServiceDependencies>(sp => new PipelineLoopServiceDependencies
@@ -39,7 +39,7 @@ public static partial class ServiceCollectionExtensions
             WorkDistributor = sp.GetService<IWorkDistributor>(),
             DispatchOrchestration = sp.GetService<IDispatchOrchestrationService>(),
             DependencyChecker = sp.GetRequiredService<IDependencyChecker>(),
-            AutoUpdateService = sp.GetRequiredService<IAutoUpdatePrBranchService>()
+            HousekeepingService = sp.GetRequiredService<IHousekeepingService>()
         });
         services.AddSingleton<PipelineLoopService>();
         services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());

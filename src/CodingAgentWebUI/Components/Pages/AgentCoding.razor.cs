@@ -185,18 +185,18 @@ public partial class AgentCoding : IDisposable
         });
     }
 
-    private async Task ToggleAutoUpdatePrBranchesEnabled((PipelineJobTemplate template, bool enabled) args)
+    private async Task ToggleHousekeepingEnabled((PipelineJobTemplate template, bool enabled) args)
     {
-        var (success, error) = await PageService.ToggleAutoUpdatePrBranchesAsync(args.template, args.enabled);
+        var (success, error) = await PageService.ToggleHousekeepingEnabledAsync(args.template, args.enabled);
         if (!success) { _errorMessage = error; return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
         var prev = !args.enabled;
         var templateId = args.template.Id;
-        await _undoSnackbar.Show($"Auto-update PR branches {(args.enabled ? "enabled" : "disabled")}.", async () =>
+        await _undoSnackbar.Show($"Housekeeping {(args.enabled ? "enabled" : "disabled")}.", async () =>
         {
             var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
             if (current is null) return;
-            await PageService.ToggleAutoUpdatePrBranchesAsync(current, prev);
+            await PageService.ToggleHousekeepingEnabledAsync(current, prev);
             await InvokeAsync(StateHasChanged);
         });
     }

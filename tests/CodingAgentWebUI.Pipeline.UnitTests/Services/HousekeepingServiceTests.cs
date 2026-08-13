@@ -9,10 +9,10 @@ using Xunit;
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Unit tests for <see cref="AutoUpdatePrBranchService"/> (spec 040, task 6.2).
+/// Unit tests for <see cref="HousekeepingService"/> (spec 040, task 6.2).
 /// All tests written BEFORE implementation — must fail until the service is implemented.
 /// </summary>
-public class AutoUpdatePrBranchServiceTests
+public class HousekeepingServiceTests
 {
     private const string RepoId = "rp-1";
 
@@ -32,7 +32,7 @@ public class AutoUpdatePrBranchServiceTests
             IsDraft = isDraft
         };
 
-    private static (AutoUpdatePrBranchService Service,
+    private static (HousekeepingService Service,
                     Mock<IRepositoryProvider> ProviderMock,
                     Mock<IOrchestratorRunService> RunsMock)
         Create(IEnumerable<PipelineRun>? activeRuns = null)
@@ -42,7 +42,7 @@ public class AutoUpdatePrBranchServiceTests
         runsMock.Setup(r => r.GetActiveRuns())
                 .Returns((activeRuns ?? Enumerable.Empty<PipelineRun>()).ToList().AsReadOnly());
 
-        var svc = new AutoUpdatePrBranchService(runsMock.Object, Log.Logger);
+        var svc = new HousekeepingService(runsMock.Object, Log.Logger);
         // Override fire-and-forget to await synchronously — eliminates Task.Delay flakiness in tests.
         svc.FireAndForget = task => task;
         return (svc, providerMock, runsMock);
@@ -368,7 +368,7 @@ public class AutoUpdatePrBranchServiceTests
         var runsMock = new Mock<IOrchestratorRunService>();
         runsMock.Setup(r => r.GetActiveRuns()).Throws(new InvalidOperationException("DB down"));
 
-        var svc = new AutoUpdatePrBranchService(runsMock.Object, Log.Logger);
+        var svc = new HousekeepingService(runsMock.Object, Log.Logger);
         svc.FireAndForget = task => task;
 
         providerMock.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))

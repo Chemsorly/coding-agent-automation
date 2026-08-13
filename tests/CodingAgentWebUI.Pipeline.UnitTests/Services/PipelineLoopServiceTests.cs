@@ -100,7 +100,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             WorkDistributor = workDistributor,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            AutoUpdateService = null
+            HousekeepingService = null
         });
         return _loopService;
     }

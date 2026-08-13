@@ -17,14 +17,14 @@ internal sealed class TemplatePoller
 {
     private readonly ProviderCacheManager _cacheManager;
     private readonly Serilog.ILogger _logger;
-    private readonly IAutoUpdatePrBranchService? _autoUpdateService;
+    private readonly IHousekeepingService? _housekeepingService;
 
     internal TemplatePoller(ProviderCacheManager cacheManager, Serilog.ILogger logger,
-        IAutoUpdatePrBranchService? autoUpdateService = null)
+        IHousekeepingService? housekeepingService = null)
     {
         _cacheManager = cacheManager;
         _logger = logger;
-        _autoUpdateService = autoUpdateService;
+        _housekeepingService = housekeepingService;
     }
 
     /// <summary>
@@ -187,9 +187,9 @@ internal sealed class TemplatePoller
     }
 
     /// <summary>
-    /// Polls the PR queue for agent:done PRs (only when AutoUpdatePrBranches is enabled).
-    /// Used by the auto-branch-updater (spec 040). Gated on AutoUpdatePrBranches only —
-    /// NOT on ReviewEnabled, as auto-update is an independent capability.
+    /// Polls the PR queue for agent:done PRs (only when HousekeepingEnabled).
+    /// Used by the housekeeping service (spec 040). Gated on HousekeepingEnabled only —
+    /// NOT on ReviewEnabled, as housekeeping is an independent capability.
     /// Wrapped in its own try-catch to not affect issue/PR/decomposition queues on failure.
     /// </summary>
     private async Task PollAgentDonePrQueueAsync(
@@ -199,7 +199,7 @@ internal sealed class TemplatePoller
         CancellationToken ct)
     {
         agentDonePrQueues[template.Id] = new List<PullRequestSummary>();
-        if (!template.AutoUpdatePrBranches) return;
+        if (!template.HousekeepingEnabled) return;
 
         try
         {
@@ -225,7 +225,7 @@ internal sealed class TemplatePoller
     /// <summary>
     /// Fetches open agent:done-labelled PRs from a repository provider.
     /// No RemoveAll filter needed — API label filter returns only agent:done PRs.
-    /// IsDraft and active-run exclusion are applied in AutoUpdatePrBranchService.ExecuteAsync.
+    /// IsDraft and active-run exclusion are applied in HousekeepingService.ExecuteAsync.
     /// </summary>
     private static async Task<List<PullRequestSummary>> FetchAgentDonePullRequestsAsync(
         IRepositoryProvider repoProvider, int maxPages, CancellationToken ct)

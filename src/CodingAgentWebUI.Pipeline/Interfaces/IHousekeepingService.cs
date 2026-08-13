@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// Must be called even when <paramref name="agentDonePrs"/> is empty so that the eviction
 /// pass can free slots for PRs that have since merged.
 /// </remarks>
-public interface IAutoUpdatePrBranchService
+public interface IHousekeepingService
 {
     /// <summary>
     /// Evicts resolved in-flight entries, then triggers server-side branch updates

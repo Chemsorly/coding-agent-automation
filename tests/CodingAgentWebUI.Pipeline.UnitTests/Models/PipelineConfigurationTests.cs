@@ -111,7 +111,7 @@ public class PipelineConfigurationTests
             EnableNativeImageParts = false,
             ImageDownloadTimeoutSeconds = 60,
             ModelFetchTimeoutSeconds = 180,
-            AutoUpdatePrBranchConcurrencyLimit = 2,
+            HousekeepingConcurrencyLimit = 2,
         };
 
         // Act
@@ -217,7 +217,7 @@ public class PipelineConfigurationTests
         config.EnableNativeImageParts.Should().BeTrue();
         config.ImageDownloadTimeoutSeconds.Should().Be(30);
         config.ModelFetchTimeoutSeconds.Should().Be(120);
-        config.AutoUpdatePrBranchConcurrencyLimit.Should().Be(1);
+        config.HousekeepingConcurrencyLimit.Should().Be(1);
 
         // CodeReview defaults
         config.CodeReview.Should().NotBeNull();

@@ -5,9 +5,9 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Tests that IRepositoryProvider default interface implementations for the
-/// auto-branch-updater methods behave correctly (spec 040, task 1.4).
+/// housekeeping methods behave correctly (spec 040, task 1.4).
 /// </summary>
-public class AutoUpdatePrBranchInterfaceDefaultTests
+public class HousekeepingInterfaceDefaultTests
 {
     // Minimal concrete implementation that uses only the default interface members
     private sealed class DefaultOnlyProvider : IRepositoryProvider

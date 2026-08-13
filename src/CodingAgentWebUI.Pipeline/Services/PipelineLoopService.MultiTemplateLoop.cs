@@ -79,26 +79,26 @@ public sealed partial class PipelineLoopService
         FailedCount += dispatchResult.FailedCount;
         CurrentIssueIdentifier = null;
 
-        // Auto-update step: trigger server-side branch updates on eligible agent:done PRs.
+        // Housekeeping step: trigger server-side branch updates on eligible agent:done PRs.
         // Called even when agentDonePrQueues is empty — eviction pass must run to free slots.
         // agentDonePrQueues not counted in EmitCyclePollMetrics — not dispatched work items.
         // Deduplicated by RepoProviderId: if multiple templates share the same repo, only the
         // first (lowest index in PollableTemplates) processes that repo this cycle.
-        if (_autoUpdateService is { } autoUpdateService)
+        if (_housekeepingService is { } housekeepingService)
         {
             var processedRepos = new HashSet<string>(StringComparer.Ordinal);
             foreach (var template in snapshot.PollableTemplates)
             {
-                if (!template.AutoUpdatePrBranches) continue;
+                if (!template.HousekeepingEnabled) continue;
                 if (!processedRepos.Add(template.RepoProviderId)) continue; // already processed this repo this cycle
                 if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId, out var repoProvider)) continue;
                 if (!repoProvider.SupportsServerSideBranchUpdate) continue;
 
                 var donePrs = agentDonePrQueues.TryGetValue(template.Id, out var d) ? d : [];
                 var limit = Math.Max(1,
-                    template.AutoUpdatePrBranchConcurrencyLimit ?? snapshot.Config.AutoUpdatePrBranchConcurrencyLimit);
+                    template.HousekeepingConcurrencyLimit ?? snapshot.Config.HousekeepingConcurrencyLimit);
 
-                await autoUpdateService.ExecuteAsync(repoProvider, template.RepoProviderId, donePrs, limit, ct);
+                await housekeepingService.ExecuteAsync(repoProvider, template.RepoProviderId, donePrs, limit, ct);
             }
         }
 
@@ -246,7 +246,7 @@ public sealed partial class PipelineLoopService
     private async Task ReconcileRepoProviderCacheAsync(List<PipelineJobTemplate> enabledTemplates, CancellationToken ct)
     {
         var neededRepoIds = enabledTemplates
-            .Where(t => t.ReviewEnabled || t.DecompositionEnabled || t.AutoUpdatePrBranches)
+            .Where(t => t.ReviewEnabled || t.DecompositionEnabled || t.HousekeepingEnabled)
             .Select(t => t.RepoProviderId)
             .ToHashSet();
         if (neededRepoIds.Count == 0) return;

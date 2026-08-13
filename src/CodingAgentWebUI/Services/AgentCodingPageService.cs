@@ -193,8 +193,8 @@ public class AgentCodingPageService : IDisposable
     public Task<(bool Success, string? Error)> ToggleDecompositionEnabledAsync(PipelineJobTemplate template, bool enabled)
         => TogglePropertyAsync(template, (t, e) => t with { DecompositionEnabled = e }, enabled);
 
-    public Task<(bool Success, string? Error)> ToggleAutoUpdatePrBranchesAsync(PipelineJobTemplate template, bool enabled)
-        => TogglePropertyAsync(template, (t, e) => t with { AutoUpdatePrBranches = e }, enabled);
+    public Task<(bool Success, string? Error)> ToggleHousekeepingEnabledAsync(PipelineJobTemplate template, bool enabled)
+        => TogglePropertyAsync(template, (t, e) => t with { HousekeepingEnabled = e }, enabled);
 
     private async Task<(bool Success, string? Error)> TogglePropertyAsync(
         PipelineJobTemplate template,
@@ -231,8 +231,8 @@ public class AgentCodingPageService : IDisposable
             PipelineProviderId = string.IsNullOrEmpty(form.PipelineProviderId) ? null : form.PipelineProviderId,
             BrainReadOnly = form.BrainReadOnly, ImplementationEnabled = form.ImplementationEnabled,
             ReviewEnabled = form.ReviewEnabled, DecompositionEnabled = form.DecompositionEnabled,
-            AutoUpdatePrBranches = form.AutoUpdatePrBranches,
-            AutoUpdatePrBranchConcurrencyLimit = form.AutoUpdatePrBranchConcurrencyLimit,
+            HousekeepingEnabled = form.HousekeepingEnabled,
+            HousekeepingConcurrencyLimit = form.HousekeepingConcurrencyLimit,
             Enabled = true
         };
         var targetProjectId = string.IsNullOrEmpty(form.ProjectId) ? WellKnownIds.DefaultProjectId : form.ProjectId;

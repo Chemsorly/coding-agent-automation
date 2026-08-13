@@ -547,7 +547,7 @@ public sealed record PipelineConfiguration
         }
     } = 120;
 
-    // ── PR branch auto-update settings ─────────────────────────────────
+    // ── Housekeeping settings ─────────────────────────────────────────────
 
     /// <summary>
     /// Maximum number of PRs allowed to be simultaneously in the "update triggered,
@@ -555,6 +555,6 @@ public sealed record PipelineConfiguration
     /// Default: 1 (fully serial). Minimum: 1.
     /// </summary>
     [Key(72)]
-    public int AutoUpdatePrBranchConcurrencyLimit { get; init; } = 1;
+    public int HousekeepingConcurrencyLimit { get; init; } = 1;
 
 }

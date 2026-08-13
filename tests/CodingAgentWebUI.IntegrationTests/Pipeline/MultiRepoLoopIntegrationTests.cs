@@ -127,7 +127,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             WorkDistributor = mockDistributor.Object,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            AutoUpdateService = null
+            HousekeepingService = null
         });
 
         using var cts = new CancellationTokenSource();
@@ -219,7 +219,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             WorkDistributor = null,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            AutoUpdateService = null
+            HousekeepingService = null
         });
 
         // Act

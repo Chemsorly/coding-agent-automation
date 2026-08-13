@@ -37,7 +37,7 @@
                                 <th>Decomp</th>
                                 <th>Impl</th>
                                 <th>Review</th>
-                                <th title="Auto-Update PR Branches (agent:done)">Auto-Update</th>
+                                <th title="Housekeeping: automatically keeps agent:done PR branches up-to-date with the base branch">Hskp</th>
                                 <th>Enabled</th>
                                 <th>Status</th>
                                 <th>Actions</th>
@@ -92,9 +92,9 @@
                                         </label>
                                     </td>
                                     <td>
-                                        <label class="toggle-switch" title="Auto-update agent:done PR branches when behind base">
-                                            <input type="checkbox" checked="@template.AutoUpdatePrBranches"
-                                                   @onchange="e => OnToggleAutoUpdatePrBranches.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                        <label class="toggle-switch" title="Housekeeping: automatically keeps agent:done PR branches up-to-date with the base branch">
+                                            <input type="checkbox" checked="@template.HousekeepingEnabled"
+                                                   @onchange="e => OnToggleHousekeeping.InvokeAsync((template, (bool)(e.Value ?? false)))" />
                                             <span class="toggle-slider"></span>
                                         </label>
                                     </td>

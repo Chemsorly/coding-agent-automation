@@ -242,7 +242,7 @@ public class LoopStatePersistenceServiceTests : IDisposable
             WorkDistributor = null,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            AutoUpdateService = null
+            HousekeepingService = null
         });
     }
 
