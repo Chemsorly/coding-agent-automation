@@ -40,10 +40,8 @@ internal sealed class LabelSwapService : ILabelSwapService
         ILogger<LabelSwapService> logger,
         int maxAttempts = 3)
     {
-        // TODO: Add ArgumentNullException.ThrowIfNull for labelService and logger to match
-        // the constructor guard pattern used throughout the Dispatch folder (e.g. DispatchLifecycleService,
-        // WorkItemTransitionService). A null dependency here produces an NRE inside the retry
-        // hot path rather than at construction time.
+        ArgumentNullException.ThrowIfNull(labelService);
+        ArgumentNullException.ThrowIfNull(logger);
         _labelService = labelService;
         _logger = logger;
         _maxAttempts = maxAttempts;
