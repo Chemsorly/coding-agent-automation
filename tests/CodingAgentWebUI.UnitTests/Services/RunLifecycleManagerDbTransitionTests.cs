@@ -27,8 +27,6 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// </summary>
 public sealed class RunLifecycleManagerDbTransitionTests
 {
-    private static readonly string[] DotnetLabels = ["dotnet"];
-
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly WorkItemTransitionService _transitionService;
