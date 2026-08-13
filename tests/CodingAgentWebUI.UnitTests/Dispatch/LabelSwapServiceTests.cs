@@ -166,7 +166,7 @@ public sealed class LabelSwapServiceTests
     public async Task SwapLabel_AllAttemptsExhausted_CompletesWithoutThrowingAndCallsSwapMaxTimes()
     {
         // Covers the else-branch in TrySwapLabelOnceAsync when attempt == _maxAttempts
-        // (i.e., the "exhausted all attempts" log path, lines 98–102 in LabelSwapService).
+        // (i.e., the "exhausted all attempts" log path).
         _mockLabelService
             .Setup(l => l.SwapLabelStrictAsync(Provider, Identifier, AgentLabels.InProgress, Kind, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("persistent failure"));
