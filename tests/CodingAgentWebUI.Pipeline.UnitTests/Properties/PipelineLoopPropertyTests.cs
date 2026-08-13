@@ -376,7 +376,8 @@ public class PipelineLoopPropertyTests
             Logger = mockLogger.Object,
             WorkDistributor = distributor,
             DispatchOrchestration = null,
-            DependencyChecker = null
+            DependencyChecker = null,
+            AutoUpdateService = null
         });
     }
 }

@@ -53,7 +53,8 @@ public class MainLayoutComponentTests : BunitContext
             Logger = mockLogger.Object,
             WorkDistributor = null,
             DispatchOrchestration = null,
-            DependencyChecker = null
+            DependencyChecker = null,
+            AutoUpdateService = null
         }));
         Services.AddSingleton(new ConsolidationBadgeService());
         Services.AddSingleton(_jsMock.Object);

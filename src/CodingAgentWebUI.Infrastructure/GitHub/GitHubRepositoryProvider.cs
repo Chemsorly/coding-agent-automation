@@ -31,6 +31,9 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
     /// <inheritdoc />
     public bool SupportsInlineReviewComments => true;
 
+    /// <inheritdoc />
+    public bool SupportsServerSideBranchUpdate => true;
+
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
     /// </summary>

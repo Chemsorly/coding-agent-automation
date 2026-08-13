@@ -99,7 +99,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             Logger = _mockLogger.Object,
             WorkDistributor = workDistributor,
             DispatchOrchestration = null,
-            DependencyChecker = null
+            DependencyChecker = null,
+            AutoUpdateService = null
         });
         return _loopService;
     }

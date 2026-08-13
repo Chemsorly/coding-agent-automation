@@ -33,6 +33,9 @@ public partial class GitLabRepositoryProvider : GitLabProviderBase, IRepositoryP
     /// <inheritdoc />
     public bool SupportsInlineReviewComments => true;
 
+    /// <inheritdoc />
+    public bool SupportsServerSideBranchUpdate => true;
+
     /// <summary>
     /// Creates a provider with a static access token.
     /// </summary>

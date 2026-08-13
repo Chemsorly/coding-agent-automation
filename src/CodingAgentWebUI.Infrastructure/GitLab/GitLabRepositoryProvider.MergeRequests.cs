@@ -16,6 +16,75 @@ namespace CodingAgentWebUI.Infrastructure.GitLab;
 /// </summary>
 public partial class GitLabRepositoryProvider
 {
+    // ── Auto-branch-update (spec 040) ─────────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<bool?> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
+    {
+        var mr = await ExecuteWithResilienceAsync(
+            client =>
+            {
+                var mrClient = client.GetMergeRequest(ProjectId);
+                return Task.Run(() => mrClient[prNumber], ct);
+            },
+            "IsPullRequestBehindBase", ct);
+
+        // mr.DetailedMergeStatus is DynamicEnum<DetailedMergeStatus> (a struct).
+        // StringValue is the raw JSON string when the value was deserialized from an unknown/string value;
+        // it is null when the value is a known enum member.
+        // We prefer StringValue for unknown values (e.g. "need_rebase" not yet in NGitLab enum).
+        // For known enum members, compare directly against DetailedMergeStatus enum values.
+        var status = mr.DetailedMergeStatus;
+        var rawString = status.StringValue;
+
+        // Known "need_rebase" — not in NGitLab 12 enum, compare by raw string
+        if (string.Equals(rawString, "need_rebase", StringComparison.Ordinal))
+            return true;
+
+        // Map known enum members
+        if (status == DetailedMergeStatus.Mergeable)
+            return false;
+        if (status == DetailedMergeStatus.NotOpen)
+            return false;
+        if (status == DetailedMergeStatus.Checking
+            || status == DetailedMergeStatus.Unchecked
+            || status == DetailedMergeStatus.NotApproved
+            || status == DetailedMergeStatus.CiStillRunning
+            || status == DetailedMergeStatus.Preparing)
+            return null;
+
+        // All other values (unknown raw strings, unrecognised enum members): conservative
+        return null;
+    }
+
+    /// <inheritdoc />
+    public async Task UpdatePullRequestBranchAsync(int prNumber, CancellationToken ct)
+    {
+        // NGitLab exposes IMergeRequestClient.Rebase(long mergeRequestIid) → RebaseResult.
+        // ExecuteWriteWithResilienceAsync retries only on 5xx; 409 (server lock busy) propagates
+        // to the outer catch and is handled as a Warning (safe to retry next tick).
+        try
+        {
+            await ExecuteWriteWithResilienceAsync(
+                client =>
+                {
+                    var mrClient = client.GetMergeRequest(ProjectId);
+                    return Task.Run(() => mrClient.Rebase(prNumber), ct);
+                },
+                "UpdatePullRequestBranch", ct);
+            Log.Information("Triggered server-side rebase for MR !{PrNumber} in project {ProjectId}",
+                prNumber, ProjectId);
+        }
+        catch (GitLabException ex) when ((int)ex.StatusCode == 409)
+        {
+            // 409 = GitLab server transaction lock busy — not a git conflict.
+            // Safe to retry on the next poll tick.
+            Log.Warning(
+                "GitLab rebase for MR !{PrNumber} returned 409 (server lock busy); will retry next tick",
+                prNumber);
+        }
+    }
+
     // ─── Merge Request CRUD ──────────────────────────────────────────────────────
 
     /// <inheritdoc />

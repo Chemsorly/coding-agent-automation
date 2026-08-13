@@ -51,7 +51,8 @@ public class FlattenTemplatesTests : IAsyncDisposable
             Logger = _mockLogger.Object,
             WorkDistributor = null,
             DispatchOrchestration = null,
-            DependencyChecker = null
+            DependencyChecker = null,
+            AutoUpdateService = null
         });
         return _loopService;
     }

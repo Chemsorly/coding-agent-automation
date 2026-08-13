@@ -95,6 +95,18 @@ public static class PipelineTelemetry
     public static readonly Counter<long> LoopCircuitBreakerTrips = Meter.CreateCounter<long>(
         "pipeline.loop.circuit_breaker_trips", "{trip}", "Circuit breaker trip events");
 
+    // PR branch auto-update metrics (spec 040)
+    public static readonly Counter<long> AutoUpdateTriggered = Meter.CreateCounter<long>(
+        "pipeline.pr_update.triggered", "{update}", "Server-side branch updates triggered");
+    public static readonly Counter<long> AutoUpdateSucceeded = Meter.CreateCounter<long>(
+        "pipeline.pr_update.succeeded", "{update}", "Server-side branch updates completed successfully");
+    public static readonly Counter<long> AutoUpdateFailed = Meter.CreateCounter<long>(
+        "pipeline.pr_update.failed", "{update}", "Server-side branch updates that threw an exception");
+    public static readonly Counter<long> AutoUpdateSkipped = Meter.CreateCounter<long>(
+        "pipeline.pr_update.skipped", "{update}", "PRs skipped during candidate selection (not behind, null, draft, active rework, in-flight)");
+    public static readonly Counter<long> AutoUpdateEvicted = Meter.CreateCounter<long>(
+        "pipeline.pr_update.evicted", "{update}", "In-flight entries removed (CI resolved or PR merged/label removed)");
+
     // Agent worker metrics
     public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(
         "agent.jobs.received", "{job}", "Jobs received by agent workers");

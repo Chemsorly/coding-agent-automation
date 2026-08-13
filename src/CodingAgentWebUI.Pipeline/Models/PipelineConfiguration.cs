@@ -547,4 +547,14 @@ public sealed record PipelineConfiguration
         }
     } = 120;
 
+    // ── PR branch auto-update settings ─────────────────────────────────
+
+    /// <summary>
+    /// Maximum number of PRs allowed to be simultaneously in the "update triggered,
+    /// CI running" state per repository. Tracked across poll ticks via an in-flight set.
+    /// Default: 1 (fully serial). Minimum: 1.
+    /// </summary>
+    [Key(72)]
+    public int AutoUpdatePrBranchConcurrencyLimit { get; init; } = 1;
+
 }

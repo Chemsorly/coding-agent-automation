@@ -285,7 +285,8 @@ public class DecompositionTemplatePropertyTests
             Logger = mockLogger.Object,
             WorkDistributor = distributor,
             DispatchOrchestration = null,
-            DependencyChecker = null
+            DependencyChecker = null,
+            AutoUpdateService = null
         });
     }
 }

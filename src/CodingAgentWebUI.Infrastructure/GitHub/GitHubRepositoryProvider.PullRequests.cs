@@ -8,6 +8,55 @@ namespace CodingAgentWebUI.Infrastructure.GitHub;
 
 public partial class GitHubRepositoryProvider
 {
+    // ── Auto-branch-update (spec 040) ─────────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<bool?> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
+    {
+        var pr = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Get(Owner, Repo, prNumber),
+            "IsPullRequestBehindBase", ct);
+
+        // IMPORTANT: Blocked and Unstable MUST map to null, not false.
+        // Blocked = required status checks are pending or failing (during active CI run).
+        // GitHub returns Blocked for the full CI run duration (5-30+ min) when required
+        // checks are configured. Mapping to false would free the concurrency slot before CI
+        // finishes, defeating the gate. See spec 040, Req 1.5.
+        // Unstable = non-required checks pending/failing; required CI may still be running.
+        //
+        // pr.MergeableState is StringEnum<MergeableState>; switch on the string value.
+        return pr.MergeableState?.StringValue switch
+        {
+            "behind"    => true,
+            "clean"     => false,   // CI passed, up-to-date — free slot
+            "dirty"     => false,   // merge conflict — update won't help
+            "draft"     => false,
+            "has_hooks" => false,
+            "blocked"   => null,    // required checks pending/failing — CI still running
+            "unstable"  => null,    // non-required checks; required CI may still run
+            "unknown"   => null,    // initial async computation (lasts seconds)
+            null        => null,
+            _           => null     // unknown future values: conservative
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task UpdatePullRequestBranchAsync(int prNumber, CancellationToken ct)
+    {
+        // Octokit has no typed method for PUT /repos/{owner}/{repo}/pulls/{number}/update-branch.
+        // Use the raw IConnection — note: IConnection.Put<T> has no CancellationToken overload.
+        // Use client.Connection.BaseAddress (includes /api/v3 for non-github.com hosts)
+        // so the URL is consistent with all other Octokit API calls.
+        var client = await GetClientAsync(ct);
+        var baseAddress = client.Connection.BaseAddress;
+        var uri = new Uri(baseAddress, $"repos/{Owner}/{Repo}/pulls/{prNumber}/update-branch");
+        await client.Connection.Put<object>(uri, new { }); // NOSONAR S8949 — no ct overload on IConnection.Put
+        Log.Information("Triggered server-side branch update for PR #{PrNumber} in {Owner}/{Repo}",
+            prNumber, Owner, Repo);
+    }
+
+    // ── PR CRUD ───────────────────────────────────────────────────────────────
+
     public async Task<string> CreatePullRequestAsync(PullRequestInfo prInfo, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(prInfo);

@@ -201,6 +201,37 @@ public interface IRepositoryProvider : IAsyncDisposable
     bool SupportsInlineReviewComments => false;
 
     /// <summary>
+    /// Whether this provider supports server-side branch updates via
+    /// <see cref="UpdatePullRequestBranchAsync"/> without requiring a local workspace clone.
+    /// Default: false (default-deny for providers that have not implemented it).
+    /// </summary>
+    bool SupportsServerSideBranchUpdate => false;
+
+    /// <summary>
+    /// Checks whether the PR branch is behind the base branch and needs updating.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> if the branch is behind and an update is needed;
+    /// <c>false</c> if the branch does not need updating (up-to-date, conflicted, draft, etc.);
+    /// <c>null</c> if the status is indeterminate — mergeability is still being computed
+    /// or CI is actively running (e.g. GitHub returns <c>"blocked"</c> during the full CI run
+    /// when required checks are configured). A <c>null</c> result keeps the in-flight slot
+    /// occupied and the PR is re-evaluated on the next tick.
+    /// </returns>
+    Task<bool?> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
+        => Task.FromResult<bool?>(null);
+
+    /// <summary>
+    /// Triggers a server-side branch update (e.g. GitHub: <c>PUT .../update-branch</c>;
+    /// GitLab: <c>PUT .../rebase</c>). Does not require a local workspace clone.
+    /// The update is asynchronous on the provider side — the method returns after the
+    /// HTTP call completes (typically 202 Accepted), not after CI finishes.
+    /// </summary>
+    Task UpdatePullRequestBranchAsync(int prNumber, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support UpdatePullRequestBranchAsync.");
+
+    /// <summary>
     /// Submits a review with optional inline comments. When <see cref="ReviewSubmission.Comments"/>
     /// is empty, produces the same result as the body-only overload.
     /// Default implementation falls back to the existing body-only overload.
