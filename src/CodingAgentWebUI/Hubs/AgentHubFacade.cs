@@ -329,10 +329,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
     {
-        // TODO: [WARNING] When _projectStore is null, an empty list is returned, which causes the scope check in
-        // AgentHub.Pipeline.cs to throw HubException (security boundary is preserved). However, the silent fallback
-        // may mask a DI registration bug — a thrown InvalidOperationException would surface misconfiguration more
-        // clearly. In production _projectStore is always non-null (registered via GetRequiredService).
         if (_projectStore is null)
             return Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(Array.Empty<PipelineJobTemplate>());
         return _projectStore.LoadTemplatesForProjectAsync(projectId, ct);

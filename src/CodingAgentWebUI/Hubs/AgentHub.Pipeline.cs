@@ -271,9 +271,6 @@ public sealed partial class AgentHub
         // Backward compat: when ProjectId is null/empty (legacy runs), any system-wide provider is accepted.
         if (issueProviderConfigId != run.IssueProviderConfigId && !string.IsNullOrEmpty(run.ProjectId))
         {
-            // TODO: [WARNING] CancellationToken.None is used here (consistent with other hub calls in this file), but the
-            // template-store query cannot be cancelled if the SignalR connection drops mid-flight. If a connection-bound
-            // token is added to hub methods in the future, propagate it here.
             var templates = await _facade.LoadTemplatesForProjectAsync(run.ProjectId, CancellationToken.None);
             var allowedProviders = templates.Select(t => t.IssueProviderId).ToHashSet();
             if (!allowedProviders.Contains(issueProviderConfigId))

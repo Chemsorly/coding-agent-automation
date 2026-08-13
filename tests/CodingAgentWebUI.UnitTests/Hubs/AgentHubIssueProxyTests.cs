@@ -78,13 +78,6 @@ public sealed class AgentHubIssueProxyTests
 
     // ── RequestPostComment — GateRejection and GateWontDo paths ──────────
 
-    // TODO: [WARNING] These tests and others in this file call _mockFacade.Setup(f => f.GetRun("job-1"))
-    // using raw string literals, relying on the implicit string→JobId conversion for Moq matching.
-    // Since JobId is a record struct with value equality on .Value, Moq matches correctly — but if
-    // GetRun's parameter type reverted to string, these tests would still compile and pass, making
-    // the type constraint non-load-bearing. Consider using _mockFacade.Setup(f => f.GetRun(new JobId("job-1")))
-    // to enforce the type boundary at the test level.
-    // See: review-findings.md [WARNING] AgentHubIssueProxyTests.cs:130
     [Fact]
     public async Task RequestPostComment_GateRejection_FormatsAndPosts()
     {
@@ -523,8 +516,7 @@ public sealed class AgentHubIssueProxyTests
         var result = await hub.RequestCreateIssueForProvider("job-1", "cross-repo-cfg", "title", "body", new[] { "bug" });
 
         result.Should().Be(expected);
-        // TODO: [WARNING] Add Verify(f => f.LoadTemplatesForProjectAsync("proj-1", ...), Times.Once) to confirm
-        // the scope-check guard was actually exercised; currently the test passes even if the check is removed.
+        _mockFacade.Verify(f => f.LoadTemplatesForProjectAsync("proj-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -589,9 +581,7 @@ public sealed class AgentHubIssueProxyTests
         var hub = CreateHub();
         var act = () => hub.RequestCreateIssueForProvider("job-1", "other-project-cfg", "title", "body", new[] { "bug" });
         await act.Should().ThrowAsync<HubException>().WithMessage("*not part of the run's project*");
-        // TODO: [WARNING] Add _mockFacade.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never)
-        // to assert no issue-creation side-effect occurred before the throw. Without this, a regression where the
-        // throw happens after provider invocation would still pass this test.
+        _mockFacade.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
     }
 
     [Fact]
