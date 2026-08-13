@@ -49,12 +49,16 @@ public partial class TemplateTableSection
 
     private string? _moveMenuTemplateId;
     private string? _expandedPreviewTemplateId;
+    private string? _expandedFeaturesTemplateId;
 
     private void ToggleMoveMenu(string? templateId) =>
         _moveMenuTemplateId = _moveMenuTemplateId == templateId ? null : templateId;
 
     private void ToggleLabelPreview(string templateId) =>
         _expandedPreviewTemplateId = _expandedPreviewTemplateId == templateId ? null : templateId;
+
+    private void ToggleFeatureExpand(string templateId) =>
+        _expandedFeaturesTemplateId = _expandedFeaturesTemplateId == templateId ? null : templateId;
 
     private async Task MoveTemplate(TemplateId templateId, string sourceProjectId, string targetProjectId)
     {

@@ -34,10 +34,7 @@
                                 <th>Repo Provider</th>
                                 <th>Brain</th>
                                 <th>CI</th>
-                                <th>Decomp</th>
-                                <th>Impl</th>
-                                <th>Review</th>
-                                <th title="Housekeeping: automatically keeps agent:done PR branches up-to-date with the base branch">Hskp</th>
+                                <th title="Active features — click to configure">Features</th>
                                 <th>Enabled</th>
                                 <th>Status</th>
                                 <th>Actions</th>
@@ -50,6 +47,7 @@
                                 var isPolling = status?.IsCurrentlyPolling == true;
                                 var hasError = !string.IsNullOrEmpty(status?.LastError);
                                 var providerMissing = IsProviderMissing(template);
+                                var isExpanded = _expandedFeaturesTemplateId == template.Id;
 
                                 <tr class="@(isPolling ? "monitoring-row-busy" : "") @(!template.Enabled ? "monitoring-row-disabled" : "")">
                                     <td>
@@ -71,32 +69,15 @@
                                     <td>@(string.IsNullOrEmpty(template.BrainProviderId) ? "—" : GetProviderDisplayName(template.BrainProviderId, BrainProviders))</td>
                                     <td>@(string.IsNullOrEmpty(template.PipelineProviderId) ? "—" : GetProviderDisplayName(template.PipelineProviderId, PipelineProviders))</td>
                                     <td>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" checked="@template.DecompositionEnabled"
-                                                   @onchange="e => OnToggleDecomposition.InvokeAsync((template, (bool)(e.Value ?? false)))" />
-                                            <span class="toggle-slider"></span>
-                                        </label>
-                                    </td>
-                                    <td>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" checked="@template.ImplementationEnabled"
-                                                   @onchange="e => OnToggleImplementation.InvokeAsync((template, (bool)(e.Value ?? false)))" />
-                                            <span class="toggle-slider"></span>
-                                        </label>
-                                    </td>
-                                    <td>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" checked="@template.ReviewEnabled"
-                                                   @onchange="e => OnToggleReview.InvokeAsync((template, (bool)(e.Value ?? false)))" />
-                                            <span class="toggle-slider"></span>
-                                        </label>
-                                    </td>
-                                    <td>
-                                        <label class="toggle-switch" title="Housekeeping: automatically keeps agent:done PR branches up-to-date with the base branch">
-                                            <input type="checkbox" checked="@template.HousekeepingEnabled"
-                                                   @onchange="e => OnToggleHousekeeping.InvokeAsync((template, (bool)(e.Value ?? false)))" />
-                                            <span class="toggle-slider"></span>
-                                        </label>
+                                        <button class="feature-badge-bar" title="Click to configure features"
+                                                aria-expanded="@isExpanded.ToString().ToLowerInvariant()"
+                                                @onclick="() => ToggleFeatureExpand(template.Id)">
+                                            <span class="feature-badge @(template.ImplementationEnabled ? "feature-on" : "feature-off")" title="Implementation">Impl</span>
+                                            <span class="feature-badge @(template.ReviewEnabled ? "feature-on" : "feature-off")" title="PR Review">Rev</span>
+                                            <span class="feature-badge @(template.DecompositionEnabled ? "feature-on" : "feature-off")" title="Epic Decomposition">Decomp</span>
+                                            <span class="feature-badge @(template.HousekeepingEnabled ? "feature-on" : "feature-off")" title="Housekeeping (branch auto-update)">Hskp</span>
+                                            <span class="feature-expand-chevron"><Icon Name="@(isExpanded ? "chevron-up" : "chevron-down")" Size="12" /></span>
+                                        </button>
                                     </td>
                                     <td>
                                         <label class="toggle-switch">
@@ -171,10 +152,57 @@
                                         }
                                     </td>
                                 </tr>
+
+                                @* Inline feature configuration row — shown when badge bar is clicked *@
+                                @if (isExpanded)
+                                {
+                                    <tr class="feature-config-row">
+                                        <td colspan="9">
+                                            <div class="feature-config-panel">
+                                                <span class="feature-config-label">Features for <strong>@template.Name</strong>:</span>
+                                                <div class="feature-config-toggles">
+                                                    <label class="feature-config-toggle">
+                                                        <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.ImplementationEnabled"
+                                                                   @onchange="e => OnToggleImplementation.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                        <span>Implementation</span>
+                                                    </label>
+                                                    <label class="feature-config-toggle">
+                                                        <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.ReviewEnabled"
+                                                                   @onchange="e => OnToggleReview.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                        <span>PR Review</span>
+                                                    </label>
+                                                    <label class="feature-config-toggle">
+                                                        <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.DecompositionEnabled"
+                                                                   @onchange="e => OnToggleDecomposition.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                        <span>Decomposition</span>
+                                                    </label>
+                                                    <label class="feature-config-toggle">
+                                                        <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.HousekeepingEnabled"
+                                                                   @onchange="e => OnToggleHousekeeping.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                        <span title="Automatically keeps agent-created PR branches up-to-date with the base branch">Housekeeping</span>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+
                                 @if (_expandedPreviewTemplateId == template.Id)
                                 {
                                     <tr class="label-preview-row">
-                                        <td colspan="12">
+                                        <td colspan="9">
                                             <LabelPreviewInline Preview="previewLabels" />
                                         </td>
                                     </tr>
