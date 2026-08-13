@@ -359,31 +359,28 @@ public sealed partial class AgentJobDispatcher
     /// Routes through IRunLifecycleManager.AgentAcceptedRunAsync to ensure label swap
     /// and agent state are handled uniformly across all modes.
     /// </summary>
-    private async Task AssignAndSendAsync(AgentEntry agent, string runId, JobAssignmentMessage message, CancellationToken ct)
+    internal async Task AssignAndSendAsync(AgentEntry agent, string runId, JobAssignmentMessage message, CancellationToken ct)
     {
         await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
 
-        // TODO: [WARNING] Silent state-tracking gap: when _lifecycleManager is non-null but either
-        // IssueProviderConfigId or RepoProviderConfigId is empty, neither branch below executes.
-        // The job has already been sent to the agent (AssignJobAsync completed), but agent.ActiveJobId
-        // is never set and the agent is never transitioned to Busy — making the run invisible to the
-        // orchestrator (IsIssueBeingProcessed returns false, duplicate dispatches become possible).
-        // Concrete scenario: a consolidation job with an intentionally empty RepoProviderConfigId.
-        // The original code called AgentAcceptedRunAsync unconditionally (using ?? ""), which was always
-        // correct. Consider passing ProviderConfigId directly from the dispatch path to eliminate the
-        // empty-string case rather than guarding against it here. See review finding for full context.
-        if (_lifecycleManager is not null
-            && !string.IsNullOrEmpty(message.IssueProviderConfigId)
-            && !string.IsNullOrEmpty(message.RepoProviderConfigId))
+        if (_lifecycleManager is not null)
         {
             await _lifecycleManager.AgentAcceptedRunAsync(
                 runId, agent.AgentId,
-                message.IssueIdentifier, message.IssueProviderConfigId,
-                message.RepoProviderConfigId, message.RunType, ct);
+                message.IssueIdentifier,
+                new ProviderConfigId(message.IssueProviderConfigId ?? ""),
+                new ProviderConfigId(message.RepoProviderConfigId ?? ""),
+                message.RunType, ct);
         }
-        else if (_lifecycleManager is null)
+        else
         {
             // Fallback for tests without lifecycle manager
+            // TODO: [WARNING] This branch only executes when _lifecycleManager is null. When
+            // _lifecycleManager is non-null, ActiveJobId and Busy state are set inside
+            // AgentAcceptedRunAsync. If AgentAcceptedRunAsync does not unconditionally set
+            // ActiveJobId (e.g. due to a future refactor), the non-null lifecycle manager path
+            // could leave ActiveJobId unset, re-enabling duplicate dispatch. Verify that
+            // AgentAcceptedRunAsync always sets agent.ActiveJobId = runId before returning.
             agent.ActiveJobId = runId;
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
         }
