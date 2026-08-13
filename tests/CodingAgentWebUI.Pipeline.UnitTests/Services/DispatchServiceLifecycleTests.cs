@@ -549,16 +549,30 @@ public class DispatchServiceLifecycleTests : IDisposable
         // Build JobTemplateStore from imageMapping + maxConcurrentPods
         var templateProvider = BuildTemplateProvider(imageMapping, maxConcurrentPods);
 
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
+        };
+
+        var lifecycle = new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options);
+
+        var stateBuilder = new DispatchStateBuilder(
+            _dbFactory, lifecycle, templateProvider,
+            new DispatchTemplateResolver(null, templateProvider),
+            options);
+
         return new DispatchService(
-            new DispatchServiceCoreDependencies(_dbFactory, leaderElection ?? _leaderElection, new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
-            {
-                PollIntervalSeconds = 10,
-                RateLimitPerSecond = 100,
-                Namespace = "default",
-                OrchestratorUrl = "http://orchestrator:8080",
-                AgentApiKeySecretName = "agent-api-key",
-                KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
-            }), RunService: runService),
+            new DispatchServiceCoreDependencies(
+                _dbFactory,
+                leaderElection ?? _leaderElection,
+                lifecycle,
+                RunService: runService,
+                StateBuilder: stateBuilder),
             config, templateProvider);
     }
 

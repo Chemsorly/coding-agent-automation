@@ -510,11 +510,12 @@ public class ConsolidationDispatchHandlerTests
     }
 
     [Fact]
-    public void Constructor_PublicDepsOnly_ConstructsWithoutThrowing()
+    public void Constructor_PublicDepsWithoutStateBuilder_ThrowsArgumentNullException()
     {
-        // Exercises the public ConsolidationDispatchHandler(deps) constructor that accepts
-        // IConfiguration (rather than the internal test constructor that accepts DispatchServiceOptions).
-        // This covers the DI-wired code path used in production.
+        // After removing the null-coalescing fallback, the public constructor requires StateBuilder.
+        // Omitting it (null by default) must throw ArgumentNullException at construction time
+        // rather than producing a silent second live DispatchStateBuilder instance.
+        // Acceptance criterion 4.
         var dbFactoryMock = new Mock<IDbContextFactory<PipelineDbContext>>();
         var leaderElectionMock = new Mock<ILeaderElectionService>();
         var kubeClientMock = new Mock<IKubernetesJobClient>();
@@ -537,10 +538,11 @@ public class ConsolidationDispatchHandlerTests
             JobTemplateStore.CreateEmpty(),
             configuration,
             TransitionService: transitionService);
+        // StateBuilder intentionally omitted (null by default)
 
-        var handler = new ConsolidationDispatchHandler(deps);
-
-        handler.Should().NotBeNull();
+        var act = () => new ConsolidationDispatchHandler(deps);
+        act.Should().Throw<ArgumentNullException>()
+            .WithParameterName("StateBuilder");
     }
 
     [Fact]
@@ -626,6 +628,13 @@ public class ConsolidationDispatchHandlerTests
 
         var options = new DispatchServiceOptions { PollIntervalSeconds = 1, RateLimitPerSecond = 100 };
 
+        var stateBuilder = new DispatchStateBuilder(
+            dbFactory,
+            lifecycle,
+            JobTemplateStore.CreateEmpty(),
+            new DispatchTemplateResolver(null, JobTemplateStore.CreateEmpty()),
+            options);
+
         return new ConsolidationDispatchHandler(
             new ConsolidationDispatchHandlerDependencies(
                 dbFactory,
@@ -633,7 +642,8 @@ public class ConsolidationDispatchHandlerTests
                 lifecycle,
                 JobTemplateStore.CreateEmpty(),
                 Mock.Of<IConfiguration>(),
-                TransitionService: transitionService),
+                TransitionService: transitionService,
+                StateBuilder: stateBuilder),
             options);
     }
 
@@ -654,6 +664,15 @@ public class ConsolidationDispatchHandlerTests
             transitionService,
             new DispatchServiceOptions());
 
+        var options = new DispatchServiceOptions();
+
+        var stateBuilder = new DispatchStateBuilder(
+            dbFactoryMock.Object,
+            lifecycle,
+            JobTemplateStore.CreateEmpty(),
+            new DispatchTemplateResolver(null, JobTemplateStore.CreateEmpty()),
+            options);
+
         return new ConsolidationDispatchHandler(
             new ConsolidationDispatchHandlerDependencies(
                 dbFactoryMock.Object,
@@ -663,8 +682,9 @@ public class ConsolidationDispatchHandlerTests
                 Mock.Of<IConfiguration>(),
                 TransitionService: transitionService,
                 ConsolidationRunStore: consolidationRunStore,
-                ConsolidationService: consolidationService),
-            new DispatchServiceOptions());
+                ConsolidationService: consolidationService,
+                StateBuilder: stateBuilder),
+            options);
     }
 
     /// <summary>
