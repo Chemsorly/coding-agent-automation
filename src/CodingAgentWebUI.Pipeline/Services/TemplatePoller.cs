@@ -223,17 +223,23 @@ internal sealed class TemplatePoller
     }
 
     /// <summary>
-    /// Fetches open agent:done-labelled PRs from a repository provider.
-    /// No RemoveAll filter needed — API label filter returns only agent:done PRs.
+    /// Fetches open agent-created PRs from a repository provider by matching the agent branch prefix.
+    /// Uses branch name prefix (<c>feature/auto-</c>) rather than label filtering because the agent
+    /// applies <c>agent:done</c> to the <em>issue</em>, not the PR — PRs have no agent status labels.
     /// IsDraft and active-run exclusion are applied in HousekeepingService.ExecuteAsync.
     /// </summary>
     private static async Task<List<PullRequestSummary>> FetchAgentDonePullRequestsAsync(
         IRepositoryProvider repoProvider, int maxPages, CancellationToken ct)
     {
-        return await FetchAllPagesAsync<PullRequestSummary>(
+        // Fetch all open PRs (no label filter — agent:done is on the issue, not the PR).
+        var all = await FetchAllPagesAsync<PullRequestSummary>(
             (page, pageSize, token) =>
-                repoProvider.ListOpenPullRequestsAsync(page, pageSize, new[] { AgentLabels.Done }, token),
+                repoProvider.ListOpenPullRequestsAsync(page, pageSize, null, token),
             maxPages, ct);
+
+        // Filter to agent-created PRs by branch prefix.
+        all.RemoveAll(pr => !pr.BranchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal));
+        return all;
     }
 
     /// <summary>

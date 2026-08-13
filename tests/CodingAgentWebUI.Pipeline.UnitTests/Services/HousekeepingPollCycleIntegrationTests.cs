@@ -11,29 +11,33 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Integration tests for the housekeeping poll cycle additions (spec 040, task 7.5).
-/// Tests that HousekeepingEnabled flag correctly controls agent:done PR fetching and
-/// HousekeepingService.ExecuteAsync invocation.
+///
+/// Key design note: the housekeeping fetch uses NO label filter (passes null) because
+/// agent:done is applied to the GitHub *issue*, not the PR. PRs are identified as
+/// agent-created by their branch name prefix (PipelineConstants.BranchPrefix = "feature/auto-").
 /// </summary>
 public class HousekeepingPollCycleIntegrationTests
 {
-    private const string RepoProviderId = "rp-auto";
+    private const string RepoProviderId = "rp-hk";
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static (TemplatePoller Poller,
                     Mock<IRepositoryProvider> RepoProviderMock,
                     Mock<IHousekeepingService> HousekeepingMock)
-        CreatePoller(bool supportsUpdate = true, bool housekeepingEnabled = true)
+        CreatePoller(bool supportsUpdate = true, IReadOnlyList<PullRequestSummary>? returnedPrs = null)
     {
         var repoProviderMock = new Mock<IRepositoryProvider>();
         repoProviderMock.Setup(r => r.SupportsServerSideBranchUpdate).Returns(supportsUpdate);
+
+        // The fetch uses null labels (fetch all open PRs), then filters client-side by branch prefix
         repoProviderMock.Setup(r => r.ListOpenPullRequestsAsync(
                 It.IsAny<int>(), It.IsAny<int>(),
-                It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains(AgentLabels.Done)),
+                It.Is<IReadOnlyList<string>?>(l => l == null),  // ← null label filter
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PullRequestSummary>
             {
-                Items = new List<PullRequestSummary>().AsReadOnly(),
+                Items = (returnedPrs ?? []).ToList().AsReadOnly(),
                 Page = 1, PageSize = 100, HasMore = false
             });
 
@@ -59,7 +63,7 @@ public class HousekeepingPollCycleIntegrationTests
         int? concurrencyLimit = null) =>
         new()
         {
-            Id = "t-auto",
+            Id = "t-hk",
             Name = "Housekeeping Template",
             IssueProviderId = "ip-1",
             RepoProviderId = RepoProviderId,
@@ -68,6 +72,19 @@ public class HousekeepingPollCycleIntegrationTests
             HousekeepingEnabled = housekeepingEnabled,
             HousekeepingConcurrencyLimit = concurrencyLimit
         };
+
+    private static PullRequestSummary MakePr(int number, string branch) => new()
+    {
+        Number = number,
+        Identifier = number.ToString(),
+        Title = $"PR #{number}",
+        Description = string.Empty,
+        Labels = Array.Empty<string>(),
+        BranchName = branch,
+        TargetBranch = "main",
+        Url = $"https://example.com/pr/{number}",
+        IsDraft = false
+    };
 
     private static (ConcurrentDictionary<string, ConfigStatusSnapshot> Statuses,
                     Action<int> ReportIdx,
@@ -79,10 +96,10 @@ public class HousekeepingPollCycleIntegrationTests
         return (statuses, _ => { }, _ => { }, () => { });
     }
 
-    // ── HousekeepingEnabled = false → agent:done fetch NOT called ─────────────
+    // ── HousekeepingEnabled = false → fetch NOT called ────────────────────────
 
     [Fact]
-    public async Task PollTemplateQueuesAsync_HousekeepingDisabled_DoesNotFetchAgentDonePrs()
+    public async Task PollTemplateQueuesAsync_HousekeepingDisabled_DoesNotFetchPrs()
     {
         var (poller, repoProviderMock, _) = CreatePoller();
         var template = MakeTemplate(housekeepingEnabled: false);
@@ -92,16 +109,17 @@ public class HousekeepingPollCycleIntegrationTests
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
+        // Fetch should not be called at all when housekeeping is disabled
         repoProviderMock.Verify(r => r.ListOpenPullRequestsAsync(
             It.IsAny<int>(), It.IsAny<int>(),
-            It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains(AgentLabels.Done)),
+            It.Is<IReadOnlyList<string>?>(l => l == null),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── SupportsServerSideBranchUpdate = false → agent:done fetch NOT called ──
+    // ── SupportsServerSideBranchUpdate = false → fetch NOT called ─────────────
 
     [Fact]
-    public async Task PollTemplateQueuesAsync_ProviderNotSupported_DoesNotFetchAgentDonePrs()
+    public async Task PollTemplateQueuesAsync_ProviderNotSupported_DoesNotFetchPrs()
     {
         var (poller, repoProviderMock, _) = CreatePoller(supportsUpdate: false);
         var template = MakeTemplate(housekeepingEnabled: true);
@@ -112,18 +130,16 @@ public class HousekeepingPollCycleIntegrationTests
             CancellationToken.None);
 
         repoProviderMock.Verify(r => r.ListOpenPullRequestsAsync(
-            It.IsAny<int>(), It.IsAny<int>(),
-            It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains(AgentLabels.Done)),
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── ReviewEnabled = false but HousekeepingEnabled = true → fetch IS called
+    // ── ReviewEnabled = false, HousekeepingEnabled = true → fetch IS called ──
 
     [Fact]
-    public async Task PollTemplateQueuesAsync_ReviewDisabledButHousekeepingEnabled_FetchesAgentDonePrs()
+    public async Task PollTemplateQueuesAsync_ReviewDisabledButHousekeepingEnabled_FetchesPrs()
     {
         var (poller, repoProviderMock, _) = CreatePoller();
-        // ReviewEnabled = false, HousekeepingEnabled = true
         var template = MakeTemplate(housekeepingEnabled: true, reviewEnabled: false);
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
@@ -131,13 +147,35 @@ public class HousekeepingPollCycleIntegrationTests
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
+        // Fetch must be called with null labels (fetch all open PRs, filter by branch prefix client-side)
         repoProviderMock.Verify(r => r.ListOpenPullRequestsAsync(
             It.IsAny<int>(), It.IsAny<int>(),
-            It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains(AgentLabels.Done)),
+            It.Is<IReadOnlyList<string>?>(l => l == null),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
-    // ── agentDonePrQueues returns correct 4-tuple element ─────────────────────
+    // ── Branch prefix filter: only agent PRs in agentDonePrQueues ─────────────
+
+    [Fact]
+    public async Task PollTemplateQueuesAsync_FiltersToAgentBranchPrefix()
+    {
+        // One agent PR, one human PR
+        var agentPr = MakePr(10, $"{PipelineConstants.BranchPrefix}123-fix-login");
+        var humanPr = MakePr(20, "feature/human-work");
+        var (poller, _, _) = CreatePoller(returnedPrs: [agentPr, humanPr]);
+        var template = MakeTemplate(housekeepingEnabled: true);
+        var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
+
+        var (_, _, _, agentDonePrQueues) = await poller.PollTemplateQueuesAsync(
+            [template], 3, statuses, reportIdx, reportStatus, notifyChange,
+            CancellationToken.None);
+
+        agentDonePrQueues["t-hk"].Should().ContainSingle()
+            .Which.BranchName.Should().Be(agentPr.BranchName,
+                "only agent-created PRs (branch prefix 'feature/auto-') should be included");
+    }
+
+    // ── agentDonePrQueues is returned as 4th tuple element ────────────────────
 
     [Fact]
     public async Task PollTemplateQueuesAsync_ReturnsAgentDonePrQueues_AsFourthTupleElement()
@@ -150,10 +188,10 @@ public class HousekeepingPollCycleIntegrationTests
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
-        agentDonePrQueues.Should().ContainKey("t-auto");
+        agentDonePrQueues.Should().ContainKey("t-hk");
     }
 
-    // ── HousekeepingEnabled = false → agentDonePrQueues returns empty list ──
+    // ── HousekeepingEnabled = false → agentDonePrQueues is empty ─────────────
 
     [Fact]
     public async Task PollTemplateQueuesAsync_HousekeepingDisabled_AgentDonePrQueuesIsEmpty()
@@ -166,7 +204,7 @@ public class HousekeepingPollCycleIntegrationTests
             [template], 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
-        agentDonePrQueues.Should().ContainKey("t-auto");
-        agentDonePrQueues["t-auto"].Should().BeEmpty();
+        agentDonePrQueues.Should().ContainKey("t-hk");
+        agentDonePrQueues["t-hk"].Should().BeEmpty();
     }
 }
