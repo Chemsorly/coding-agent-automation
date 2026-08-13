@@ -13,10 +13,21 @@ public static class TestOrchestrationFactory
     /// <summary>
     /// Creates a <see cref="PipelineOrchestrationService"/> with no-op/null defaults for all facade parameters.
     /// Tests should provide specific implementations only for the dependencies they exercise.
+    /// <para>
+    /// When <see cref="CreateMinimalOptions.OrchestrationService"/> is set, that instance is returned
+    /// directly without constructing the concrete class — allowing tests to inject a
+    /// <c>Mock&lt;IPipelineOrchestrationService&gt;</c> without the 6-parameter concrete constructor.
+    /// </para>
     /// </summary>
-    public static PipelineOrchestrationService CreateMinimal(CreateMinimalOptions? options = null)
+    public static IPipelineOrchestrationService CreateMinimal(CreateMinimalOptions? options = null)
     {
         var o = options ?? new CreateMinimalOptions();
+
+        // Short-circuit: if the caller supplied a pre-built IPipelineOrchestrationService (e.g. a mock),
+        // return it directly so tests only need the interface, not the 6-parameter concrete class.
+        if (o.OrchestrationService is not null)
+            return o.OrchestrationService;
+
         var logger = o.Logger ?? Serilog.Log.Logger;
         var historyService = o.HistoryService ?? new NullHistoryService();
 
@@ -45,17 +56,39 @@ public static class TestOrchestrationFactory
         Serilog.ILogger? logger = null,
         IPipelineRunHistoryService? historyService = null,
         IOrchestratorRunService? runService = null)
-        => CreateMinimal(new CreateMinimalOptions
-        {
-            ConfigStore = configStore,
-            ProviderFactory = providerFactory,
-            CancellationFacade = cancellationFacade,
-            Lifecycle = lifecycle,
-            LabelService = labelService,
-            Logger = logger,
-            HistoryService = historyService,
-            RunService = runService
-        });
+    {
+        logger ??= Serilog.Log.Logger;
+        historyService ??= new NullHistoryService();
+        var store = configStore ?? throw new ArgumentNullException(nameof(configStore), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object");
+        return new PipelineOrchestrationService(
+            store,
+            providerFactory ?? throw new ArgumentNullException(nameof(providerFactory), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
+            cancellationFacade ?? new PipelineCancellationFacade(null, null),
+            lifecycle ?? new PipelineRunLifecycleService(historyService, runService, logger),
+            labelService ?? NoOpLabelService.Instance,
+            logger);
+    }
+
+    /// <summary>
+    /// Returns an <see cref="IPipelineOrchestrationService"/> for tests that only need to verify
+    /// cancel interactions and do not require the full concrete <see cref="PipelineOrchestrationService"/>
+    /// with its 6-parameter constructor.
+    /// <para>
+    /// Pass a <c>Mock&lt;IPipelineOrchestrationService&gt;().Object</c> to inject a verifiable mock,
+    /// or omit the argument to receive a lightweight no-op implementation.
+    /// </para>
+    /// </summary>
+    /// <param name="orchestrationService">
+    /// Optional pre-built implementation. When <c>null</c>, a no-op is returned.
+    /// </param>
+    public static IPipelineOrchestrationService CreateMinimalInterface(
+        IPipelineOrchestrationService? orchestrationService = null)
+        => orchestrationService ?? new NoOpOrchestrationService();
+
+    private sealed class NoOpOrchestrationService : IPipelineOrchestrationService
+    {
+        public Task CancelPipelineAsync() => Task.CompletedTask;
+    }
 
     /// <summary>
     /// Creates a <see cref="DispatchRunCreationService"/> with the same lifecycle as a companion
