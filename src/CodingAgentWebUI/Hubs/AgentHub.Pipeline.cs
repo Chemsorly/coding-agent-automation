@@ -266,6 +266,20 @@ public sealed partial class AgentHub
         if (issueConfig is null)
             throw new HubException($"Issue provider config '{issueProviderConfigId}' not found for cross-repo routing in job {jobId.Value}");
 
+        // Scope check: ensure the requested provider belongs to the run's project.
+        // Fast path: the run's own provider is always in scope — no template lookup needed.
+        // Backward compat: when ProjectId is null/empty (legacy runs), any system-wide provider is accepted.
+        if (issueProviderConfigId != run.IssueProviderConfigId && !string.IsNullOrEmpty(run.ProjectId))
+        {
+            // TODO: [WARNING] CancellationToken.None is used here (consistent with other hub calls in this file), but the
+            // template-store query cannot be cancelled if the SignalR connection drops mid-flight. If a connection-bound
+            // token is added to hub methods in the future, propagate it here.
+            var templates = await _facade.LoadTemplatesForProjectAsync(run.ProjectId, CancellationToken.None);
+            var allowedProviders = templates.Select(t => t.IssueProviderId).ToHashSet();
+            if (!allowedProviders.Contains(issueProviderConfigId))
+                throw new HubException($"Provider '{issueProviderConfigId}' is not part of the run's project '{run.ProjectId}'");
+        }
+
         await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
         try
         {

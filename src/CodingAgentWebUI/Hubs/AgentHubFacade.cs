@@ -30,6 +30,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly WorkItemTransitionService? _workItemTransition;
     private readonly PendingWorkItemDrainService? _pendingDrainService;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
+    private readonly IProjectStore? _projectStore;
     private readonly ILogger<AgentHubFacadeDependencies> _logger;
 
     public AgentHubFacade(AgentHubFacadeDependencies deps)
@@ -55,6 +56,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _workItemTransition = deps.WorkItemTransition;
         _pendingDrainService = deps.PendingDrainService;
         _dbFactory = deps.DbFactory;
+        _projectStore = deps.ProjectStore;
     }
 
     // ── Registry operations ─────────────────────────────────────────────
@@ -323,6 +325,18 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _historyService.GetRunHistoryAsync(ct);
 
     // ── Issue provider operations ───────────────────────────────────────
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
+    {
+        // TODO: [WARNING] When _projectStore is null, an empty list is returned, which causes the scope check in
+        // AgentHub.Pipeline.cs to throw HubException (security boundary is preserved). However, the silent fallback
+        // may mask a DI registration bug — a thrown InvalidOperationException would surface misconfiguration more
+        // clearly. In production _projectStore is always non-null (registered via GetRequiredService).
+        if (_projectStore is null)
+            return Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(Array.Empty<PipelineJobTemplate>());
+        return _projectStore.LoadTemplatesForProjectAsync(projectId, ct);
+    }
 
     /// <inheritdoc />
     public Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
