@@ -299,9 +299,6 @@ public class WorkItemEndpointsTests : IDisposable
             CreateTestPayload(projectId: "proj-no-secrets"), PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, WorkItemStatus.Dispatched, payload);
 
-        // TODO: Add a second test variant with Secrets = new Dictionary<string, string>() (empty, non-null)
-        // to verify the Count > 0 guard also skips injection for an empty dictionary. Without this, a
-        // regression that changes the guard to 'Secrets != null' would not be caught.
         var project = new PipelineProject
         {
             Id = "proj-no-secrets",
