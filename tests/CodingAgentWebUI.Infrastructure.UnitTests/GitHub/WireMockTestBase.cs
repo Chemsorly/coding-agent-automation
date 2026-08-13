@@ -72,6 +72,20 @@ public abstract class WireMockTestBase : IAsyncDisposable
                 .WithBody(JsonSerializer.Serialize(responseBody, JsonOptions)));
     }
 
+    /// <summary>Stubs a PUT endpoint returning JSON.</summary>
+    protected void StubPut(string path, object? responseBody = null, int statusCode = 202)
+    {
+        var response = Response.Create()
+            .WithStatusCode(statusCode)
+            .WithHeader("Content-Type", "application/json");
+
+        if (responseBody is not null)
+            response.WithBody(JsonSerializer.Serialize(responseBody, JsonOptions));
+
+        Server.Given(Request.Create().WithPath(path).UsingPut())
+            .RespondWith(response);
+    }
+
     /// <summary>Stubs a DELETE endpoint.</summary>
     protected void StubDelete(string path, int statusCode = 200)
     {

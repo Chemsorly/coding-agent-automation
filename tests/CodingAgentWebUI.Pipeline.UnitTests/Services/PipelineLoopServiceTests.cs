@@ -99,7 +99,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             Logger = _mockLogger.Object,
             WorkDistributor = workDistributor,
             DispatchOrchestration = null,
-            DependencyChecker = null
+            DependencyChecker = null,
+            HousekeepingService = null
         });
         return _loopService;
     }
@@ -1466,5 +1467,115 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             _loopService.Dispose();
         }
         _orchestration.Dispose();
+    }
+
+    // ── Housekeeping per-repo dedup ───────────────────────────────────────────
+
+    /// <summary>
+    /// Regression test for the per-repo deduplication guard in
+    /// <c>PipelineLoopService.MultiTemplateLoop.cs</c>.
+    ///
+    /// Two templates sharing the same <c>RepoProviderId</c> and both with
+    /// <c>HousekeepingEnabled=true</c> must result in <c>ExecuteAsync</c> being
+    /// called exactly once per cycle for that repo — not twice. If the
+    /// <c>processedRepos</c> HashSet guard is removed, the second template would
+    /// trigger a second invocation.
+    /// </summary>
+    [Fact]
+    public async Task Housekeeping_TwoTemplatesSameRepo_ExecuteAsyncCalledOncePerCycle()
+    {
+        // Two templates sharing the same RepoProviderId, both with housekeeping on
+        var sharedRepoId = "rp-shared";
+        var twoSharedRepoTemplates = new List<PipelineJobTemplate>
+        {
+            new() { Id = "tmpl-A", Name = "Template A", IssueProviderId = "ip-1", RepoProviderId = sharedRepoId, Enabled = true, HousekeepingEnabled = true },
+            new() { Id = "tmpl-B", Name = "Template B", IssueProviderId = "ip-1", RepoProviderId = sharedRepoId, Enabled = true, HousekeepingEnabled = true },
+        };
+
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default());
+        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(twoSharedRepoTemplates);
+        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = ["tmpl-A", "tmpl-B"] }
+            });
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = sharedRepoId, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Shared Repo" }
+            });
+
+        // The mock factory must return a repo provider with SupportsServerSideBranchUpdate=true,
+        // otherwise the loop skips the housekeeping step entirely.
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.SupportsServerSideBranchUpdate).Returns(true);
+        mockRepoProvider.Setup(r => r.ListOpenPullRequestsAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PullRequestSummary>
+            {
+                Items = new List<PullRequestSummary>().AsReadOnly(),
+                Page = 1, PageSize = 100, HasMore = false
+            });
+        _mockFactory.Setup(f => f.CreateRepositoryProvider(It.Is<ProviderConfig>(c => c.Id == sharedRepoId)))
+                    .Returns(mockRepoProvider.Object);
+
+        var housekeepingMock = new Mock<IHousekeepingService>();
+        housekeepingMock.Setup(h => h.ExecuteAsync(
+                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
+                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
+                It.IsAny<bool>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = _runCreator,
+            ProviderFactory = _mockFactory.Object,
+            PipelineConfigStore = _mockStore.Object,
+            ProviderConfigStore = _mockStore.Object,
+            ProjectStore = _mockStore.Object,
+            Logger = _mockLogger.Object,
+            WorkDistributor = null,
+            DispatchOrchestration = null,
+            DependencyChecker = null,
+            HousekeepingService = housekeepingMock.Object
+        });
+
+        using var cts = new CancellationTokenSource();
+        await _loopService.StartAsync(cts.Token);
+        await _loopService.StartLoopAsync();
+
+        // Wait for one full cycle
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!_loopService.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
+               && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        // Stop immediately after first cycle completes so we count exactly one cycle
+        _loopService.StopLoop();
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_loopService.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        cts.Cancel();
+        try { await _loopService.StopAsync(CancellationToken.None); } catch { }
+
+        // The dedup guard must ensure ExecuteAsync fires exactly once for the shared repo
+        // per cycle, even though two templates reference it with HousekeepingEnabled=true.
+        // Without the dedup, 2 templates × 1 cycle = 2 calls. With dedup = 1 call.
+        // We stop after the first "Cycle complete" so the assertion is for one cycle.
+        housekeepingMock.Verify(h => h.ExecuteAsync(
+            It.IsAny<IRepositoryProvider>(),
+            It.Is<string>(id => id == sharedRepoId),
+            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
+            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(),
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "ExecuteAsync must be called exactly once per cycle for a shared repo — dedup guard prevents double-invocation");
     }
 }

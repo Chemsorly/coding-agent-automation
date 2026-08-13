@@ -38,7 +38,7 @@ public sealed partial class PipelineLoopService
     {
         var failuresBefore = BuildTemplateFailureBaseline(snapshot.PollableTemplates);
 
-        var (issueQueues, prQueues, decompositionQueues) = await _poller.PollTemplateQueuesAsync(
+        var (issueQueues, prQueues, decompositionQueues, agentDonePrQueues) = await _poller.PollTemplateQueuesAsync(
             snapshot.PollableTemplates, snapshot.MaxPagesToFetch, _templateStatuses,
             i => CurrentCycleTemplateIndex = i,
             msg => { lock (_lock) { StatusMessage = msg; } },
@@ -78,6 +78,36 @@ public sealed partial class PipelineLoopService
         ProcessedCount += dispatchResult.ProcessedCount;
         FailedCount += dispatchResult.FailedCount;
         CurrentIssueIdentifier = null;
+
+        // Housekeeping step: trigger server-side branch updates on eligible agent:done PRs.
+        // Called even when agentDonePrQueues is empty — eviction pass must run to free slots.
+        // agentDonePrQueues not counted in EmitCyclePollMetrics — not dispatched work items.
+        // Deduplicated by RepoProviderId: if multiple templates share the same repo, only the
+        // first (lowest index in PollableTemplates) processes that repo this cycle.
+        if (_housekeepingService is { } housekeepingService)
+        {
+            var processedRepos = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var template in snapshot.PollableTemplates)
+            {
+                if (!template.HousekeepingEnabled) continue;
+                if (!processedRepos.Add(template.RepoProviderId)) continue; // already processed this repo this cycle
+                if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId, out var repoProvider)) continue;
+                if (!repoProvider.SupportsServerSideBranchUpdate) continue;
+                if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var issueProvider)) continue;
+
+                var donePrs = agentDonePrQueues.TryGetValue(template.Id, out var d) ? d : [];
+                var limit = Math.Max(1,
+                    template.HousekeepingConcurrencyLimit ?? snapshot.Config.HousekeepingConcurrencyLimit);
+
+                await housekeepingService.ExecuteAsync(
+                    repoProvider, template.RepoProviderId,
+                    issueProvider, template.IssueProviderId,
+                    donePrs, limit,
+                    template.HousekeepingBranchCleanupEnabled,
+                    snapshot.Config.HousekeepingBranchCleanupIntervalMinutes,
+                    ct);
+            }
+        }
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
@@ -223,7 +253,7 @@ public sealed partial class PipelineLoopService
     private async Task ReconcileRepoProviderCacheAsync(List<PipelineJobTemplate> enabledTemplates, CancellationToken ct)
     {
         var neededRepoIds = enabledTemplates
-            .Where(t => t.ReviewEnabled || t.DecompositionEnabled)
+            .Where(t => t.ReviewEnabled || t.DecompositionEnabled || t.HousekeepingEnabled)
             .Select(t => t.RepoProviderId)
             .ToHashSet();
         if (neededRepoIds.Count == 0) return;
