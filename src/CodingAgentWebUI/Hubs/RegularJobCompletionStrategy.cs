@@ -65,7 +65,7 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         }
         catch (Exception ex)
         {
-            await DefensiveRunCleanupAsync(jobId, run, payload, workItemStatus, ex, ct);
+            await DefensiveRunCleanupAsync(jobId, run, payload, workItemStatus, ex);
         }
 
         _logger.Information(
@@ -76,7 +76,7 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
     }
 
     private async Task DefensiveRunCleanupAsync(
-        JobId jobId, PipelineRun run, JobCompletionPayload payload, WorkItemStatus workItemStatus, Exception outerEx, CancellationToken ct)
+        JobId jobId, PipelineRun run, JobCompletionPayload payload, WorkItemStatus workItemStatus, Exception outerEx)
     {
         _logger.Warning(outerEx, "CompleteRunAsync failed for job {JobId} (status={Status}), performing defensive cleanup", jobId.Value, workItemStatus);
 
