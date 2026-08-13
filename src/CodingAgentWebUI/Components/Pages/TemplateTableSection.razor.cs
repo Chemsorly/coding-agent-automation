@@ -37,6 +37,7 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleReview { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleDecomposition { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleHousekeeping { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleBranchCleanup { get; set; }
     [Parameter] public EventCallback<PipelineJobTemplate> OnConfirmRemove { get; set; }
     [Parameter] public EventCallback<(TemplateId TemplateId, string SourceProjectId, string TargetProjectId)> OnMoveTemplate { get; set; }
     [Parameter] public EventCallback OnShowAddForm { get; set; }
@@ -167,6 +168,7 @@ public partial class TemplateTableSection
         public string PipelineProviderId { get; set; } = "";
         public bool HousekeepingEnabled { get; set; } = false;
         public int? HousekeepingConcurrencyLimit { get; set; } = null;
+        public bool HousekeepingBranchCleanupEnabled { get; set; } = false;
         public bool BrainReadOnly { get; set; }
         public bool ImplementationEnabled { get; set; } = true;
         public bool ReviewEnabled { get; set; } = true;

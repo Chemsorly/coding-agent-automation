@@ -75,4 +75,12 @@ public sealed record PipelineJobTemplate
     /// </summary>
     [Key(12)]
     public int? HousekeepingConcurrencyLimit { get; init; } = null;
+
+    /// <summary>
+    /// When true, the poll cycle deletes remote agent branches that have no open PR
+    /// and whose linked issue is not actively being worked on. Default: false.
+    /// Runs at the interval defined by <see cref="PipelineConfiguration.HousekeepingBranchCleanupIntervalMinutes"/>.
+    /// </summary>
+    [Key(13)]
+    public bool HousekeepingBranchCleanupEnabled { get; init; } = false;
 }

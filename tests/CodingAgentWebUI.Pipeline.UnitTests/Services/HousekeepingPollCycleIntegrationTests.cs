@@ -51,6 +51,7 @@ public class HousekeepingPollCycleIntegrationTests
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
             It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
+            It.IsAny<bool>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 

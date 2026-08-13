@@ -53,6 +53,51 @@ public partial class GitHubRepositoryProvider
             prNumber, Owner, Repo);
     }
 
+    // ── Branch cleanup (spec 040) ─────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ListAgentBranchesAsync(CancellationToken ct)
+    {
+        // Fetch all branches with pagination — GitHub returns 30 per page by default.
+        var branches = await ExecuteWithResilienceAsync(
+            client => client.Repository.Branch.GetAll(Owner, Repo,
+                new ApiOptions { PageSize = 100 }),
+            "ListAgentBranches", ct);
+
+        return branches
+            .Select(b => b.Name)
+            .Where(name => name.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal))
+            .ToList()
+            .AsReadOnly();
+    }
+
+    /// <inheritdoc />
+    public async Task DeleteBranchAsync(string branchName, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(branchName);
+        try
+        {
+            await ExecuteWithResilienceAsync(
+                client => client.Git.Reference.Delete(Owner, Repo, $"refs/heads/{branchName}"),
+                "DeleteBranch", ct);
+            Log.Information("Housekeeping: deleted stale branch {BranchName} in {Owner}/{Repo}",
+                branchName, Owner, Repo);
+        }
+        catch (NotFoundException)
+        {
+            // 404 — branch already gone (no-op)
+            Log.Debug("Housekeeping: branch {BranchName} not found in {Owner}/{Repo} — already deleted",
+                branchName, Owner, Repo);
+        }
+        catch (ApiValidationException ex) when (ex.Message.Contains("Reference does not exist",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            // 422 — GitHub returns this when the ref doesn't exist (no-op)
+            Log.Debug("Housekeeping: branch {BranchName} does not exist in {Owner}/{Repo} — skipping",
+                branchName, Owner, Repo);
+        }
+    }
+
     // ── PR CRUD ───────────────────────────────────────────────────────────────
 
     public async Task<string> CreatePullRequestAsync(PullRequestInfo prInfo, CancellationToken ct)

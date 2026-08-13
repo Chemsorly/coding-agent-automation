@@ -10,8 +10,8 @@ using Xunit;
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Unit tests for <see cref="HousekeepingService"/> (spec 040 / conflict-rework extension).
-/// All tests use the synchronous <c>FireAndForget</c> seam to eliminate non-determinism.
+/// Unit tests for <see cref="HousekeepingService"/> (spec 040 / conflict-rework / stale-branch-cleanup).
+/// All tests use the synchronous <c>FireAndForget</c> seam and a controlled <c>UtcNow</c> clock.
 /// </summary>
 public class HousekeepingServiceTests
 {
@@ -55,19 +55,22 @@ public class HousekeepingServiceTests
                 .Returns((activeRuns ?? Enumerable.Empty<PipelineRun>()).ToList().AsReadOnly());
 
         var svc = new HousekeepingService(runsMock.Object, Log.Logger);
-        // Override fire-and-forget to await synchronously — eliminates flakiness in tests.
         svc.FireAndForget = task => task;
         return (svc, providerMock, issueProviderMock, runsMock);
     }
 
-    /// <summary>Executes the service with standard test defaults.</summary>
+    /// <summary>Runs service with no cleanup, standard defaults.</summary>
     private static Task ExecAsync(
         HousekeepingService svc,
         Mock<IRepositoryProvider> repo,
         Mock<IIssueProvider> issues,
         IReadOnlyList<PullRequestSummary> prs,
-        int limit = 1)
-        => svc.ExecuteAsync(repo.Object, RepoId, issues.Object, IssueProviderId, prs, limit, CancellationToken.None);
+        int limit = 1,
+        bool branchCleanup = false,
+        int intervalMinutes = 60)
+        => svc.ExecuteAsync(
+            repo.Object, RepoId, issues.Object, IssueProviderId,
+            prs, limit, branchCleanup, intervalMinutes, CancellationToken.None);
 
     private static PipelineRun ActiveRun(string branch) => new()
     {
@@ -78,6 +81,21 @@ public class HousekeepingServiceTests
         RepoProviderConfigId = "rp",
         BranchName = branch
     };
+
+    // ── ExtractIssueId static helper ──────────────────────────────────────────
+
+    [Theory]
+    [InlineData("feature/auto-123-fix-login", "123")]
+    [InlineData("feature/auto-42-update-deps", "42")]
+    [InlineData("feature/auto-999", "999")]     // no slug
+    [InlineData("feature/auto-", null)]          // empty after prefix
+    [InlineData("main", null)]                   // not an agent branch
+    [InlineData("feature/manual-123", null)]     // wrong prefix
+    public void ExtractIssueId_VariousInputs_ReturnsExpected(string branchName, string? expected)
+    {
+        var result = HousekeepingService.ExtractIssueId(branchName);
+        result.Should().Be(expected);
+    }
 
     // ── Draft PRs are skipped ─────────────────────────────────────────────────
 
@@ -107,7 +125,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── Blocked / Unknown mergeability → skipped (slot stays occupied) ────────
+    // ── Blocked / Unknown → slot kept ────────────────────────────────────────
 
     [Theory]
     [InlineData(PrMergeabilityStatus.Blocked)]
@@ -120,10 +138,8 @@ public class HousekeepingServiceTests
         provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
-        // Tick 1: trigger #1, fills slot
         await ExecAsync(svc, provider, issues, [MakePr(1)]);
 
-        // Tick 2: CI still running → slot stays occupied, PR #2 blocked
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(status);
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()))
@@ -131,11 +147,10 @@ public class HousekeepingServiceTests
 
         await ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2)]);
 
-        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()), Times.Never,
-            $"{status} should keep slot occupied — PR #2 must not be triggered");
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── UpToDate mergeability → skipped (no update needed) ───────────────────
+    // ── UpToDate → skipped ────────────────────────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_UpToDate_IsSkipped()
@@ -149,7 +164,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── Behind → update triggered, PR added to in-flight ─────────────────────
+    // ── Behind → update triggered ─────────────────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_Behind_TriggersUpdate()
@@ -165,7 +180,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Concurrency limit = 1: only first (lowest number) PR triggered ────────
+    // ── Concurrency limit = 1: only lowest PR triggered ───────────────────────
 
     [Fact]
     public async Task ExecuteAsync_LimitOne_OnlyLowestNumberTriggered()
@@ -182,7 +197,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── Concurrency limit = 2: both eligible PRs triggered ────────────────────
+    // ── Concurrency limit = 2: both triggered ─────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_LimitTwo_BothEligiblePrsTriggered()
@@ -199,7 +214,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── In-flight PR with UpToDate → evicted, slot freed ─────────────────────
+    // ── In-flight UpToDate → evicted, slot freed ──────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_InFlightPrWithUpToDate_EvictedAndSlotFreed()
@@ -207,25 +222,22 @@ public class HousekeepingServiceTests
         var (svc, provider, issues, _) = Create();
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
-        provider.Setup(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()))
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
 
-        // Second tick: #10 CI done (UpToDate) → evict, free slot → #20 triggered
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.UpToDate);
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(20, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
-        provider.Setup(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
 
         await ExecAsync(svc, provider, issues, [MakePr(10), MakePr(20)]);
 
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── In-flight PR with Behind → evicted, re-selected same tick ────────────
+    // ── In-flight Behind → evicted and re-selected same tick ─────────────────
 
     [Fact]
     public async Task ExecuteAsync_InFlightPrWithBehind_EvictedAndReselected()
@@ -237,15 +249,12 @@ public class HousekeepingServiceTests
                 .Returns(Task.CompletedTask);
 
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
-
-        // Second tick: base moved again (Behind) → evict AND re-trigger in the same tick
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
 
-        // Total calls = 2 (once per tick)
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
-    // ── In-flight PR absent from agentDonePrs → evicted ──────────────────────
+    // ── In-flight absent from list → evicted ─────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_InFlightPrNotInList_Evicted()
@@ -258,7 +267,6 @@ public class HousekeepingServiceTests
 
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
 
-        // Second tick: #10 merged — not in list; #20 now eligible
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(20, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
 
@@ -267,7 +275,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── IsPullRequestBehindBaseAsync called once per PR (result reused) ───────
+    // ── Mergeability checked once per PR ─────────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_MergeabilityCheckedOncePerPr()
@@ -278,20 +286,18 @@ public class HousekeepingServiceTests
         provider.Setup(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
-        // Tick 1
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
 
         provider.Invocations.Clear();
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
 
-        // Tick 2: #10 in-flight AND in list → exactly ONE IsPullRequestBehindBaseAsync call
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
 
         provider.Verify(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── UpdateAsync exception → warning logged, PR stays in-flight ───────────
+    // ── UpdateAsync throws → warning, PR stays in-flight ─────────────────────
 
     [Fact]
     public async Task ExecuteAsync_UpdateThrows_WarningLoggedAndPrStaysInFlight()
@@ -304,7 +310,6 @@ public class HousekeepingServiceTests
 
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
 
-        // Next tick: #10 still in-flight (Blocked), slot occupied, #20 blocked
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Blocked);
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(20, It.IsAny<CancellationToken>()))
@@ -315,7 +320,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── GetActiveRuns() throws → warning, processing continues ───────────────
+    // ── GetActiveRuns throws → continues ─────────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_GetActiveRunsThrows_ContinuesWithEmptySet()
@@ -334,7 +339,7 @@ public class HousekeepingServiceTests
                     .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
-            [MakePr(1)], 1, CancellationToken.None);
+            [MakePr(1)], 1, false, 60, CancellationToken.None);
 
         providerMock.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -355,7 +360,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Empty agentDonePrs: eviction still runs ───────────────────────────────
+    // ── Empty list → eviction runs ────────────────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_EmptyList_EvictsInFlightEntries()
@@ -367,16 +372,12 @@ public class HousekeepingServiceTests
                 .Returns(Task.CompletedTask);
 
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
-
-        // Tick 2: empty list → #10 not in currentPrNumbers → evicted
         provider.Invocations.Clear();
 
         await ExecAsync(svc, provider, issues, []);
 
-        provider.Verify(p => p.IsPullRequestBehindBaseAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never,
-            "No PRs in list means no API calls needed — eviction by absence");
+        provider.Verify(p => p.IsPullRequestBehindBaseAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
 
-        // Tick 3: PR #10 again — slot should be free now
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
 
@@ -385,7 +386,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Conflicted PR: ExtractLinkedIssuesAsync is called ────────────────────
+    // ── Conflicted → ExtractLinkedIssues called ───────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_ConflictedPr_CallsExtractLinkedIssues()
@@ -401,7 +402,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Conflicted PR with agent:done issue → label swap triggered ────────────
+    // ── Conflicted + agent:done → label swap triggered ────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_ConflictedPr_IssueWithAgentDone_SwapsToAgentNext()
@@ -422,11 +423,10 @@ public class HousekeepingServiceTests
 
         issues.Verify(i => i.AddLabelAsync(
             It.Is<IssueIdentifier>(id => id.Value == "42"),
-            AgentLabels.Next,
-            It.IsAny<CancellationToken>()), Times.Once);
+            AgentLabels.Next, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Conflicted PR with agent:next issue → label swap NOT triggered ────────
+    // ── Conflicted + agent:next → no swap ────────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_ConflictedPr_IssueAlreadyAgentNext_SkipsSwap()
@@ -445,7 +445,7 @@ public class HousekeepingServiceTests
             Times.Never);
     }
 
-    // ── Conflicted PR with agent:in-progress issue → label swap NOT triggered ─
+    // ── Conflicted + agent:in-progress → no swap ─────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_ConflictedPr_IssueAgentInProgress_SkipsSwap()
@@ -464,7 +464,7 @@ public class HousekeepingServiceTests
             Times.Never);
     }
 
-    // ── Conflicted PR with empty linked issues → no swap, no crash ───────────
+    // ── Conflicted + empty linked issues → no crash ───────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_ConflictedPr_NoLinkedIssues_NoSwap()
@@ -477,23 +477,21 @@ public class HousekeepingServiceTests
 
         var ex = await Record.ExceptionAsync(() => ExecAsync(svc, provider, issues, [MakePr(1)]));
 
-        ex.Should().BeNull("no linked issues is a valid case — service must not throw");
+        ex.Should().BeNull();
         issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
-    // ── Conflicted PR: ExtractLinkedIssuesAsync throws → warning, continues ──
+    // ── Conflicted ExtractLinkedIssues throws → continues ────────────────────
 
     [Fact]
     public async Task ExecuteAsync_ConflictedPr_ExtractLinkedIssuesThrows_ContinuesProcessing()
     {
         var (svc, provider, issues, _) = Create();
-        // PR #1 conflicted, extract throws
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Conflicted);
         provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("API error"));
-        // PR #2 behind — should still be processed
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(2, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
         provider.Setup(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()))
@@ -502,26 +500,23 @@ public class HousekeepingServiceTests
         var ex = await Record.ExceptionAsync(
             () => ExecAsync(svc, provider, issues, [MakePr(1), MakePr(2)]));
 
-        ex.Should().BeNull("ExtractLinkedIssues failure must be swallowed, not propagated");
-        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()), Times.Once,
-            "processing must continue for subsequent PRs after the extract failure");
+        ex.Should().BeNull();
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(2, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Conflicted PR → evicted from in-flight set (slot freed) ──────────────
+    // ── Conflicted in-flight → evicted ────────────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_ConflictedInFlightPr_IsEvicted()
     {
         var (svc, provider, issues, _) = Create();
-        // Tick 1: trigger #10 (Behind)
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Behind);
-        provider.Setup(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()))
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
 
-        // Tick 2: #10 now Conflicted → evicted; slot freed → #20 (Behind) triggered
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Conflicted);
         provider.Setup(p => p.ExtractLinkedIssuesAsync(10, It.IsAny<CancellationToken>()))
@@ -531,11 +526,10 @@ public class HousekeepingServiceTests
 
         await ExecAsync(svc, provider, issues, [MakePr(10), MakePr(20)]);
 
-        provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once,
-            "Conflicted eviction must free the slot so PR #20 can be triggered");
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── UpToDate PR → no rework swap (not conflicted) ─────────────────────────
+    // ── UpToDate PR → no rework swap ─────────────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_UpToDatePr_NoReworkSwap()
@@ -549,5 +543,172 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
         issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    // ─── Stale branch cleanup ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_BranchCleanupDisabled_ListAgentBranchesNotCalled()
+    {
+        var (svc, provider, issues, _) = Create();
+
+        await ExecAsync(svc, provider, issues, [], branchCleanup: false);
+
+        provider.Verify(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BranchCleanupEnabled_IntervalNotElapsed_ListNotCalled()
+    {
+        var (svc, provider, issues, _) = Create();
+        var now = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => now;
+
+        // First tick — seeds _lastCleanupAt
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[]);
+
+        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 60);
+        provider.Invocations.Clear();
+
+        // Second tick — interval not elapsed (still the same time)
+        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 60);
+
+        provider.Verify(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()), Times.Never,
+            "cleanup interval has not elapsed — ListAgentBranchesAsync must not be called again");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BranchCleanupEnabled_IntervalElapsed_ListIsCalled()
+    {
+        var (svc, provider, issues, _) = Create();
+        var t0 = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => t0;
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[]);
+
+        // First tick
+        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 60);
+        provider.Invocations.Clear();
+
+        // Advance time past the interval
+        svc.UtcNow = () => t0.AddMinutes(61);
+        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 60);
+
+        provider.Verify(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "interval elapsed — ListAgentBranchesAsync must be called");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BranchWithOpenPr_NotDeleted()
+    {
+        var (svc, provider, issues, _) = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}99-some-feature";
+        var openPr = MakePr(99, agentBranch);
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+        // Return Behind so the mergeability step also runs
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(99, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.UpToDate);
+
+        await ExecAsync(svc, provider, issues, [openPr], branchCleanup: true, intervalMinutes: 0);
+
+        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "branch has an open PR — must not be deleted");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BranchWithAgentNextIssue_NotDeleted()
+    {
+        var (svc, provider, issues, _) = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}42-fix-login";
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", AgentLabels.Next));
+
+        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
+
+        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "issue has agent:next — may create a new PR soon, must not delete");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BranchWithAgentDoneIssueAndNoPr_IsDeleted()
+    {
+        var (svc, provider, issues, _) = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}42-fix-login";
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", AgentLabels.Done));
+        provider.Setup(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
+
+        provider.Verify(p => p.DeleteBranchAsync(agentBranch, It.IsAny<CancellationToken>()), Times.Once,
+            "no open PR + terminal issue label → branch must be deleted");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BranchDeleteThrows_ContinuesProcessingOtherBranches()
+    {
+        var (svc, provider, issues, _) = Create();
+        var branch1 = $"{PipelineConstants.BranchPrefix}10-feat-a";
+        var branch2 = $"{PipelineConstants.BranchPrefix}20-feat-b";
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[branch1, branch2]);
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("10"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("10", AgentLabels.Done));
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("20"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("20", AgentLabels.Done));
+        provider.Setup(p => p.DeleteBranchAsync(branch1, It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("server error"));
+        provider.Setup(p => p.DeleteBranchAsync(branch2, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        var ex = await Record.ExceptionAsync(
+            () => ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0));
+
+        ex.Should().BeNull("delete failure must be swallowed");
+        provider.Verify(p => p.DeleteBranchAsync(branch2, It.IsAny<CancellationToken>()), Times.Once,
+            "second branch must still be processed after first delete fails");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_EmptyBranchList_NoBranchApiCalls()
+    {
+        var (svc, provider, issues, _) = Create();
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[]);
+
+        var ex = await Record.ExceptionAsync(
+            () => ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0));
+
+        ex.Should().BeNull();
+        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        issues.Verify(i => i.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ListAgentBranchesThrows_ContinuesWithoutCleanup()
+    {
+        var (svc, provider, issues, _) = Create();
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("API down"));
+
+        var ex = await Record.ExceptionAsync(
+            () => ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0));
+
+        ex.Should().BeNull("ListAgentBranches failure must be swallowed");
+        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

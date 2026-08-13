@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.GitLab;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Moq;
@@ -171,6 +172,86 @@ public class GitLabRepositoryProviderAutoUpdateTests
         // Act & Assert: 409 from Rebase must surface as InvalidOperationException
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => provider.UpdatePullRequestBranchAsync(1, CancellationToken.None));
+    }
+
+    // ── ListAgentBranchesAsync ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ListAgentBranchesAsync_ReturnsOnlyAgentBranches()
+    {
+        // Build mock that returns a mix of branch names
+        var allBranches = new[]
+        {
+            $"{PipelineConstants.BranchPrefix}123-fix-login",
+            "main",
+            $"{PipelineConstants.BranchPrefix}42-update-deps",
+            "feature/manual-work",
+        };
+
+        var branchObjects = allBranches
+            .Select(name => new Branch { Name = name })
+            .ToList();
+
+        var repoClientMock = new Mock<IRepositoryClient>();
+        var branchClientMock = new Mock<IBranchClient>();
+        branchClientMock.Setup(b => b.All).Returns(branchObjects);
+        repoClientMock.Setup(r => r.Branches).Returns(branchClientMock.Object);
+
+        var clientMock = new Mock<IGitLabClient>();
+        clientMock.Setup(c => c.GetRepository(ProjectId)).Returns(repoClientMock.Object);
+
+        var provider = new GitLabRepositoryProvider(clientMock.Object, ProjectId, BaseBranch);
+        var result = await provider.ListAgentBranchesAsync(CancellationToken.None);
+
+        result.Should().HaveCount(2);
+        result.Should().Contain($"{PipelineConstants.BranchPrefix}123-fix-login");
+        result.Should().Contain($"{PipelineConstants.BranchPrefix}42-update-deps");
+        result.Should().NotContain("main");
+        result.Should().NotContain("feature/manual-work");
+    }
+
+    // ── DeleteBranchAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteBranchAsync_WhenBranchExists_DoesNotThrow()
+    {
+        var branchName = $"{PipelineConstants.BranchPrefix}42-fix-login";
+
+        var repoClientMock = new Mock<IRepositoryClient>();
+        var branchClientMock = new Mock<IBranchClient>();
+        branchClientMock.Setup(b => b.Delete(branchName));
+        repoClientMock.Setup(r => r.Branches).Returns(branchClientMock.Object);
+
+        var clientMock = new Mock<IGitLabClient>();
+        clientMock.Setup(c => c.GetRepository(ProjectId)).Returns(repoClientMock.Object);
+
+        var provider = new GitLabRepositoryProvider(clientMock.Object, ProjectId, BaseBranch);
+        var ex = await Record.ExceptionAsync(
+            () => provider.DeleteBranchAsync(branchName, CancellationToken.None));
+
+        ex.Should().BeNull("Delete should not throw for an existing branch");
+        branchClientMock.Verify(b => b.Delete(branchName), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteBranchAsync_WhenBranchNotFound_TreatedAsNoOp()
+    {
+        var branchName = $"{PipelineConstants.BranchPrefix}99-already-gone";
+        var notFoundEx = new GitLabException("Branch Not Found") { StatusCode = System.Net.HttpStatusCode.NotFound };
+
+        var repoClientMock = new Mock<IRepositoryClient>();
+        var branchClientMock = new Mock<IBranchClient>();
+        branchClientMock.Setup(b => b.Delete(branchName)).Throws(notFoundEx);
+        repoClientMock.Setup(r => r.Branches).Returns(branchClientMock.Object);
+
+        var clientMock = new Mock<IGitLabClient>();
+        clientMock.Setup(c => c.GetRepository(ProjectId)).Returns(repoClientMock.Object);
+
+        var provider = new GitLabRepositoryProvider(clientMock.Object, ProjectId, BaseBranch);
+        var ex = await Record.ExceptionAsync(
+            () => provider.DeleteBranchAsync(branchName, CancellationToken.None));
+
+        ex.Should().BeNull("404 on a non-existent branch should be a no-op");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

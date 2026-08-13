@@ -92,6 +92,43 @@ public partial class GitLabRepositoryProvider
         }
     }
 
+    // ─── Branch cleanup (spec 040) ───────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ListAgentBranchesAsync(CancellationToken ct)
+    {
+        var branches = await ExecuteWithResilienceAsync(
+            client => Task.Run(() =>
+                client.GetRepository(ProjectId).Branches.All
+                    .Select(b => b.Name)
+                    .Where(name => name.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal))
+                    .ToList(), ct),
+            "ListAgentBranches", ct);
+
+        return branches.AsReadOnly();
+    }
+
+    /// <inheritdoc />
+    public async Task DeleteBranchAsync(string branchName, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(branchName);
+        try
+        {
+            await ExecuteWriteWithResilienceAsync(
+                client => Task.Run(() =>
+                    client.GetRepository(ProjectId).Branches.Delete(branchName), ct),
+                "DeleteBranch", ct);
+            Log.Information("Housekeeping: deleted stale branch {BranchName} in project {ProjectId}",
+                branchName, ProjectId);
+        }
+        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        {
+            // Branch already gone — treat as success (no-op)
+            Log.Debug("Housekeeping: branch {BranchName} not found in project {ProjectId} — already deleted",
+                branchName, ProjectId);
+        }
+    }
+
     // ─── Merge Request CRUD ──────────────────────────────────────────────────────
 
     /// <inheritdoc />

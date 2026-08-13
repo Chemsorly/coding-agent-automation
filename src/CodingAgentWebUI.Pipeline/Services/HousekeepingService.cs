@@ -8,8 +8,8 @@ namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
 /// Evaluates agent:done PRs, evicts resolved in-flight entries, triggers
-/// server-side branch updates for PRs that are behind base, and re-queues
-/// conflicted PRs for rework by swapping the linked issue label to <c>agent:next</c>.
+/// server-side branch updates for PRs that are behind base, re-queues
+/// conflicted PRs for rework, and deletes stale agent branches.
 /// </summary>
 /// <remarks>
 /// State: <c>_inFlight</c> is a <c>ConcurrentDictionary&lt;string, HashSet&lt;int&gt;&gt;</c>
@@ -17,8 +17,6 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// but is safe here because <see cref="ExecuteAsync"/> is called sequentially from the
 /// poll tick (one call at a time per template). <see cref="UpdateAsync"/> does NOT
 /// access <c>_inFlight</c> — it only calls the provider and emits telemetry.
-/// If multi-template parallelism is ever introduced, replace the inner HashSet with
-/// <c>ConcurrentDictionary&lt;int, byte&gt;</c>.
 /// </remarks>
 public sealed class HousekeepingService : IHousekeepingService
 {
@@ -27,8 +25,7 @@ public sealed class HousekeepingService : IHousekeepingService
 
     /// <summary>
     /// Issue labels that indicate the issue is already actively queued or in-progress.
-    /// If a conflicted PR's linked issue has any of these labels, the rework label swap
-    /// is skipped — the issue is already being handled.
+    /// Used to guard both conflict-rework label swaps and stale branch deletion.
     /// </summary>
     private static readonly HashSet<string> ActiveLabels = new(StringComparer.Ordinal)
     {
@@ -46,10 +43,22 @@ public sealed class HousekeepingService : IHousekeepingService
     internal Func<Task, Task> FireAndForget { get; set; } = task => { _ = task; return Task.CompletedTask; };
 
     /// <summary>
+    /// Overridable time source for the cleanup interval guard.
+    /// In tests: replace with a lambda that returns a controlled time.
+    /// </summary>
+    internal Func<DateTimeOffset> UtcNow { get; set; } = () => DateTimeOffset.UtcNow;
+
+    /// <summary>
     /// In-flight PR numbers per repository, persisted across poll ticks.
     /// The slot represents the CI run lifetime, not the HTTP call lifetime.
     /// </summary>
     private readonly ConcurrentDictionary<string, HashSet<int>> _inFlight = new();
+
+    /// <summary>
+    /// Tracks when the last stale-branch cleanup pass ran per repository,
+    /// so we don't call <c>ListAgentBranchesAsync</c> on every tick.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastCleanupAt = new();
 
     public HousekeepingService(IOrchestratorRunService runService, ILogger logger)
     {
@@ -67,6 +76,8 @@ public sealed class HousekeepingService : IHousekeepingService
         string issueProviderId,
         IReadOnlyList<PullRequestSummary> agentDonePrs,
         int effectiveConcurrencyLimit,
+        bool branchCleanupEnabled,
+        int cleanupIntervalMinutes,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(repoProvider);
@@ -79,7 +90,6 @@ public sealed class HousekeepingService : IHousekeepingService
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", repoProviderId);
 
         // ── Step 1: Build mergeability map — one call per PR, reused below ──
-        // N+1 trade-off: pool is small (bounded by unmerged agent PRs). See spec 040, Req 7.1.
         var mergeabilityMap = new Dictionary<int, PrMergeabilityStatus>(agentDonePrs.Count);
         foreach (var pr in agentDonePrs)
         {
@@ -91,28 +101,21 @@ public sealed class HousekeepingService : IHousekeepingService
 
         // ── Step 3: Evict resolved in-flight entries ──────────────────────────
         var currentPrNumbers = new HashSet<int>(agentDonePrs.Select(p => p.Number));
-        foreach (var prNumber in inFlight.ToList()) // snapshot for safe iteration
+        foreach (var prNumber in inFlight.ToList())
         {
             if (!currentPrNumbers.Contains(prNumber))
             {
-                // PR merged or agent:done label removed — free slot
                 inFlight.Remove(prNumber);
                 PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
             else
             {
                 var status = mergeabilityMap[prNumber];
-                // Keep in slot only while Blocked/Unknown (CI still running/computing).
-                // Behind, UpToDate, Conflicted all mean CI has resolved → evict.
-                // IMPORTANT: do NOT add 'continue' after eviction for Behind — the PR
-                // will be re-selected as a candidate in step 6 because inFlight no longer
-                // contains it. Same-tick evict+re-select is intentional for Behind.
                 if (status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
                 {
                     inFlight.Remove(prNumber);
                     PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
                 }
-                // else: Blocked/Unknown → CI still running → keep in set
             }
         }
 
@@ -148,7 +151,7 @@ public sealed class HousekeepingService : IHousekeepingService
         foreach (var pr in sorted)
         {
             if (inFlight.Count >= limit)
-                break; // budget exhausted
+                break;
 
             if (pr.IsDraft)
             {
@@ -168,20 +171,136 @@ public sealed class HousekeepingService : IHousekeepingService
                 continue;
             }
 
-            var mergeability = mergeabilityMap[pr.Number]; // reuse from step 1
-
+            var mergeability = mergeabilityMap[pr.Number];
             if (mergeability != PrMergeabilityStatus.Behind)
             {
-                // Blocked/Unknown → still computing; UpToDate/Conflicted → no update needed
                 PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
 
-            // Behind → add to in-flight and fire update
             inFlight.Add(pr.Number);
             PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
             await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));
         }
+
+        // ── Step 7: Stale branch cleanup ──────────────────────────────────────
+        if (branchCleanupEnabled)
+        {
+            var now = UtcNow();
+            var lastCleanup = _lastCleanupAt.GetValueOrDefault(repoProviderId, DateTimeOffset.MinValue);
+            var intervalElapsed = (now - lastCleanup).TotalMinutes >= cleanupIntervalMinutes;
+
+            if (intervalElapsed)
+            {
+                _lastCleanupAt[repoProviderId] = now;
+                await RunBranchCleanupAsync(repoProvider, issueProvider, agentDonePrs, repoTag, ct);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Lists all agent branches, skips those with an open PR or an active issue label,
+    /// and deletes the rest.
+    /// </summary>
+    private async Task RunBranchCleanupAsync(
+        IRepositoryProvider repoProvider,
+        IIssueProvider issueProvider,
+        IReadOnlyList<PullRequestSummary> agentDonePrs,
+        KeyValuePair<string, object?> repoTag,
+        CancellationToken ct)
+    {
+        IReadOnlyList<string> allAgentBranches;
+        try
+        {
+            allAgentBranches = await repoProvider.ListAgentBranchesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "HousekeepingService: failed to list agent branches for cleanup: {Error}", ex.Message);
+            return;
+        }
+
+        if (allAgentBranches.Count == 0)
+            return;
+
+        // Build a fast lookup of branches that have open PRs — these must never be deleted.
+        var branchesWithOpenPr = new HashSet<string>(
+            agentDonePrs.Select(p => p.BranchName),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var branchName in allAgentBranches)
+        {
+            // Skip if an open PR exists for this branch
+            if (branchesWithOpenPr.Contains(branchName))
+                continue;
+
+            // Extract issue identifier from branch name: "feature/auto-{issueId}-{slug}"
+            var issueId = ExtractIssueId(branchName);
+            if (issueId is null)
+            {
+                _logger.Debug(
+                    "HousekeepingService: cannot extract issue ID from branch {BranchName} — skipping",
+                    branchName);
+                continue;
+            }
+
+            // Check issue label state — skip if issue is actively being worked on
+            IssueDetail issue;
+            try
+            {
+                issue = await issueProvider.GetIssueAsync(new IssueIdentifier(issueId), ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex,
+                    "HousekeepingService: failed to fetch issue {IssueId} for branch {BranchName} cleanup — skipping: {Error}",
+                    issueId, branchName, ex.Message);
+                continue;
+            }
+
+            if (issue.Labels.Any(l => ActiveLabels.Contains(l)))
+            {
+                _logger.Debug(
+                    "HousekeepingService: issue {IssueId} for branch {BranchName} has active label — skipping cleanup",
+                    issueId, branchName);
+                continue;
+            }
+
+            // Safe to delete
+            try
+            {
+                await repoProvider.DeleteBranchAsync(branchName, ct);
+                PipelineTelemetry.HousekeepingBranchDeleted.Add(1, repoTag);
+                _logger.Information(
+                    "HousekeepingService: deleted stale branch {BranchName} (issue {IssueId})",
+                    branchName, issueId);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex,
+                    "HousekeepingService: failed to delete branch {BranchName}: {Error}",
+                    branchName, ex.Message);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Extracts the issue identifier from an agent branch name.
+    /// Branch format: <c>feature/auto-{issueId}-{slug}</c>.
+    /// Returns null if the format does not match.
+    /// </summary>
+    internal static string? ExtractIssueId(string branchName)
+    {
+        if (!branchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal))
+            return null;
+
+        var rest = branchName[PipelineConstants.BranchPrefix.Length..]; // "123-fix-login"
+        if (rest.Length == 0)
+            return null;
+
+        var dashIdx = rest.IndexOf('-');
+        return dashIdx > 0 ? rest[..dashIdx] : rest;
     }
 
     /// <summary>
@@ -249,7 +368,6 @@ public sealed class HousekeepingService : IHousekeepingService
             return;
         }
 
-        // Skip if the issue already has an active label — it is already queued or in-progress.
         if (issue.Labels.Any(l => ActiveLabels.Contains(l)))
         {
             _logger.Debug(
@@ -258,9 +376,6 @@ public sealed class HousekeepingService : IHousekeepingService
             return;
         }
 
-        // Perform the label swap: add agent:next first, then remove all other agent labels.
-        // Uses AgentLabelOperations.SwapAsync directly to avoid a dependency on ILabelService
-        // (which lives in CodingAgentWebUI.Orchestration and is not available in this assembly).
         try
         {
             await AgentLabelOperations.SwapAsync(
@@ -286,10 +401,7 @@ public sealed class HousekeepingService : IHousekeepingService
 
     /// <summary>
     /// Fire-and-forget wrapper for <see cref="IRepositoryProvider.UpdatePullRequestBranchAsync"/>.
-    /// Uses <see cref="CancellationToken.None"/> so the HTTP call completes independently of
-    /// the poll tick's cancellation token. The server-side effect proceeds regardless of shutdown.
-    /// The PR stays in the in-flight set until the next eviction pass resolves it — the slot
-    /// represents the CI run, not this HTTP call.
+    /// Uses <see cref="CancellationToken.None"/> so the HTTP call completes independently.
     /// </summary>
     private async Task UpdateAsync(
         IRepositoryProvider repoProvider,
@@ -311,7 +423,6 @@ public sealed class HousekeepingService : IHousekeepingService
             _logger.Warning(ex,
                 "Housekeeping: failed to update branch for PR #{PrNumber} on {RepoProviderId}: {Error}",
                 prNumber, repoProviderId, ex.Message);
-            // PR stays in inFlight — eviction pass frees the slot next tick when mergeability resolves.
         }
     }
 }

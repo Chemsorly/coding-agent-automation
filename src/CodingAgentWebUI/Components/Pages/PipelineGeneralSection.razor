@@ -41,6 +41,14 @@
             <input type="number" @bind="_housekeepingConcurrencyLimit" min="1" max="20" />
             <span class="form-hint">Per-repository limit for automatic branch updates (spec 040). Can be overridden per template.</span>
         </div>
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Branch Cleanup Interval (minutes)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="How often the stale branch cleanup pass runs. The pass lists all agent branches and deletes those with no open PR and an inactive issue. Default: 60 minutes.">?</span>
+            </div>
+            <input type="number" @bind="_branchCleanupIntervalMinutes" min="0" max="10080" />
+            <span class="form-hint">Set to 0 to run every poll tick (not recommended for busy repos).</span>
+        </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
             <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
             <span>Advanced settings</span>
@@ -121,6 +129,7 @@
     private string _blacklistedPathsText = ".kiro,.github,.brain";
     private bool _showAdvanced;
     private int _housekeepingConcurrencyLimit = 1;
+    private int _branchCleanupIntervalMinutes = 60;
 
     protected override async Task OnInitializedAsync()
     {
@@ -137,6 +146,7 @@
         _issuePageSize = config.IssuePageSize;
         _blacklistedPathsText = string.Join(",", config.BlacklistedPaths);
         _housekeepingConcurrencyLimit = config.HousekeepingConcurrencyLimit;
+        _branchCleanupIntervalMinutes = config.HousekeepingBranchCleanupIntervalMinutes;
     }
 
     private async Task SaveAsync()
@@ -161,7 +171,8 @@
                     WorkspaceBaseDirectory = _workspaceBaseDirectory,
                     IssuePageSize = _issuePageSize,
                     BlacklistedPaths = blacklistedPaths,
-                    HousekeepingConcurrencyLimit = Math.Max(1, _housekeepingConcurrencyLimit)
+                    HousekeepingConcurrencyLimit = Math.Max(1, _housekeepingConcurrencyLimit),
+                    HousekeepingBranchCleanupIntervalMinutes = Math.Max(0, _branchCleanupIntervalMinutes)
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("General settings saved.", false));

@@ -209,8 +209,7 @@ public interface IRepositoryProvider : IAsyncDisposable
 
     /// <summary>
     /// Returns the mergeability status of the PR branch relative to the base branch.
-    /// </summary>
-    /// <returns>
+    /// </summary>    /// <returns>
     /// <see cref="PrMergeabilityStatus.Behind"/> if the branch is behind and a server-side update should be triggered;
     /// <see cref="PrMergeabilityStatus.UpToDate"/> if the branch is clean and no action is needed;
     /// <see cref="PrMergeabilityStatus.Conflicted"/> if there is a merge conflict — the linked issue should be re-queued for rework;
@@ -231,6 +230,21 @@ public interface IRepositoryProvider : IAsyncDisposable
     Task UpdatePullRequestBranchAsync(int prNumber, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support UpdatePullRequestBranchAsync.");
+
+    /// <summary>
+    /// Lists all remote branches whose name starts with the agent branch prefix
+    /// (<see cref="PipelineConstants.BranchPrefix"/>). Returns branch names only (not full refs).
+    /// Default: empty list (conservative for providers that have not implemented it).
+    /// </summary>
+    Task<IReadOnlyList<string>> ListAgentBranchesAsync(CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+
+    /// <summary>
+    /// Deletes a remote branch by name. No-op if the branch does not exist.
+    /// </summary>
+    Task DeleteBranchAsync(string branchName, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support DeleteBranchAsync.");
 
     /// <summary>
     /// Submits a review with optional inline comments. When <see cref="ReviewSubmission.Comments"/>

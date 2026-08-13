@@ -557,4 +557,12 @@ public sealed record PipelineConfiguration
     [Key(72)]
     public int HousekeepingConcurrencyLimit { get; init; } = 1;
 
+    /// <summary>
+    /// How often (in minutes) the stale branch cleanup pass runs. The cleanup lists all
+    /// agent branches and deletes those with no open PR and an inactive issue label.
+    /// Default: 60 minutes. Set to 0 to run every poll tick (not recommended for busy repos).
+    /// </summary>
+    [Key(73)]
+    public int HousekeepingBranchCleanupIntervalMinutes { get; init; } = 60;
+
 }

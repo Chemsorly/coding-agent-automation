@@ -196,6 +196,9 @@ public class AgentCodingPageService : IDisposable
     public Task<(bool Success, string? Error)> ToggleHousekeepingEnabledAsync(PipelineJobTemplate template, bool enabled)
         => TogglePropertyAsync(template, (t, e) => t with { HousekeepingEnabled = e }, enabled);
 
+    public Task<(bool Success, string? Error)> ToggleBranchCleanupEnabledAsync(PipelineJobTemplate template, bool enabled)
+        => TogglePropertyAsync(template, (t, e) => t with { HousekeepingBranchCleanupEnabled = e }, enabled);
+
     private async Task<(bool Success, string? Error)> TogglePropertyAsync(
         PipelineJobTemplate template,
         Func<PipelineJobTemplate, bool, PipelineJobTemplate> updater,
@@ -233,6 +236,7 @@ public class AgentCodingPageService : IDisposable
             ReviewEnabled = form.ReviewEnabled, DecompositionEnabled = form.DecompositionEnabled,
             HousekeepingEnabled = form.HousekeepingEnabled,
             HousekeepingConcurrencyLimit = form.HousekeepingConcurrencyLimit,
+            HousekeepingBranchCleanupEnabled = form.HousekeepingBranchCleanupEnabled,
             Enabled = true
         };
         var targetProjectId = string.IsNullOrEmpty(form.ProjectId) ? WellKnownIds.DefaultProjectId : form.ProjectId;

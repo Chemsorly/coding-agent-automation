@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.GitHub;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Xunit;
@@ -130,6 +131,60 @@ public class GitHubRepositoryProviderAutoUpdateTests : WireMockTestBase
         await using var provider = CreateProvider();
         await Assert.ThrowsAnyAsync<Exception>(
             () => provider.UpdatePullRequestBranchAsync(21, CancellationToken.None));
+    }
+
+    // ── ListAgentBranchesAsync ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ListAgentBranchesAsync_ReturnsOnlyAgentBranches()
+    {
+        // Stub the branches list endpoint with a mix of agent and non-agent branches
+        var branches = new[]
+        {
+            new { name = $"{PipelineConstants.BranchPrefix}123-fix-login", @protected = false },
+            new { name = "main", @protected = true },
+            new { name = $"{PipelineConstants.BranchPrefix}42-update-deps", @protected = false },
+            new { name = "feature/manual-work", @protected = false },
+        };
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/branches"), branches);
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListAgentBranchesAsync(CancellationToken.None);
+
+        result.Should().HaveCount(2);
+        result.Should().Contain($"{PipelineConstants.BranchPrefix}123-fix-login");
+        result.Should().Contain($"{PipelineConstants.BranchPrefix}42-update-deps");
+        result.Should().NotContain("main");
+        result.Should().NotContain("feature/manual-work");
+    }
+
+    // ── DeleteBranchAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteBranchAsync_On204_DoesNotThrow()
+    {
+        var branchName = $"{PipelineConstants.BranchPrefix}42-fix-login";
+        StubDelete(ApiPath($"/repos/{Owner}/{Repo}/git/refs/heads/{branchName}"), statusCode: 204);
+
+        await using var provider = CreateProvider();
+        var exception = await Record.ExceptionAsync(
+            () => provider.DeleteBranchAsync(branchName, CancellationToken.None));
+        exception.Should().BeNull("204 No Content is the success response for branch deletion");
+    }
+
+    [Fact]
+    public async Task DeleteBranchAsync_On422_TreatedAsNoOp()
+    {
+        // GitHub returns 422 when the branch doesn't exist
+        var branchName = $"{PipelineConstants.BranchPrefix}99-already-gone";
+        StubError(ApiPath($"/repos/{Owner}/{Repo}/git/refs/heads/{branchName}"), 422,
+            new { message = "Reference does not exist" });
+
+        await using var provider = CreateProvider();
+        // NotFoundException wraps 422 in Octokit — the provider catches it as no-op
+        var exception = await Record.ExceptionAsync(
+            () => provider.DeleteBranchAsync(branchName, CancellationToken.None));
+        exception.Should().BeNull("non-existent branch should be a no-op, not an exception");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

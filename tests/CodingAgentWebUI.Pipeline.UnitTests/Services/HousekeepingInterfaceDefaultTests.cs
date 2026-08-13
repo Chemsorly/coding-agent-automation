@@ -45,6 +45,22 @@ public class HousekeepingInterfaceDefaultTests
     }
 
     [Fact]
+    public async Task ListAgentBranchesAsync_Default_ReturnsEmpty()
+    {
+        IRepositoryProvider provider = new DefaultOnlyProvider();
+        var result = await provider.ListAgentBranchesAsync(CancellationToken.None);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task DeleteBranchAsync_Default_ThrowsNotSupportedException()
+    {
+        IRepositoryProvider provider = new DefaultOnlyProvider();
+        await Assert.ThrowsAsync<NotSupportedException>(
+            () => provider.DeleteBranchAsync("feature/auto-1-test", CancellationToken.None));
+    }
+
+    [Fact]
     public async Task UpdatePullRequestBranchAsync_Default_ThrowsNotSupportedException()
     {
         IRepositoryProvider provider = new DefaultOnlyProvider();

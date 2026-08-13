@@ -102,7 +102,10 @@ public sealed partial class PipelineLoopService
                 await housekeepingService.ExecuteAsync(
                     repoProvider, template.RepoProviderId,
                     issueProvider, template.IssueProviderId,
-                    donePrs, limit, ct);
+                    donePrs, limit,
+                    template.HousekeepingBranchCleanupEnabled,
+                    snapshot.Config.HousekeepingBranchCleanupIntervalMinutes,
+                    ct);
             }
         }
 

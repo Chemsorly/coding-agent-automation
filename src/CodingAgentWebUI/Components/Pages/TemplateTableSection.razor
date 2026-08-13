@@ -193,6 +193,14 @@
                                                         </label>
                                                         <span title="Automatically keeps agent-created PR branches up-to-date with the base branch">Housekeeping</span>
                                                     </label>
+                                                    <label class="feature-config-toggle">
+                                                        <label class="toggle-switch">
+                                                            <input type="checkbox" checked="@template.HousekeepingBranchCleanupEnabled"
+                                                                   @onchange="e => OnToggleBranchCleanup.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                                            <span class="toggle-slider"></span>
+                                                        </label>
+                                                        <span title="Periodically deletes stale agent branches with no open PR and an inactive issue label">Branch Cleanup</span>
+                                                    </label>
                                                 </div>
                                             </div>
                                         </td>

@@ -109,6 +109,9 @@ public static class PipelineTelemetry
     public static readonly Counter<long> HousekeepingConflictReworkTriggered = Meter.CreateCounter<long>(
         "pipeline.housekeeping.conflict_rework_triggered", "{rework}",
         "Issues re-queued for rework due to PR merge conflict");
+    public static readonly Counter<long> HousekeepingBranchDeleted = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.branch_deleted", "{branch}",
+        "Stale agent branches deleted (no open PR, inactive issue label)");
 
     // Agent worker metrics
     public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(
