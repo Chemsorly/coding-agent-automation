@@ -115,12 +115,6 @@ public class ConsolidationDispatchHandlerTests
     {
         // Arrange: start as leader with a controllable token
         var firstLeaderCts = new CancellationTokenSource();
-        // TODO: currentIsLeader and currentLeaderToken are written on the test thread and read inside
-        // the handler's background task thread via captured-variable lambdas, without volatile, Interlocked,
-        // or any explicit memory barrier. This is a data race: the background thread is not guaranteed to
-        // observe the updated values promptly (formally undefined behaviour, though benign on x86/x64 due to
-        // TSO). The test could become intermittently unreliable on ARM or under aggressive JIT optimization.
-        // Marking the variables volatile would eliminate the race. See Correctness WARNING (Issue #1912).
         var currentIsLeader = true;
         var currentLeaderToken = firstLeaderCts.Token;
 
@@ -324,8 +318,6 @@ public class ConsolidationDispatchHandlerTests
         savedRun.CompletedAtUtc.Should().NotBeNull();
     }
 
-    // ── Constructor coverage ─────────────────────────────────────────────
-
     // ── Dispose / base-class coverage ────────────────────────────────────
 
     [Fact]
@@ -517,25 +509,6 @@ public class ConsolidationDispatchHandlerTests
             .Should().NotThrowAsync("must be a silent no-op when neither service nor store registered");
     }
 
-    /// <summary>
-    /// Creates a minimal <see cref="JobDistributionRequest"/> for transition tests.
-    /// Allows overriding <paramref name="runId"/> and <paramref name="issueIdentifier"/>.
-    /// </summary>
-    private static JobDistributionRequest CreateMinimalRequest(string? runId = "run-test", string? issueIdentifier = "owner/repo#1")
-    {
-        return new JobDistributionRequest
-        {
-            IssueIdentifier = issueIdentifier ?? string.Empty,
-            IssueProviderConfigId = "provider-1",
-            RepoProviderConfigId = "repo-1",
-            InitiatedBy = "test",
-            TaskType = WorkItemTaskType.Consolidation,
-            AgentSelector = "kiro",
-            TimeoutSeconds = 300,
-            RunId = runId
-        };
-    }
-
     [Fact]
     public void Constructor_PublicDepsOnly_ConstructsWithoutThrowing()
     {
@@ -684,13 +657,32 @@ public class ConsolidationDispatchHandlerTests
         return new ConsolidationDispatchHandler(
             new ConsolidationDispatchHandlerDependencies(
                 dbFactoryMock.Object,
-            leaderElectionMock.Object,
-            lifecycle,
-            JobTemplateStore.CreateEmpty(),
-            Mock.Of<IConfiguration>(),
-            TransitionService: transitionService,
-            ConsolidationRunStore: consolidationRunStore,
-            ConsolidationService: consolidationService),
+                leaderElectionMock.Object,
+                lifecycle,
+                JobTemplateStore.CreateEmpty(),
+                Mock.Of<IConfiguration>(),
+                TransitionService: transitionService,
+                ConsolidationRunStore: consolidationRunStore,
+                ConsolidationService: consolidationService),
             new DispatchServiceOptions());
+    }
+
+    /// <summary>
+    /// Creates a minimal <see cref="JobDistributionRequest"/> for transition tests.
+    /// Allows overriding <paramref name="runId"/> and <paramref name="issueIdentifier"/>.
+    /// </summary>
+    private static JobDistributionRequest CreateMinimalRequest(string? runId = "run-test", string? issueIdentifier = "owner/repo#1")
+    {
+        return new JobDistributionRequest
+        {
+            IssueIdentifier = issueIdentifier ?? string.Empty,
+            IssueProviderConfigId = "provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "kiro",
+            TimeoutSeconds = 300,
+            RunId = runId
+        };
     }
 }
