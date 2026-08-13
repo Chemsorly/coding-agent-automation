@@ -270,5 +270,44 @@ public sealed class AgentHubFacadeTests
         result.Should().BeSameAs(mockProvider);
     }
 
+    [Fact]
+    public async Task LoadTemplatesForProjectAsync_DelegatesToProjectStore()
+    {
+        // Construct a facade with an injected IProjectStore mock via the new ProjectStore parameter
+        var mockProjectStore = new Mock<IProjectStore>();
+        var templates = new List<PipelineJobTemplate>
+        {
+            new() { Id = "tmpl-1", Name = "Template 1", IssueProviderId = "ip-1", RepoProviderId = "rp-1" }
+        };
+        mockProjectStore
+            .Setup(s => s.LoadTemplatesForProjectAsync("proj-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(templates);
+
+        var facadeWithProjectStore = new AgentHubFacade(new AgentHubFacadeDependencies(
+            _registry,
+            _runService,
+            _dispatcher,
+            _drainService,
+            _mockHistory.Object,
+            _mockConfigStore.Object,
+            _mockProviderFactory.Object,
+            _facadeLogger,
+            ProjectStore: mockProjectStore.Object));
+
+        var result = await facadeWithProjectStore.LoadTemplatesForProjectAsync("proj-1", CancellationToken.None);
+
+        result.Should().BeSameAs(templates);
+        mockProjectStore.Verify(s => s.LoadTemplatesForProjectAsync("proj-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task LoadTemplatesForProjectAsync_NullProjectStore_ReturnsEmptyList()
+    {
+        // Facade constructed without ProjectStore (null) — returns empty list rather than throwing
+        var result = await _facade.LoadTemplatesForProjectAsync("proj-1", CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
     #endregion
 }
