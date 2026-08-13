@@ -106,6 +106,41 @@ public class GitLabRepositoryProviderAutoUpdateTests
         exception.Should().BeNull("Rebase on NGitLab.Mock should not throw");
     }
 
+    // ── UpdatePullRequestBranchAsync — 409 re-throw ───────────────────────────
+
+    [Fact]
+    public async Task UpdatePullRequestBranchAsync_WhenRebaseReturns409_ThrowsInvalidOperationException()
+    {
+        // Arrange: mock Rebase() to throw GitLabException with 409 Conflict.
+        // This simulates the GitLab server transaction lock being busy.
+        // The provider must re-throw as InvalidOperationException so HousekeepingService
+        // increments the Failed counter instead of incorrectly counting as Succeeded.
+        var conflictException = new GitLabException("409 Conflict — rebase already in progress")
+        {
+            StatusCode = System.Net.HttpStatusCode.Conflict
+        };
+
+        var mrClientMock = new Mock<IMergeRequestClient>();
+        mrClientMock.Setup(c => c[1L]).Returns(new MergeRequest
+        {
+            Iid = 1,
+            Title = "Test MR",
+            State = "opened",
+            SourceBranch = "feature/test",
+            TargetBranch = BaseBranch
+        });
+        mrClientMock.Setup(c => c.Rebase(1L)).Throws(conflictException);
+
+        var clientMock = new Mock<IGitLabClient>();
+        clientMock.Setup(c => c.GetMergeRequest(ProjectId)).Returns(mrClientMock.Object);
+
+        var provider = new GitLabRepositoryProvider(clientMock.Object, ProjectId, BaseBranch);
+
+        // Act & Assert: 409 from Rebase must surface as InvalidOperationException
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => provider.UpdatePullRequestBranchAsync(1, CancellationToken.None));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>

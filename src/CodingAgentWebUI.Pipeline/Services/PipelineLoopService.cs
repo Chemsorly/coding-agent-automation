@@ -98,7 +98,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
         _housekeepingService = deps.HousekeepingService;
 
         _cacheManager = new ProviderCacheManager(deps.ProviderFactory, deps.Logger);
-        _poller = new TemplatePoller(_cacheManager, deps.Logger, deps.HousekeepingService);
+        _poller = new TemplatePoller(_cacheManager, deps.Logger);
         _dispatcher = new DispatchScheduler(deps.Orchestration, deps.DispatchOrchestration, deps.WorkDistributor, deps.DependencyChecker, _cacheManager, deps.Logger);
     }
 

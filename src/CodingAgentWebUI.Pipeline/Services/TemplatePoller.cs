@@ -17,14 +17,11 @@ internal sealed class TemplatePoller
 {
     private readonly ProviderCacheManager _cacheManager;
     private readonly Serilog.ILogger _logger;
-    private readonly IHousekeepingService? _housekeepingService;
 
-    internal TemplatePoller(ProviderCacheManager cacheManager, Serilog.ILogger logger,
-        IHousekeepingService? housekeepingService = null)
+    internal TemplatePoller(ProviderCacheManager cacheManager, Serilog.ILogger logger)
     {
         _cacheManager = cacheManager;
         _logger = logger;
-        _housekeepingService = housekeepingService;
     }
 
     /// <summary>

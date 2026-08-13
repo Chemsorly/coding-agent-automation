@@ -53,7 +53,7 @@ public class HousekeepingPollCycleIntegrationTests
             It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var poller = new TemplatePoller(cacheManager, logger, housekeepingMock.Object);
+        var poller = new TemplatePoller(cacheManager, logger);
         return (poller, repoProviderMock, housekeepingMock);
     }
 
