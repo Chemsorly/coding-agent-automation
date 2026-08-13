@@ -93,13 +93,10 @@ public class AgentJobDispatcherStalenessTests : IDisposable
                 new QualityGateResolver(),
                 new ReviewerResolver(),
                 _mockConfigStore.Object,
-                _mockLogger.Object));
-
-        if (withStalenessDetector)
-        {
-            infra.StalenessDetector = new AnalysisStalenessDetector(
-                _mockWorkItemQuery.Object, _mockLogger.Object);
-        }
+                _mockLogger.Object),
+            withStalenessDetector
+                ? new AnalysisStalenessDetector(_mockWorkItemQuery.Object, _mockLogger.Object)
+                : null);
 
         return new AgentJobDispatcher(new AgentJobDispatcherDependencies(
             _dedup,
