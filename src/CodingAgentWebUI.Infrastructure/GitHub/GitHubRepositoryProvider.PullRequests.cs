@@ -11,32 +11,30 @@ public partial class GitHubRepositoryProvider
     // ── Auto-branch-update (spec 040) ─────────────────────────────────────────
 
     /// <inheritdoc />
-    public async Task<bool?> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
+    public async Task<PrMergeabilityStatus> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
     {
         var pr = await ExecuteWithResilienceAsync(
             client => client.PullRequest.Get(Owner, Repo, prNumber),
             "IsPullRequestBehindBase", ct);
 
-        // IMPORTANT: Blocked and Unstable MUST map to null, not false.
-        // Blocked = required status checks are pending or failing (during active CI run).
-        // GitHub returns Blocked for the full CI run duration (5-30+ min) when required
-        // checks are configured. Mapping to false would free the concurrency slot before CI
-        // finishes, defeating the gate. See spec 040, Req 1.5.
+        // IMPORTANT: Blocked MUST map to PrMergeabilityStatus.Blocked, not UpToDate or Conflicted.
+        // GitHub returns "blocked" for the full CI run duration (5–30+ min) when required checks
+        // are configured. Any other mapping would prematurely free the concurrency slot.
         // Unstable = non-required checks pending/failing; required CI may still be running.
         //
         // pr.MergeableState is StringEnum<MergeableState>; switch on the string value.
         return pr.MergeableState?.StringValue switch
         {
-            "behind"    => true,
-            "clean"     => false,   // CI passed, up-to-date — free slot
-            "dirty"     => false,   // merge conflict — update won't help
-            "draft"     => false,
-            "has_hooks" => false,
-            "blocked"   => null,    // required checks pending/failing — CI still running
-            "unstable"  => null,    // non-required checks; required CI may still run
-            "unknown"   => null,    // initial async computation (lasts seconds)
-            null        => null,
-            _           => null     // unknown future values: conservative
+            "behind"    => PrMergeabilityStatus.Behind,
+            "clean"     => PrMergeabilityStatus.UpToDate,
+            "dirty"     => PrMergeabilityStatus.Conflicted, // merge conflict — trigger rework
+            "draft"     => PrMergeabilityStatus.UpToDate,
+            "has_hooks" => PrMergeabilityStatus.UpToDate,
+            "unstable"  => PrMergeabilityStatus.UpToDate,   // non-required checks only; not a conflict
+            "blocked"   => PrMergeabilityStatus.Blocked,    // required checks pending/failing — CI still running
+            "unknown"   => PrMergeabilityStatus.Unknown,    // initial async computation (lasts seconds)
+            null        => PrMergeabilityStatus.Unknown,
+            _           => PrMergeabilityStatus.Unknown     // unknown future values: conservative
         };
     }
 

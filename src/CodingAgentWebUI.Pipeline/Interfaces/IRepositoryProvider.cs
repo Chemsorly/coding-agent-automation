@@ -208,18 +208,19 @@ public interface IRepositoryProvider : IAsyncDisposable
     bool SupportsServerSideBranchUpdate => false;
 
     /// <summary>
-    /// Checks whether the PR branch is behind the base branch and needs updating.
+    /// Returns the mergeability status of the PR branch relative to the base branch.
     /// </summary>
     /// <returns>
-    /// <c>true</c> if the branch is behind and an update is needed;
-    /// <c>false</c> if the branch does not need updating (up-to-date, conflicted, draft, etc.);
-    /// <c>null</c> if the status is indeterminate — mergeability is still being computed
-    /// or CI is actively running (e.g. GitHub returns <c>"blocked"</c> during the full CI run
-    /// when required checks are configured). A <c>null</c> result keeps the in-flight slot
-    /// occupied and the PR is re-evaluated on the next tick.
+    /// <see cref="PrMergeabilityStatus.Behind"/> if the branch is behind and a server-side update should be triggered;
+    /// <see cref="PrMergeabilityStatus.UpToDate"/> if the branch is clean and no action is needed;
+    /// <see cref="PrMergeabilityStatus.Conflicted"/> if there is a merge conflict — the linked issue should be re-queued for rework;
+    /// <see cref="PrMergeabilityStatus.Blocked"/> if required checks are still running or mergeability is being computed — keep the in-flight slot;
+    /// <see cref="PrMergeabilityStatus.Unknown"/> for any unrecognised value — conservative wait.
+    /// CRITICAL: GitHub <c>"blocked"</c> MUST map to <see cref="PrMergeabilityStatus.Blocked"/>, NOT <see cref="PrMergeabilityStatus.UpToDate"/>.
+    /// GitHub returns <c>"blocked"</c> for the full CI run duration when required checks are configured.
     /// </returns>
-    Task<bool?> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
-        => Task.FromResult<bool?>(null);
+    Task<PrMergeabilityStatus> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
+        => Task.FromResult(PrMergeabilityStatus.Unknown);
 
     /// <summary>
     /// Triggers a server-side branch update (e.g. GitHub: <c>PUT .../update-branch</c>;

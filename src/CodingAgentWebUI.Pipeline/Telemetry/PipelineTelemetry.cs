@@ -106,6 +106,9 @@ public static class PipelineTelemetry
         "pipeline.housekeeping.skipped", "{update}", "PRs skipped during candidate selection (not behind, null, draft, active rework, in-flight)");
     public static readonly Counter<long> HousekeepingEvicted = Meter.CreateCounter<long>(
         "pipeline.housekeeping.evicted", "{update}", "In-flight entries removed (CI resolved or PR merged/label removed)");
+    public static readonly Counter<long> HousekeepingConflictReworkTriggered = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.conflict_rework_triggered", "{rework}",
+        "Issues re-queued for rework due to PR merge conflict");
 
     // Agent worker metrics
     public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(

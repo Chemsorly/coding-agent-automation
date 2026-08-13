@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using Xunit;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
@@ -30,51 +31,78 @@ public class GitHubRepositoryProviderAutoUpdateTests : WireMockTestBase
         ((IRepositoryProvider)provider).SupportsServerSideBranchUpdate.Should().BeTrue();
     }
 
-    // ── IsPullRequestBehindBaseAsync — mergeable_state mapping ────────────────
+    // ── IsPullRequestBehindBaseAsync — Behind ─────────────────────────────────
 
-    [Theory]
-    [InlineData("behind", true)]
-    public async Task IsPullRequestBehindBaseAsync_BehindState_ReturnsTrue(string mergeableState, bool? expected)
+    [Fact]
+    public async Task IsPullRequestBehindBaseAsync_Behind_ReturnsBehind()
     {
-        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/10"), BuildPrWithMergeableState(10, mergeableState));
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/10"), BuildPrWithMergeableState(10, "behind"));
         await using var provider = CreateProvider();
         var result = await provider.IsPullRequestBehindBaseAsync(10, CancellationToken.None);
-        result.Should().Be(expected);
+        result.Should().Be(PrMergeabilityStatus.Behind);
     }
+
+    // ── IsPullRequestBehindBaseAsync — UpToDate states ───────────────────────
 
     [Theory]
     [InlineData("clean")]
-    [InlineData("dirty")]
     [InlineData("has_hooks")]
     [InlineData("draft")]
-    public async Task IsPullRequestBehindBaseAsync_FalseStates_ReturnsFalse(string mergeableState)
+    [InlineData("unstable")]   // non-required checks only — not a conflict or CI-blocker
+    public async Task IsPullRequestBehindBaseAsync_UpToDateStates_ReturnsUpToDate(string mergeableState)
     {
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/11"), BuildPrWithMergeableState(11, mergeableState));
         await using var provider = CreateProvider();
         var result = await provider.IsPullRequestBehindBaseAsync(11, CancellationToken.None);
-        result.Should().BeFalse($"mergeable_state='{mergeableState}' should map to false");
+        result.Should().Be(PrMergeabilityStatus.UpToDate,
+            $"mergeable_state='{mergeableState}' should map to UpToDate");
     }
 
-    [Theory]
-    [InlineData("blocked")]   // CRITICAL: required checks running — must be null, NOT false
-    [InlineData("unstable")]  // CRITICAL: non-required checks; required CI may still run
-    [InlineData("unknown")]
-    public async Task IsPullRequestBehindBaseAsync_NullStates_ReturnsNull(string mergeableState)
+    // ── IsPullRequestBehindBaseAsync — Conflicted ─────────────────────────────
+
+    [Fact]
+    public async Task IsPullRequestBehindBaseAsync_Dirty_ReturnsConflicted()
     {
-        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/12"), BuildPrWithMergeableState(12, mergeableState));
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/12"), BuildPrWithMergeableState(12, "dirty"));
         await using var provider = CreateProvider();
         var result = await provider.IsPullRequestBehindBaseAsync(12, CancellationToken.None);
-        result.Should().BeNull(
-            $"mergeable_state='{mergeableState}' means CI may be running — slot must stay in-flight (null)");
+        result.Should().Be(PrMergeabilityStatus.Conflicted,
+            "mergeable_state='dirty' means a merge conflict — trigger rework label swap");
+    }
+
+    // ── IsPullRequestBehindBaseAsync — Blocked ────────────────────────────────
+
+    [Theory]
+    [InlineData("blocked")]  // CRITICAL: required checks running — must be Blocked, NOT UpToDate/Conflicted
+    public async Task IsPullRequestBehindBaseAsync_Blocked_ReturnsBlocked(string mergeableState)
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/13"), BuildPrWithMergeableState(13, mergeableState));
+        await using var provider = CreateProvider();
+        var result = await provider.IsPullRequestBehindBaseAsync(13, CancellationToken.None);
+        result.Should().Be(PrMergeabilityStatus.Blocked,
+            $"mergeable_state='{mergeableState}' means required CI is running — slot must stay in-flight");
+    }
+
+    // ── IsPullRequestBehindBaseAsync — Unknown ────────────────────────────────
+
+    [Theory]
+    [InlineData("unknown")]
+    public async Task IsPullRequestBehindBaseAsync_Unknown_ReturnsUnknown(string mergeableState)
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/14"), BuildPrWithMergeableState(14, mergeableState));
+        await using var provider = CreateProvider();
+        var result = await provider.IsPullRequestBehindBaseAsync(14, CancellationToken.None);
+        result.Should().Be(PrMergeabilityStatus.Unknown,
+            $"mergeable_state='{mergeableState}' means still computing — conservative Unknown");
     }
 
     [Fact]
-    public async Task IsPullRequestBehindBaseAsync_NullMergeableState_ReturnsNull()
+    public async Task IsPullRequestBehindBaseAsync_NullMergeableState_ReturnsUnknown()
     {
-        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/13"), BuildPrWithNullMergeableState(13));
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/15"), BuildPrWithNullMergeableState(15));
         await using var provider = CreateProvider();
-        var result = await provider.IsPullRequestBehindBaseAsync(13, CancellationToken.None);
-        result.Should().BeNull("null mergeable_state means not yet computed");
+        var result = await provider.IsPullRequestBehindBaseAsync(15, CancellationToken.None);
+        result.Should().Be(PrMergeabilityStatus.Unknown, "null mergeable_state means not yet computed");
     }
 
     // ── UpdatePullRequestBranchAsync ──────────────────────────────────────────

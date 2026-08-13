@@ -49,6 +49,7 @@ public class HousekeepingPollCycleIntegrationTests
         var housekeepingMock = new Mock<IHousekeepingService>();
         housekeepingMock.Setup(s => s.ExecuteAsync(
             It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
+            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<int>(),
             It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);

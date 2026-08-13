@@ -37,11 +37,11 @@ public class HousekeepingInterfaceDefaultTests
     }
 
     [Fact]
-    public async Task IsPullRequestBehindBaseAsync_Default_ReturnsNull()
+    public async Task IsPullRequestBehindBaseAsync_Default_ReturnsUnknown()
     {
         IRepositoryProvider provider = new DefaultOnlyProvider();
         var result = await provider.IsPullRequestBehindBaseAsync(42, CancellationToken.None);
-        Assert.Null(result);
+        Assert.Equal(PrMergeabilityStatus.Unknown, result);
     }
 
     [Fact]

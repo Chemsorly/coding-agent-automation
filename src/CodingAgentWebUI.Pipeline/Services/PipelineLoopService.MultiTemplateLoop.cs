@@ -93,12 +93,16 @@ public sealed partial class PipelineLoopService
                 if (!processedRepos.Add(template.RepoProviderId)) continue; // already processed this repo this cycle
                 if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId, out var repoProvider)) continue;
                 if (!repoProvider.SupportsServerSideBranchUpdate) continue;
+                if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var issueProvider)) continue;
 
                 var donePrs = agentDonePrQueues.TryGetValue(template.Id, out var d) ? d : [];
                 var limit = Math.Max(1,
                     template.HousekeepingConcurrencyLimit ?? snapshot.Config.HousekeepingConcurrencyLimit);
 
-                await housekeepingService.ExecuteAsync(repoProvider, template.RepoProviderId, donePrs, limit, ct);
+                await housekeepingService.ExecuteAsync(
+                    repoProvider, template.RepoProviderId,
+                    issueProvider, template.IssueProviderId,
+                    donePrs, limit, ct);
             }
         }
 

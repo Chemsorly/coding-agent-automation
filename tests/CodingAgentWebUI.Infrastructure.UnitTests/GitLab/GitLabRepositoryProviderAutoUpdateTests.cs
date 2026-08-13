@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.GitLab;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using Moq;
 using NGitLab;
 using NGitLab.Mock;
@@ -30,33 +31,67 @@ public class GitLabRepositoryProviderAutoUpdateTests
         ((IRepositoryProvider)provider.Provider).SupportsServerSideBranchUpdate.Should().BeTrue();
     }
 
-    // ── IsPullRequestBehindBaseAsync — detailed_merge_status mapping ──────────
+    // ── IsPullRequestBehindBaseAsync — Behind ─────────────────────────────────
 
     [Fact]
-    public async Task IsPullRequestBehindBaseAsync_NeedRebase_ReturnsTrue()
+    public async Task IsPullRequestBehindBaseAsync_NeedRebase_ReturnsBehind()
     {
         // "need_rebase" is a real GitLab API value not yet in NGitLab 12 enum.
-        // Use a raw string DynamicEnum to simulate what the real API would return.
         var provider = CreateProviderWithRawStatus("need_rebase");
         var result = await provider.Provider.IsPullRequestBehindBaseAsync(1, CancellationToken.None);
-        result.Should().BeTrue("need_rebase means the branch is behind and needs rebase");
+        result.Should().Be(PrMergeabilityStatus.Behind, "need_rebase means the branch is behind and needs rebase");
     }
 
+    // ── IsPullRequestBehindBaseAsync — UpToDate ───────────────────────────────
+
     [Fact]
-    public async Task IsPullRequestBehindBaseAsync_Mergeable_ReturnsFalse()
+    public async Task IsPullRequestBehindBaseAsync_Mergeable_ReturnsUpToDate()
     {
         var provider = CreateProviderWithMr(DetailedMergeStatus.Mergeable);
         var result = await provider.Provider.IsPullRequestBehindBaseAsync(1, CancellationToken.None);
-        result.Should().BeFalse("Mergeable means no update needed — free the slot");
+        result.Should().Be(PrMergeabilityStatus.UpToDate, "Mergeable means no update needed — free the slot");
     }
 
     [Fact]
-    public async Task IsPullRequestBehindBaseAsync_NotOpen_ReturnsFalse()
+    public async Task IsPullRequestBehindBaseAsync_NotOpen_ReturnsUpToDate()
     {
         var provider = CreateProviderWithMr(DetailedMergeStatus.NotOpen);
         var result = await provider.Provider.IsPullRequestBehindBaseAsync(1, CancellationToken.None);
-        result.Should().BeFalse("not_open means MR is closed — no update needed");
+        result.Should().Be(PrMergeabilityStatus.UpToDate, "not_open means MR is closed — no update needed");
     }
+
+    // ── IsPullRequestBehindBaseAsync — Conflicted ─────────────────────────────
+
+    [Fact]
+    public async Task IsPullRequestBehindBaseAsync_HasConflictsTrue_ReturnsConflicted()
+    {
+        // GitLab has no dedicated "conflicted" DetailedMergeStatus enum value.
+        // HasConflicts = true is the canonical way to detect merge conflicts.
+        var mr = new MergeRequest
+        {
+            Iid = 1,
+            Title = "Test MR",
+            State = "opened",
+            SourceBranch = "feature/test",
+            TargetBranch = BaseBranch,
+            DetailedMergeStatus = new DynamicEnum<DetailedMergeStatus>(DetailedMergeStatus.Mergeable),
+            HasConflicts = true  // ← conflict signal takes precedence over DetailedMergeStatus
+        };
+
+        var mrClientMock = new Mock<IMergeRequestClient>();
+        mrClientMock.Setup(c => c[1L]).Returns(mr);
+
+        var clientMock = new Mock<IGitLabClient>();
+        clientMock.Setup(c => c.GetMergeRequest(ProjectId)).Returns(mrClientMock.Object);
+
+        var provider = new GitLabRepositoryProvider(clientMock.Object, ProjectId, BaseBranch);
+        var result = await provider.IsPullRequestBehindBaseAsync(1, CancellationToken.None);
+
+        result.Should().Be(PrMergeabilityStatus.Conflicted,
+            "HasConflicts=true must return Conflicted regardless of DetailedMergeStatus");
+    }
+
+    // ── IsPullRequestBehindBaseAsync — Blocked (transient states) ────────────
 
     [Theory]
     [InlineData(DetailedMergeStatus.Checking)]
@@ -64,12 +99,13 @@ public class GitLabRepositoryProviderAutoUpdateTests
     [InlineData(DetailedMergeStatus.NotApproved)]
     [InlineData(DetailedMergeStatus.CiStillRunning)]
     [InlineData(DetailedMergeStatus.Preparing)]
-    public async Task IsPullRequestBehindBaseAsync_TransientStates_ReturnsNull(
+    public async Task IsPullRequestBehindBaseAsync_TransientStates_ReturnsBlocked(
         DetailedMergeStatus status)
     {
         var provider = CreateProviderWithMr(status);
         var result = await provider.Provider.IsPullRequestBehindBaseAsync(1, CancellationToken.None);
-        result.Should().BeNull($"DetailedMergeStatus.{status} is transient — slot must stay in-flight");
+        result.Should().Be(PrMergeabilityStatus.Blocked,
+            $"DetailedMergeStatus.{status} is transient — slot must stay in-flight");
     }
 
     // ── UpdatePullRequestBranchAsync ──────────────────────────────────────────
@@ -106,15 +142,11 @@ public class GitLabRepositoryProviderAutoUpdateTests
         exception.Should().BeNull("Rebase on NGitLab.Mock should not throw");
     }
 
-    // ── UpdatePullRequestBranchAsync — 409 re-throw ───────────────────────────
-
     [Fact]
     public async Task UpdatePullRequestBranchAsync_WhenRebaseReturns409_ThrowsInvalidOperationException()
     {
         // Arrange: mock Rebase() to throw GitLabException with 409 Conflict.
         // This simulates the GitLab server transaction lock being busy.
-        // The provider must re-throw as InvalidOperationException so HousekeepingService
-        // increments the Failed counter instead of incorrectly counting as Succeeded.
         var conflictException = new GitLabException("409 Conflict — rebase already in progress")
         {
             StatusCode = System.Net.HttpStatusCode.Conflict
@@ -143,10 +175,6 @@ public class GitLabRepositoryProviderAutoUpdateTests
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Creates a GitLabRepositoryProvider backed by a mocked IGitLabClient that returns
-    /// a MergeRequest with the given DetailedMergeStatus enum value.
-    /// </summary>
     private static (GitLabRepositoryProvider Provider, Mock<IGitLabClient> ClientMock)
         CreateProviderWithMr(DetailedMergeStatus status)
     {
@@ -157,7 +185,8 @@ public class GitLabRepositoryProviderAutoUpdateTests
             State = "opened",
             SourceBranch = "feature/test",
             TargetBranch = BaseBranch,
-            DetailedMergeStatus = new DynamicEnum<DetailedMergeStatus>(status)
+            DetailedMergeStatus = new DynamicEnum<DetailedMergeStatus>(status),
+            HasConflicts = false
         };
 
         var mrClientMock = new Mock<IMergeRequestClient>();
@@ -170,10 +199,6 @@ public class GitLabRepositoryProviderAutoUpdateTests
         return (provider, clientMock);
     }
 
-    /// <summary>
-    /// Creates a GitLabRepositoryProvider that returns a MergeRequest with a raw string
-    /// DetailedMergeStatus (for values not yet in the NGitLab enum, e.g. "need_rebase").
-    /// </summary>
     private static (GitLabRepositoryProvider Provider, Mock<IGitLabClient> ClientMock)
         CreateProviderWithRawStatus(string rawStatus)
     {
@@ -184,7 +209,8 @@ public class GitLabRepositoryProviderAutoUpdateTests
             State = "opened",
             SourceBranch = "feature/test",
             TargetBranch = BaseBranch,
-            DetailedMergeStatus = new DynamicEnum<DetailedMergeStatus>(rawStatus)
+            DetailedMergeStatus = new DynamicEnum<DetailedMergeStatus>(rawStatus),
+            HasConflicts = false
         };
 
         var mrClientMock = new Mock<IMergeRequestClient>();

@@ -7,8 +7,9 @@ using Serilog;
 namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
-/// Evaluates agent:done PRs, evicts resolved in-flight entries, and triggers
-/// server-side branch updates for PRs that are behind base within the concurrency budget.
+/// Evaluates agent:done PRs, evicts resolved in-flight entries, triggers
+/// server-side branch updates for PRs that are behind base, and re-queues
+/// conflicted PRs for rework by swapping the linked issue label to <c>agent:next</c>.
 /// </summary>
 /// <remarks>
 /// State: <c>_inFlight</c> is a <c>ConcurrentDictionary&lt;string, HashSet&lt;int&gt;&gt;</c>
@@ -23,6 +24,19 @@ public sealed class HousekeepingService : IHousekeepingService
 {
     private readonly IOrchestratorRunService _runService;
     private readonly ILogger _logger;
+
+    /// <summary>
+    /// Issue labels that indicate the issue is already actively queued or in-progress.
+    /// If a conflicted PR's linked issue has any of these labels, the rework label swap
+    /// is skipped — the issue is already being handled.
+    /// </summary>
+    private static readonly HashSet<string> ActiveLabels = new(StringComparer.Ordinal)
+    {
+        AgentLabels.Next,
+        AgentLabels.InProgress,
+        AgentLabels.Epic,
+        AgentLabels.EpicApproved,
+    };
 
     /// <summary>
     /// Controls how fire-and-forget update tasks are dispatched.
@@ -49,12 +63,16 @@ public sealed class HousekeepingService : IHousekeepingService
     public async Task ExecuteAsync(
         IRepositoryProvider repoProvider,
         string repoProviderId,
+        IIssueProvider issueProvider,
+        string issueProviderId,
         IReadOnlyList<PullRequestSummary> agentDonePrs,
         int effectiveConcurrencyLimit,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(repoProvider);
         ArgumentNullException.ThrowIfNull(repoProviderId);
+        ArgumentNullException.ThrowIfNull(issueProvider);
+        ArgumentNullException.ThrowIfNull(issueProviderId);
         ArgumentNullException.ThrowIfNull(agentDonePrs);
 
         var limit = Math.Max(1, effectiveConcurrencyLimit);
@@ -62,7 +80,7 @@ public sealed class HousekeepingService : IHousekeepingService
 
         // ── Step 1: Build mergeability map — one call per PR, reused below ──
         // N+1 trade-off: pool is small (bounded by unmerged agent PRs). See spec 040, Req 7.1.
-        var mergeabilityMap = new Dictionary<int, bool?>(agentDonePrs.Count);
+        var mergeabilityMap = new Dictionary<int, PrMergeabilityStatus>(agentDonePrs.Count);
         foreach (var pr in agentDonePrs)
         {
             mergeabilityMap[pr.Number] = await repoProvider.IsPullRequestBehindBaseAsync(pr.Number, ct);
@@ -81,17 +99,21 @@ public sealed class HousekeepingService : IHousekeepingService
                 inFlight.Remove(prNumber);
                 PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
-            else if (mergeabilityMap[prNumber] != null)
+            else
             {
-                // CI done (null = still running; non-null = resolved) — free slot.
-                // IMPORTANT: do NOT add a 'continue' here for the result == true case.
-                // A PR evicted with result = true (base moved again) is naturally
-                // re-selected as a candidate in step 6 because inFlight.Contains
-                // is now false. No special handling needed.
-                inFlight.Remove(prNumber);
-                PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
+                var status = mergeabilityMap[prNumber];
+                // Keep in slot only while Blocked/Unknown (CI still running/computing).
+                // Behind, UpToDate, Conflicted all mean CI has resolved → evict.
+                // IMPORTANT: do NOT add 'continue' after eviction for Behind — the PR
+                // will be re-selected as a candidate in step 6 because inFlight no longer
+                // contains it. Same-tick evict+re-select is intentional for Behind.
+                if (status != PrMergeabilityStatus.Blocked && status != PrMergeabilityStatus.Unknown)
+                {
+                    inFlight.Remove(prNumber);
+                    PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
+                }
+                // else: Blocked/Unknown → CI still running → keep in set
             }
-            // else: null → CI still running → keep in set
         }
 
         // ── Step 4: Get active run branches (for rework exclusion) ───────────
@@ -113,7 +135,16 @@ public sealed class HousekeepingService : IHousekeepingService
         // ── Step 5: Sort candidates ascending by PR number (oldest first) ────
         var sorted = agentDonePrs.OrderBy(p => p.Number).ToList();
 
-        // ── Step 6: Select and trigger eligible updates ───────────────────────
+        // ── Step 6a: Handle Conflicted PRs — swap linked issue to agent:next ─
+        foreach (var pr in sorted)
+        {
+            if (mergeabilityMap[pr.Number] != PrMergeabilityStatus.Conflicted)
+                continue;
+
+            await TriggerReworkAsync(repoProvider, issueProvider, issueProviderId, pr, repoTag, ct);
+        }
+
+        // ── Step 6b: Select and trigger eligible branch updates ───────────────
         foreach (var pr in sorted)
         {
             if (inFlight.Count >= limit)
@@ -138,23 +169,118 @@ public sealed class HousekeepingService : IHousekeepingService
             }
 
             var mergeability = mergeabilityMap[pr.Number]; // reuse from step 1
-            if (mergeability == null)
+
+            if (mergeability != PrMergeabilityStatus.Behind)
             {
-                // null = CI running or computing — skip this tick, re-evaluate next
+                // Blocked/Unknown → still computing; UpToDate/Conflicted → no update needed
                 PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;
             }
 
-            if (mergeability == false)
-            {
-                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
-                continue;
-            }
-
-            // mergeability == true → add to in-flight and fire update
+            // Behind → add to in-flight and fire update
             inFlight.Add(pr.Number);
             PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
             await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));
+        }
+    }
+
+    /// <summary>
+    /// Handles a conflicted PR: extracts linked issues and swaps eligible issue labels
+    /// to <c>agent:next</c> so the pipeline dispatches a rework run.
+    /// </summary>
+    private async Task TriggerReworkAsync(
+        IRepositoryProvider repoProvider,
+        IIssueProvider issueProvider,
+        string issueProviderId,
+        PullRequestSummary pr,
+        KeyValuePair<string, object?> repoTag,
+        CancellationToken ct)
+    {
+        IReadOnlyList<string> linkedIssues;
+        try
+        {
+            linkedIssues = await repoProvider.ExtractLinkedIssuesAsync(pr.Number, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "HousekeepingService: failed to extract linked issues for PR #{PrNumber}: {Error}",
+                pr.Number, ex.Message);
+            return;
+        }
+
+        if (linkedIssues.Count == 0)
+        {
+            _logger.Information(
+                "HousekeepingService: PR #{PrNumber} is conflicted but has no linked issues — skipping rework",
+                pr.Number);
+            return;
+        }
+
+        foreach (var issueIdString in linkedIssues)
+        {
+            await TrySwapIssueToNextAsync(issueProvider, issueProviderId, pr.Number, issueIdString, repoTag, ct);
+        }
+    }
+
+    /// <summary>
+    /// Fetches the issue and swaps its label to <c>agent:next</c> if it is in a terminal state
+    /// and not already active.
+    /// </summary>
+    private async Task TrySwapIssueToNextAsync(
+        IIssueProvider issueProvider,
+        string issueProviderId,
+        int prNumber,
+        string issueIdString,
+        KeyValuePair<string, object?> repoTag,
+        CancellationToken ct)
+    {
+        IssueIdentifier issueId = issueIdString;
+        IssueDetail issue;
+        try
+        {
+            issue = await issueProvider.GetIssueAsync(issueId, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "HousekeepingService: failed to fetch issue {IssueId} linked to PR #{PrNumber}: {Error}",
+                issueIdString, prNumber, ex.Message);
+            return;
+        }
+
+        // Skip if the issue already has an active label — it is already queued or in-progress.
+        if (issue.Labels.Any(l => ActiveLabels.Contains(l)))
+        {
+            _logger.Debug(
+                "HousekeepingService: issue {IssueId} linked to conflicted PR #{PrNumber} already has an active label — skipping rework swap",
+                issueIdString, prNumber);
+            return;
+        }
+
+        // Perform the label swap: add agent:next first, then remove all other agent labels.
+        // Uses AgentLabelOperations.SwapAsync directly to avoid a dependency on ILabelService
+        // (which lives in CodingAgentWebUI.Orchestration and is not available in this assembly).
+        try
+        {
+            await AgentLabelOperations.SwapAsync(
+                removeLabel: (label, c) => issueProvider.RemoveLabelAsync(issueId, label, c),
+                addLabel: (label, c) => issueProvider.AddLabelAsync(issueId, label, c),
+                newLabel: AgentLabels.Next,
+                ct: ct,
+                expectedCurrentLabel: issue.Labels.FirstOrDefault(l => l.StartsWith("agent:", StringComparison.Ordinal)),
+                identifier: issueIdString);
+
+            PipelineTelemetry.HousekeepingConflictReworkTriggered.Add(1, repoTag);
+            _logger.Information(
+                "HousekeepingService: re-queued issue {IssueId} for rework due to merge conflict on PR #{PrNumber} (issueProvider: {IssueProviderId})",
+                issueIdString, prNumber, issueProviderId);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "HousekeepingService: failed to swap label on issue {IssueId} linked to PR #{PrNumber}: {Error}",
+                issueIdString, prNumber, ex.Message);
         }
     }
 

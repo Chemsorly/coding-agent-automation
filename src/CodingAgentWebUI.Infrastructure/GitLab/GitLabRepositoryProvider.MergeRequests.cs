@@ -19,7 +19,7 @@ public partial class GitLabRepositoryProvider
     // ── Auto-branch-update (spec 040) ─────────────────────────────────────────
 
     /// <inheritdoc />
-    public async Task<bool?> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
+    public async Task<PrMergeabilityStatus> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
     {
         var mr = await ExecuteWithResilienceAsync(
             client =>
@@ -28,6 +28,12 @@ public partial class GitLabRepositoryProvider
                 return Task.Run(() => mrClient[prNumber], ct);
             },
             "IsPullRequestBehindBase", ct);
+
+        // Check HasConflicts first — this is the definitive conflict signal from GitLab.
+        // It takes precedence over DetailedMergeStatus because GitLab has no dedicated
+        // "conflicted" enum member; HasConflicts is the canonical way to detect conflicts.
+        if (mr.HasConflicts)
+            return PrMergeabilityStatus.Conflicted;
 
         // mr.DetailedMergeStatus is DynamicEnum<DetailedMergeStatus> (a struct).
         // StringValue is the raw JSON string when the value was deserialized from an unknown/string value;
@@ -39,22 +45,22 @@ public partial class GitLabRepositoryProvider
 
         // Known "need_rebase" — not in NGitLab 12 enum, compare by raw string
         if (string.Equals(rawString, "need_rebase", StringComparison.Ordinal))
-            return true;
+            return PrMergeabilityStatus.Behind;
 
         // Map known enum members
         if (status == DetailedMergeStatus.Mergeable)
-            return false;
+            return PrMergeabilityStatus.UpToDate;
         if (status == DetailedMergeStatus.NotOpen)
-            return false;
+            return PrMergeabilityStatus.UpToDate;
         if (status == DetailedMergeStatus.Checking
             || status == DetailedMergeStatus.Unchecked
             || status == DetailedMergeStatus.NotApproved
             || status == DetailedMergeStatus.CiStillRunning
             || status == DetailedMergeStatus.Preparing)
-            return null;
+            return PrMergeabilityStatus.Blocked;
 
         // All other values (unknown raw strings, unrecognised enum members): conservative
-        return null;
+        return PrMergeabilityStatus.Unknown;
     }
 
     /// <inheritdoc />
