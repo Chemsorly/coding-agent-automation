@@ -5,7 +5,6 @@ using Moq;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
@@ -20,8 +19,6 @@ public class ProjectDetailSectionComponentTests : BunitContext
     {
         _mockStore = new Mock<IConfigurationStore>();
         SetupDefaults();
-
-        Services.AddSingleton(new ProjectChangeNotifier());
     }
 
     private void SetupDefaults()
@@ -190,8 +187,6 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
     {
         _mockStore = new Mock<IConfigurationStore>();
         SetupDefaults();
-
-        Services.AddSingleton(new ProjectChangeNotifier());
     }
 
     private void SetupDefaults()
@@ -530,7 +525,6 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
     {
         _mockStore = new Mock<IConfigurationStore>();
         SetupDefaults();
-        Services.AddSingleton(new ProjectChangeNotifier());
     }
 
     private void SetupDefaults()
