@@ -100,20 +100,15 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<Pipeline.Interfaces.IWorkItemQueryService>(sp =>
             sp.GetRequiredService<WorkItemTransitionService>());
 
+        // ── AnalysisStalenessDetector (DB mode — evaluates analysis freshness signals) ──
+        services.AddSingleton<Orchestration.Dispatch.AnalysisStalenessDetector>(sp =>
+            new Orchestration.Dispatch.AnalysisStalenessDetector(
+                sp.GetRequiredService<Pipeline.Interfaces.IWorkItemQueryService>(), Log.Logger));
+
         // ── DispatchOrchestrationService (DB modes only — null in Legacy mode) ──
-        // TODO: StalenessDetector is set here as a side-effect on the shared DispatchInfrastructure
-        // singleton. This creates an implicit DI resolution ordering dependency: if AgentJobDispatcher
-        // dispatches before IDispatchOrchestrationService is first resolved, staleness detection will
-        // silently no-op. Consider registering AnalysisStalenessDetector as its own singleton and
-        // injecting it into DispatchInfrastructure's constructor to make the dependency explicit.
         services.AddSingleton<IDispatchOrchestrationService>(sp =>
         {
             var infra = sp.GetRequiredService<DispatchInfrastructure>();
-            var workItemQuery = sp.GetRequiredService<Pipeline.Interfaces.IWorkItemQueryService>();
-
-            // Construct shared staleness detector and attach to DispatchInfrastructure.
-            // Both DispatchOrchestrationService and AgentJobDispatcher use _infra.StalenessDetector.
-            infra.StalenessDetector = new Orchestration.Dispatch.AnalysisStalenessDetector(workItemQuery, Log.Logger);
 
             return new DispatchOrchestrationService(
                 new Orchestration.Dispatch.DispatchOrchestrationServiceDependencies(
