@@ -135,4 +135,28 @@ public sealed class LabelSwapServiceTests
             l => l.SwapLabelStrictAsync(Provider, Identifier, AgentLabels.InProgress, Kind, It.IsAny<CancellationToken>()),
             Times.Once);
     }
+
+    // ── Constructor guard tests ─────────────────────────────────────────────
+
+    [Fact]
+    public void Constructor_NullLabelService_ThrowsArgumentNullException()
+    {
+        var act = () => new LabelSwapService(
+            null!,
+            NullLogger<LabelSwapService>.Instance);
+
+        act.Should().Throw<ArgumentNullException>()
+            .WithParameterName("labelService");
+    }
+
+    [Fact]
+    public void Constructor_NullLogger_ThrowsArgumentNullException()
+    {
+        var act = () => new LabelSwapService(
+            _mockLabelService.Object,
+            null!);
+
+        act.Should().Throw<ArgumentNullException>()
+            .WithParameterName("logger");
+    }
 }
