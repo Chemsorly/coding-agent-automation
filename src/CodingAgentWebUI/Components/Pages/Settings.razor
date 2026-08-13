@@ -17,7 +17,6 @@
 @inject IProviderFactory ProviderFactory
 @inject ModelFetchService ModelFetchService
 @inject NotificationService NotificationService
-@inject ProjectChangeNotifier ProjectNotifier
 @inject FeatureFlags Features
 @inject JobTemplateStore? JobTemplateStore
 @inject IServiceProvider ServiceProvider
@@ -342,7 +341,6 @@
     {
         if (_treeNav is not null)
             await _treeNav.RefreshProjectsAsync();
-        ProjectNotifier.NotifyChanged();
     }
 
     public async ValueTask DisposeAsync()
