@@ -7,18 +7,165 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.Reflection;
 
 namespace CodingAgentWebUI.Orchestration.UnitTests.Dispatch;
 
 /// <summary>
-/// Unit tests for <see cref="ConsolidationDispatchHandler.CascadeFailureAsync"/>.
-/// Covers: IConsolidationService path, direct IConsolidationRunStore fallback path,
-/// non-fatal exception handling, and no-op when neither dependency is available.
+/// Unit tests for <see cref="ConsolidationDispatchHandler"/>.
+/// Covers: lifecycle (leader-wait, poll-loop, leadership loss), CascadeFailureAsync paths,
+/// non-fatal exception handling, constructor paths.
 /// </summary>
 public class ConsolidationDispatchHandlerTests
 {
+    // ── Lifecycle tests ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Verifies that PollAndDispatchConsolidationAsync is never called before leadership is acquired.
+    /// Uses a negative-assertion pattern with fixed delay since there is no event to signal on.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WaitsForLeadership_DoesNotPollUntilLeader()
+    {
+        // Arrange: leader election where IsLeader=false and LeaderToken never fires
+        var leaderCts = new CancellationTokenSource();
+        var leaderElectionMock = new Mock<ILeaderElectionService>();
+        leaderElectionMock.SetupGet(l => l.IsLeader).Returns(false);
+        leaderElectionMock.SetupGet(l => l.LeaderToken).Returns(leaderCts.Token);
+
+        // Track if BuildStateAsync (and thus PollAndDispatchConsolidationAsync) is called
+        var dbFactoryMock = new Mock<IDbContextFactory<PipelineDbContext>>();
+        var dbFactoryCalled = false;
+        dbFactoryMock
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => dbFactoryCalled = true)
+            .ThrowsAsync(new InvalidOperationException("should not be called"));
+
+        var handler = CreateHandlerWithLeaderElection(leaderElectionMock.Object, dbFactoryMock.Object);
+
+        var hostStopCts = new CancellationTokenSource();
+
+        // Act: start ExecuteAsync — it should remain in the 2s leader-wait loop
+        var executeTask = InvokeExecuteAsync(handler, hostStopCts.Token);
+
+        // Wait 300ms — enough to confirm no poll occurred (leader-wait loop is 2s)
+        await Task.Delay(300);
+
+        hostStopCts.Cancel();
+        await WaitForTaskCompletion(executeTask);
+
+        // Assert: db factory (and thus PollAndDispatchConsolidationAsync) was never called
+        dbFactoryCalled.Should().BeFalse("handler must not poll before acquiring leadership");
+    }
+
+    /// <summary>
+    /// Verifies that the poll loop stops promptly when the leadership token is cancelled.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_LeadershipLost_StopsPollLoop()
+    {
+        // Arrange: start as leader
+        var leaderCts = new CancellationTokenSource();
+        var leaderElectionMock = new Mock<ILeaderElectionService>();
+        leaderElectionMock.SetupGet(l => l.IsLeader).Returns(true);
+        leaderElectionMock.SetupGet(l => l.LeaderToken).Returns(leaderCts.Token);
+
+        // Signal the first poll via a TCS wired to CreateDbContextAsync
+        var firstPollTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var dbFactoryMock = new Mock<IDbContextFactory<PipelineDbContext>>();
+        dbFactoryMock
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken ct) =>
+            {
+                firstPollTcs.TrySetResult(true);
+                // Let the cancellation propagate naturally
+                await Task.Delay(Timeout.Infinite, ct);
+                return null!;
+            });
+
+        var handler = CreateHandlerWithLeaderElection(leaderElectionMock.Object, dbFactoryMock.Object);
+
+        var hostStopCts = new CancellationTokenSource();
+        var executeTask = InvokeExecuteAsync(handler, hostStopCts.Token);
+
+        // Wait for at least one poll cycle to confirm entry into the poll loop
+        var polled = await Task.WhenAny(firstPollTcs.Task, Task.Delay(5000));
+        polled.Should().Be(firstPollTcs.Task, "should start polling after acquiring leadership");
+
+        // Act: cancel leadership
+        leaderCts.Cancel();
+        leaderElectionMock.SetupGet(l => l.IsLeader).Returns(false);
+
+        // Give brief time for the loop to exit, then stop the host
+        await Task.Delay(200);
+        hostStopCts.Cancel();
+
+        var completed = await Task.WhenAny(executeTask, Task.Delay(5000));
+        completed.Should().Be(executeTask, "ExecuteAsync should exit promptly after leadership loss + host stop");
+    }
+
+    /// <summary>
+    /// Verifies that after leadership is re-acquired, polling resumes.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_LeadershipLostAndReacquired_ResumesPolling()
+    {
+        // Arrange: start as leader with a controllable token
+        var firstLeaderCts = new CancellationTokenSource();
+        var currentIsLeader = true;
+        var currentLeaderToken = firstLeaderCts.Token;
+
+        var leaderElectionMock = new Mock<ILeaderElectionService>();
+        leaderElectionMock.SetupGet(l => l.IsLeader).Returns(() => currentIsLeader);
+        leaderElectionMock.SetupGet(l => l.LeaderToken).Returns(() => currentLeaderToken);
+
+        var pollCallCount = 0;
+        var firstPollTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondPollTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var dbFactoryMock = new Mock<IDbContextFactory<PipelineDbContext>>();
+        dbFactoryMock
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken ct) =>
+            {
+                var count = Interlocked.Increment(ref pollCallCount);
+                if (count == 1) firstPollTcs.TrySetResult(true);
+                if (count >= 2) secondPollTcs.TrySetResult(true);
+                await Task.Delay(Timeout.Infinite, ct);
+                return null!;
+            });
+
+        var handler = CreateHandlerWithLeaderElection(leaderElectionMock.Object, dbFactoryMock.Object);
+
+        var hostStopCts = new CancellationTokenSource();
+        var executeTask = InvokeExecuteAsync(handler, hostStopCts.Token);
+
+        // Wait for first poll to confirm we're in the loop
+        var firstPollDone = await Task.WhenAny(firstPollTcs.Task, Task.Delay(5000));
+        firstPollDone.Should().Be(firstPollTcs.Task, "should poll after initial leadership");
+
+        // Simulate leadership loss
+        currentIsLeader = false;
+        firstLeaderCts.Cancel();
+        await Task.Delay(200);
+
+        // Re-acquire leadership with a new token
+        var secondLeaderCts = new CancellationTokenSource();
+        currentLeaderToken = secondLeaderCts.Token;
+        currentIsLeader = true;
+
+        // Wait for second poll — leader-wait loop checks every 2s, use 5s budget
+        var secondPollDone = await Task.WhenAny(secondPollTcs.Task, Task.Delay(5000));
+        secondPollDone.Should().Be(secondPollTcs.Task, "should resume polling after leadership re-acquisition");
+
+        hostStopCts.Cancel();
+        await WaitForTaskCompletion(executeTask);
+    }
+
+
     [Fact]
     public async Task CascadeFailureAsync_WhenConsolidationServiceAvailable_DelegatesToService()
     {
@@ -171,7 +318,196 @@ public class ConsolidationDispatchHandlerTests
         savedRun.CompletedAtUtc.Should().NotBeNull();
     }
 
-    // ── Constructor coverage ─────────────────────────────────────────────
+    // ── Dispose / base-class coverage ────────────────────────────────────
+
+    [Fact]
+    public void Dispose_WithRateLimiter_DisposesWithoutThrowing()
+    {
+        // Exercises LeaderElectedPollingService.Dispose() which calls RateLimiter?.Dispose()
+        // (lines 65-68 of LeaderElectedPollingService.cs).
+        var handler = CreateHandler();
+        // Must not throw — Dispose is called once and cleans up the TokenBucketRateLimiter.
+        handler.Invoking(h => h.Dispose())
+            .Should().NotThrow("Dispose must not throw regardless of RateLimiter state");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OnPollCycleThrowsUnhandledException_SwallowsAndContinues()
+    {
+        // Exercises the catch (Exception ex) path in LeaderElectedPollingService.RunLeadershipTermAsync
+        // (lines 135-137) where an unhandled error in a poll cycle is logged and swallowed.
+        var leaderCts = new CancellationTokenSource();
+        var leaderElectionMock = new Mock<ILeaderElectionService>();
+        leaderElectionMock.SetupGet(l => l.IsLeader).Returns(true);
+        leaderElectionMock.SetupGet(l => l.LeaderToken).Returns(leaderCts.Token);
+
+        var callCount = 0;
+        var secondCallTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var dbFactoryMock = new Mock<IDbContextFactory<PipelineDbContext>>();
+        dbFactoryMock
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken ct) =>
+            {
+                var count = Interlocked.Increment(ref callCount);
+                if (count == 1)
+                {
+                    // First poll: throw a non-cancellation exception to exercise the swallow path
+                    throw new InvalidOperationException("simulated poll error");
+                }
+                // Second poll: signal and block to prevent further loops
+                secondCallTcs.TrySetResult(true);
+                await Task.Delay(Timeout.Infinite, ct);
+                return null!;
+            });
+
+        var handler = CreateHandlerWithLeaderElection(leaderElectionMock.Object, dbFactoryMock.Object);
+
+        var hostStopCts = new CancellationTokenSource();
+        var executeTask = InvokeExecuteAsync(handler, hostStopCts.Token);
+
+        // Wait for the second poll — proves the service continued after swallowing the first exception
+        var secondPoll = await Task.WhenAny(secondCallTcs.Task, Task.Delay(5000));
+        secondPoll.Should().Be(secondCallTcs.Task, "handler must continue polling after swallowing an unhandled poll exception");
+
+        hostStopCts.Cancel();
+        await WaitForTaskCompletion(executeTask);
+    }
+
+    // ── TransitionConsolidationRunToRunningAsync coverage ────────────────
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenServiceAvailable_DelegatesToService()
+    {
+        // Happy path: IConsolidationService is present; should call TransitionToRunningAsync.
+        var mockService = new Mock<IConsolidationService>();
+        mockService
+            .Setup(s => s.TransitionToRunningAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var handler = CreateHandler(consolidationService: mockService.Object);
+
+        var request = CreateMinimalRequest(runId: "run-tx-001");
+        await handler.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None);
+
+        mockService.Verify(s => s.TransitionToRunningAsync(
+            (RunId)"run-tx-001", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenServiceThrows_IsNonFatal()
+    {
+        // Error path: IConsolidationService throws a non-cancellation exception; should be swallowed.
+        var mockService = new Mock<IConsolidationService>();
+        mockService
+            .Setup(s => s.TransitionToRunningAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
+
+        var handler = CreateHandler(consolidationService: mockService.Object);
+        var request = CreateMinimalRequest(runId: "run-tx-err");
+
+        await handler.Invoking(h => h.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None))
+            .Should().NotThrowAsync("TransitionConsolidationRunToRunningAsync must swallow non-cancellation exceptions");
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenNoRunId_IsNoOp()
+    {
+        // Edge case: request has no RunId and no IssueIdentifier — method returns early without calling anything.
+        var mockService = new Mock<IConsolidationService>();
+        var handler = CreateHandler(consolidationService: mockService.Object);
+
+        var request = CreateMinimalRequest(runId: null, issueIdentifier: null);
+        await handler.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None);
+
+        mockService.Verify(s => s.TransitionToRunningAsync(
+            It.IsAny<RunId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenServiceUnavailable_UsesDirectStoreWrite()
+    {
+        // Fallback path: no IConsolidationService; should transition run from Queued to Running via store.
+        var existingRun = new ConsolidationRun
+        {
+            RunId = "run-tx-002",
+            Status = ConsolidationRunStatus.Queued,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5)
+        };
+
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync((RunId)"run-tx-002", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingRun);
+        mockStore
+            .Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object); // no consolidationService
+
+        var request = CreateMinimalRequest(runId: "run-tx-002");
+        await handler.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None);
+
+        mockStore.Verify(s => s.SaveRunAsync(
+            It.Is<ConsolidationRun>(r =>
+                r.RunId == "run-tx-002" &&
+                r.Status == ConsolidationRunStatus.Running),
+            CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenStoreRunNotQueued_DoesNotOverwrite()
+    {
+        // Direct-store path: run already Running; should not overwrite status.
+        var existingRun = new ConsolidationRun
+        {
+            RunId = "run-tx-003",
+            Status = ConsolidationRunStatus.Running, // already Running — not Queued
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync((RunId)"run-tx-003", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingRun);
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object);
+        var request = CreateMinimalRequest(runId: "run-tx-003");
+
+        await handler.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None);
+
+        mockStore.Verify(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never, "should not overwrite a run that is already in Running state");
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenStoreThrows_IsNonFatal()
+    {
+        // Direct-store path: store throws; should be swallowed.
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("store failure"));
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object);
+        var request = CreateMinimalRequest(runId: "run-tx-err2");
+
+        await handler.Invoking(h => h.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None))
+            .Should().NotThrowAsync("must swallow exceptions from the direct-store fallback path");
+    }
+
+    [Fact]
+    public async Task TransitionConsolidationRunToRunningAsync_WhenNoServiceAndNoStore_IsNoOp()
+    {
+        // No service, no store — method should return early without throwing.
+        var handler = CreateHandler(); // both null
+        var request = CreateMinimalRequest(runId: "run-tx-004");
+
+        await handler.Invoking(h => h.TransitionConsolidationRunToRunningAsync(request, CancellationToken.None))
+            .Should().NotThrowAsync("must be a silent no-op when neither service nor store registered");
+    }
 
     [Fact]
     public void Constructor_PublicDepsOnly_ConstructsWithoutThrowing()
@@ -250,6 +586,57 @@ public class ConsolidationDispatchHandlerTests
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Invokes ExecuteAsync via BackgroundService reflection — matches the pattern in
+    /// DispatchServiceLifecycleTests. Must NOT use IHostedService.StartAsync, which
+    /// wraps exceptions differently and can mask failures.
+    /// </summary>
+    private static Task InvokeExecuteAsync(ConsolidationDispatchHandler handler, CancellationToken stoppingToken)
+    {
+        var method = typeof(BackgroundService).GetMethod("ExecuteAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        return (Task)method!.Invoke(handler, [stoppingToken])!;
+    }
+
+    private static async Task WaitForTaskCompletion(Task task)
+    {
+        try { await task.ConfigureAwait(false); }
+        catch (OperationCanceledException) { /* expected on host stop */ }
+    }
+
+    /// <summary>
+    /// Creates a ConsolidationDispatchHandler with a controllable leader election and a
+    /// provided IDbContextFactory mock. The factory is used by BuildStateAsync, so calls
+    /// to CreateDbContextAsync reflect poll cycle invocations.
+    /// </summary>
+    private static ConsolidationDispatchHandler CreateHandlerWithLeaderElection(
+        ILeaderElectionService leaderElection,
+        IDbContextFactory<PipelineDbContext> dbFactory)
+    {
+        var kubeClientMock = new Mock<IKubernetesJobClient>();
+
+        var transitionService = new WorkItemTransitionService(
+            dbFactory,
+            NullLogger<WorkItemTransitionService>.Instance);
+
+        var lifecycle = new DispatchLifecycleService(
+            kubeClientMock.Object,
+            transitionService,
+            new DispatchServiceOptions());
+
+        var options = new DispatchServiceOptions { PollIntervalSeconds = 1, RateLimitPerSecond = 100 };
+
+        return new ConsolidationDispatchHandler(
+            new ConsolidationDispatchHandlerDependencies(
+                dbFactory,
+                leaderElection,
+                lifecycle,
+                JobTemplateStore.CreateEmpty(),
+                Mock.Of<IConfiguration>(),
+                TransitionService: transitionService),
+            options);
+    }
+
     private static ConsolidationDispatchHandler CreateHandler(
         IConsolidationService? consolidationService = null,
         IConsolidationRunStore? consolidationRunStore = null)
@@ -270,13 +657,32 @@ public class ConsolidationDispatchHandlerTests
         return new ConsolidationDispatchHandler(
             new ConsolidationDispatchHandlerDependencies(
                 dbFactoryMock.Object,
-            leaderElectionMock.Object,
-            lifecycle,
-            JobTemplateStore.CreateEmpty(),
-            Mock.Of<IConfiguration>(),
-            TransitionService: transitionService,
-            ConsolidationRunStore: consolidationRunStore,
-            ConsolidationService: consolidationService),
+                leaderElectionMock.Object,
+                lifecycle,
+                JobTemplateStore.CreateEmpty(),
+                Mock.Of<IConfiguration>(),
+                TransitionService: transitionService,
+                ConsolidationRunStore: consolidationRunStore,
+                ConsolidationService: consolidationService),
             new DispatchServiceOptions());
+    }
+
+    /// <summary>
+    /// Creates a minimal <see cref="JobDistributionRequest"/> for transition tests.
+    /// Allows overriding <paramref name="runId"/> and <paramref name="issueIdentifier"/>.
+    /// </summary>
+    private static JobDistributionRequest CreateMinimalRequest(string? runId = "run-test", string? issueIdentifier = "owner/repo#1")
+    {
+        return new JobDistributionRequest
+        {
+            IssueIdentifier = issueIdentifier ?? string.Empty,
+            IssueProviderConfigId = "provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "kiro",
+            TimeoutSeconds = 300,
+            RunId = runId
+        };
     }
 }
