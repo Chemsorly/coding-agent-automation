@@ -43,6 +43,18 @@ public class GitLabRepositoryProviderAutoUpdateTests
         result.Should().Be(PrMergeabilityStatus.Behind, "need_rebase means the branch is behind and needs rebase");
     }
 
+    [Fact]
+    public async Task IsPullRequestBehindBaseAsync_ConflictRawStatus_ReturnsConflicted()
+    {
+        // "conflict" is a real GitLab API value for textual merge conflicts,
+        // distinct from "need_rebase". Must map to Conflicted so the rework path triggers
+        // and the in-flight slot is freed (not stuck on Unknown indefinitely).
+        var provider = CreateProviderWithRawStatus("conflict");
+        var result = await provider.Provider.IsPullRequestBehindBaseAsync(1, CancellationToken.None);
+        result.Should().Be(PrMergeabilityStatus.Conflicted,
+            "'conflict' raw status must map to Conflicted — not Unknown — to prevent permanent slot occupation");
+    }
+
     // ── IsPullRequestBehindBaseAsync — UpToDate ───────────────────────────────
 
     [Fact]

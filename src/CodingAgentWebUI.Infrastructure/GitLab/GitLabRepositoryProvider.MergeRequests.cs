@@ -47,6 +47,13 @@ public partial class GitLabRepositoryProvider
         if (string.Equals(rawString, "need_rebase", StringComparison.Ordinal))
             return PrMergeabilityStatus.Behind;
 
+        // "conflict" — real GitLab API value (distinct from "need_rebase") meaning a
+        // textual merge conflict exists. Map to Conflicted so the rework path triggers
+        // and the in-flight slot is freed. HasConflicts above covers most cases, but
+        // this handles the eventual-consistency window where HasConflicts may lag.
+        if (string.Equals(rawString, "conflict", StringComparison.Ordinal))
+            return PrMergeabilityStatus.Conflicted;
+
         // Map known enum members
         if (status == DetailedMergeStatus.Mergeable)
             return PrMergeabilityStatus.UpToDate;
