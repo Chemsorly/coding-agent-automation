@@ -78,10 +78,11 @@ public partial class GitLabRepositoryProvider
         catch (GitLabException ex) when ((int)ex.StatusCode == 409)
         {
             // 409 = GitLab server transaction lock busy — not a git conflict.
-            // Safe to retry on the next poll tick.
-            Log.Warning(
-                "GitLab rebase for MR !{PrNumber} returned 409 (server lock busy); will retry next tick",
-                prNumber);
+            // Re-throw so AutoUpdatePrBranchService.UpdateAsync catches it and increments
+            // the Failed counter (rather than incorrectly counting as Succeeded).
+            // The MR is re-triggered on the next tick when mergeability resolves.
+            throw new InvalidOperationException(
+                $"GitLab rebase for MR !{prNumber} returned 409 (server lock busy); will retry next tick", ex);
         }
     }
 

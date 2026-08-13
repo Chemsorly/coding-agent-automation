@@ -25,6 +25,13 @@ public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
     private readonly ILogger _logger;
 
     /// <summary>
+    /// Controls how fire-and-forget update tasks are dispatched.
+    /// In production: discards the task (true fire-and-forget).
+    /// In tests: overridden to await synchronously so assertions are deterministic.
+    /// </summary>
+    internal Func<Task, Task> FireAndForget { get; set; } = task => { _ = task; return Task.CompletedTask; };
+
+    /// <summary>
     /// In-flight PR numbers per repository, persisted across poll ticks.
     /// The slot represents the CI run lifetime, not the HTTP call lifetime.
     /// </summary>
@@ -46,6 +53,10 @@ public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
         int effectiveConcurrencyLimit,
         CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(repoProvider);
+        ArgumentNullException.ThrowIfNull(repoProviderId);
+        ArgumentNullException.ThrowIfNull(agentDonePrs);
+
         var limit = Math.Max(1, effectiveConcurrencyLimit);
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", repoProviderId);
 
@@ -143,7 +154,7 @@ public sealed class AutoUpdatePrBranchService : IAutoUpdatePrBranchService
             // mergeability == true → add to in-flight and fire update
             inFlight.Add(pr.Number);
             PipelineTelemetry.AutoUpdateTriggered.Add(1, repoTag);
-            _ = UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag);
+            await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));
         }
     }
 

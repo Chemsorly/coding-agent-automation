@@ -82,11 +82,15 @@ public sealed partial class PipelineLoopService
         // Auto-update step: trigger server-side branch updates on eligible agent:done PRs.
         // Called even when agentDonePrQueues is empty — eviction pass must run to free slots.
         // agentDonePrQueues not counted in EmitCyclePollMetrics — not dispatched work items.
+        // Deduplicated by RepoProviderId: if multiple templates share the same repo, only the
+        // first (lowest index in PollableTemplates) processes that repo this cycle.
         if (_autoUpdateService is { } autoUpdateService)
         {
+            var processedRepos = new HashSet<string>(StringComparer.Ordinal);
             foreach (var template in snapshot.PollableTemplates)
             {
                 if (!template.AutoUpdatePrBranches) continue;
+                if (!processedRepos.Add(template.RepoProviderId)) continue; // already processed this repo this cycle
                 if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId, out var repoProvider)) continue;
                 if (!repoProvider.SupportsServerSideBranchUpdate) continue;
 

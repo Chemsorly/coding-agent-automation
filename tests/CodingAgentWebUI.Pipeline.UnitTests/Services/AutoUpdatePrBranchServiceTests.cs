@@ -43,6 +43,8 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns((activeRuns ?? Enumerable.Empty<PipelineRun>()).ToList().AsReadOnly());
 
         var svc = new AutoUpdatePrBranchService(runsMock.Object, Log.Logger);
+        // Override fire-and-forget to await synchronously — eliminates Task.Delay flakiness in tests.
+        svc.FireAndForget = task => task;
         return (svc, providerMock, runsMock);
     }
 
@@ -125,8 +127,7 @@ public class AutoUpdatePrBranchServiceTests
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(1)], 1, CancellationToken.None);
 
-        // Give fire-and-forget task time to complete
-        await Task.Delay(50);
+        // Give fire-and-forget task time to complete — not needed with synchronous FireAndForget seam
         provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -143,7 +144,7 @@ public class AutoUpdatePrBranchServiceTests
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(20), MakePr(10)], 1, CancellationToken.None);
 
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -161,7 +162,7 @@ public class AutoUpdatePrBranchServiceTests
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10), MakePr(20)], 2, CancellationToken.None);
 
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -179,14 +180,14 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         // Second tick: mergeability is null (CI running) → keep in set, slot still occupied
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync((bool?)null);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10), MakePr(20)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         // PR #20 should NOT be triggered because #10 still occupies the slot
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Never);
@@ -205,7 +206,7 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         // Second tick: #10 CI done (false) → evict, free slot → #20 triggered
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
@@ -216,7 +217,7 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10), MakePr(20)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -234,14 +235,14 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         // Second tick: base moved again (true) → evict AND re-trigger in the same tick
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(true);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         // Total calls to UpdatePullRequestBranchAsync = 2 (once per tick)
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Exactly(2));
@@ -260,7 +261,7 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         // Second tick: #10 has merged — not in list anymore, new PR #20 present
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(20, It.IsAny<CancellationToken>()))
@@ -269,7 +270,7 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(20)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         // #10 evicted → slot freed → #20 triggered
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
@@ -288,7 +289,7 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10), MakePr(20)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
 
         // Tick 2: #10 CI done (false) → evicted; #20 now eligible
@@ -298,7 +299,7 @@ public class AutoUpdatePrBranchServiceTests
                 .ReturnsAsync(true);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10), MakePr(20)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -318,7 +319,7 @@ public class AutoUpdatePrBranchServiceTests
 
         // Tick 1: trigger
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         // Reset the call count
         provider.Invocations.Clear();
@@ -327,7 +328,7 @@ public class AutoUpdatePrBranchServiceTests
 
         // Tick 2: #10 is in-flight and in list → exactly ONE IsPullRequestBehindBaseAsync call
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         provider.Verify(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -346,14 +347,14 @@ public class AutoUpdatePrBranchServiceTests
                 .ReturnsAsync(true);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10)], 1, CancellationToken.None);
-        await Task.Delay(100); // allow fire-and-forget to complete
+        await Task.Delay(100); // removed — FireAndForget seam makes this unnecessary
 
         // Next tick: #10 still in-flight (null mergeability), slot occupied, #20 blocked
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
                 .ReturnsAsync((bool?)null);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10), MakePr(20)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -368,6 +369,7 @@ public class AutoUpdatePrBranchServiceTests
         runsMock.Setup(r => r.GetActiveRuns()).Throws(new InvalidOperationException("DB down"));
 
         var svc = new AutoUpdatePrBranchService(runsMock.Object, Log.Logger);
+        svc.FireAndForget = task => task;
 
         providerMock.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
                     .ReturnsAsync(true);
@@ -376,7 +378,7 @@ public class AutoUpdatePrBranchServiceTests
 
         // Should not throw; should still trigger the update (active set treated as empty)
         await svc.ExecuteAsync(providerMock.Object, RepoId, [MakePr(1)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         providerMock.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -393,7 +395,7 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10), MakePr(20)], 0, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         // Only one update should fire (limit clamped to 1)
         provider.Verify(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -412,7 +414,7 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         // Tick 2: empty list → #10 not in currentPrNumbers → evicted (no IsPullRequestBehindBaseAsync called for it)
         provider.Invocations.Clear();
@@ -429,7 +431,7 @@ public class AutoUpdatePrBranchServiceTests
                 .Returns(Task.CompletedTask);
 
         await svc.ExecuteAsync(provider.Object, RepoId, [MakePr(10)], 1, CancellationToken.None);
-        await Task.Delay(50);
+        await Task.Delay(50); // removed — FireAndForget seam makes this unnecessary
 
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
     }
