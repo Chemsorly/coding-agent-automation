@@ -144,23 +144,50 @@ public class WorkItemMetricsBackgroundServiceTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_DbError_ResetsMeasurementsToEmpty()
     {
-        // Use a factory that throws on CreateDbContextAsync
-        var throwingFactory = new ThrowingDbContextFactory();
-        var service = new WorkItemMetricsBackgroundService(throwingFactory);
+        // 1. Seed a WorkItem so the first tick has something to report
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(CreateWorkItem(WorkItemStatus.Pending, "kiro,dotnet"));
+            await db.SaveChangesAsync();
+        }
+
+        // 2. Use a switchable factory: starts non-throwing so the first tick succeeds,
+        //    then can be flipped to throw to trigger the error-reset path.
+        //    Both _dbFactory (used for seeding above) and SwitchableDbContextFactory share the same
+        //    in-memory database via _dbOptions, so the seeded WorkItem is visible to 'switchable'.
+        var switchable = new SwitchableDbContextFactory(_dbOptions);
+        var service = new WorkItemMetricsBackgroundService(switchable);
         using var cts = new CancellationTokenSource();
 
         await service.StartAsync(cts.Token);
-        // Wait for the immediate first tick to complete (and fail)
-        await Task.Delay(200);
 
-        _measurements.Clear();
-        _listener.RecordObservableInstruments();
+        // 3. Poll until measurements are non-empty — proves the service ran and reported data.
+        //    If the service fails to start or the gauge callback is never registered, the
+        //    deadline expires and NotBeEmpty() fails the test (satisfying acceptance criterion 4).
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            _measurements.Clear();
+            _listener.RecordObservableInstruments();
+            if (_measurements.Count > 0) break;
+            await Task.Delay(50);
+        }
+        _measurements.Should().NotBeEmpty("the service should have populated measurements on the first tick");
 
-        // TODO: This assertion is weak — it also passes if the service never executed at all.
-        // Strengthen by seeding valid data first, confirming the gauge reports it, then triggering
-        // a failure and asserting measurements reset from non-empty to empty.
-        // Should be empty (reset to []) not null/stale
-        _measurements.Should().BeEmpty();
+        // 4. Trigger DB failure on the next tick
+        switchable.ShouldThrow = true;
+
+        // 5. Poll until measurements are empty — proves the service reset its cache on error.
+        //    Allow up to 15s: the PeriodicTimer fires every 10s, plus execution margin.
+        deadline = DateTime.UtcNow.AddSeconds(15);
+        while (DateTime.UtcNow < deadline)
+        {
+            _measurements.Clear();
+            _listener.RecordObservableInstruments();
+            if (_measurements.Count == 0) break;
+            await Task.Delay(50);
+        }
+        _measurements.Should().BeEmpty("the service should reset to empty on DB failure");
 
         cts.Cancel();
         await service.StopAsync(CancellationToken.None);
@@ -207,10 +234,28 @@ public class WorkItemMetricsBackgroundServiceTests : IDisposable
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(CreateDbContext());
     }
 
-    private sealed class ThrowingDbContextFactory : IDbContextFactory<PipelineDbContext>
+    private sealed class SwitchableDbContextFactory : IDbContextFactory<PipelineDbContext>
     {
-        public PipelineDbContext CreateDbContext() => throw new InvalidOperationException("Simulated DB failure");
-        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) =>
-            throw new InvalidOperationException("Simulated DB failure");
+        private readonly DbContextOptions<PipelineDbContext> _options;
+
+        /// <summary>
+        /// When false (default), delegates to the real in-memory DB.
+        /// When true, throws to simulate a DB failure on the next tick.
+        /// </summary>
+        public bool ShouldThrow { get; set; }
+
+        public SwitchableDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
+
+        public PipelineDbContext CreateDbContext()
+        {
+            if (ShouldThrow) throw new InvalidOperationException("Simulated DB failure");
+            return new TestPipelineDbContext(_options);
+        }
+
+        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+        {
+            if (ShouldThrow) throw new InvalidOperationException("Simulated DB failure");
+            return Task.FromResult<PipelineDbContext>(new TestPipelineDbContext(_options));
+        }
     }
 }

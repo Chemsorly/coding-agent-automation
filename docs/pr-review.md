@@ -66,6 +66,7 @@ Each pipeline job template has independent toggles:
 | `ImplementationEnabled` | `true` | Template processes issues for implementation |
 | `ReviewEnabled` | `true` | Template processes PRs for code review |
 | `DecompositionEnabled` | `false` | Template processes epics for decomposition |
+| `HousekeepingEnabled` | `false` | Template manages agent:done PRs for branch updates, conflict rework, and stale branch cleanup |
 
 Set `ReviewEnabled: false` to disable PR review for a template, or `ImplementationEnabled: false` to create a review-only template. See [Pipeline Orchestration](pipeline-orchestration.md) for the full technical reference.
 

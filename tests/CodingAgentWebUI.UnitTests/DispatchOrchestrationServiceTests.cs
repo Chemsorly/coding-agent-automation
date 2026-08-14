@@ -17,7 +17,9 @@ namespace CodingAgentWebUI.UnitTests;
 /// </summary>
 public class DispatchOrchestrationServiceTests
 {
-    private readonly Mock<IConfigurationStore> _mockConfigStore = new();
+    private readonly Mock<IAgentProfileStore>   _mockAgentProfileStore  = new();
+    private readonly Mock<IConfigurationStore>  _mockProviderConfigStore = new();
+    private readonly Mock<IPipelineConfigStore> _mockPipelineConfigStore = new();
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
@@ -71,7 +73,7 @@ public class DispatchOrchestrationServiceTests
             new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
-            _mockConfigStore.Object,
+            _mockProviderConfigStore.Object,
             _mockLogger.Object);
     }
 
@@ -85,7 +87,7 @@ public class DispatchOrchestrationServiceTests
             .Returns(mockRepoProvider.Object);
 
         var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: _mockConfigStore.Object,
+            configStore: _mockProviderConfigStore.Object,
             providerFactory: _mockProviderFactory.Object,
             logger: _mockLogger.Object,
             runService: _runService);
@@ -100,49 +102,64 @@ public class DispatchOrchestrationServiceTests
                 runCreator,
                 _runService,
                 _mockWorkDistributor.Object,
-                // TODO: Use separate typed mocks for each sub-interface (IAgentProfileStore, IProviderConfigStore,
-                // IPipelineConfigStore, IProjectStore) to detect parameter wiring errors and verify correct routing.
-                _mockConfigStore.Object,
-                _mockConfigStore.Object,
-                _mockConfigStore.Object),
+                _mockAgentProfileStore.Object,
+                _mockProviderConfigStore.Object,
+                _mockPipelineConfigStore.Object),
             _mockLogger.Object);
     }
 
     private void SetupStandardMocks()
     {
-        _mockConfigStore
+        // LoadAgentProfilesAsync: set up on both mocks — direct call via _agentProfileStore
+        // (ResolveProfileByLabelsAsync) and via _resolution.ConfigStore (DispatchResolutionService).
+        // TODO: Both mocks are configured with the same return value, which means a wiring swap
+        // between _mockAgentProfileStore and _mockProviderConfigStore would still pass these tests.
+        // For stronger swap-detection, use distinct profiles per mock (or leave one unconfigured
+        // and verify which mock receives the call).
+        _mockAgentProfileStore
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { TestProfile });
 
-        _mockConfigStore
+        _mockProviderConfigStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { TestProfile });
+
+        _mockProviderConfigStore
             .Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
 
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
 
-        _mockConfigStore
+        // LoadPipelineConfigAsync: set up on both mocks — direct call via _pipelineConfigStore
+        // (ResolveRequiredLabelsInternalAsync) and via _resolution.ConfigStore
+        // (PipelineConfigurationResolver.ResolveAsync inside PrepareDispatchCoreAsync).
+        _mockPipelineConfigStore
             .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestConfig);
 
-        _mockConfigStore
+        _mockProviderConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestConfig);
+
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestRepoConfig);
 
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("agent-config-1", ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestAgentConfig);
 
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { TestRepoConfig });
 
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { TestAgentConfig });
 
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
 
@@ -154,7 +171,7 @@ public class DispatchOrchestrationServiceTests
             ProviderType = "github",
             Kind = ProviderKind.Issue
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(issueConfig);
 
@@ -266,8 +283,12 @@ public class DispatchOrchestrationServiceTests
     public async Task PrepareAsync_WhenNoProfileMatches_ReturnsNull()
     {
         SetupStandardMocks();
-        // Override profiles to return empty (no match)
-        _mockConfigStore
+        // Override profiles to return empty (no match) — must override on both mocks since
+        // LoadAgentProfilesAsync is called from two paths (direct _agentProfileStore and _resolution.ConfigStore).
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        _mockProviderConfigStore
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
 
@@ -293,7 +314,7 @@ public class DispatchOrchestrationServiceTests
     {
         SetupStandardMocks();
         // Override to return null for issue config
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
 
@@ -405,7 +426,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -455,7 +476,10 @@ public class DispatchOrchestrationServiceTests
             MatchLabels = ["python", "dotnet", "aws"],
             McpServers = []
         };
-        _mockConfigStore
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { multiLabelProfile });
+        _mockProviderConfigStore
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { multiLabelProfile });
 
@@ -468,7 +492,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["python", "dotnet", "aws"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -497,7 +521,10 @@ public class DispatchOrchestrationServiceTests
     public async Task PrepareDistributionRequestAsync_WhenNoMatchingProfile_ReturnsNull()
     {
         SetupStandardMocks();
-        _mockConfigStore
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        _mockProviderConfigStore
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
 
@@ -510,7 +537,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["java"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -555,10 +582,10 @@ public class DispatchOrchestrationServiceTests
             RequiredLabels = ["dotnet"],
             SteeringContent = "## Repo Instructions\nFollow the decisions in decisions.md."
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithSteering);
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { repoConfigWithSteering });
 
@@ -598,7 +625,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -637,7 +664,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -688,7 +715,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -726,8 +753,11 @@ public class DispatchOrchestrationServiceTests
     public async Task PrepareReviewDistributionRequestAsync_WhenOrchestrationFails_ReturnsNull()
     {
         SetupStandardMocks();
-        // No profiles → orchestration fails
-        _mockConfigStore
+        // No profiles → orchestration fails — must override on both mocks.
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        _mockProviderConfigStore
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
 
@@ -739,7 +769,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -776,7 +806,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -837,7 +867,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -900,7 +930,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -937,7 +967,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -975,7 +1005,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -1015,7 +1045,7 @@ public class DispatchOrchestrationServiceTests
             Kind = ProviderKind.Repository,
             RequiredLabels = ["dotnet"]
         };
-        _mockConfigStore
+        _mockProviderConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
@@ -1062,7 +1092,10 @@ public class DispatchOrchestrationServiceTests
             McpServers = [new McpServerConfig { Name = "context7", Type = "stdio", Command = "uvx" }]
         };
         SetupStandardMocks();
-        _mockConfigStore
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profileWithMcp });
+        _mockProviderConfigStore
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { profileWithMcp });
 
@@ -1112,7 +1145,10 @@ public class DispatchOrchestrationServiceTests
             McpServers = [new McpServerConfig { Name = "web-search", Type = "stdio", Command = "uvx", Disabled = false }]
         };
         SetupStandardMocks();
-        _mockConfigStore
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profileWithMcp });
+        _mockProviderConfigStore
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { profileWithMcp });
 
@@ -1157,7 +1193,10 @@ public class DispatchOrchestrationServiceTests
             McpServers = [new McpServerConfig { Name = "context7", Type = "stdio", Command = "uvx" }]
         };
         SetupStandardMocks();
-        _mockConfigStore
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profileWithMcp });
+        _mockProviderConfigStore
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { profileWithMcp });
 
@@ -1209,11 +1248,6 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             new ReviewerResolver(),
             mockConfigStore.Object,
             _mockLogger.Object);
-        var orchestration = TestUtilities.TestOrchestrationFactory.CreateMinimal(
-            configStore: mockConfigStore.Object,
-            providerFactory: mockProviderFactory.Object,
-            logger: _mockLogger.Object,
-            runService: _runService);
 
         var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: mockConfigStore.Object,
@@ -1221,6 +1255,10 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             logger: _mockLogger.Object,
             runService: _runService);
 
+        // TODO: Split mockConfigStore into three separate typed mocks (Mock<IAgentProfileStore>,
+        // Mock<IConfigurationStore>, Mock<IPipelineConfigStore>) so a constructor parameter swap
+        // between the second and third store slots would be caught by test failures here too
+        // (acceptance criterion: parameter swap causes at least one test to fail).
         _service = new DispatchOrchestrationService(
             new DispatchOrchestrationServiceDependencies(
                 new DispatchInfrastructure(
@@ -1229,7 +1267,6 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
                 runCreator,
                 _runService,
                 new Mock<IWorkDistributor>().Object,
-                // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
                 mockConfigStore.Object,
                 mockConfigStore.Object,
                 mockConfigStore.Object),
@@ -1375,11 +1412,6 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
             new ReviewerResolver(),
             mockConfigStore.Object,
             _mockLogger.Object);
-        var orchestration = TestUtilities.TestOrchestrationFactory.CreateMinimal(
-            configStore: mockConfigStore.Object,
-            providerFactory: mockProviderFactory.Object,
-            logger: _mockLogger.Object,
-            runService: _runService);
 
         var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: mockConfigStore.Object,
@@ -1387,6 +1419,10 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
             logger: _mockLogger.Object,
             runService: _runService);
 
+        // TODO: Split mockConfigStore into three separate typed mocks (Mock<IAgentProfileStore>,
+        // Mock<IConfigurationStore>, Mock<IPipelineConfigStore>) so a constructor parameter swap
+        // between the second and third store slots would be caught by test failures here too
+        // (acceptance criterion: parameter swap causes at least one test to fail).
         _service = new DispatchOrchestrationService(
             new DispatchOrchestrationServiceDependencies(
                 new DispatchInfrastructure(
@@ -1395,7 +1431,6 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
                 runCreator,
                 _runService,
                 _mockWorkDistributor.Object,
-                // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
                 mockConfigStore.Object,
                 mockConfigStore.Object,
                 mockConfigStore.Object),
