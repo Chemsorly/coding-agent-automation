@@ -153,18 +153,11 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
     {
         var method = typeof(BackgroundService).GetMethod("ExecuteAsync",
             BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var task = (Task)method.Invoke(service, [stoppingToken])!;
-        // ConfigureAwait(false) prevents capturing xUnit's single-threaded context,
-        // which would deadlock when the test awaits the background loop task.
-        // TODO [WARNING]: The ContinueWith + GetAwaiter().GetResult() re-throw pattern causes
-        // unhandled exceptions from ExecuteAsync to surface on TaskScheduler.Default rather than
-        // propagating through `await`, which crashes the test process instead of failing the test
-        // with a useful assertion message. Consider returning the raw task and letting `await`
-        // propagate exceptions normally through xUnit's exception handling.
-        return task.ContinueWith(t => t.GetAwaiter().GetResult(),
-            CancellationToken.None,
-            TaskContinuationOptions.None,
-            TaskScheduler.Default);
+        // Return the raw task so exceptions propagate through `await` in xUnit's normal
+        // exception-handling path. A ContinueWith + GetAwaiter().GetResult() rethrow would
+        // surface any TaskCanceledException as an unobserved exception on TaskScheduler.Default,
+        // which trips the SetupCommandRunnerTests.RunAsync_Timeout_DoesNotProduceUnobservedTaskException test.
+        return (Task)method.Invoke(service, [stoppingToken])!;
     }
 
     private static async Task WaitUntil(Func<bool> condition, TimeSpan timeout, string failMessage)
