@@ -207,6 +207,22 @@ stateDiagram-v2
 
 Re-queueing from `agent:error` or `agent:needs-refinement` requires manual dispatch via the web UI — closed-loop mode skips issues that still carry these labels. Re-queueing from `agent:wont-do` or `agent:cancelled` works in both manual and closed-loop modes.
 
+## Housekeeping
+
+The `HousekeepingService` is a per-poll-cycle service that manages `agent:done` PRs and stale agent branches. It is enabled per template via `HousekeepingEnabled: true` on the `PipelineJobTemplate`.
+
+### What it does each poll cycle
+
+1. **Conflict rework** — For every `agent:done` PR that is merge-conflicted: extracts linked issues, swaps any terminal `agent:*` label back to `agent:next` so the pipeline dispatches a rework run. Skips issues already carrying an active label (`agent:next`, `agent:in-progress`, `agent:epic`, `agent:epic-approved`).
+
+2. **Automated branch updates** — For every `agent:done` PR that is behind its base branch: triggers a server-side branch update (fire-and-forget). Respects the `effectiveConcurrencyLimit` (template-level `HousekeepingConcurrencyLimit` or global fallback) — at most N updates are in-flight per repository at any time. Draft PRs and branches with active runs are skipped.
+
+3. **Stale branch cleanup** (when `HousekeepingBranchCleanupEnabled: true`) — On a configurable interval (`HousekeepingBranchCleanupIntervalMinutes`, default 60 min): lists all `feature/auto-*` branches, skips any that have an open PR or whose linked issue carries an active label, deletes the rest.
+
+### Configuration
+
+See [Configuration — Housekeeping](configuration.md#housekeeping) for all settings and their defaults.
+
 ## Error Handling
 
 Any step can transition to `Failed` on error. The pipeline catches exceptions at each phase boundary and records the failure reason. Specific behaviors:
@@ -362,8 +378,9 @@ Each `PipelineJobTemplate` has three independent toggles controlling which work 
 | `ImplementationEnabled` | `bool` | `true` | Template polls for issues and dispatches implementation jobs |
 | `ReviewEnabled` | `bool` | `true` | Template polls for PRs and dispatches review jobs |
 | `DecompositionEnabled` | `bool` | `false` | Template polls for epics and dispatches decomposition jobs |
+| `HousekeepingEnabled` | `bool` | `false` | Template evaluates `agent:done` PRs for branch updates, conflict rework, and stale branch cleanup |
 
-The existing `Enabled` property acts as a master switch — when `false`, all work types (implementation, review, and decomposition) are disabled regardless of individual flags.
+The existing `Enabled` property acts as a master switch — when `false`, all work types (implementation, review, decomposition, and housekeeping) are disabled regardless of individual flags.
 
 #### Configuration Examples
 
