@@ -1,4 +1,3 @@
-using System.Text.Json;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
@@ -90,85 +89,6 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         return base.OnDisconnectedAsync(exception);
     }
 
-    // ── Registration ────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Registers an agent in the registry. Validates that the <c>agentId</c> in the message
-    /// matches the <c>agentId</c> query parameter from the connection and the authenticated identity.
-    /// </summary>
-    public async Task RegisterAgent(AgentRegistrationMessage message)
-    {
-        ArgumentNullException.ThrowIfNull(message);
-
-        var queryAgentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
-        if (!string.Equals(message.AgentId.Value, queryAgentId, StringComparison.Ordinal))
-        {
-            _logger.Warning(
-                "RegisterAgent rejected — message agentId '{MessageAgentId}' does not match query param '{QueryAgentId}'",
-                message.AgentId, queryAgentId);
-            throw new HubException($"AgentId mismatch: message has '{message.AgentId}' but connection has '{queryAgentId}'");
-        }
-
-        // Defense-in-depth: validate authenticated identity matches registration
-        var authenticatedAgentId = Context.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (!string.IsNullOrEmpty(authenticatedAgentId) && authenticatedAgentId != "agent" &&
-            !string.Equals(message.AgentId.Value, authenticatedAgentId, StringComparison.Ordinal))
-        {
-            _logger.Warning(
-                "RegisterAgent rejected — authenticated as '{AuthenticatedAgentId}' but registering as '{MessageAgentId}'",
-                authenticatedAgentId, message.AgentId);
-            throw new HubException($"AgentId mismatch: authenticated as '{authenticatedAgentId}' but registering as '{message.AgentId}'");
-        }
-
-        // If an agent with the same ID is already connected with a different connectionId,
-        // force-disconnect the old connection before re-registering.
-        var existingEntry = _facade.GetByAgentId(message.AgentId);
-        if (existingEntry is not null && existingEntry.ConnectionId != Context.ConnectionId
-            && existingEntry.Status != AgentStatus.Disconnected)
-        {
-            _logger.Information("Agent {AgentId} re-registered (connection={NewConn}), force-disconnecting old connection {OldConn}",
-                message.AgentId, Context.ConnectionId, existingEntry.ConnectionId);
-            try
-            {
-                await Clients.Client(existingEntry.ConnectionId).ForceDisconnect();
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to send ForceDisconnect to old connection {OldConn} for agent {AgentId}",
-                    existingEntry.ConnectionId, message.AgentId);
-            }
-        }
-
-        _facade.Register(message, Context.ConnectionId);
-
-        await _orphanRecoveryService.RecoverOrphanedStateAsync(message, message.AgentId);
-    }
-
-    /// <summary>
-    /// Deregisters an agent from the registry.
-    /// Only allows the caller to deregister their own agent identity.
-    /// </summary>
-    public Task DeregisterAgent(AgentId agentId)
-    {
-        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
-        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)).
-        // ThrowIfNull on a struct field reports "Value" as the parameter name in exceptions, not "agentId".
-        ArgumentNullException.ThrowIfNull(agentId.Value);
-
-        // Security: verify caller owns this agentId (prevents cross-agent deregistration)
-        var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, agentId.Value, StringComparison.Ordinal))
-        {
-            _logger.Warning(
-                "DeregisterAgent rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, agentId);
-            return Task.CompletedTask;
-        }
-
-        _facade.Deregister(agentId);
-        return Task.CompletedTask;
-    }
-
     // ── Heartbeat ───────────────────────────────────────────────────────
 
     /// <summary>
@@ -184,7 +104,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         // Security: verify caller owns this agentId (prevents heartbeat spoofing)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, message.AgentId.Value, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, message.AgentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "Heartbeat rejected — caller connection {ConnectionId} does not own agent {AgentId}",
@@ -220,38 +140,14 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Agent signals it is ready for the next job. Triggers job dequeue.
-    /// </summary>
-    public Task AgentReady(AgentId agentId)
-    {
-        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
-        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) — see DeregisterAgent.
-        ArgumentNullException.ThrowIfNull(agentId.Value);
-
-        // Security: verify caller owns this agentId (prevents spurious drain signals)
-        var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, agentId.Value, StringComparison.Ordinal))
-        {
-            _logger.Warning(
-                "AgentReady rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, agentId);
-            return Task.CompletedTask;
-        }
-
-        _logger.Information("Agent {AgentId} signaled ready", agentId);
-        _facade.Signal();
-        return Task.CompletedTask;
-    }
-
     // ── Shared private helpers ──────────────────────────────────────────
 
     /// <summary>
     /// Swaps the agent label on the entity (issue or PR) using the shared issue operations service.
-    /// Routes based on <see cref="PipelineRun.LabelTargetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
+    /// Routes based on <paramref name="targetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
     /// </summary>
-    private Task SwapLabelAsync(PipelineRun run, string newLabel)
-        => _issueOps.SwapLabelAsync(run, newLabel);
+    private Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind)
+        => _issueOps.SwapLabelAsync(run, newLabel, targetKind);
 
     /// <summary>
     /// Posts a comment on the issue using the shared issue operations service.
@@ -259,4 +155,9 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// </summary>
     private Task<string?> PostCommentViaIssueProviderAsync(PipelineRun run, string body)
         => _issueOps.PostCommentViaIssueProviderAsync(run, body);
+
+    /// <summary>
+    /// Determines the correct <see cref="LabelTargetKind"/> based on the run's <see cref="PipelineRun.RunType"/>.
+    /// </summary>
+    private static LabelTargetKind GetLabelTargetKind(PipelineRun run) => run.LabelTargetKind;
 }
