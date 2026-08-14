@@ -114,9 +114,8 @@ public class AgentWorkerServiceJobSlotTests
             PipelineConfiguration = new PipelineConfiguration()
         };
 
-        var handler = GetPrivateMethod(service, "HandleAssignConsolidationJobAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
+        var consolidationJobHandler = GetConsolidationJobHandler(service);
+        await consolidationJobHandler.HandleAssignConsolidationJobAsync(message);
 
         // Handler completes without throwing; active job unchanged
         GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"existing-job");
@@ -279,5 +278,13 @@ public class AgentWorkerServiceJobSlotTests
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_slotManager' not found");
         return (AgentJobSlotManager)field.GetValue(service)!;
+    }
+
+    private static ConsolidationJobHandler GetConsolidationJobHandler(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_consolidationJobHandler",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_consolidationJobHandler' not found");
+        return (ConsolidationJobHandler)field.GetValue(service)!;
     }
 }
