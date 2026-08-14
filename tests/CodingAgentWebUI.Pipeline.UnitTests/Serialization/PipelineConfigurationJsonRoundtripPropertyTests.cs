@@ -183,6 +183,23 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
     }
 
     /// <summary>
+    /// TimeSpan edge-case roundtrip: verifies that TimeSpanConverter correctly handles
+    /// TimeSpan.MaxValue and negative durations, which are excluded from the property-based
+    /// test by its PositiveInt generators.
+    /// </summary>
+    [Theory]
+    [InlineData(long.MaxValue)]   // TimeSpan.MaxValue ticks
+    [InlineData(-1L)]             // negative duration (-100ns)
+    [InlineData(-36000000000L)]   // negative duration (-1 hour)
+    public void TimeSpanConverter_EdgeCase_Roundtrip(long ticks)
+    {
+        var value = new TimeSpan(ticks);
+        var json = JsonSerializer.Serialize(value, PipelineJsonOptions.Default);
+        var restored = JsonSerializer.Deserialize<TimeSpan>(json, PipelineJsonOptions.Default);
+        restored.Should().Be(value);
+    }
+
+    /// <summary>
     /// Lenient deserialization: verifies that PipelineJsonOptions.Lenient can deserialize
     /// JSON produced by PipelineJsonOptions.Default (cross-options compatibility).
     /// This is the actual production path: Default writes to disk, Lenient reads from disk.
