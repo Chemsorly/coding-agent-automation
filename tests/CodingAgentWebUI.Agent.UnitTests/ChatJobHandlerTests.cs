@@ -56,7 +56,6 @@ public class ChatJobHandlerTests : IDisposable
             Mock.Of<System.Net.Http.IHttpClientFactory>(),
             lifetime,
             signalAgentReady ?? (() => Task.CompletedTask),
-            agentId: "test-chat",
             isOpenCodeProvider: isOpenCodeProvider,
             isChatMode: isChatMode,
             logger: mockLogger);

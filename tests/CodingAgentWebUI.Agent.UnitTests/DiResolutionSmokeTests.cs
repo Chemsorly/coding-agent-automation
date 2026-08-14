@@ -355,7 +355,6 @@ public class DiResolutionSmokeTests
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<IHostApplicationLifetime>(),
                 signalAgentReady: () => Task.CompletedTask,
-                agentId: "test-agent-signalr-smoke",
                 isOpenCodeProvider: false,
                 isChatMode: false,
                 logger: Log.Logger),

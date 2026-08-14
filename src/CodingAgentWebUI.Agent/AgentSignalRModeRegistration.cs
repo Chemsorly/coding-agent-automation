@@ -36,11 +36,9 @@ internal static class AgentSignalRModeRegistration
                 try
                 {
                     var connectionLifecycle = sp.GetRequiredService<AgentConnectionLifecycle>();
-                    // TODO: Pass IHostApplicationLifetime.ApplicationStopping as the CancellationToken here.
-                    // The original AgentWorkerService.SignalAgentReadyAsync() passed _hostApplicationLifetime.ApplicationStopping,
-                    // which ensures the InvokeAsync is cancelled during shutdown rather than hanging until the connection drops.
+                    var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
                     await connectionLifecycle.Connection.InvokeAsync(
-                        HubMethodNames.AgentReady, agentId);
+                        HubMethodNames.AgentReady, agentId, lifetime.ApplicationStopping);
                 }
                 catch (Exception ex)
                 {
@@ -73,23 +71,15 @@ internal static class AgentSignalRModeRegistration
                 {
                     try
                     {
-                        // TODO: Inconsistency — agentId is captured as a primitive but lifecycle is re-resolved via the
-                        // container on every invocation. Because AgentConnectionLifecycle is a singleton this is harmless,
-                        // but it diverges from the pattern used in the AgentJobSlotManager lambda above (which also
-                        // re-resolves). Consider capturing the already-resolved lifecycle directly to make the pattern
-                        // consistent and resilient to future registration changes.
-                        // TODO: Pass IHostApplicationLifetime.ApplicationStopping as the CancellationToken here, consistent
-                        // with the original AgentWorkerService.SignalAgentReadyAsync(). Without it, a pending AgentReady
-                        // invocation during shutdown may hang until the connection drops naturally.
                         var lifecycle = sp.GetRequiredService<AgentConnectionLifecycle>();
-                        await lifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, agentId);
+                        var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
+                        await lifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, agentId, lifetime.ApplicationStopping);
                     }
                     catch (Exception ex)
                     {
                         logger.Warning(ex, "Failed to send AgentReady signal from ChatJobHandler");
                     }
                 },
-                agentId: agentId,
                 isOpenCodeProvider: isOpenCodeProvider,
                 isChatMode: isChatMode,
                 logger: logger);

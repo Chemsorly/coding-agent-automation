@@ -45,8 +45,13 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 {
     private readonly AgentConnectionLifecycle _connectionLifecycle;
     private readonly AgentJobSlotManager _slotManager;
+    // S1450 suppressed: these fields are used only in the constructor for event wiring, but they
+    // must remain as fields so tests can access the handler instances via reflection to verify
+    // handler behavior in integration with the service's slot manager and lifecycle.
+#pragma warning disable S1450
     private readonly ChatJobHandler _chatJobHandler;
     private readonly ConsolidationJobHandler _consolidationJobHandler;
+#pragma warning restore S1450
     private readonly IPipelineExecutor _executor;
     private readonly IJobCompletionReporter _completionReporter;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
@@ -272,19 +277,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
         _logger.Information("Cancelling job {JobId}", jobId);
         return Task.CompletedTask;
-    }
-
-    private async Task SignalAgentReadyAsync()
-    {
-        try
-        {
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, _agentId,
-                _hostApplicationLifetime.ApplicationStopping);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to send AgentReady signal");
-        }
     }
 
     private async Task ShutdownAsync()

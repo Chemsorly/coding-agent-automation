@@ -16,9 +16,9 @@ internal static class TestAgentWorkerServiceFactory
 {
     /// <summary>
     /// Creates an <see cref="AgentWorkerService"/> with default mocks suitable for unit tests.
-    /// Returns the service along with its slot manager and connection lifecycle for test manipulation.
+    /// Returns the service along with its slot manager, connection lifecycle, and chat handler for test manipulation.
     /// </summary>
-    public static (AgentWorkerService Service, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle)
+    public static (AgentWorkerService Service, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle, ChatJobHandler ChatHandler)
         CreateWithComponents(
             IHostApplicationLifetime? hostLifetime = null,
             IJobCompletionReporter? completionReporter = null,
@@ -66,7 +66,7 @@ internal static class TestAgentWorkerServiceFactory
             lifetime,
             mockLogger));
 
-        return (service, slotManager, lifecycle);
+        return (service, slotManager, lifecycle, chatHandler);
     }
 
     /// <summary>
@@ -104,7 +104,6 @@ internal static class TestAgentWorkerServiceFactory
             Mock.Of<IHttpClientFactory>(),
             lifetime,
             signalAgentReady ?? (() => Task.CompletedTask),
-            agentId: "test-agent",
             isOpenCodeProvider: isOpenCodeProvider,
             isChatMode: isChatMode,
             logger: mockLogger);

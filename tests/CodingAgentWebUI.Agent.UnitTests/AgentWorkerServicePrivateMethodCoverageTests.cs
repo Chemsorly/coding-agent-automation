@@ -72,23 +72,17 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that SignalAgentReadyAsync passes _hostApplicationLifetime.ApplicationStopping
-    /// to InvokeAsync so the call is cancelled during application shutdown.
+    /// Verifies that the signalAgentReady delegate in AgentSignalRModeRegistration passes
+    /// ApplicationStopping to InvokeAsync so the call is cancelled during application shutdown.
     /// </summary>
     [Fact]
-    public void SourceCode_SignalAgentReadyAsync_PassesApplicationStopping()
+    public void SourceCode_SignalAgentReady_PassesApplicationStopping()
     {
         var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentSignalRModeRegistration.cs"));
 
-        var methodStart = source.IndexOf("private async Task SignalAgentReadyAsync()", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        methodBody.Should().Contain("_hostApplicationLifetime.ApplicationStopping",
-            "SignalAgentReadyAsync must pass ApplicationStopping to InvokeAsync so it is cancelled during shutdown");
+        source.Should().Contain("ApplicationStopping",
+            "signalAgentReady delegates must pass ApplicationStopping to InvokeAsync so they are cancelled during shutdown");
     }
 
     /// <summary>

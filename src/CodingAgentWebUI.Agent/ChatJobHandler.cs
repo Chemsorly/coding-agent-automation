@@ -26,11 +26,6 @@ public sealed class ChatJobHandler
     private readonly System.Net.Http.IHttpClientFactory _httpClientFactory;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly Func<Task> _signalAgentReady;
-    // TODO: _agentId is dead state — it is assigned in the constructor but never read within ChatJobHandler.
-    // The signalAgentReady delegate already has agentId baked in via the DI lambda closure, so this field
-    // is redundant. Remove _agentId and the corresponding constructor parameter to eliminate the risk of
-    // a future method silently using a stale or wrong agent ID from this field.
-    private readonly string _agentId;
     private readonly bool _isOpenCodeProvider;
     private readonly bool _isChatMode;
     private readonly Serilog.ILogger _logger;
@@ -42,7 +37,6 @@ public sealed class ChatJobHandler
         System.Net.Http.IHttpClientFactory httpClientFactory,
         IHostApplicationLifetime hostApplicationLifetime,
         Func<Task> signalAgentReady,
-        string agentId,
         bool isOpenCodeProvider,
         bool isChatMode,
         Serilog.ILogger logger)
@@ -61,7 +55,6 @@ public sealed class ChatJobHandler
         _httpClientFactory = httpClientFactory;
         _hostApplicationLifetime = hostApplicationLifetime;
         _signalAgentReady = signalAgentReady;
-        _agentId = agentId;
         _isOpenCodeProvider = isOpenCodeProvider;
         _isChatMode = isChatMode;
         _logger = logger;
@@ -78,12 +71,13 @@ public sealed class ChatJobHandler
 
         _logger.Information("Accepted chat prompt for session {SessionId}", message.SessionId);
 
-        // TODO: Guard against null ChatCancellationToken after TryAcquireChatSlot succeeds. If a race with a
-        // concurrent release causes ChatCancellationToken to be null here, the null-forgiving operator (!) silently
-        // yields a NullReferenceException that is never observed (async event handler), and the acquired chat slot
-        // is never released — permanently locking the agent in Busy state. Add a null check and release the slot
-        // explicitly before returning if ChatCancellationToken is unexpectedly null.
-        var chatToken = _slotManager.ChatCancellationToken!.Value;
+        if (_slotManager.ChatCancellationToken is not { } chatToken)
+        {
+            _logger.Warning("ChatCancellationToken is null after TryAcquireChatSlot for session {SessionId} — releasing slot", message.SessionId);
+            _slotManager.ReleaseChatSlot();
+            return;
+        }
+
         var activeTask = Task.Run(async () => await RunChatTaskAsync(message, chatToken), CancellationToken.None);
         _slotManager.SetActiveChatTask(activeTask);
     }

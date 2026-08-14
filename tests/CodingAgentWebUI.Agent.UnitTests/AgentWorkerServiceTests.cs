@@ -63,7 +63,7 @@ public class AgentWorkerServiceTests : IDisposable
     public void Constructor_ThrowsOnNullExecutor()
     {
         var mockLogger = new Mock<Serilog.ILogger>();
-        var (_, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (_, slotManager, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
         var (chatHandler, consolidationHandler) = CreateHandlersForLifecycle(lifecycle, slotManager, mockLogger.Object);
 
         var act = () => new AgentWorkerService(
@@ -74,7 +74,7 @@ public class AgentWorkerServiceTests : IDisposable
     [Fact]
     public void Constructor_ThrowsOnNullLogger()
     {
-        var (_, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (_, slotManager, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
         var logger = new Mock<Serilog.ILogger>().Object;
         var (chatHandler, consolidationHandler) = CreateHandlersForLifecycle(lifecycle, slotManager, logger);
 

@@ -88,7 +88,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         SetEnv("AGENT_CHAT_MODE", "true");
 
         // Act — constructor reads AGENT_CHAT_MODE; chat mode pods skip OnAssignJob wiring
-        var (service, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (service, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         // Assert — in chat mode, OnAssignJob must be null (no subscriber wired)
         // We verify the behavioral contract: the handler subscription is conditional.
@@ -126,7 +126,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         SetEnv("AGENT_CHAT_MODE", "false");
 
         // Act
-        var (service, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (service, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         // Assert — non-chat mode: OnAssignJob must have a subscriber
         var onAssignJobDelegate = GetEventDelegate(lifecycle, "OnAssignJob");
@@ -141,7 +141,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         UnsetEnv("AGENT_CHAT_MODE");
 
         // Act
-        var (service, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (service, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         // Assert
         var onAssignJobDelegate = GetEventDelegate(lifecycle, "OnAssignJob");
@@ -174,7 +174,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
 
         // NOTE: This constructor call WILL NOT COMPILE until task 6.2 adds IHostApplicationLifetime
         // to AgentWorkerService's constructor. That is the expected red state.
-        var (service, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents(
+        var (service, slotManager, lifecycle, chatHandler3) = TestAgentWorkerServiceFactory.CreateWithComponents(
             hostLifetime: mockLifetime.Object);
 
         // Set up an active chat session for the handler to match on
@@ -184,7 +184,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         SetPrivateField(slotManager, "_activeChatTask", Task.CompletedTask);
 
         // Act
-        var chatJobHandler = GetChatJobHandler(service);
+        var chatJobHandler = GetChatJobHandler(chatHandler3);
         await chatJobHandler.HandleCancelChatAsync(sessionId);
 
         // Assert 1: StopApplication() must have been called in chat mode
@@ -220,7 +220,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         var mockLifetime = new Mock<IHostApplicationLifetime>();
         mockLifetime.Setup(l => l.ApplicationStopping).Returns(CancellationToken.None);
 
-        var (service, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents(
+        var (service, slotManager, lifecycle, chatHandler4) = TestAgentWorkerServiceFactory.CreateWithComponents(
             hostLifetime: mockLifetime.Object);
 
         var sessionId = "cancel-session-non-chat-mode";
@@ -229,7 +229,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         SetPrivateField(slotManager, "_activeChatTask", Task.CompletedTask);
 
         // Act
-        var chatJobHandler = GetChatJobHandler(service);
+        var chatJobHandler = GetChatJobHandler(chatHandler4);
         await chatJobHandler.HandleCancelChatAsync(sessionId);
 
         // Assert — StopApplication must NOT be called in non-chat mode
@@ -258,7 +258,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         var mockLifetime = new Mock<IHostApplicationLifetime>();
         mockLifetime.Setup(l => l.ApplicationStopping).Returns(CancellationToken.None);
 
-        var (service, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents(
+        var (service, slotManager, lifecycle, chatHandler5) = TestAgentWorkerServiceFactory.CreateWithComponents(
             hostLifetime: mockLifetime.Object);
 
         var sessionId = "chat-end-signal-session";
@@ -271,7 +271,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
             "before cancel, _chatEndSource must not be signalled");
 
         // Act — HandleCancelChatAsync should call lifecycle.SignalChatEnd()
-        var chatJobHandler = GetChatJobHandler(service);
+        var chatJobHandler = GetChatJobHandler(chatHandler5);
         await chatJobHandler.HandleCancelChatAsync(sessionId);
 
         // Assert — _chatEndSource must now be completed (SignalChatEnd was called)
@@ -317,7 +317,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
                     return Task.FromResult(0);
                 });
 
-        var (service, slotManager, _) = TestAgentWorkerServiceFactory.CreateWithComponents(
+        var (service, slotManager, _, chatHandler6) = TestAgentWorkerServiceFactory.CreateWithComponents(
             orchestrator: mockOrchestrator.Object);
 
         var chatWindowId = Guid.NewGuid().ToString();
@@ -338,7 +338,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         };
 
         // Act — invoke HandleChatPromptAsync; it runs a background Task.Run
-        var chatJobHandler = GetChatJobHandler(service);
+        var chatJobHandler = GetChatJobHandler(chatHandler6);
         await chatJobHandler.HandleChatPromptAsync(message);
 
         // Wait for background task to complete
@@ -388,7 +388,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
                     return Task.FromResult(0);
                 });
 
-        var (service, slotManager, _) = TestAgentWorkerServiceFactory.CreateWithComponents(
+        var (service, slotManager, _, chatHandler7) = TestAgentWorkerServiceFactory.CreateWithComponents(
             orchestrator: mockOrchestrator.Object);
 
         // Pre-create workspace so Directory.CreateDirectory doesn't fail on CI
@@ -404,7 +404,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         };
 
         // Act
-        var chatJobHandler = GetChatJobHandler(service);
+        var chatJobHandler = GetChatJobHandler(chatHandler7);
         await chatJobHandler.HandleChatPromptAsync(message);
 
         var chatTask = GetPrivateField<Task?>(slotManager, "_activeChatTask");
@@ -464,11 +464,5 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         return (T?)field.GetValue(obj);
     }
 
-    private static ChatJobHandler GetChatJobHandler(AgentWorkerService service)
-    {
-        var field = typeof(AgentWorkerService).GetField("_chatJobHandler",
-            BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("Field '_chatJobHandler' not found");
-        return (ChatJobHandler)field.GetValue(service)!;
-    }
+    private static ChatJobHandler GetChatJobHandler(ChatJobHandler chatJobHandler) => chatJobHandler;
 }
