@@ -17,4 +17,5 @@ public sealed record PipelineLoopServiceDependencies
     public required IWorkDistributor? WorkDistributor { get; init; }
     public required IDispatchOrchestrationService? DispatchOrchestration { get; init; }
     public required IDependencyChecker? DependencyChecker { get; init; }
+    public required IHousekeepingService? HousekeepingService { get; init; }
 }

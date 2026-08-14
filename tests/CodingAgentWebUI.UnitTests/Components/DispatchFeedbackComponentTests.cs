@@ -68,7 +68,8 @@ public class DispatchFeedbackComponentTests : BunitContext
             Logger = mockLogger.Object,
             WorkDistributor = null,
             DispatchOrchestration = null,
-            DependencyChecker = null
+            DependencyChecker = null,
+            HousekeepingService = null
         }));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 

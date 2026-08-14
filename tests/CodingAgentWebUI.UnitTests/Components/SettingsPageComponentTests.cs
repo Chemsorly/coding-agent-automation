@@ -37,7 +37,6 @@ public class SettingsPageComponentTests : BunitContext
             new Mock<IAgentCommunication>().Object,
             Serilog.Log.Logger));
         Services.AddScoped<NotificationService>();
-        Services.AddSingleton(new ProjectChangeNotifier());
         Services.AddSingleton(new FeatureFlags { IsDatabaseMode = false });
         // JobTemplateStore is injected into Settings.razor; register empty store for non-k8s tests
         Services.AddSingleton<JobTemplateStore>(JobTemplateStore.CreateEmpty());

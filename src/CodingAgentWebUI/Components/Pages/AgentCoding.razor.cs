@@ -185,6 +185,38 @@ public partial class AgentCoding : IDisposable
         });
     }
 
+    private async Task ToggleHousekeepingEnabled((PipelineJobTemplate template, bool enabled) args)
+    {
+        var (success, error) = await PageService.ToggleHousekeepingEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        var templateId = args.template.Id;
+        await _undoSnackbar.Show($"Housekeeping {(args.enabled ? "enabled" : "disabled")}.", async () =>
+        {
+            var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+            if (current is null) return;
+            await PageService.ToggleHousekeepingEnabledAsync(current, prev);
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private async Task ToggleBranchCleanupEnabled((PipelineJobTemplate template, bool enabled) args)
+    {
+        var (success, error) = await PageService.ToggleBranchCleanupEnabledAsync(args.template, args.enabled);
+        if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        var templateId = args.template.Id;
+        await _undoSnackbar.Show($"Branch cleanup {(args.enabled ? "enabled" : "disabled")}.", async () =>
+        {
+            var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+            if (current is null) return;
+            await PageService.ToggleBranchCleanupEnabledAsync(current, prev);
+            await InvokeAsync(StateHasChanged);
+        });
+    }
+
     private async Task AddTemplate()
     {
         _formError = null;

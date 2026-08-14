@@ -29,22 +29,19 @@ public sealed class DispatchInfrastructure
     public ILabelService LabelService { get; }
     public DispatchResolutionService Resolution { get; }
 
-    // TODO: Consider making StalenessDetector an init-only or constructor parameter to eliminate
-    // temporal coupling — currently set as a side-effect inside the IDispatchOrchestrationService
-    // singleton factory, creating an implicit DI resolution ordering dependency.
-    // TODO: Restrict setter to internal to prevent accidental mutation from outside the assembly/initialization path.
     /// <summary>
     /// Optional staleness detector for evaluating analysis freshness.
-    /// Set by DI in DB mode; null in legacy (no-DB) mode where
+    /// Injected via constructor in DB mode; null in legacy (no-DB) mode where
     /// <see cref="Pipeline.Interfaces.IWorkItemQueryService"/> is unavailable.
     /// </summary>
-    public AnalysisStalenessDetector? StalenessDetector { get; set; }
+    public AnalysisStalenessDetector? StalenessDetector { get; }
 
     public DispatchInfrastructure(
         ITokenVendingService tokenVending,
         IProviderFactory providerFactory,
         ILabelService labelService,
-        DispatchResolutionService resolution)
+        DispatchResolutionService resolution,
+        AnalysisStalenessDetector? stalenessDetector = null)
     {
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -55,6 +52,7 @@ public sealed class DispatchInfrastructure
         ProviderFactory = providerFactory;
         LabelService = labelService;
         Resolution = resolution;
+        StalenessDetector = stalenessDetector;
     }
 
     // ── Config Resolution (extracted from AgentJobDispatcher) ─────────────────────

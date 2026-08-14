@@ -241,7 +241,8 @@ public class LoopStatePersistenceServiceTests : IDisposable
             Logger = _logger,
             WorkDistributor = null,
             DispatchOrchestration = null,
-            DependencyChecker = null
+            DependencyChecker = null,
+            HousekeepingService = null
         });
     }
 
