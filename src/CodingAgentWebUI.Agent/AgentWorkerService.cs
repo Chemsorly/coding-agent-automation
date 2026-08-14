@@ -125,16 +125,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         {
             // Expected during shutdown
         }
-        catch (Exception ex)
-        {
-            // Log and rethrow — this is a fatal, unrecoverable error in the background service.
-            // Sonar S2139: intentional log+rethrow pattern; logging provides context before the
-            // process crashes, and rethrowing ensures the crash is visible to the runtime host.
-#pragma warning disable S2139
-            _logger.Error(ex, "Agent worker service encountered a fatal error");
-            throw;
-#pragma warning restore S2139
-        }
         finally
         {
             await ShutdownAsync();
