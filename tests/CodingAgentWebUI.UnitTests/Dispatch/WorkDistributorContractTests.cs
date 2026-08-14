@@ -311,6 +311,7 @@ public class WorkDistributorAdditionalTests
         var data = new TheoryData<string, IWorkDistributor>();
         data.Add("Legacy", CreateLegacy());
         data.Add("Kubernetes", CreateKubernetes());
+        data.Add("SignalR", CreateSignalR());
         return data;
     }
 
@@ -464,6 +465,40 @@ public class WorkDistributorAdditionalTests
         var factory = new ContractTestSimpleDbContextFactory(options);
         var transitionService = new WorkItemTransitionService(factory, Mock.Of<ILogger<WorkItemTransitionService>>());
         return new KubernetesWorkDistributor(factory, transitionService, Mock.Of<ILogger<KubernetesWorkDistributor>>());
+    }
+
+    private static SignalRWorkDistributor CreateSignalR()
+    {
+        // Must use ContractTestPipelineDbContext (not plain PipelineDbContext) to suppress
+        // InMemory provider incompatibilities: RowVersion concurrency tokens + filtered indexes.
+        // Must include ConfigureWarnings to suppress the InMemory transaction warning emitted
+        // by SaveChangesAsync / TransitionAsync calls inside SignalRWorkDistributor.
+        var dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase($"SignalRAdditional_{Guid.NewGuid()}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        using (var ctx = new ContractTestPipelineDbContext(dbOptions))
+            ctx.Database.EnsureCreated();
+
+        var dbFactory = new ContractTestDbContextFactory(dbOptions);
+        var transitionService = new WorkItemTransitionService(
+            dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+
+        // IAgentCommunication and ISignalRWorkDistributorAgentResolver mocks have no setups here.
+        // The six cold-state Theory tests don't trigger dispatch paths so this is currently safe,
+        // but if SignalRWorkDistributor ever calls ResolveAgent/AssignJobAsync before its null guard,
+        // the mock's default return (null) would mask the bug rather than throwing NullReferenceException.
+        // Add explicit mock setups (matching SignalRWorkDistributorContractTests) if the
+        // DistributeAsync null-guard position changes or new Theory tests are added that exercise dispatch.
+        return new SignalRWorkDistributor(
+            dbFactory,
+            new Mock<IAgentCommunication>().Object,
+            transitionService,
+            new Mock<ISignalRWorkDistributorAgentResolver>().Object,
+            new Mock<IOrchestratorRunService>().Object,
+            new Mock<IProjectStore>().Object,
+            NullLogger<SignalRWorkDistributor>.Instance);
     }
 
     private static JobDistributionRequest CreateMinimalRequest() => new()
