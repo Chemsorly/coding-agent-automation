@@ -1248,11 +1248,6 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             new ReviewerResolver(),
             mockConfigStore.Object,
             _mockLogger.Object);
-        var orchestration = TestUtilities.TestOrchestrationFactory.CreateMinimal(
-            configStore: mockConfigStore.Object,
-            providerFactory: mockProviderFactory.Object,
-            logger: _mockLogger.Object,
-            runService: _runService);
 
         var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: mockConfigStore.Object,
@@ -1417,11 +1412,6 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
             new ReviewerResolver(),
             mockConfigStore.Object,
             _mockLogger.Object);
-        var orchestration = TestUtilities.TestOrchestrationFactory.CreateMinimal(
-            configStore: mockConfigStore.Object,
-            providerFactory: mockProviderFactory.Object,
-            logger: _mockLogger.Object,
-            runService: _runService);
 
         var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: mockConfigStore.Object,
