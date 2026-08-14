@@ -638,12 +638,30 @@ public class K8sEdgeCaseTests : IDisposable
 
         var service = new DispatchService(
             new DispatchServiceCoreDependencies(
-                _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+                _dbFactory, CreateAlwaysLeaderElection(),
+                new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
                 {
                     PollIntervalSeconds = 10, RateLimitPerSecond = 100, Namespace = "default",
                     OrchestratorUrl = "http://orchestrator:8080", AgentApiKeySecretName = "agent-api-key",
                     KiroPvcPool = new List<string> { "pvc-kiro-1", "pvc-kiro-2" }
-                })),
+                }),
+                // TODO: The DispatchStateBuilder here is constructed with a separate DispatchLifecycleService
+                // instance (only KiroPvcPool set; Namespace, OrchestratorUrl, RateLimitPerSecond at defaults)
+                // and a separate DispatchServiceOptions (also only KiroPvcPool). Both differ from the fully-
+                // configured instances held by DispatchServiceCoreDependencies. In production, a single shared
+                // lifecycle+options pair is DI-injected. If GetEligibleCandidatesAsync ever reads
+                // _lifecycle.Options.Namespace or _options.RateLimitPerSecond, the test will silently use
+                // default (0) values instead of the configured ones. Refactor to share a single
+                // lifecycle/options instance across all components in this test.
+                StateBuilder: new DispatchStateBuilder(
+                    _dbFactory,
+                    new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+                    {
+                        KiroPvcPool = new List<string> { "pvc-kiro-1", "pvc-kiro-2" }
+                    }),
+                    templateProvider,
+                    new DispatchTemplateResolver(null, templateProvider),
+                    new DispatchServiceOptions { KiroPvcPool = new List<string> { "pvc-kiro-1", "pvc-kiro-2" } })),
             config, templateProvider);
 
         _mockKubeClient
@@ -1273,9 +1291,17 @@ public class K8sEdgeCaseTests : IDisposable
             KiroPvcPool = pvcPool.ToList()
         };
 
+        var lifecycle = new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options);
+
+        var stateBuilder = new DispatchStateBuilder(
+            _dbFactory, lifecycle, templateProvider,
+            new DispatchTemplateResolver(null, templateProvider),
+            options);
+
         return new DispatchService(
             new DispatchServiceCoreDependencies(
-                _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options)),
+                _dbFactory, CreateAlwaysLeaderElection(), lifecycle,
+                StateBuilder: stateBuilder),
             config, templateProvider);
     }
 

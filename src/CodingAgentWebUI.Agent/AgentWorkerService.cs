@@ -144,17 +144,9 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
     private async Task HandleAssignJobAsync(JobAssignmentMessage message)
     {
-        PipelineTelemetry.AgentJobsReceived.Add(1);
-
-        using var receiveActivity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReceiveJob");
-        receiveActivity?.SetTag("job_id", message.JobId);
-        receiveActivity?.SetTag("run_type", "implementation");
-
-        if (!_slotManager.TryAcquireJobSlot(message.JobId, out var busyWith))
-        {
-            await RejectJobBusyAsync(message.JobId, busyWith, receiveActivity);
-            return;
-        }
+        var (accepted, activity) = await TryReceiveJobAsync(message.JobId, "implementation");
+        if (!accepted) return;
+        using var receiveActivity = activity; // caller owns the activity on the success path
 
         _logger.Information("Accepted job {JobId} for issue {IssueIdentifier}",
             message.JobId, message.IssueIdentifier);
@@ -164,25 +156,94 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         if (!await SendJobAcceptedAsync(message.JobId, receiveActivity))
             return;
 
+        // Task is dispatched AFTER SendJobAcceptedAsync succeeds to preserve the original
+        // ordering guarantee: the orchestrator is notified before the job starts executing.
+        // If SendJobAcceptedAsync fails it calls ForceReleaseJobSlot internally and returns false.
         var jobToken = _slotManager.JobCancellationToken!.Value;
         var activeTask = Task.Run(async () => await RunJobTaskAsync(message, jobToken), CancellationToken.None);
         _slotManager.SetActiveJobTask(activeTask);
     }
 
-    private async Task RejectJobBusyAsync(string jobId, string? busyWith, Activity? activity)
+    /// <summary>
+    /// Unified receive/acquire helper shared by both pipeline and consolidation job handlers.
+    /// Increments the <c>agent.jobs.received</c> counter, starts an <c>Agent.ReceiveJob</c> activity
+    /// tagged with <paramref name="jobId"/> and <paramref name="runType"/>, and attempts slot acquisition.
+    /// Task dispatch is intentionally left to the caller so that each handler can enforce its own
+    /// post-acceptance sequencing (e.g. the pipeline handler sends <c>JobAccepted</c> before
+    /// starting the background task; the consolidation handler dispatches immediately).
+    /// </summary>
+    /// <remarks>
+    /// <b>Activity ownership contract:</b>
+    /// <list type="bullet">
+    ///   <item>
+    ///     <b>Rejection path:</b> the activity is disposed internally before this method returns
+    ///     <c>(false, null)</c>. The caller must do nothing.
+    ///   </item>
+    ///   <item>
+    ///     <b>Success path:</b> ownership transfers to the caller, which MUST wrap the returned
+    ///     activity in a <c>using</c> declaration (<c>using var receiveActivity = activity;</c>)
+    ///     to ensure disposal when it goes out of scope.
+    ///   </item>
+    /// </list>
+    /// </remarks>
+    private async Task<(bool Accepted, Activity? Activity)> TryReceiveJobAsync(
+        string jobId,
+        string runType)
+    {
+        PipelineTelemetry.AgentJobsReceived.Add(1);
+        var activity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReceiveJob");
+        activity?.SetTag("job_id", jobId);
+        activity?.SetTag("run_type", runType);
+
+        if (!_slotManager.TryAcquireJobSlot(jobId, out var busyWith))
+        {
+            // TODO [WARNING]: jobKind is inferred from the runType string ("implementation" → "job",
+            // everything else → "consolidation job"). Any future caller with a different runType
+            // (e.g. "review") will silently produce a misleading "consolidation job" label in logs
+            // and telemetry. Consider adding an explicit jobKind parameter to TryReceiveJobAsync or
+            // using an enum to eliminate the implicit string contract.
+            await RejectJobAsync(jobId, busyWith, activity,
+                runType == "implementation" ? "job" : "consolidation job");
+            // TODO [WARNING]: Double-dispose risk — activity is also disposed inside RejectJobAsync's
+            // own exception path (indirectly through the catch block). Activity.Dispose() is idempotent
+            // in the current BCL so this is safe today, but it contradicts the XML doc ownership model
+            // which states "the activity is disposed internally before this method returns". Consider
+            // moving this Dispose() call inside a try/finally in RejectJobAsync itself and removing
+            // it here so the ownership contract matches the documented behaviour.
+            // TODO [WARNING]: Activity resource leak if RejectJobAsync throws before its own try block
+            // (e.g. AgentJobsRejected.Add or the first _logger.Warning throws). In that case neither
+            // the Dispose() below nor any internal Dispose() is reached. Wrapping the rejection
+            // branch in a try/finally that always disposes the activity would close this path.
+            activity?.Dispose();
+            return (false, null);
+        }
+
+        return (true, activity);
+    }
+
+    /// <summary>
+    /// Unified job rejection helper. Increments the <c>agent.jobs.rejected</c> counter with
+    /// <c>reason=busy</c>, logs a warning, and invokes <c>JobRejected</c> on the hub.
+    /// Hub errors are caught and swallowed — rejection is best-effort.
+    /// </summary>
+    private async Task RejectJobAsync(string jobId, string? busyWith, Activity? activity, string jobKind)
     {
         PipelineTelemetry.AgentJobsRejected.Add(1,
             new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
-        _logger.Warning("Rejecting job {JobId} — agent is busy with {ActiveJobId}", jobId, busyWith);
+        _logger.Warning("Rejecting {JobKind} {JobId} — agent is busy with {ActiveJobId}", jobKind, jobId, busyWith);
         try
         {
             await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, jobId, "Agent is busy", CancellationToken.None);
         }
         catch (Exception ex)
         {
+            // TODO [WARNING]: If SetStatus or AddException throws here (however unlikely), the
+            // activity?.Dispose() call in TryReceiveJobAsync (the caller) is never reached,
+            // leaving the activity undisposed. Wrapping the rejection block in try/finally with
+            // Dispose() in finally would close this resource-leak path.
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
-            _logger.Warning(ex, "Failed to notify orchestrator of job rejection {JobId}", jobId);
+            _logger.Warning(ex, "Failed to notify orchestrator of {JobKind} rejection {JobId}", jobKind, jobId);
         }
     }
 
@@ -609,42 +670,18 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
     private async Task HandleAssignConsolidationJobAsync(ConsolidationJobMessage message)
     {
-        PipelineTelemetry.AgentJobsReceived.Add(1);
-
-        using var receiveActivity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReceiveJob");
-        receiveActivity?.SetTag("job_id", message.JobId);
-        receiveActivity?.SetTag("run_type", "consolidation");
-
-        if (!_slotManager.TryAcquireJobSlot(message.JobId, out var busyWith))
-        {
-            await RejectConsolidationJobBusyAsync(message.JobId, busyWith, receiveActivity);
-            return;
-        }
+        var (accepted, activity) = await TryReceiveJobAsync(message.JobId, "consolidation");
+        if (!accepted) return;
+        using var receiveActivity = activity; // caller owns the activity on the success path
 
         _logger.Information("Accepted consolidation job {JobId} of type {Type}",
             message.JobId, message.Type);
 
+        // Consolidation jobs do not send JobAccepted to the orchestrator, so the task is
+        // dispatched immediately after slot acquisition (no ordering constraint to preserve).
         var jobToken = _slotManager.JobCancellationToken!.Value;
         var activeTask = Task.Run(async () => await RunConsolidationTaskAsync(message, jobToken), CancellationToken.None);
         _slotManager.SetActiveJobTask(activeTask);
-    }
-
-    private async Task RejectConsolidationJobBusyAsync(string jobId, string? busyWith, Activity? activity)
-    {
-        PipelineTelemetry.AgentJobsRejected.Add(1,
-            new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
-        _logger.Warning("Rejecting consolidation job {JobId} — agent is busy with {ActiveJobId}",
-            jobId, busyWith);
-        try
-        {
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, jobId, "Agent is busy", CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.AddException(ex);
-            _logger.Warning(ex, "Failed to notify orchestrator of consolidation job rejection {JobId}", jobId);
-        }
     }
 
     private async Task RunConsolidationTaskAsync(ConsolidationJobMessage message, CancellationToken jobToken)

@@ -1019,9 +1019,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         // constructor in the CodingAgentWebUI.Pipeline.UnitTests coverage domain.
         // Uses a real ConfigurationBuilder (not Mock<IConfiguration>) so that
         // DispatchServiceOptionsFactory.Create doesn't throw.
-        // Does NOT supply deps.StateBuilder so the null-coalescing fallback (lines 63-68) is taken,
-        // covering the DispatchStateBuilder construction code path in the public constructor.
-        // Polls an empty DB, hitting the "state is null → return" early exit path (line 189).
+        // Polls an empty DB, hitting the "state is null → return" early exit path.
         var configData = new Dictionary<string, string?>
         {
             ["WorkDistribution:Namespace"] = "default",
@@ -1037,15 +1035,22 @@ public class DispatchServiceConsolidationTests : IDisposable
             _transitionService,
             new DispatchServiceOptions());
 
-        // StateBuilder is intentionally omitted (null) to exercise the ?? fallback path
+        // Build with StateBuilder required
+        var templateProvider = BuildTemplateProvider();
+        var options = new DispatchServiceOptions();
         var handler = new ConsolidationDispatchHandler(
             new ConsolidationDispatchHandlerDependencies(
                 _dbFactory,
                 _leaderElection,
                 lifecycle,
-                BuildTemplateProvider(),
+                templateProvider,
                 config,
-                _transitionService));
+                _transitionService,
+                StateBuilder: new DispatchStateBuilder(
+                    _dbFactory, lifecycle, templateProvider,
+                    new DispatchTemplateResolver(null, templateProvider),
+                    options)),
+            options);
 
         // DB is empty → BuildStateAsync returns null → method returns immediately without throwing
         await handler.PollAndDispatchConsolidationAsync(CancellationToken.None);
@@ -1220,7 +1225,11 @@ public class DispatchServiceConsolidationTests : IDisposable
                     _mockAgentProfileStore.Object),
                 _mockPipelineConfigStore.Object,
                 _mockProjectStore.Object,
-                _mockAgentProfileStore.Object),
+                _mockAgentProfileStore.Object,
+                StateBuilder: new DispatchStateBuilder(
+                    dbFactory, lifecycle, templateProvider,
+                    new DispatchTemplateResolver(_mockAgentProfileStore.Object, templateProvider),
+                    options)),
             options);
     }
 
@@ -1256,7 +1265,11 @@ public class DispatchServiceConsolidationTests : IDisposable
                     _mockAgentProfileStore.Object),
                 _mockPipelineConfigStore.Object,
                 _mockProjectStore.Object,
-                _mockAgentProfileStore.Object),
+                _mockAgentProfileStore.Object,
+                StateBuilder: new DispatchStateBuilder(
+                    _dbFactory, lifecycle, templateProvider,
+                    new DispatchTemplateResolver(_mockAgentProfileStore.Object, templateProvider),
+                    options)),
             options);
     }
 
@@ -1317,7 +1330,11 @@ public class DispatchServiceConsolidationTests : IDisposable
                     _mockAgentProfileStore.Object),
                 _mockPipelineConfigStore.Object,
                 _mockProjectStore.Object,
-                _mockAgentProfileStore.Object),
+                _mockAgentProfileStore.Object,
+                StateBuilder: new DispatchStateBuilder(
+                    _dbFactory, lifecycle, templateProvider,
+                    new DispatchTemplateResolver(_mockAgentProfileStore.Object, templateProvider),
+                    options)),
             options);
     }
 

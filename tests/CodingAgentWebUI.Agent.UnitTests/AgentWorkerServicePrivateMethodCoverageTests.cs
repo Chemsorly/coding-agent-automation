@@ -1,9 +1,12 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
 using Moq;
 
@@ -263,10 +266,247 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         return dir ?? throw new InvalidOperationException("Could not find solution root");
     }
 
-    // ── RejectJobBusyAsync — hub throws, should swallow and complete ──────
+    // ── Characterization tests — telemetry counter + activity tags ──────────
+    // These must be added BEFORE any extraction so that regressions (e.g. dropping the counter
+    // from the extracted method) are caught by the test suite, not discovered at runtime.
+
+    // MeterListener warm-up helper shared by the counter tests below.
+    // Activates the listener, emits a zero-valued warm-up measurement so InstrumentPublished fires
+    // for both static instruments, clears the warm-up noise, and returns the listener + measurement list.
+    private static (MeterListener listener, List<(string name, List<KeyValuePair<string, object?>> tags)> measurements)
+        CreateMeterListener()
+    {
+        var measurements = new List<(string, List<KeyValuePair<string, object?>>)>();
+        var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
+        {
+            var tagList = new List<KeyValuePair<string, object?>>();
+            foreach (var t in tags) tagList.Add(t);
+            measurements.Add((instrument.Name, tagList));
+        });
+        listener.Start();
+        // warm-up: force InstrumentPublished for static instruments created before Start()
+        PipelineTelemetry.AgentJobsReceived.Add(0);
+        PipelineTelemetry.AgentJobsRejected.Add(0);
+        measurements.Clear();
+        return (listener, measurements);
+    }
 
     [Fact]
-    public async Task RejectJobBusyAsync_HubThrows_CompletesWithoutThrowing()
+    public async Task RejectJobAsync_Pipeline_IncrementsRejectedCounterWithBusyTag()
+    {
+        // Characterization test: pins rejection telemetry behavior on the pipeline handler path.
+        // Verifies agent.jobs.rejected is incremented with reason=busy when HandleAssignJobAsync
+        // is called while the agent is busy.
+        var (listener, measurements) = CreateMeterListener();
+        using (listener)
+        {
+            var service = TestAgentWorkerServiceFactory.Create();
+            var slotManager = GetSlotManager(service);
+            SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"existing-job");
+            SetPrivateField(slotManager, "_isBusy", true);
+
+            await (Task)GetPrivateMethod(service, "HandleAssignJobAsync")
+                .Invoke(service, [CreateJobAssignment("new-job")])!;
+        }
+
+        measurements.Should().Contain(m =>
+            m.name == "agent.jobs.rejected" &&
+            m.tags.Contains(new KeyValuePair<string, object?>("reason", "busy")),
+            "agent.jobs.rejected must be incremented with reason=busy when pipeline job is rejected");
+    }
+
+    [Fact]
+    public async Task RejectJobAsync_Consolidation_IncrementsRejectedCounterWithBusyTag()
+    {
+        // Characterization test: pins rejection telemetry behavior on the consolidation handler path.
+        var (listener, measurements) = CreateMeterListener();
+        using (listener)
+        {
+            var service = TestAgentWorkerServiceFactory.Create();
+            var slotManager = GetSlotManager(service);
+            SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"existing-job");
+            SetPrivateField(slotManager, "_isBusy", true);
+
+            var message = new ConsolidationJobMessage
+            {
+                JobId = "new-consolidation",
+                Type = ConsolidationRunType.BrainConsolidation,
+                ProviderConfigs = [],
+                PipelineConfiguration = new PipelineConfiguration()
+            };
+
+            await (Task)GetPrivateMethod(service, "HandleAssignConsolidationJobAsync")
+                .Invoke(service, [message])!;
+        }
+
+        measurements.Should().Contain(m =>
+            m.name == "agent.jobs.rejected" &&
+            m.tags.Contains(new KeyValuePair<string, object?>("reason", "busy")),
+            "agent.jobs.rejected must be incremented with reason=busy when consolidation job is rejected");
+    }
+
+    [Fact]
+    public async Task HandleAssignJobAsync_IncrementsReceivedCounter()
+    {
+        // Characterization test: pins received counter behavior on the pipeline handler path.
+        // TODO [WARNING]: This test uses an idle agent, so TryReceiveJobAsync proceeds to the success
+        // path and starts a background Task.Run. That background task is not awaited here, meaning
+        // uncontrolled work runs during teardown and may emit additional telemetry. Consider using a
+        // busy agent (like the rejection tests) to keep this test strictly scoped to the counter increment.
+        // TODO [WARNING]: The assertion only checks that agent.jobs.received appears at least once.
+        // A regression that emits the counter twice would pass. Consider asserting
+        // measurements.Count(m => m.name == "agent.jobs.received") == 1 for tighter coverage.
+        var (listener, measurements) = CreateMeterListener();
+        using (listener)
+        {
+            var service = TestAgentWorkerServiceFactory.Create();
+            // idle agent — slot available
+            await (Task)GetPrivateMethod(service, "HandleAssignJobAsync")
+                .Invoke(service, [CreateJobAssignment("job-rcv-pipeline")])!;
+        }
+
+        measurements.Should().Contain(m => m.name == "agent.jobs.received",
+            "agent.jobs.received must be incremented when HandleAssignJobAsync is called");
+    }
+
+    [Fact]
+    public async Task HandleAssignConsolidationJobAsync_IncrementsReceivedCounter()
+    {
+        // Characterization test: pins received counter behavior on the consolidation handler path.
+        // TODO [WARNING]: Same idle-agent background task concern as HandleAssignJobAsync_IncrementsReceivedCounter —
+        // the dispatched Task.Run is not awaited, leaving uncontrolled work during teardown.
+        // Consider using a busy agent to keep the test scope narrow.
+        // TODO [WARNING]: The assertion only checks presence, not exact count (== 1). A double-increment
+        // regression would pass silently. Consider asserting the exact measurement count.
+        var (listener, measurements) = CreateMeterListener();
+        using (listener)
+        {
+            var service = TestAgentWorkerServiceFactory.Create();
+            var message = new ConsolidationJobMessage
+            {
+                JobId = "job-rcv-consolidation",
+                Type = ConsolidationRunType.BrainConsolidation,
+                ProviderConfigs = [],
+                PipelineConfiguration = new PipelineConfiguration()
+            };
+            await (Task)GetPrivateMethod(service, "HandleAssignConsolidationJobAsync")
+                .Invoke(service, [message])!;
+        }
+
+        measurements.Should().Contain(m => m.name == "agent.jobs.received",
+            "agent.jobs.received must be incremented when HandleAssignConsolidationJobAsync is called");
+    }
+
+    [Fact]
+    public async Task HandleAssignJobAsync_SetsRunTypeTagImplementation()
+    {
+        // Characterization test: verifies run_type="implementation" is set on the receive activity
+        // via ActivityListener (not a source-scan — avoids passing on comment-only matches).
+        // Tags are captured on ActivityStopped (after all SetTag calls) rather than ActivityStarted.
+        // TODO [WARNING]: ActivityStopped firing synchronously on Activity.Dispose() is an
+        // implementation detail of System.Diagnostics.Activity, not a documented test contract. If the
+        // runtime ever defers the callback, capturedTags may be empty at assertion time, producing a
+        // spurious (false-negative) failure. This is a fragility risk, not a current defect.
+        var capturedTags = new List<(string key, object? value)>();
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == PipelineTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = act =>
+            {
+                if (act.OperationName == "Agent.ReceiveJob")
+                {
+                    foreach (var tag in act.Tags)
+                        capturedTags.Add((tag.Key, tag.Value));
+                }
+            }
+        };
+        // TODO [WARNING]: ActivitySource.AddActivityListener registers the listener globally for the
+        // process lifetime until the listener is disposed. The `using var` declaration disposes it at
+        // the end of the method scope, but if the test throws before that point the listener outlives
+        // the test. Other tests in the same process that start Agent.ReceiveJob activities after this
+        // test completes may fire the ActivityStopped callback into a potentially stale context.
+        // In practice capturedTags is a local list so the risk is low, but the global registration
+        // is a structural fragility. Consider wrapping the listener creation and AddActivityListener
+        // call in a try/finally (or a helper that ensures removal on disposal).
+        ActivitySource.AddActivityListener(activityListener);
+
+        var service = TestAgentWorkerServiceFactory.Create();
+        var slotManager = GetSlotManager(service);
+        // Use a busy agent so the handler returns early after tagging; avoids background task side effects
+        SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"existing");
+        SetPrivateField(slotManager, "_isBusy", true);
+
+        await (Task)GetPrivateMethod(service, "HandleAssignJobAsync")
+            .Invoke(service, [CreateJobAssignment("tag-test-pipeline")])!;
+
+        capturedTags.Should().Contain(t => t.key == "run_type" && (string?)t.value == "implementation",
+            "run_type tag must be set to 'implementation' on the Agent.ReceiveJob activity for pipeline jobs");
+    }
+
+    [Fact]
+    public async Task HandleAssignConsolidationJobAsync_SetsRunTypeTagConsolidation()
+    {
+        // Characterization test: verifies run_type="consolidation" is set on the receive activity.
+        // Tags are captured on ActivityStopped (after all SetTag calls) rather than ActivityStarted.
+        // TODO [WARNING]: Same ActivityStopped timing fragility as HandleAssignJobAsync_SetsRunTypeTagImplementation —
+        // the callback firing synchronously on Dispose() is an undocumented implementation detail.
+        // If deferred, capturedTags may be empty at assertion time (spurious failure).
+        var capturedTags = new List<(string key, object? value)>();
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == PipelineTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = act =>
+            {
+                if (act.OperationName == "Agent.ReceiveJob")
+                {
+                    foreach (var tag in act.Tags)
+                        capturedTags.Add((tag.Key, tag.Value));
+                }
+            }
+        };
+        // TODO [WARNING]: Same globally-registered ActivityListener concern as
+        // HandleAssignJobAsync_SetsRunTypeTagImplementation — the listener is registered for the
+        // process lifetime until disposed, and other tests that start Agent.ReceiveJob activities
+        // after this test could fire the ActivityStopped callback into this test's stale context.
+        // See the TODO in the sibling test for the full description and suggested remediation.
+        ActivitySource.AddActivityListener(activityListener);
+
+        var service = TestAgentWorkerServiceFactory.Create();
+        var slotManager = GetSlotManager(service);
+        SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"existing");
+        SetPrivateField(slotManager, "_isBusy", true);
+
+        var message = new ConsolidationJobMessage
+        {
+            JobId = "tag-test-consolidation",
+            Type = ConsolidationRunType.BrainConsolidation,
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration()
+        };
+
+        await (Task)GetPrivateMethod(service, "HandleAssignConsolidationJobAsync")
+            .Invoke(service, [message])!;
+
+        capturedTags.Should().Contain(t => t.key == "run_type" && (string?)t.value == "consolidation",
+            "run_type tag must be set to 'consolidation' on the Agent.ReceiveJob activity for consolidation jobs");
+    }
+
+    // ── HandleAssignJobAsync_WhenBusy — hub throws, should swallow and complete ──────
+    // (Previously named RejectJobBusyAsync_HubThrows_CompletesWithoutThrowing — renamed post-extraction
+    // because this test invokes the handler, not the old private rejection method.)
+
+    [Fact]
+    public async Task HandleAssignJobAsync_WhenBusy_HubThrows_CompletesWithoutThrowing()
     {
         var service = TestAgentWorkerServiceFactory.Create();
         var slotManager = GetSlotManager(service);
@@ -420,10 +660,12 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         await act.Should().NotThrowAsync();
     }
 
-    // ── RejectConsolidationJobBusyAsync — hub throws, swallowed ──────────
+    // ── HandleAssignConsolidationJobAsync_WhenBusy — hub throws, swallowed ──────
+    // (Previously named RejectConsolidationJobBusyAsync_HubThrows_CompletesWithoutThrowing — renamed
+    // post-extraction because this test invokes the handler, not the old private rejection method.)
 
     [Fact]
-    public async Task RejectConsolidationJobBusyAsync_HubThrows_CompletesWithoutThrowing()
+    public async Task HandleAssignConsolidationJobAsync_WhenBusy_HubThrows_CompletesWithoutThrowing()
     {
         var service = TestAgentWorkerServiceFactory.Create();
         var slotManager = GetSlotManager(service);
