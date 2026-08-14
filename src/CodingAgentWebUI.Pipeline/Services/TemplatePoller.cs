@@ -25,9 +25,12 @@ internal sealed class TemplatePoller
     }
 
     /// <summary>
-    /// Polls once per pollable template for issues, PRs, and decomposition candidates.
+    /// Polls once per pollable template for issues, PRs, decomposition candidates, and agent:done PRs.
     /// </summary>
-    internal async Task<(Dictionary<string, List<IssueSummary>> IssueQueues, Dictionary<string, List<PullRequestSummary>> PrQueues, Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> DecompositionQueues)>
+    internal async Task<(Dictionary<string, List<IssueSummary>> IssueQueues,
+                          Dictionary<string, List<PullRequestSummary>> PrQueues,
+                          Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> DecompositionQueues,
+                          Dictionary<string, List<PullRequestSummary>> AgentDonePrQueues)>
         PollTemplateQueuesAsync(
             IReadOnlyList<PipelineJobTemplate> pollableTemplates,
             int maxPagesToFetch,
@@ -40,6 +43,7 @@ internal sealed class TemplatePoller
         var issueQueues = new Dictionary<string, List<IssueSummary>>();
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
         var decompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>();
 
         for (int i = 0; i < pollableTemplates.Count; i++)
         {
@@ -56,7 +60,7 @@ internal sealed class TemplatePoller
 
             try
             {
-                await PollSingleTemplateAsync(template, maxPagesToFetch, templateStatuses, issueQueues, prQueues, decompositionQueues, ct);
+                await PollSingleTemplateAsync(template, maxPagesToFetch, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, ct);
             }
             catch (OperationCanceledException)
             {
@@ -64,23 +68,24 @@ internal sealed class TemplatePoller
             }
             catch (RateLimitExceededException ex)
             {
-                HandleRateLimitException(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues);
+                HandleRateLimitException(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
             }
             catch (Exception ex) when (IsAuthError(ex))
             {
-                await HandleAuthErrorExceptionAsync(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues);
+                await HandleAuthErrorExceptionAsync(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
             }
             catch (Exception ex)
             {
-                HandleGenericPollException(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues);
+                HandleGenericPollException(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
             }
         }
 
-        return (issueQueues, prQueues, decompositionQueues);
+        return (issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
     }
 
     /// <summary>
-    /// Polls issues, PRs, and decomposition candidates for a single template, then updates the success status.
+    /// Polls issues, PRs, decomposition candidates, and agent:done PRs for a single template,
+    /// then updates the success status.
     /// </summary>
     private async Task PollSingleTemplateAsync(
         PipelineJobTemplate template,
@@ -89,13 +94,15 @@ internal sealed class TemplatePoller
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
         CancellationToken ct)
     {
         await PollIssueQueueAsync(template, maxPagesToFetch, templateStatuses, issueQueues, ct);
         await PollPrQueueAsync(template, maxPagesToFetch, prQueues, ct);
         await PollDecompositionQueueAsync(template, maxPagesToFetch, decompositionQueues, ct);
+        await PollAgentDonePrQueueAsync(template, maxPagesToFetch, agentDonePrQueues, ct);
 
-        // Success — update status
+        // Success — update status (agentDonePrQueues not counted as dispatchable work)
         var issueCount = issueQueues[template.Id].Count;
         var prCount = prQueues[template.Id].Count;
         var decompCount = decompositionQueues[template.Id].Count;
@@ -177,6 +184,62 @@ internal sealed class TemplatePoller
     }
 
     /// <summary>
+    /// Polls the PR queue for agent:done PRs (only when HousekeepingEnabled).
+    /// Used by the housekeeping service (spec 040). Gated on HousekeepingEnabled only —
+    /// NOT on ReviewEnabled, as housekeeping is an independent capability.
+    /// Wrapped in its own try-catch to not affect issue/PR/decomposition queues on failure.
+    /// </summary>
+    private async Task PollAgentDonePrQueueAsync(
+        PipelineJobTemplate template,
+        int maxPagesToFetch,
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        CancellationToken ct)
+    {
+        agentDonePrQueues[template.Id] = new List<PullRequestSummary>();
+        if (!template.HousekeepingEnabled) return;
+
+        try
+        {
+            if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId, out var repoProvider))
+            {
+                _logger.Warning("Template '{TemplateName}': repo provider not found, skipping agent:done PR polling",
+                    template.Name);
+                return;
+            }
+
+            if (!repoProvider.SupportsServerSideBranchUpdate) return;
+
+            agentDonePrQueues[template.Id] = await FetchAgentDonePullRequestsAsync(repoProvider, maxPagesToFetch, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Template '{TemplateName}' agent:done PR polling failed: {Error}",
+                template.Name, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Fetches open agent-created PRs from a repository provider by matching the agent branch prefix.
+    /// Uses branch name prefix (<c>feature/auto-</c>) rather than label filtering because the agent
+    /// applies <c>agent:done</c> to the <em>issue</em>, not the PR — PRs have no agent status labels.
+    /// IsDraft and active-run exclusion are applied in HousekeepingService.ExecuteAsync.
+    /// </summary>
+    private static async Task<List<PullRequestSummary>> FetchAgentDonePullRequestsAsync(
+        IRepositoryProvider repoProvider, int maxPages, CancellationToken ct)
+    {
+        // Fetch all open PRs (no label filter — agent:done is on the issue, not the PR).
+        var all = await FetchAllPagesAsync<PullRequestSummary>(
+            (page, pageSize, token) =>
+                repoProvider.ListOpenPullRequestsAsync(page, pageSize, null, token),
+            maxPages, ct);
+
+        // Filter to agent-created PRs by branch prefix.
+        all.RemoveAll(pr => !pr.BranchName.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal));
+        return all;
+    }
+
+    /// <summary>
     /// Polls the decomposition queue for a template (only when DecompositionEnabled).
     /// Wrapped in its own try-catch so that a decomposition failure does not discard issue/PR queues.
     /// </summary>
@@ -232,7 +295,8 @@ internal sealed class TemplatePoller
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues)
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues)
     {
         _logger.Warning(ex, "Template '{TemplateName}' rate limited until {ResetAt}", template.Name, ex.ResetAt);
         var prevStatus = templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
@@ -242,7 +306,7 @@ internal sealed class TemplatePoller
             RateLimitResetAt = ex.ResetAt,
             IsCurrentlyPolling = false
         };
-        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues);
+        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
     }
 
     /// <summary>Handles an auth error exception: evicts cached provider, updates status, clears queues.</summary>
@@ -252,7 +316,8 @@ internal sealed class TemplatePoller
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues)
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues)
     {
         _logger.Warning(ex, "Template '{TemplateName}' auth error, evicting cached provider", template.Name);
         await _cacheManager.EvictOnAuthErrorAsync(template.IssueProviderId);
@@ -265,7 +330,7 @@ internal sealed class TemplatePoller
             IsCurrentlyPolling = false
         };
         PipelineTelemetry.LoopBackoffEvents.Add(1);
-        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues);
+        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
     }
 
     /// <summary>Handles a generic poll exception: updates failure status, clears queues.</summary>
@@ -275,7 +340,8 @@ internal sealed class TemplatePoller
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues)
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues)
     {
         _logger.Warning(ex, "Template '{TemplateName}' poll failed: {Error}", template.Name, ex.Message);
         var prevStatus = templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
@@ -287,7 +353,7 @@ internal sealed class TemplatePoller
             IsCurrentlyPolling = false
         };
         PipelineTelemetry.LoopBackoffEvents.Add(1);
-        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues);
+        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues);
     }
 
     /// <summary>
@@ -472,18 +538,20 @@ internal sealed class TemplatePoller
     }
 
     /// <summary>
-    /// Clears all three queue dictionaries for a given template. Used in error catch blocks
+    /// Clears all four queue dictionaries for a given template. Used in error catch blocks
     /// to ensure a failed template doesn't leave stale partial data in queues.
     /// </summary>
     internal static void ClearQueuesForTemplate(
         TemplateId templateId,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues)
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues)
     {
         issueQueues[templateId.Value] = new List<IssueSummary>();
         prQueues[templateId.Value] = new List<PullRequestSummary>();
         decompositionQueues[templateId.Value] = new List<(IssueSummary, PipelineRunType)>();
+        agentDonePrQueues[templateId.Value] = new List<PullRequestSummary>();
     }
 
     /// <summary>

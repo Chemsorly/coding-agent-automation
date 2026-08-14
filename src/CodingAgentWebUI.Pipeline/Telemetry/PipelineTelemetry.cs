@@ -95,6 +95,24 @@ public static class PipelineTelemetry
     public static readonly Counter<long> LoopCircuitBreakerTrips = Meter.CreateCounter<long>(
         "pipeline.loop.circuit_breaker_trips", "{trip}", "Circuit breaker trip events");
 
+    // Housekeeping metrics (spec 040)
+    public static readonly Counter<long> HousekeepingTriggered = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.triggered", "{update}", "Server-side branch updates triggered");
+    public static readonly Counter<long> HousekeepingSucceeded = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.succeeded", "{update}", "Server-side branch updates completed successfully");
+    public static readonly Counter<long> HousekeepingFailed = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.failed", "{update}", "Server-side branch updates that threw an exception");
+    public static readonly Counter<long> HousekeepingSkipped = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.skipped", "{update}", "PRs skipped during candidate selection (not behind, null, draft, active rework, in-flight)");
+    public static readonly Counter<long> HousekeepingEvicted = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.evicted", "{update}", "In-flight entries removed (CI resolved or PR merged/label removed)");
+    public static readonly Counter<long> HousekeepingConflictReworkTriggered = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.conflict_rework_triggered", "{rework}",
+        "Issues re-queued for rework due to PR merge conflict");
+    public static readonly Counter<long> HousekeepingBranchDeleted = Meter.CreateCounter<long>(
+        "pipeline.housekeeping.branch_deleted", "{branch}",
+        "Stale agent branches deleted (no open PR, inactive issue label)");
+
     // Agent worker metrics
     public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(
         "agent.jobs.received", "{job}", "Jobs received by agent workers");

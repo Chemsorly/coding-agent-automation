@@ -152,6 +152,7 @@ public class TestOrchestrationFactoryTests
         opts.Logger.Should().BeNull();
         opts.HistoryService.Should().BeNull();
         opts.RunService.Should().BeNull();
+        opts.OrchestrationService.Should().BeNull();
     }
 
     [Fact]

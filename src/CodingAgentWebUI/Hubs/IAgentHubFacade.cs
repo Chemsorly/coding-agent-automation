@@ -142,6 +142,12 @@ public interface IAgentHubFacade
     // ── Issue provider operations ───────────────────────────────────────
 
     /// <summary>
+    /// Loads all templates belonging to the specified project.
+    /// Returns an empty list if no project store is available or the project has no templates.
+    /// </summary>
+    Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct);
+
+    /// <summary>
     /// Loads provider configurations of the specified kind.
     /// </summary>
     Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct);
