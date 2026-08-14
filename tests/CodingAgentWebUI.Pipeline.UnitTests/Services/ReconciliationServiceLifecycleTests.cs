@@ -542,6 +542,120 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         item!.Status.Should().Be(WorkItemStatus.Running);
     }
 
+    // ── Startup PVC Reconciliation ───────────────────────────────────────
+
+    [Fact]
+    public async Task StartupReconciliation_OrphanedPvcNullJobName_ClearsClaim()
+    {
+        // Arrange: WorkItem has a PVC claim but no K8s job name.
+        // This represents the crash-recovery scenario: DB written, K8s Job creation never started.
+        var workItemId = Guid.NewGuid();
+        await InsertWorkItem(workItemId, "owner/repo#startup1", WorkItemStatus.Pending,
+            k8sJobName: null, claimedPvcName: "pvc-startup-1");
+
+        var service = CreateService();
+
+        // Act
+        await InvokeRunStartupReconciliationAsync(service);
+
+        // Assert: PVC claim must be cleared — string.IsNullOrEmpty(K8sJobName) branch fires
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.ClaimedPvcName.Should().BeNull(
+            "a WorkItem with ClaimedPvcName but no K8sJobName is an orphaned PVC claim that must be released on startup");
+    }
+
+    [Fact]
+    public async Task StartupReconciliation_OrphanedPvcMissingK8sJob_ClearsClaim()
+    {
+        // Arrange: WorkItem has both PVC claim and K8s job name, but the job no longer exists in K8s (404).
+        // This represents a crash after Job creation but before the WorkItem reached terminal state.
+        var workItemId = Guid.NewGuid();
+        await InsertWorkItem(workItemId, "owner/repo#startup2", WorkItemStatus.Dispatched,
+            k8sJobName: "caa-orphan-job", claimedPvcName: "pvc-startup-2");
+
+        // Simulate K8s returning 404 for this job name (job was deleted / never actually created)
+        _mockBatchV1
+            .Setup(b => b.ReadNamespacedJobWithHttpMessagesAsync(
+                "caa-orphan-job", "default",
+                It.IsAny<bool?>(),
+                It.IsAny<IReadOnlyDictionary<string, IReadOnlyList<string>>>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpOperationException("Not Found")
+            {
+                Response = new HttpResponseMessageWrapper(
+                    new HttpResponseMessage(HttpStatusCode.NotFound), "")
+            });
+
+        var service = CreateService();
+
+        // Act
+        await InvokeRunStartupReconciliationAsync(service);
+
+        // Assert: PVC claim must be cleared — JobExistsAsync returned false
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.ClaimedPvcName.Should().BeNull(
+            "when the K8s Job no longer exists (404), the orphaned PVC claim must be released on startup");
+    }
+
+    [Fact]
+    public async Task StartupReconciliation_LiveK8sJob_RetainsPvcClaim()
+    {
+        // Arrange: WorkItem has both PVC claim and a K8s job that is still running.
+        // Startup reconciliation must NOT release claims for live jobs.
+        var workItemId = Guid.NewGuid();
+        await InsertWorkItem(workItemId, "owner/repo#startup3", WorkItemStatus.Dispatched,
+            k8sJobName: "caa-live-job", claimedPvcName: "pvc-startup-3");
+
+        // Simulate K8s confirming the job exists
+        _mockBatchV1
+            .Setup(b => b.ReadNamespacedJobWithHttpMessagesAsync(
+                "caa-live-job", "default",
+                It.IsAny<bool?>(),
+                It.IsAny<IReadOnlyDictionary<string, IReadOnlyList<string>>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new k8s.Autorest.HttpOperationResponse<V1Job> { Body = new V1Job() });
+
+        var service = CreateService();
+
+        // Act
+        await InvokeRunStartupReconciliationAsync(service);
+
+        // Assert: PVC claim must be retained — job is still alive
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.ClaimedPvcName.Should().Be("pvc-startup-3",
+            "the PVC claim must be preserved when the corresponding K8s Job is still running");
+    }
+
+    [Fact]
+    public async Task StartupReconciliation_IsIdempotent()
+    {
+        // Arrange: WorkItem with an orphaned PVC claim (no K8s job).
+        // Running startup reconciliation twice must leave the DB in the same state as running it once.
+        var workItemId = Guid.NewGuid();
+        await InsertWorkItem(workItemId, "owner/repo#startup4", WorkItemStatus.Pending,
+            k8sJobName: null, claimedPvcName: "pvc-startup-4");
+
+        var service = CreateService();
+
+        // Act — first run clears the claim
+        await InvokeRunStartupReconciliationAsync(service);
+
+        await using var db1 = await _dbFactory.CreateDbContextAsync();
+        var afterFirst = await db1.WorkItems.FindAsync(workItemId);
+        afterFirst!.ClaimedPvcName.Should().BeNull("PVC claim must be cleared on the first run");
+
+        // Act — second run with already-null claim must not throw or corrupt state
+        await InvokeRunStartupReconciliationAsync(service);
+
+        await using var db2 = await _dbFactory.CreateDbContextAsync();
+        var afterSecond = await db2.WorkItems.FindAsync(workItemId);
+        afterSecond!.ClaimedPvcName.Should().BeNull(
+            "startup reconciliation must be idempotent — a second run leaves state unchanged when claim is already null");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private ReconciliationService CreateService(int retentionDays = 7, LeaderElectionService? leaderElection = null,
@@ -586,6 +700,16 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         await task;
     }
 
+    private static async Task InvokeRunStartupReconciliationAsync(ReconciliationService service)
+    {
+        var method = typeof(ReconciliationService).GetMethod(
+            "RunStartupReconciliationAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "Method RunStartupReconciliationAsync not found — was it renamed?");
+        await (Task)method.Invoke(service, [CancellationToken.None])!;
+    }
+
     private static LeaderElectionService CreateLeaderElectionWithCts(CancellationTokenSource cts)
     {
         var les = new LeaderElectionService(Options.Create(new LeaderElectionOptions()));
@@ -607,7 +731,8 @@ public class ReconciliationServiceLifecycleTests : IDisposable
     private async Task InsertWorkItem(Guid id, string issueId, WorkItemStatus status,
         DateTimeOffset? createdAt = null, int timeoutSeconds = 1800,
         string? k8sJobName = null, DateTimeOffset? completedAt = null,
-        DateTimeOffset? dispatchedAt = null, DateTimeOffset? lastProgressAt = null)
+        DateTimeOffset? dispatchedAt = null, DateTimeOffset? lastProgressAt = null,
+        string? claimedPvcName = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
         db.WorkItems.Add(new WorkItemEntity
@@ -623,6 +748,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
             K8sJobName = k8sJobName,
             CompletedAt = completedAt,
             LastProgressAt = lastProgressAt,
+            ClaimedPvcName = claimedPvcName,
             Payload = "{}"
         });
         await db.SaveChangesAsync();
