@@ -1109,7 +1109,7 @@ public class AgentJobDispatcherTests : IDisposable
         var act = () => dispatcher.TryDispatchAsync(
             "issue-1", default(ProviderConfigId), "rp", null, null, "test", CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentException>()
-            .WithParameterName("issueProviderId");
+            .WithParameterName("issueProviderId.Value");
     }
 
     [Fact]
@@ -1119,7 +1119,7 @@ public class AgentJobDispatcherTests : IDisposable
         var act = () => dispatcher.TryDispatchAsync(
             "issue-1", "ip", default(ProviderConfigId), null, null, "test", CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentException>()
-            .WithParameterName("repoProviderId");
+            .WithParameterName("repoProviderId.Value");
     }
 
     [Fact]
@@ -1138,7 +1138,7 @@ public class AgentJobDispatcherTests : IDisposable
             InitiatedBy = "test"
         }, CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentException>()
-            .WithParameterName("IssueProviderId");
+            .WithParameterName("request.IssueProviderId.Value");
     }
 
     [Fact]
@@ -1157,7 +1157,7 @@ public class AgentJobDispatcherTests : IDisposable
             InitiatedBy = "test"
         }, CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentException>()
-            .WithParameterName("RepoProviderId");
+            .WithParameterName("request.RepoProviderId.Value");
     }
 
     [Fact]
@@ -1168,7 +1168,7 @@ public class AgentJobDispatcherTests : IDisposable
             "epic-1", "Epic Title", PipelineRunType.DecompositionAnalysis,
             default(ProviderConfigId), "rp", null, "test", CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentException>()
-            .WithParameterName("issueProviderId");
+            .WithParameterName("issueProviderId.Value");
     }
 
     [Fact]
@@ -1179,7 +1179,7 @@ public class AgentJobDispatcherTests : IDisposable
             "epic-1", "Epic Title", PipelineRunType.DecompositionAnalysis,
             "ip", default(ProviderConfigId), null, "test", CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentException>()
-            .WithParameterName("repoProviderId");
+            .WithParameterName("repoProviderId.Value");
     }
 
     [Fact]
@@ -1205,11 +1205,8 @@ public class AgentJobDispatcherTests : IDisposable
             },
             Array.Empty<string>(),
             CancellationToken.None);
-        // TODO: [WARNING] "IssueProviderId" (PascalCase) reflects nameof(job.IssueProviderId) in the guard.
-        // Other dispatch tests use camelCase parameter names (e.g. "issueProviderId"). If the guard is
-        // made idiomatic (changed to nameof(job)), this assertion must change to "job" to match.
         await act.Should().ThrowAsync<ArgumentException>()
-            .WithParameterName("IssueProviderId");
+            .WithParameterName("job.IssueProviderId.Value");
     }
 
     [Fact]
@@ -1235,11 +1232,8 @@ public class AgentJobDispatcherTests : IDisposable
             },
             Array.Empty<string>(),
             CancellationToken.None);
-        // TODO: [WARNING] "RepoProviderId" (PascalCase) reflects nameof(job.RepoProviderId) in the guard.
-        // Other dispatch tests use camelCase parameter names (e.g. "repoProviderId"). If the guard is
-        // made idiomatic (changed to nameof(job)), this assertion must change to "job" to match.
         await act.Should().ThrowAsync<ArgumentException>()
-            .WithParameterName("RepoProviderId");
+            .WithParameterName("job.RepoProviderId.Value");
     }
 
     #endregion

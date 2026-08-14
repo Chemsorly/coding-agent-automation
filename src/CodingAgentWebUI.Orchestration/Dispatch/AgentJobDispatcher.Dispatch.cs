@@ -18,10 +18,10 @@ public sealed partial class AgentJobDispatcher
         string? issueTitle = null,
         PipelineProject? project = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(initiatedBy);
-        ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value, nameof(issueProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value, nameof(repoProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value);
 
         // Check if already being processed
         if (_orchestration.IsIssueBeingProcessed(issueIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(issueIdentifier, issueProviderId))
@@ -58,13 +58,8 @@ public sealed partial class AgentJobDispatcher
     public async Task<bool> TryDispatchReviewAsync(ReviewDispatchRequest request, CancellationToken ct, PipelineProject? project = null)
     {
         ArgumentNullException.ThrowIfNull(request);
-        // TODO: [WARNING] nameof(request.IssueProviderId) and nameof(request.RepoProviderId) evaluate to
-        // the property names "IssueProviderId"/"RepoProviderId", not the method parameter name "request".
-        // This is non-idiomatic for ArgumentException.ParamName; .NET convention uses the method parameter
-        // name (i.e., nameof(request)). Fixing this would also require updating the corresponding test
-        // assertions in AgentJobDispatcherTests.cs (TryDispatchReviewAsync_Default*ProviderId tests).
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value, nameof(request.IssueProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value, nameof(request.RepoProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
 
         // Check if already being processed
         if (IsIssueBeingProcessedOrQueued(request.PrIdentifier, request.IssueProviderId))
@@ -114,11 +109,11 @@ public sealed partial class AgentJobDispatcher
         string? decompositionSource = null,
         PipelineProject? project = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value, nameof(epicIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value);
         ArgumentNullException.ThrowIfNull(epicTitle);
         ArgumentNullException.ThrowIfNull(initiatedBy);
-        ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value, nameof(issueProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value, nameof(repoProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value);
 
         if (phaseType is not (PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition))
             throw new ArgumentOutOfRangeException(nameof(phaseType), phaseType, "Must be DecompositionAnalysis or Decomposition");
@@ -202,13 +197,8 @@ public sealed partial class AgentJobDispatcher
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(requiredLabels);
-        // TODO: [WARNING] nameof(job.IssueProviderId) and nameof(job.RepoProviderId) evaluate to the
-        // property names "IssueProviderId"/"RepoProviderId", not the method parameter name "job".
-        // This is non-idiomatic for ArgumentException.ParamName; .NET convention uses the method parameter
-        // name (i.e., nameof(job)). Fixing this would also require updating the corresponding test
-        // assertions in AgentJobDispatcherTests.cs (DispatchToAgentDirectAsync_Default*ProviderId tests).
-        ArgumentException.ThrowIfNullOrEmpty(job.IssueProviderId.Value, nameof(job.IssueProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(job.RepoProviderId.Value, nameof(job.RepoProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(job.IssueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(job.RepoProviderId.Value);
 
         return job.RunType switch
         {

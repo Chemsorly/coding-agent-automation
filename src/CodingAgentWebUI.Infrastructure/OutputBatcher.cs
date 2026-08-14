@@ -240,14 +240,14 @@ public sealed class OutputBatcher : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _cts.Cancel();
+        await _cts.CancelAsync();
 
         // Wait for the flush loop to finish observing cancellation BEFORE disposing
         // the trigger. Disposing the trigger first (e.g. ManualFlushTrigger.DisposeAsync
         // which calls _gate.Dispose()) while the loop is still awaiting
         // WaitForNextTickAsync causes an ObjectDisposedException on the semaphore.
         try { await _flushLoop; }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException e) { _ = e; /* expected during disposal */ }
 
         await _trigger.DisposeAsync();
 
