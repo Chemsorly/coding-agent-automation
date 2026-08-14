@@ -158,7 +158,6 @@ public static partial class ServiceCollectionExtensions
             (IConsolidationRunTracker)sp.GetRequiredService<IConsolidationService>());
 
         services.AddSingleton<ConsolidationBadgeService>();
-        services.AddSingleton<ProjectChangeNotifier>();
 
         return services;
     }

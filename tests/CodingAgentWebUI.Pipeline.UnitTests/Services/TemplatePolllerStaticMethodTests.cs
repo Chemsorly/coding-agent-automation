@@ -98,11 +98,17 @@ public class TemplatePolllerStaticMethodTests
             [templateId.Value] = [(MakeIssue("epic1"), PipelineRunType.DecompositionAnalysis)]
         };
 
-        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues);
+        var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            [templateId.Value] = [MakePr(99)]
+        };
+
+        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues);
 
         issueQueues[templateId.Value].Should().BeEmpty();
         prQueues[templateId.Value].Should().BeEmpty();
         decompQueues[templateId.Value].Should().BeEmpty();
+        agentDonePrQueues[templateId.Value].Should().BeEmpty("ClearQueuesForTemplate must also clear agentDonePrQueues");
     }
 
     [Fact]
@@ -113,14 +119,18 @@ public class TemplatePolllerStaticMethodTests
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
         var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
 
-        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues);
+        var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>();
+
+        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues);
 
         issueQueues.Should().ContainKey(templateId.Value);
         prQueues.Should().ContainKey(templateId.Value);
         decompQueues.Should().ContainKey(templateId.Value);
+        agentDonePrQueues.Should().ContainKey(templateId.Value, "ClearQueuesForTemplate must initialise agentDonePrQueues entry");
         issueQueues[templateId.Value].Should().BeEmpty();
         prQueues[templateId.Value].Should().BeEmpty();
         decompQueues[templateId.Value].Should().BeEmpty();
+        agentDonePrQueues[templateId.Value].Should().BeEmpty();
     }
 
     [Fact]
@@ -144,10 +154,18 @@ public class TemplatePolllerStaticMethodTests
             [otherId] = []
         };
 
-        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues);
+        var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            [templateId.Value] = [MakePr(42)],
+            [otherId] = [MakePr(43)]
+        };
+
+        TemplatePoller.ClearQueuesForTemplate(templateId, issueQueues, prQueues, decompQueues, agentDonePrQueues);
 
         issueQueues[otherId].Should().HaveCount(1, "other template's queue must be untouched");
         prQueues[otherId].Should().HaveCount(1, "other template's PR queue must be untouched");
+        agentDonePrQueues[otherId].Should().HaveCount(1, "other template's agentDone queue must be untouched");
+        agentDonePrQueues[templateId.Value].Should().BeEmpty("only the target template's agentDone queue is cleared");
     }
 
     // ── FetchAllPagesAsync ────────────────────────────────────────────────

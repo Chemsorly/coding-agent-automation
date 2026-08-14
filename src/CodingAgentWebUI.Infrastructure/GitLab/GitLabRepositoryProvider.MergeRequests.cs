@@ -16,6 +16,126 @@ namespace CodingAgentWebUI.Infrastructure.GitLab;
 /// </summary>
 public partial class GitLabRepositoryProvider
 {
+    // ── Auto-branch-update (spec 040) ─────────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<PrMergeabilityStatus> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
+    {
+        var mr = await ExecuteWithResilienceAsync(
+            client =>
+            {
+                var mrClient = client.GetMergeRequest(ProjectId);
+                return Task.Run(() => mrClient[prNumber], ct);
+            },
+            "IsPullRequestBehindBase", ct);
+
+        // Check HasConflicts first — this is the definitive conflict signal from GitLab.
+        // It takes precedence over DetailedMergeStatus because GitLab has no dedicated
+        // "conflicted" enum member; HasConflicts is the canonical way to detect conflicts.
+        if (mr.HasConflicts)
+            return PrMergeabilityStatus.Conflicted;
+
+        // mr.DetailedMergeStatus is DynamicEnum<DetailedMergeStatus> (a struct).
+        // StringValue is the raw JSON string when the value was deserialized from an unknown/string value;
+        // it is null when the value is a known enum member.
+        // We prefer StringValue for unknown values (e.g. "need_rebase" not yet in NGitLab enum).
+        // For known enum members, compare directly against DetailedMergeStatus enum values.
+        var status = mr.DetailedMergeStatus;
+        var rawString = status.StringValue;
+
+        // Known "need_rebase" — not in NGitLab 12 enum, compare by raw string
+        if (string.Equals(rawString, "need_rebase", StringComparison.Ordinal))
+            return PrMergeabilityStatus.Behind;
+
+        // "conflict" — real GitLab API value (distinct from "need_rebase") meaning a
+        // textual merge conflict exists. Map to Conflicted so the rework path triggers
+        // and the in-flight slot is freed. HasConflicts above covers most cases, but
+        // this handles the eventual-consistency window where HasConflicts may lag.
+        if (string.Equals(rawString, "conflict", StringComparison.Ordinal))
+            return PrMergeabilityStatus.Conflicted;
+
+        // Map known enum members
+        if (status == DetailedMergeStatus.Mergeable)
+            return PrMergeabilityStatus.UpToDate;
+        if (status == DetailedMergeStatus.NotOpen)
+            return PrMergeabilityStatus.UpToDate;
+        if (status == DetailedMergeStatus.Checking
+            || status == DetailedMergeStatus.Unchecked
+            || status == DetailedMergeStatus.NotApproved
+            || status == DetailedMergeStatus.CiStillRunning
+            || status == DetailedMergeStatus.Preparing)
+            return PrMergeabilityStatus.Blocked;
+
+        // All other values (unknown raw strings, unrecognised enum members): conservative
+        return PrMergeabilityStatus.Unknown;
+    }
+
+    /// <inheritdoc />
+    public async Task UpdatePullRequestBranchAsync(int prNumber, CancellationToken ct)
+    {
+        // NGitLab exposes IMergeRequestClient.Rebase(long mergeRequestIid) → RebaseResult.
+        // ExecuteWriteWithResilienceAsync retries only on 5xx; 409 (server lock busy) propagates
+        // to the outer catch and is handled as a Warning (safe to retry next tick).
+        try
+        {
+            await ExecuteWriteWithResilienceAsync(
+                client =>
+                {
+                    var mrClient = client.GetMergeRequest(ProjectId);
+                    return Task.Run(() => mrClient.Rebase(prNumber), ct);
+                },
+                "UpdatePullRequestBranch", ct);
+            Log.Information("Triggered server-side rebase for MR !{PrNumber} in project {ProjectId}",
+                prNumber, ProjectId);
+        }
+        catch (GitLabException ex) when ((int)ex.StatusCode == 409)
+        {
+            // 409 = GitLab server transaction lock busy — not a git conflict.
+            // Re-throw so HousekeepingService.UpdateAsync catches it and increments
+            // the Failed counter (rather than incorrectly counting as Succeeded).
+            // The MR is re-triggered on the next tick when mergeability resolves.
+            throw new InvalidOperationException(
+                $"GitLab rebase for MR !{prNumber} returned 409 (server lock busy); will retry next tick", ex);
+        }
+    }
+
+    // ─── Branch cleanup (spec 040) ───────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ListAgentBranchesAsync(CancellationToken ct)
+    {
+        var branches = await ExecuteWithResilienceAsync(
+            client => Task.Run(() =>
+                client.GetRepository(ProjectId).Branches.All
+                    .Select(b => b.Name)
+                    .Where(name => name.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal))
+                    .ToList(), ct),
+            "ListAgentBranches", ct);
+
+        return branches.AsReadOnly();
+    }
+
+    /// <inheritdoc />
+    public async Task DeleteBranchAsync(string branchName, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(branchName);
+        try
+        {
+            await ExecuteWriteWithResilienceAsync(
+                client => Task.Run(() =>
+                    client.GetRepository(ProjectId).Branches.Delete(branchName), ct),
+                "DeleteBranch", ct);
+            Log.Information("Housekeeping: deleted stale branch {BranchName} in project {ProjectId}",
+                branchName, ProjectId);
+        }
+        catch (GitLabException ex) when ((int)ex.StatusCode == 404)
+        {
+            // Branch already gone — treat as success (no-op)
+            Log.Debug("Housekeeping: branch {BranchName} not found in project {ProjectId} — already deleted",
+                branchName, ProjectId);
+        }
+    }
+
     // ─── Merge Request CRUD ──────────────────────────────────────────────────────
 
     /// <inheritdoc />

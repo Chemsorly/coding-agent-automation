@@ -30,6 +30,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly WorkItemTransitionService? _workItemTransition;
     private readonly PendingWorkItemDrainService? _pendingDrainService;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
+    private readonly IProjectStore? _projectStore;
     private readonly ILogger<AgentHubFacadeDependencies> _logger;
 
     public AgentHubFacade(AgentHubFacadeDependencies deps)
@@ -55,6 +56,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _workItemTransition = deps.WorkItemTransition;
         _pendingDrainService = deps.PendingDrainService;
         _dbFactory = deps.DbFactory;
+        _projectStore = deps.ProjectStore;
     }
 
     // ── Registry operations ─────────────────────────────────────────────
@@ -323,6 +325,14 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _historyService.GetRunHistoryAsync(ct);
 
     // ── Issue provider operations ───────────────────────────────────────
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
+    {
+        if (_projectStore is null)
+            return Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(Array.Empty<PipelineJobTemplate>());
+        return _projectStore.LoadTemplatesForProjectAsync(projectId, ct);
+    }
 
     /// <inheritdoc />
     public Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)

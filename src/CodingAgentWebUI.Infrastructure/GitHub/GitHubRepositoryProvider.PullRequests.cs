@@ -8,6 +8,98 @@ namespace CodingAgentWebUI.Infrastructure.GitHub;
 
 public partial class GitHubRepositoryProvider
 {
+    // ── Auto-branch-update (spec 040) ─────────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<PrMergeabilityStatus> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
+    {
+        var pr = await ExecuteWithResilienceAsync(
+            client => client.PullRequest.Get(Owner, Repo, prNumber),
+            "IsPullRequestBehindBase", ct);
+
+        // IMPORTANT: Blocked MUST map to PrMergeabilityStatus.Blocked, not UpToDate or Conflicted.
+        // GitHub returns "blocked" for the full CI run duration (5–30+ min) when required checks
+        // are configured. Any other mapping would prematurely free the concurrency slot.
+        // Unstable = non-required checks pending/failing; required CI may still be running.
+        //
+        // pr.MergeableState is StringEnum<MergeableState>; switch on the string value.
+        return pr.MergeableState?.StringValue switch
+        {
+            "behind"    => PrMergeabilityStatus.Behind,
+            "clean"     => PrMergeabilityStatus.UpToDate,
+            "dirty"     => PrMergeabilityStatus.Conflicted, // merge conflict — trigger rework
+            "draft"     => PrMergeabilityStatus.UpToDate,
+            "has_hooks" => PrMergeabilityStatus.UpToDate,
+            "unstable"  => PrMergeabilityStatus.UpToDate,   // non-required checks only; not a conflict
+            "blocked"   => PrMergeabilityStatus.Blocked,    // required checks pending/failing — CI still running
+            "unknown"   => PrMergeabilityStatus.Unknown,    // initial async computation (lasts seconds)
+            null        => PrMergeabilityStatus.Unknown,
+            _           => PrMergeabilityStatus.Unknown     // unknown future values: conservative
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task UpdatePullRequestBranchAsync(int prNumber, CancellationToken ct)
+    {
+        // Octokit has no typed method for PUT /repos/{owner}/{repo}/pulls/{number}/update-branch.
+        // Use the raw IConnection — note: IConnection.Put<T> has no CancellationToken overload.
+        // Use client.Connection.BaseAddress (includes /api/v3 for non-github.com hosts)
+        // so the URL is consistent with all other Octokit API calls.
+        var client = await GetClientAsync(ct);
+        var baseAddress = client.Connection.BaseAddress;
+        var uri = new Uri(baseAddress, $"repos/{Owner}/{Repo}/pulls/{prNumber}/update-branch");
+        await client.Connection.Put<object>(uri, new { }); // NOSONAR S8949 — no ct overload on IConnection.Put
+        Log.Information("Triggered server-side branch update for PR #{PrNumber} in {Owner}/{Repo}",
+            prNumber, Owner, Repo);
+    }
+
+    // ── Branch cleanup (spec 040) ─────────────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ListAgentBranchesAsync(CancellationToken ct)
+    {
+        // Fetch all branches with pagination — GitHub returns 30 per page by default.
+        var branches = await ExecuteWithResilienceAsync(
+            client => client.Repository.Branch.GetAll(Owner, Repo,
+                new ApiOptions { PageSize = 100 }),
+            "ListAgentBranches", ct);
+
+        return branches
+            .Select(b => b.Name)
+            .Where(name => name.StartsWith(PipelineConstants.BranchPrefix, StringComparison.Ordinal))
+            .ToList()
+            .AsReadOnly();
+    }
+
+    /// <inheritdoc />
+    public async Task DeleteBranchAsync(string branchName, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(branchName);
+        try
+        {
+            await ExecuteWithResilienceAsync(
+                client => client.Git.Reference.Delete(Owner, Repo, $"refs/heads/{branchName}"),
+                "DeleteBranch", ct);
+            Log.Information("Housekeeping: deleted stale branch {BranchName} in {Owner}/{Repo}",
+                branchName, Owner, Repo);
+        }
+        catch (NotFoundException)
+        {
+            // 404 — branch already gone (no-op)
+            Log.Debug("Housekeeping: branch {BranchName} not found in {Owner}/{Repo} — already deleted",
+                branchName, Owner, Repo);
+        }
+        catch (ApiValidationException ex) when (ex.Message.Contains("Reference does not exist",
+            StringComparison.OrdinalIgnoreCase))
+        {
+            // 422 — GitHub returns this when the ref doesn't exist (no-op)
+            Log.Debug("Housekeeping: branch {BranchName} does not exist in {Owner}/{Repo} — skipping",
+                branchName, Owner, Repo);
+        }
+    }
+
+    // ── PR CRUD ───────────────────────────────────────────────────────────────
+
     public async Task<string> CreatePullRequestAsync(PullRequestInfo prInfo, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(prInfo);

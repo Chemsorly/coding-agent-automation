@@ -193,6 +193,12 @@ public class AgentCodingPageService : IDisposable
     public Task<(bool Success, string? Error)> ToggleDecompositionEnabledAsync(PipelineJobTemplate template, bool enabled)
         => TogglePropertyAsync(template, (t, e) => t with { DecompositionEnabled = e }, enabled);
 
+    public Task<(bool Success, string? Error)> ToggleHousekeepingEnabledAsync(PipelineJobTemplate template, bool enabled)
+        => TogglePropertyAsync(template, (t, e) => t with { HousekeepingEnabled = e }, enabled);
+
+    public Task<(bool Success, string? Error)> ToggleBranchCleanupEnabledAsync(PipelineJobTemplate template, bool enabled)
+        => TogglePropertyAsync(template, (t, e) => t with { HousekeepingBranchCleanupEnabled = e }, enabled);
+
     private async Task<(bool Success, string? Error)> TogglePropertyAsync(
         PipelineJobTemplate template,
         Func<PipelineJobTemplate, bool, PipelineJobTemplate> updater,
@@ -227,7 +233,11 @@ public class AgentCodingPageService : IDisposable
             BrainProviderId = string.IsNullOrEmpty(form.BrainProviderId) ? null : form.BrainProviderId,
             PipelineProviderId = string.IsNullOrEmpty(form.PipelineProviderId) ? null : form.PipelineProviderId,
             BrainReadOnly = form.BrainReadOnly, ImplementationEnabled = form.ImplementationEnabled,
-            ReviewEnabled = form.ReviewEnabled, DecompositionEnabled = form.DecompositionEnabled, Enabled = true
+            ReviewEnabled = form.ReviewEnabled, DecompositionEnabled = form.DecompositionEnabled,
+            HousekeepingEnabled = form.HousekeepingEnabled,
+            HousekeepingConcurrencyLimit = form.HousekeepingConcurrencyLimit,
+            HousekeepingBranchCleanupEnabled = form.HousekeepingBranchCleanupEnabled,
+            Enabled = true
         };
         var targetProjectId = string.IsNullOrEmpty(form.ProjectId) ? WellKnownIds.DefaultProjectId : form.ProjectId;
         try { await _projectStore.SaveTemplateAsync(targetProjectId, newTemplate, CancellationToken.None); }

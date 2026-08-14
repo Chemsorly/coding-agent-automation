@@ -68,7 +68,7 @@ public class TemplatePolllerQueueExceptionTests
         var template = MakeTemplate("t1", "ip-rl");
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
-        var (issueQueues, prQueues, decompQueues) = await poller.PollTemplateQueuesAsync(
+        var (issueQueues, prQueues, decompQueues, _) = await poller.PollTemplateQueuesAsync(
             new[] { template }, 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
@@ -105,7 +105,7 @@ public class TemplatePolllerQueueExceptionTests
         var template = MakeTemplate("t3", "ip-auth");
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
-        var (issueQueues, prQueues, decompQueues) = await poller.PollTemplateQueuesAsync(
+        var (issueQueues, prQueues, decompQueues, _) = await poller.PollTemplateQueuesAsync(
             new[] { template }, 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
@@ -139,7 +139,7 @@ public class TemplatePolllerQueueExceptionTests
         var template = MakeTemplate("t5", "ip-gen");
         var (statuses, reportIdx, reportStatus, notifyChange) = MakeCallbacks();
 
-        var (issueQueues, prQueues, decompQueues) = await poller.PollTemplateQueuesAsync(
+        var (issueQueues, prQueues, decompQueues, _) = await poller.PollTemplateQueuesAsync(
             new[] { template }, 3, statuses, reportIdx, reportStatus, notifyChange,
             CancellationToken.None);
 
