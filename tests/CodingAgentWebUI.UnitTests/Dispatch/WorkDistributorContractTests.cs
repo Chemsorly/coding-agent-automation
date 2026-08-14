@@ -485,11 +485,11 @@ public class WorkDistributorAdditionalTests
         var transitionService = new WorkItemTransitionService(
             dbFactory, NullLogger<WorkItemTransitionService>.Instance);
 
-        // TODO: IAgentCommunication and ISignalRWorkDistributorAgentResolver mocks have no setups here.
+        // IAgentCommunication and ISignalRWorkDistributorAgentResolver mocks have no setups here.
         // The six cold-state Theory tests don't trigger dispatch paths so this is currently safe,
         // but if SignalRWorkDistributor ever calls ResolveAgent/AssignJobAsync before its null guard,
         // the mock's default return (null) would mask the bug rather than throwing NullReferenceException.
-        // Consider explicit mock setups (e.g. matching SignalRWorkDistributorContractTests) if the
+        // Add explicit mock setups (matching SignalRWorkDistributorContractTests) if the
         // DistributeAsync null-guard position changes or new Theory tests are added that exercise dispatch.
         return new SignalRWorkDistributor(
             dbFactory,
