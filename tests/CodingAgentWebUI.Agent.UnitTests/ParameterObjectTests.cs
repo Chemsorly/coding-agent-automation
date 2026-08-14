@@ -22,40 +22,37 @@ public class ParameterObjectTests
     [Fact]
     public void AgentWorkerServiceDependencies_AllRequiredPropertiesAssigned()
     {
-        // AgentConnectionLifecycle and AgentJobSlotManager are sealed — use null! for
-        // the dependency object tests (we test that the record stores values, not that
-        // the classes are functional)
+        // AgentConnectionLifecycle, AgentJobSlotManager, ChatJobHandler, ConsolidationJobHandler
+        // are sealed — use null! for the dependency object tests (we test that the record stores
+        // values, not that the classes are functional)
         AgentConnectionLifecycle connectionLifecycle = null!;
         AgentJobSlotManager slotManager = null!;
+        ChatJobHandler chatHandler = null!;
+        ConsolidationJobHandler consolidationHandler = null!;
         var agentId = new AgentId("test-agent");
         var executor = Mock.Of<IPipelineExecutor>();
-        var consolidationExecutor = Mock.Of<IConsolidationExecutor>();
         var completionReporter = Mock.Of<IJobCompletionReporter>();
-        var orchestrator = Mock.Of<IKiroCliOrchestrator>();
-        var httpClientFactory = Mock.Of<System.Net.Http.IHttpClientFactory>();
         var hostLifetime = Mock.Of<IHostApplicationLifetime>();
         var logger = Mock.Of<Serilog.ILogger>();
 
         var deps = new AgentWorkerServiceDependencies(
             connectionLifecycle,
             slotManager,
+            chatHandler,
+            consolidationHandler,
             agentId,
             executor,
-            consolidationExecutor,
             completionReporter,
-            orchestrator,
-            httpClientFactory,
             hostLifetime,
             logger);
 
         deps.ConnectionLifecycle.Should().BeNull();
         deps.SlotManager.Should().BeNull();
+        deps.ChatHandler.Should().BeNull();
+        deps.ConsolidationHandler.Should().BeNull();
         deps.AgentId.Should().Be(agentId);
         deps.Executor.Should().BeSameAs(executor);
-        deps.ConsolidationExecutor.Should().BeSameAs(consolidationExecutor);
         deps.CompletionReporter.Should().BeSameAs(completionReporter);
-        deps.Orchestrator.Should().BeSameAs(orchestrator);
-        deps.HttpClientFactory.Should().BeSameAs(httpClientFactory);
         deps.HostApplicationLifetime.Should().BeSameAs(hostLifetime);
         deps.Logger.Should().BeSameAs(logger);
     }
