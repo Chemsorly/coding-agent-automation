@@ -54,10 +54,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 #pragma warning restore S1450
     private readonly IPipelineExecutor _executor;
     private readonly IJobCompletionReporter _completionReporter;
-    private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
-    private readonly string _agentId;
 
     public AgentWorkerService(AgentWorkerServiceDependencies deps)
     {
@@ -68,18 +66,14 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         ArgumentNullException.ThrowIfNull(deps.ConsolidationHandler);
         ArgumentNullException.ThrowIfNull(deps.Executor);
         ArgumentNullException.ThrowIfNull(deps.CompletionReporter);
-        ArgumentNullException.ThrowIfNull(deps.HostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(deps.Logger);
 
         _connectionLifecycle = deps.ConnectionLifecycle;
         _slotManager = deps.SlotManager;
         _chatJobHandler = deps.ChatHandler;
         _consolidationJobHandler = deps.ConsolidationHandler;
-        // NOTE: Validate agentId.Value is not null/empty — default(AgentId) would propagate null.
-        _agentId = deps.AgentId.Value;
         _executor = deps.Executor;
         _completionReporter = deps.CompletionReporter;
-        _hostApplicationLifetime = deps.HostApplicationLifetime;
         _logger = deps.Logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(deps.Logger);
 
