@@ -57,13 +57,6 @@ public class RateLimiterNullGuardTests
 
         var service = new NullRateLimiterService(leaderElectionMock.Object);
 
-        // TODO: This test exercises InvokeNullGuard() on a synthetic NullRateLimiterService subclass
-        // rather than the actual ?? throw guard in DispatchService or ConsolidationDispatchHandler.
-        // If the guard were accidentally removed from the production files while this helper retained it,
-        // the test would still pass. Consider adding tests that construct the real services via a
-        // constructor that omits rateLimitPerSecond (if the base class is extended to support that path)
-        // or use reflection/subclassing to trigger the production guard. See TestQualityReviewer WARNING.
-
         // Act & Assert: the null-guard must throw InvalidOperationException, not NullReferenceException.
         service.Invoking(s => s.InvokeNullGuard())
             .Should().Throw<InvalidOperationException>(
@@ -79,13 +72,6 @@ public class RateLimiterNullGuardTests
         leaderElectionMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
 
         var service = new NullRateLimiterService(leaderElectionMock.Object);
-
-        // TODO: This assertion validates the exception message of NullRateLimiterService.InvokeNullGuard()
-        // (which mentions "NullRateLimiterService"), not the production messages in DispatchService or
-        // ConsolidationDispatchHandler (which mention "DispatchService" and "ConsolidationDispatchHandler"
-        // respectively). If a production message string were silently emptied or changed, this test would
-        // not catch it. Consider adding dedicated tests for each production service's guard message.
-        // See TestQualityReviewer WARNING.
 
         // Act & Assert: the exception message must identify the service for actionable diagnostics.
         service.Invoking(s => s.InvokeNullGuard())
