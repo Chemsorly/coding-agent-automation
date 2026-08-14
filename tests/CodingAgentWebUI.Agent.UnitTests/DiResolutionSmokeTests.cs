@@ -348,16 +348,16 @@ public class DiResolutionSmokeTests
         services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
-            new ChatJobHandler(
+            new ChatJobHandler(new ChatJobHandlerDependencies(
                 sp.GetRequiredService<AgentConnectionLifecycle>(),
                 sp.GetRequiredService<AgentJobSlotManager>(),
                 sp.GetRequiredService<IKiroCliOrchestrator>(),
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<IHostApplicationLifetime>(),
-                signalAgentReady: () => Task.CompletedTask,
-                isOpenCodeProvider: false,
-                isChatMode: false,
-                logger: Log.Logger),
+                SignalAgentReady: () => Task.CompletedTask,
+                IsOpenCodeProvider: false,
+                IsChatMode: false,
+                Logger: Log.Logger)),
             new ConsolidationJobHandler(
                 sp.GetRequiredService<AgentConnectionLifecycle>(),
                 sp.GetRequiredService<AgentJobSlotManager>(),

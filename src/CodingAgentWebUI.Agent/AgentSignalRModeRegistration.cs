@@ -61,13 +61,13 @@ internal static class AgentSignalRModeRegistration
                 .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
             var isChatMode = string.Equals(
                 Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
-            return new ChatJobHandler(
+            return new ChatJobHandler(new ChatJobHandlerDependencies(
                 sp.GetRequiredService<AgentConnectionLifecycle>(),
                 sp.GetRequiredService<AgentJobSlotManager>(),
                 sp.GetRequiredService<IKiroCliOrchestrator>(),
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<IHostApplicationLifetime>(),
-                signalAgentReady: async () =>
+                SignalAgentReady: async () =>
                 {
                     try
                     {
@@ -80,9 +80,9 @@ internal static class AgentSignalRModeRegistration
                         logger.Warning(ex, "Failed to send AgentReady signal from ChatJobHandler");
                     }
                 },
-                isOpenCodeProvider: isOpenCodeProvider,
-                isChatMode: isChatMode,
-                logger: logger);
+                IsOpenCodeProvider: isOpenCodeProvider,
+                IsChatMode: isChatMode,
+                Logger: logger));
         });
         services.AddSingleton<ConsolidationJobHandler>(sp => new ConsolidationJobHandler(
             sp.GetRequiredService<AgentConnectionLifecycle>(),

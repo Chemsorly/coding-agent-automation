@@ -51,14 +51,14 @@ public class ChatJobHandlerTests : IDisposable
         var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
             new AgentId("test-chat"), lifetime, mockLogger);
 
-        var handler = new ChatJobHandler(
+        var handler = new ChatJobHandler(new ChatJobHandlerDependencies(
             lifecycle, slotManager, mockOrchestrator,
             Mock.Of<System.Net.Http.IHttpClientFactory>(),
             lifetime,
-            signalAgentReady ?? (() => Task.CompletedTask),
-            isOpenCodeProvider: isOpenCodeProvider,
-            isChatMode: isChatMode,
-            logger: mockLogger);
+            SignalAgentReady: signalAgentReady ?? (() => Task.CompletedTask),
+            IsOpenCodeProvider: isOpenCodeProvider,
+            IsChatMode: isChatMode,
+            Logger: mockLogger));
 
         return (handler, slotManager, lifecycle);
     }

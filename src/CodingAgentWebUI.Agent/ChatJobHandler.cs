@@ -30,34 +30,26 @@ public sealed class ChatJobHandler
     private readonly bool _isChatMode;
     private readonly Serilog.ILogger _logger;
 
-    public ChatJobHandler(
-        AgentConnectionLifecycle connectionLifecycle,
-        AgentJobSlotManager slotManager,
-        IKiroCliOrchestrator orchestrator,
-        System.Net.Http.IHttpClientFactory httpClientFactory,
-        IHostApplicationLifetime hostApplicationLifetime,
-        Func<Task> signalAgentReady,
-        bool isOpenCodeProvider,
-        bool isChatMode,
-        Serilog.ILogger logger)
+    public ChatJobHandler(ChatJobHandlerDependencies deps)
     {
-        ArgumentNullException.ThrowIfNull(connectionLifecycle);
-        ArgumentNullException.ThrowIfNull(slotManager);
-        ArgumentNullException.ThrowIfNull(orchestrator);
-        ArgumentNullException.ThrowIfNull(httpClientFactory);
-        ArgumentNullException.ThrowIfNull(hostApplicationLifetime);
-        ArgumentNullException.ThrowIfNull(signalAgentReady);
-        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.ConnectionLifecycle);
+        ArgumentNullException.ThrowIfNull(deps.SlotManager);
+        ArgumentNullException.ThrowIfNull(deps.Orchestrator);
+        ArgumentNullException.ThrowIfNull(deps.HttpClientFactory);
+        ArgumentNullException.ThrowIfNull(deps.HostApplicationLifetime);
+        ArgumentNullException.ThrowIfNull(deps.SignalAgentReady);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
 
-        _connectionLifecycle = connectionLifecycle;
-        _slotManager = slotManager;
-        _orchestrator = orchestrator;
-        _httpClientFactory = httpClientFactory;
-        _hostApplicationLifetime = hostApplicationLifetime;
-        _signalAgentReady = signalAgentReady;
-        _isOpenCodeProvider = isOpenCodeProvider;
-        _isChatMode = isChatMode;
-        _logger = logger;
+        _connectionLifecycle = deps.ConnectionLifecycle;
+        _slotManager = deps.SlotManager;
+        _orchestrator = deps.Orchestrator;
+        _httpClientFactory = deps.HttpClientFactory;
+        _hostApplicationLifetime = deps.HostApplicationLifetime;
+        _signalAgentReady = deps.SignalAgentReady;
+        _isOpenCodeProvider = deps.IsOpenCodeProvider;
+        _isChatMode = deps.IsChatMode;
+        _logger = deps.Logger;
     }
 
     public async Task HandleChatPromptAsync(ChatPromptMessage message)
@@ -91,27 +83,7 @@ public sealed class ChatJobHandler
         {
             // Scoped so the batcher is disposed (flushing remaining lines)
             // BEFORE reporting completion to the orchestrator.
-            {
-                await using var outputBatcher = new OutputBatcher();
-                outputBatcher.OnFlush += async lines =>
-                {
-                    try
-                    {
-                        var response = new ChatResponseMessage
-                        {
-                            SessionId = message.SessionId,
-                            Lines = lines.ToList()
-                        };
-                        await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response, CancellationToken.None);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warning(ex, "Failed to send chat response lines");
-                    }
-                };
-
-                (exitCode, error) = await ExecuteChatWithOutputAsync(message, outputBatcher, chatToken);
-            }
+            (exitCode, error) = await ExecuteWithBatchedOutputAsync(message, chatToken);
         }
         finally
         {
@@ -133,6 +105,35 @@ public sealed class ChatJobHandler
 
         // Do NOT send AgentReady — the chat session is still active.
         // The agent will be released when CancelChat is received (End Chat / navigate away).
+    }
+
+    /// <summary>
+    /// Creates an <see cref="OutputBatcher"/>, wires its flush handler to send chat response
+    /// lines over SignalR, and delegates to <see cref="ExecuteChatWithOutputAsync"/>.
+    /// Extracted from <see cref="RunChatTaskAsync"/> to satisfy S1199 (nested code block).
+    /// </summary>
+    private async Task<(int exitCode, string? error)> ExecuteWithBatchedOutputAsync(
+        ChatPromptMessage message, CancellationToken chatToken)
+    {
+        await using var outputBatcher = new OutputBatcher();
+        outputBatcher.OnFlush += async lines =>
+        {
+            try
+            {
+                var response = new ChatResponseMessage
+                {
+                    SessionId = message.SessionId,
+                    Lines = lines.ToList()
+                };
+                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to send chat response lines");
+            }
+        };
+
+        return await ExecuteChatWithOutputAsync(message, outputBatcher, chatToken);
     }
 
     public async Task<(int exitCode, string? error)> ExecuteChatWithOutputAsync(

@@ -97,16 +97,16 @@ internal static class TestAgentWorkerServiceFactory
         var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
         var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
         var lifetime = hostLifetime ?? Mock.Of<IHostApplicationLifetime>();
-        return new ChatJobHandler(
+        return new ChatJobHandler(new ChatJobHandlerDependencies(
             connectionLifecycle,
             slotManager,
             mockOrchestrator,
             Mock.Of<IHttpClientFactory>(),
             lifetime,
-            signalAgentReady ?? (() => Task.CompletedTask),
-            isOpenCodeProvider: isOpenCodeProvider,
-            isChatMode: isChatMode,
-            logger: mockLogger);
+            SignalAgentReady: signalAgentReady ?? (() => Task.CompletedTask),
+            IsOpenCodeProvider: isOpenCodeProvider,
+            IsChatMode: isChatMode,
+            Logger: mockLogger));
     }
 
     /// <summary>
