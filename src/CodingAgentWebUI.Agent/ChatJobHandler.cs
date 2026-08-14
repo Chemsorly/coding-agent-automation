@@ -291,6 +291,13 @@ public sealed class ChatJobHandler
 
         if (chatTask is not null)
         {
+            // TODO: [WARNING] Task.Delay(TimeSpan.FromSeconds(10), _hostApplicationLifetime.ApplicationStopping)
+            // throws OperationCanceledException immediately if ApplicationStopping is already cancelled at
+            // the point this executes (e.g. container SIGTERM races with orchestrator CancelChat message).
+            // That OCE propagates out of HandleCancelChatAsync uncaught, skipping the SignalChatEnd() /
+            // StopApplication() / _signalAgentReady() calls below and leaving the agent in an inconsistent state.
+            // Consider wrapping the Task.WhenAny block with a try/catch(OperationCanceledException) that
+            // falls through to the lifecycle completion calls.
             var completed = await Task.WhenAny(chatTask, Task.Delay(TimeSpan.FromSeconds(10), _hostApplicationLifetime.ApplicationStopping));
             if (completed != chatTask)
                 _logger.Warning("Chat task did not complete within timeout after cancellation for session {SessionId}", sessionId);

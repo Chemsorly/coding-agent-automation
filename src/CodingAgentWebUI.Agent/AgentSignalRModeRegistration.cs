@@ -71,6 +71,13 @@ internal static class AgentSignalRModeRegistration
                 {
                     try
                     {
+                        // TODO: [WARNING] AgentConnectionLifecycle and IHostApplicationLifetime are re-resolved
+                        // from the DI container on every invocation of this delegate. Since both are registered
+                        // as singletons this is safe today, but the pattern is inconsistent with the outer scope
+                        // (which captures the resolved instances via the outer `sp`). If either registration were
+                        // changed to scoped, the delegate would silently capture a different instance than
+                        // ChatJobHandler's own _connectionLifecycle field. Prefer capturing the singleton
+                        // instances from the outer factory scope rather than re-resolving on each call.
                         var lifecycle = sp.GetRequiredService<AgentConnectionLifecycle>();
                         var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
                         await lifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, agentId, lifetime.ApplicationStopping);

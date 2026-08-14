@@ -56,6 +56,12 @@ public sealed class ConsolidationJobHandler
         _logger.Information("Accepted consolidation job {JobId} of type {Type}",
             message.JobId, message.Type);
 
+        // TODO: [WARNING] _slotManager.JobCancellationToken!.Value uses the null-forgiving operator without
+        // a defensive null check. ChatJobHandler.HandleChatPromptAsync (line ~66) uses the safer pattern:
+        // `if (_slotManager.ChatCancellationToken is not { } chatToken) { release slot; return; }`.
+        // If TryAcquireJobSlot ever succeeds but JobCancellationToken is null (e.g. due to a race in
+        // AgentJobSlotManager), this throws NullReferenceException with no slot release. Consider adding
+        // the same defensive check as ChatJobHandler for consistency and resilience.
         var jobToken = _slotManager.JobCancellationToken!.Value;
         var activeTask = Task.Run(async () => await RunConsolidationTaskAsync(message, jobToken), CancellationToken.None);
         _slotManager.SetActiveJobTask(activeTask);

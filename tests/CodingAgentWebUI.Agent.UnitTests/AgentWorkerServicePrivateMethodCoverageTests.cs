@@ -81,6 +81,12 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         var source = File.ReadAllText(
             Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentSignalRModeRegistration.cs"));
 
+        // TODO: [WARNING] This assertion scans the entire file for "ApplicationStopping" and will pass as long
+        // as the string appears anywhere — e.g. it is also present in the AgentReady hub invocation at the top
+        // of the file (line ~40). If the ChatJobHandler's _signalAgentReady delegate were changed to pass
+        // CancellationToken.None instead of lifetime.ApplicationStopping, this test would still pass because
+        // the other occurrence remains. Narrow the assertion to the ChatJobHandler factory lambda body to
+        // ensure the cancellation contract is enforced at the correct callsite.
         source.Should().Contain("ApplicationStopping",
             "signalAgentReady delegates must pass ApplicationStopping to InvokeAsync so they are cancelled during shutdown");
     }
@@ -323,6 +329,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     public async Task RejectJobAsync_Consolidation_IncrementsRejectedCounterWithBusyTag()
     {
         // Characterization test: pins rejection telemetry behavior on the consolidation handler path.
+        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobHandler — call it there.
         var (listener, measurements) = CreateMeterListener();
         using (listener)
         {
@@ -339,8 +346,9 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
                 PipelineConfiguration = new PipelineConfiguration()
             };
 
-            await (Task)GetPrivateMethod(service, "HandleAssignConsolidationJobAsync")
-                .Invoke(service, [message])!;
+            var consolidationHandler = GetConsolidationJobHandler(service);
+            await (Task)GetMethod(consolidationHandler, "HandleAssignConsolidationJobAsync")
+                .Invoke(consolidationHandler, [message])!;
         }
 
         measurements.Should().Contain(m =>
@@ -377,6 +385,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     public async Task HandleAssignConsolidationJobAsync_IncrementsReceivedCounter()
     {
         // Characterization test: pins received counter behavior on the consolidation handler path.
+        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobHandler — call it there.
         // TODO [WARNING]: Same idle-agent background task concern as HandleAssignJobAsync_IncrementsReceivedCounter —
         // the dispatched Task.Run is not awaited, leaving uncontrolled work during teardown.
         // Consider using a busy agent to keep the test scope narrow.
@@ -393,8 +402,9 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
                 ProviderConfigs = [],
                 PipelineConfiguration = new PipelineConfiguration()
             };
-            await (Task)GetPrivateMethod(service, "HandleAssignConsolidationJobAsync")
-                .Invoke(service, [message])!;
+            var consolidationHandler = GetConsolidationJobHandler(service);
+            await (Task)GetMethod(consolidationHandler, "HandleAssignConsolidationJobAsync")
+                .Invoke(consolidationHandler, [message])!;
         }
 
         measurements.Should().Contain(m => m.name == "agent.jobs.received",
@@ -492,8 +502,10 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             PipelineConfiguration = new PipelineConfiguration()
         };
 
-        await (Task)GetPrivateMethod(service, "HandleAssignConsolidationJobAsync")
-            .Invoke(service, [message])!;
+        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobHandler — call it there.
+        var consolidationHandler = GetConsolidationJobHandler(service);
+        await (Task)GetMethod(consolidationHandler, "HandleAssignConsolidationJobAsync")
+            .Invoke(consolidationHandler, [message])!;
 
         capturedTags.Should().Contain(t => t.key == "run_type" && (string?)t.value == "consolidation",
             "run_type tag must be set to 'consolidation' on the Agent.ReceiveJob activity for consolidation jobs");

@@ -210,6 +210,10 @@ public class ChatJobHandlerTests : IDisposable
         if (chatTask is not null)
             await Task.WhenAny(chatTask, Task.Delay(5000));
 
+        // TODO: [WARNING] Same silent false-green pattern as WhenNotResume test above. If directory creation
+        // fails (catch { return; } above) or the background task does not reach the orchestrator mock within
+        // 5 seconds, callOrder is empty and the test exits green without running any assertions. A regression
+        // that broke resume-path logic entirely would produce a false pass.
         if (callOrder.Count == 0) return;
 
         callOrder.Should().HaveCount(1, "resume must skip warm-up and send only one prompt");
@@ -256,6 +260,10 @@ public class ChatJobHandlerTests : IDisposable
         if (chatTask is not null)
             await Task.WhenAny(chatTask, Task.Delay(5000));
 
+        // TODO: [WARNING] Silent false-green — if directory creation fails (catch { return; } above) or the
+        // background task does not reach the orchestrator mock within 5 seconds, capturedWorkspace is empty
+        // and the test exits green without running any assertions. The critical assertion that per-window
+        // workspace path is used is never verified on the failure path.
         if (capturedWorkspace.Count == 0) return;
         capturedWorkspace[0].Should().Be(expectedWorkspace,
             "non-empty ChatWindowId must use per-window workspace under ChatWorkspacesRoot");
@@ -277,6 +285,9 @@ public class ChatJobHandlerTests : IDisposable
 
         var (handler, slotManager, _) = CreateHandler(orchestrator: mockOrchestrator.Object);
 
+        // TODO: [WARNING] If Directory.CreateDirectory fails, the test exits green via `catch { return; }`
+        // without acquiring the slot or running any assertions. The assertion that the chat slot is released
+        // after RunChatTaskAsync completes is never verified on the failure path.
         try { Directory.CreateDirectory(AgentDefaults.ChatWorkspacePath); }
         catch { return; }
 
@@ -306,6 +317,9 @@ public class ChatJobHandlerTests : IDisposable
 
         var (handler, slotManager, _) = CreateHandler(orchestrator: mockOrchestrator.Object);
 
+        // TODO: [WARNING] If Directory.CreateDirectory fails, the test exits green via `catch { return; }`
+        // without the slot being held or any assertions running. The most important invariant here —
+        // that the finally block unconditionally releases the slot — is never verified on the failure path.
         try { Directory.CreateDirectory(AgentDefaults.ChatWorkspacePath); }
         catch { return; }
 

@@ -126,6 +126,12 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         {
             // Expected during shutdown
         }
+        // TODO: [WARNING] The previous catch (Exception ex) block that logged "Agent worker service encountered
+        // a fatal error" and re-threw was removed. Unexpected exceptions from ConnectAndRunAsync (e.g.
+        // InvalidOperationException on misconfigured hub URL) now propagate silently to the BackgroundService
+        // infrastructure, losing the agent-specific structured log entry. Consider re-adding a general
+        // catch-log-rethrow here, or confirm that the host's BackgroundService exception logging is sufficient
+        // for production diagnostics.
         finally
         {
             await ShutdownAsync();
