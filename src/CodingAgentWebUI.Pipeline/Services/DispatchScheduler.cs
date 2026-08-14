@@ -5,10 +5,10 @@ using CodingAgentWebUI.Pipeline.Telemetry;
 namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
-/// Fair round-robin dispatch logic across issue/PR/decomposition queues.
-/// Alternates between dispatching one round of issues (one per template), one round
-/// of PRs (one per template), and one round of decomposition (one per template) to
-/// ensure all three queue types get fair access to the budget.
+/// Priority-based dispatch logic across issue/PR/decomposition queues.
+/// Selects the highest-priority eligible queue type each iteration: PullRequests first,
+/// then Decomposition, then Issues (Implementation). Within each type, FIFO order is
+/// preserved by the per-queue dequeue logic.
 /// </summary>
 internal sealed class DispatchScheduler
 {
@@ -37,15 +37,9 @@ internal sealed class DispatchScheduler
     }
 
     /// <summary>
-    /// Represents which queue type the round-robin dispatcher should process next.
+    /// Represents the queue type to process, in priority order (PullRequests &gt; Decomposition &gt; Issues).
     /// </summary>
     internal enum DispatchTurn { Issues = 0, PullRequests = 1, Decomposition = 2 }
-
-    /// <summary>
-    /// Advances to the next turn in the three-way round-robin cycle.
-    /// </summary>
-    internal static DispatchTurn NextTurn(DispatchTurn turn) =>
-        (DispatchTurn)(((int)turn + 1) % 3);
 
     /// <summary>
     /// Result of a single-template dispatch attempt within <see cref="DispatchRoundAsync"/>.
@@ -139,7 +133,6 @@ internal sealed class DispatchScheduler
 
         var cycleStateCache = new Dictionary<int, bool>();
         var templateProjectLookup = request.FlattenedTemplates.ToDictionary(ft => ft.Template.Id, ft => ft.Project);
-        var currentTurn = DispatchTurn.Issues;
 
         string? lastReportedIssue = null;
         var trackingReportIssue = (string? id) => { lastReportedIssue = id; request.ReportIssue(id); };
@@ -149,9 +142,8 @@ internal sealed class DispatchScheduler
             if (ct.IsCancellationRequested) break;
 
             var (hasIssues, hasPrs, hasDecomp) = ComputeQueueAvailability(request, activeDecompositionCount);
-            var (foundTurn, selectedTurn) = TrySelectNextTurn(currentTurn, hasIssues, hasPrs, hasDecomp);
+            var (foundTurn, selectedTurn) = TrySelectHighestPriorityQueue(hasIssues, hasPrs, hasDecomp);
             if (!foundTurn) break;
-            currentTurn = selectedTurn;
 
             var roundCtx = new RoundDispatchContext
             {
@@ -166,7 +158,7 @@ internal sealed class DispatchScheduler
             };
 
             var turnResult = await ExecuteTurnAsync(
-                currentTurn, request, roundCtx, cycleStateCache,
+                selectedTurn, request, roundCtx, cycleStateCache,
                 new TurnEligibility(hasIssues, hasPrs, hasDecomp, activeDecompositionCount),
                 stoppingToken, ct);
 
@@ -177,14 +169,6 @@ internal sealed class DispatchScheduler
 
             if (ct.IsCancellationRequested || remaining <= 0) break;
             if (!turnResult.AnyProgress) break;
-
-            // TODO: currentTurn = NextTurn(currentTurn) is dead state mutation after the priority ordering
-            // change (#1931). TrySelectNextTurn now ignores startTurn entirely (iterates PriorityOrder),
-            // so advancing currentTurn here has no effect on turn selection. The call is harmless but
-            // misleading — it creates the impression that round-robin state still matters. Remove
-            // NextTurn, the currentTurn variable, and the startTurn parameter from TrySelectNextTurn
-            // in a follow-up clean-up to make program intent clear.
-            currentTurn = NextTurn(currentTurn);
         }
 
         EmitSkippedMaxRunsTelemetry(request, remaining);
@@ -294,19 +278,17 @@ internal sealed class DispatchScheduler
     /// <summary>
     /// Priority order for turn selection. Review (PRs) is dispatched first, then Decomposition,
     /// then Issues (Implementation). Within each type, FIFO order is preserved by the per-queue
-    /// dequeue logic. <c>startTurn</c> is retained for signature compatibility but is no longer
-    /// used after priority ordering replaced the modulo round-robin.
+    /// dequeue logic.
     /// </summary>
     private static readonly DispatchTurn[] PriorityOrder =
         [DispatchTurn.PullRequests, DispatchTurn.Decomposition, DispatchTurn.Issues];
 
     /// <summary>
-    /// Selects the next eligible turn using priority ordering: PullRequests first, then
-    /// Decomposition, then Issues. Returns (found=false, default) when all queues are exhausted.
+    /// Selects the next eligible queue type using priority ordering: PullRequests first,
+    /// then Decomposition, then Issues. Returns (found=false, default) when all queues are exhausted.
     /// </summary>
-    /// <param name="startTurn">Unused after priority ordering replaced round-robin; retained for signature compatibility.</param>
-    internal static (bool found, DispatchTurn selectedTurn) TrySelectNextTurn(
-        DispatchTurn startTurn, bool hasIssues, bool hasPrs, bool hasDecomp)
+    internal static (bool found, DispatchTurn selectedTurn) TrySelectHighestPriorityQueue(
+        bool hasIssues, bool hasPrs, bool hasDecomp)
     {
         foreach (var turn in PriorityOrder)
         {
@@ -315,7 +297,7 @@ internal sealed class DispatchScheduler
                 || (turn == DispatchTurn.Decomposition && hasDecomp))
                 return (true, turn);
         }
-        return (false, startTurn);
+        return (false, default);
     }
 
     /// <summary>
