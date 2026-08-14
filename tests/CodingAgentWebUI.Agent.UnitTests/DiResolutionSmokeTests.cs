@@ -348,12 +348,25 @@ public class DiResolutionSmokeTests
         services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
+            new ChatJobHandler(
+                sp.GetRequiredService<AgentConnectionLifecycle>(),
+                sp.GetRequiredService<AgentJobSlotManager>(),
+                sp.GetRequiredService<IKiroCliOrchestrator>(),
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<IHostApplicationLifetime>(),
+                signalAgentReady: () => Task.CompletedTask,
+                agentId: "test-agent-signalr-smoke",
+                isOpenCodeProvider: false,
+                isChatMode: false,
+                logger: Log.Logger),
+            new ConsolidationJobHandler(
+                sp.GetRequiredService<AgentConnectionLifecycle>(),
+                sp.GetRequiredService<AgentJobSlotManager>(),
+                sp.GetRequiredService<IConsolidationExecutor>(),
+                Log.Logger),
             sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IPipelineExecutor>(),
-            sp.GetRequiredService<IConsolidationExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
-            sp.GetRequiredService<IKiroCliOrchestrator>(),
-            sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger)));
 

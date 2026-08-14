@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -13,8 +12,10 @@ namespace CodingAgentWebUI.Agent;
 
 /// <summary>
 /// Background service that coordinates the agent lifecycle by composing
-/// <see cref="AgentConnectionLifecycle"/> (connection management, heartbeat, reconnection)
-/// and <see cref="AgentJobSlotManager"/> (slot acquisition, concurrency control).
+/// <see cref="AgentConnectionLifecycle"/> (connection management, heartbeat, reconnection),
+/// <see cref="AgentJobSlotManager"/> (slot acquisition, concurrency control),
+/// <see cref="ChatJobHandler"/> (chat session and model-fetch handling), and
+/// <see cref="ConsolidationJobHandler"/> (consolidation job handling).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -44,62 +45,56 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 {
     private readonly AgentConnectionLifecycle _connectionLifecycle;
     private readonly AgentJobSlotManager _slotManager;
+    private readonly ChatJobHandler _chatJobHandler;
+    private readonly ConsolidationJobHandler _consolidationJobHandler;
     private readonly IPipelineExecutor _executor;
-    private readonly IConsolidationExecutor _consolidationExecutor;
     private readonly IJobCompletionReporter _completionReporter;
-    private readonly IKiroCliOrchestrator _orchestrator;
-    private readonly IHttpClientFactory _httpClientFactory;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
     private readonly string _agentId;
-    private readonly bool _isOpenCodeProvider;
-    private readonly bool _isChatMode;
 
     public AgentWorkerService(AgentWorkerServiceDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
         ArgumentNullException.ThrowIfNull(deps.ConnectionLifecycle);
         ArgumentNullException.ThrowIfNull(deps.SlotManager);
+        ArgumentNullException.ThrowIfNull(deps.ChatHandler);
+        ArgumentNullException.ThrowIfNull(deps.ConsolidationHandler);
         ArgumentNullException.ThrowIfNull(deps.Executor);
-        ArgumentNullException.ThrowIfNull(deps.ConsolidationExecutor);
         ArgumentNullException.ThrowIfNull(deps.CompletionReporter);
-        ArgumentNullException.ThrowIfNull(deps.Orchestrator);
-        ArgumentNullException.ThrowIfNull(deps.HttpClientFactory);
         ArgumentNullException.ThrowIfNull(deps.HostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(deps.Logger);
 
         _connectionLifecycle = deps.ConnectionLifecycle;
         _slotManager = deps.SlotManager;
+        _chatJobHandler = deps.ChatHandler;
+        _consolidationJobHandler = deps.ConsolidationHandler;
         // NOTE: Validate agentId.Value is not null/empty — default(AgentId) would propagate null.
         _agentId = deps.AgentId.Value;
         _executor = deps.Executor;
-        _consolidationExecutor = deps.ConsolidationExecutor;
         _completionReporter = deps.CompletionReporter;
-        _orchestrator = deps.Orchestrator;
-        _httpClientFactory = deps.HttpClientFactory;
         _hostApplicationLifetime = deps.HostApplicationLifetime;
         _logger = deps.Logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(deps.Logger);
-        _isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
-            .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
-        _isChatMode = string.Equals(
+
+        var isChatMode = string.Equals(
             Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
 
         // Wire business event handlers (unconditional)
-        _connectionLifecycle.OnAssignChatPrompt += HandleChatPromptAsync;
-        _connectionLifecycle.OnCancelChat += HandleCancelChatAsync;
+        _connectionLifecycle.OnAssignChatPrompt += _chatJobHandler.HandleChatPromptAsync;
+        _connectionLifecycle.OnCancelChat += _chatJobHandler.HandleCancelChatAsync;
         _connectionLifecycle.OnCancelJob += HandleCancelJobAsync;
-        _connectionLifecycle.OnFetchModels += HandleFetchModelsAsync;
-        _connectionLifecycle.OnAssignConsolidationJob += HandleAssignConsolidationJobAsync;
+        _connectionLifecycle.OnFetchModels += _chatJobHandler.HandleFetchModelsAsync;
+        _connectionLifecycle.OnAssignConsolidationJob += _consolidationJobHandler.HandleAssignConsolidationJobAsync;
 
         // OnAssignJob only in non-chat mode — chat pods must not receive work-item jobs
-        if (!_isChatMode)
+        if (!isChatMode)
         {
             _connectionLifecycle.OnAssignJob += HandleAssignJobAsync;
         }
 
-        if (_isChatMode)
+        if (isChatMode)
         {
             var chatSessionId = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId) ?? "";
             if (string.IsNullOrEmpty(chatSessionId))
@@ -144,9 +139,17 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
     private async Task HandleAssignJobAsync(JobAssignmentMessage message)
     {
-        var (accepted, activity) = await TryReceiveJobAsync(message.JobId, "implementation");
-        if (!accepted) return;
-        using var receiveActivity = activity; // caller owns the activity on the success path
+        PipelineTelemetry.AgentJobsReceived.Add(1);
+
+        using var receiveActivity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReceiveJob");
+        receiveActivity?.SetTag("job_id", message.JobId);
+        receiveActivity?.SetTag("run_type", "implementation");
+
+        if (!_slotManager.TryAcquireJobSlot(message.JobId, out var busyWith))
+        {
+            await RejectJobBusyAsync(message.JobId, busyWith, receiveActivity);
+            return;
+        }
 
         _logger.Information("Accepted job {JobId} for issue {IssueIdentifier}",
             message.JobId, message.IssueIdentifier);
@@ -156,94 +159,25 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         if (!await SendJobAcceptedAsync(message.JobId, receiveActivity))
             return;
 
-        // Task is dispatched AFTER SendJobAcceptedAsync succeeds to preserve the original
-        // ordering guarantee: the orchestrator is notified before the job starts executing.
-        // If SendJobAcceptedAsync fails it calls ForceReleaseJobSlot internally and returns false.
         var jobToken = _slotManager.JobCancellationToken!.Value;
         var activeTask = Task.Run(async () => await RunJobTaskAsync(message, jobToken), CancellationToken.None);
         _slotManager.SetActiveJobTask(activeTask);
     }
 
-    /// <summary>
-    /// Unified receive/acquire helper shared by both pipeline and consolidation job handlers.
-    /// Increments the <c>agent.jobs.received</c> counter, starts an <c>Agent.ReceiveJob</c> activity
-    /// tagged with <paramref name="jobId"/> and <paramref name="runType"/>, and attempts slot acquisition.
-    /// Task dispatch is intentionally left to the caller so that each handler can enforce its own
-    /// post-acceptance sequencing (e.g. the pipeline handler sends <c>JobAccepted</c> before
-    /// starting the background task; the consolidation handler dispatches immediately).
-    /// </summary>
-    /// <remarks>
-    /// <b>Activity ownership contract:</b>
-    /// <list type="bullet">
-    ///   <item>
-    ///     <b>Rejection path:</b> the activity is disposed internally before this method returns
-    ///     <c>(false, null)</c>. The caller must do nothing.
-    ///   </item>
-    ///   <item>
-    ///     <b>Success path:</b> ownership transfers to the caller, which MUST wrap the returned
-    ///     activity in a <c>using</c> declaration (<c>using var receiveActivity = activity;</c>)
-    ///     to ensure disposal when it goes out of scope.
-    ///   </item>
-    /// </list>
-    /// </remarks>
-    private async Task<(bool Accepted, Activity? Activity)> TryReceiveJobAsync(
-        string jobId,
-        string runType)
-    {
-        PipelineTelemetry.AgentJobsReceived.Add(1);
-        var activity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReceiveJob");
-        activity?.SetTag("job_id", jobId);
-        activity?.SetTag("run_type", runType);
-
-        if (!_slotManager.TryAcquireJobSlot(jobId, out var busyWith))
-        {
-            // TODO [WARNING]: jobKind is inferred from the runType string ("implementation" → "job",
-            // everything else → "consolidation job"). Any future caller with a different runType
-            // (e.g. "review") will silently produce a misleading "consolidation job" label in logs
-            // and telemetry. Consider adding an explicit jobKind parameter to TryReceiveJobAsync or
-            // using an enum to eliminate the implicit string contract.
-            await RejectJobAsync(jobId, busyWith, activity,
-                runType == "implementation" ? "job" : "consolidation job");
-            // TODO [WARNING]: Double-dispose risk — activity is also disposed inside RejectJobAsync's
-            // own exception path (indirectly through the catch block). Activity.Dispose() is idempotent
-            // in the current BCL so this is safe today, but it contradicts the XML doc ownership model
-            // which states "the activity is disposed internally before this method returns". Consider
-            // moving this Dispose() call inside a try/finally in RejectJobAsync itself and removing
-            // it here so the ownership contract matches the documented behaviour.
-            // TODO [WARNING]: Activity resource leak if RejectJobAsync throws before its own try block
-            // (e.g. AgentJobsRejected.Add or the first _logger.Warning throws). In that case neither
-            // the Dispose() below nor any internal Dispose() is reached. Wrapping the rejection
-            // branch in a try/finally that always disposes the activity would close this path.
-            activity?.Dispose();
-            return (false, null);
-        }
-
-        return (true, activity);
-    }
-
-    /// <summary>
-    /// Unified job rejection helper. Increments the <c>agent.jobs.rejected</c> counter with
-    /// <c>reason=busy</c>, logs a warning, and invokes <c>JobRejected</c> on the hub.
-    /// Hub errors are caught and swallowed — rejection is best-effort.
-    /// </summary>
-    private async Task RejectJobAsync(string jobId, string? busyWith, Activity? activity, string jobKind)
+    private async Task RejectJobBusyAsync(string jobId, string? busyWith, Activity? activity)
     {
         PipelineTelemetry.AgentJobsRejected.Add(1,
             new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
-        _logger.Warning("Rejecting {JobKind} {JobId} — agent is busy with {ActiveJobId}", jobKind, jobId, busyWith);
+        _logger.Warning("Rejecting job {JobId} — agent is busy with {ActiveJobId}", jobId, busyWith);
         try
         {
             await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, jobId, "Agent is busy", CancellationToken.None);
         }
         catch (Exception ex)
         {
-            // TODO [WARNING]: If SetStatus or AddException throws here (however unlikely), the
-            // activity?.Dispose() call in TryReceiveJobAsync (the caller) is never reached,
-            // leaving the activity undisposed. Wrapping the rejection block in try/finally with
-            // Dispose() in finally would close this resource-leak path.
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
-            _logger.Warning(ex, "Failed to notify orchestrator of {JobKind} rejection {JobId}", jobKind, jobId);
+            _logger.Warning(ex, "Failed to notify orchestrator of job rejection {JobId}", jobId);
         }
     }
 
@@ -339,394 +273,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _logger.Information("Cancelling job {JobId}", jobId);
         return Task.CompletedTask;
     }
-
-    private async Task HandleChatPromptAsync(ChatPromptMessage message)
-    {
-        if (!_slotManager.TryAcquireChatSlot(message.SessionId, out _))
-        {
-            _logger.Warning("Rejecting chat prompt for session {SessionId} — agent is busy",
-                message.SessionId);
-            return;
-        }
-
-        _logger.Information("Accepted chat prompt for session {SessionId}", message.SessionId);
-
-        var chatToken = _slotManager.ChatCancellationToken!.Value;
-        var activeTask = Task.Run(async () => await RunChatTaskAsync(message, chatToken), CancellationToken.None);
-        _slotManager.SetActiveChatTask(activeTask);
-    }
-
-    private async Task RunChatTaskAsync(ChatPromptMessage message, CancellationToken chatToken)
-    {
-        int exitCode = ExitCodes.GeneralFailure;
-        string? error = null;
-
-        try
-        {
-            // Scoped so the batcher is disposed (flushing remaining lines)
-            // BEFORE reporting completion to the orchestrator.
-            {
-                await using var outputBatcher = new OutputBatcher();
-                outputBatcher.OnFlush += async lines =>
-                {
-                    try
-                    {
-                        var response = new ChatResponseMessage
-                        {
-                            SessionId = message.SessionId,
-                            Lines = lines.ToList()
-                        };
-                        await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response, CancellationToken.None);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warning(ex, "Failed to send chat response lines");
-                    }
-                };
-
-                (exitCode, error) = await ExecuteChatWithOutputAsync(message, outputBatcher, chatToken);
-            }
-        }
-        finally
-        {
-            // No secret cleanup required — secrets are no longer injected into the
-            // process-wide environment. They are passed per-process via ProcessStartInfo.Environment.
-        }
-
-        try
-        {
-            await ReportChatCompletedAsync(message.SessionId, exitCode, error);
-        }
-        finally
-        {
-            // Always release the chat slot — runs even if ReportChatCompletedAsync throws
-            // (e.g. SignalR connection dropped). Without this guarantee the agent would be
-            // permanently stuck in Busy state.
-            _slotManager.ReleaseChatSlot();
-        }
-
-        // Do NOT send AgentReady — the chat session is still active.
-        // The agent will be released when CancelChat is received (End Chat / navigate away).
-    }
-
-    private async Task<(int exitCode, string? error)> ExecuteChatWithOutputAsync(
-        ChatPromptMessage message, OutputBatcher outputBatcher, CancellationToken chatToken)
-    {
-        try
-        {
-            var chatWorkspace = string.IsNullOrEmpty(message.ChatWindowId)
-                ? AgentDefaults.ChatWorkspacePath           // backward compat: old SignalR agents
-                : Path.Combine(AgentDefaults.ChatWorkspacesRoot, message.ChatWindowId);
-            Directory.CreateDirectory(chatWorkspace);
-
-            if (!message.UseResume && message.McpServers is { Count: > 0 })
-            {
-                WriteMcpConfig(message.McpConfigPath, message.McpServers);
-                await outputBatcher.AddLineAsync(
-                    $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}",
-                    chatToken);
-            }
-
-            // Write project steering before dispatching to the provider.
-            // For Kiro CLI, this must precede the warm-up prompt which triggers session init
-            // (and .kiro/steering/ loading). Only written on first prompt (UseResume = false).
-            if (!message.UseResume && !string.IsNullOrEmpty(message.ProjectSteeringContent))
-            {
-                ChatSteeringWriter.Write(message.ProjectSteeringContent, chatWorkspace, _isOpenCodeProvider);
-                await outputBatcher.AddLineAsync("📋 Wrote project steering to workspace", chatToken);
-            }
-
-            if (!message.UseResume && message.ProjectSecrets is { Count: > 0 })
-            {
-                await outputBatcher.AddLineAsync($"🔐 Loaded {message.ProjectSecrets.Count} project secret(s) for process injection", chatToken);
-            }
-
-            if (_isOpenCodeProvider)
-            {
-                return await ExecuteChatViaOpenCodeAsync(message, chatWorkspace, outputBatcher, chatToken);
-            }
-            else
-            {
-                return await ExecuteChatViaKiroCliAsync(message, chatWorkspace, outputBatcher, chatToken);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            return (ExitCodes.Cancelled, "Chat cancelled");
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Chat execution failed for session {SessionId}", message.SessionId);
-            return (ExitCodes.GeneralFailure, ex.Message);
-        }
-    }
-
-    private async Task ReportChatCompletedAsync(string sessionId, int exitCode, string? error)
-    {
-        try
-        {
-            var completed = new ChatCompletedMessage
-            {
-                SessionId = sessionId,
-                ExitCode = exitCode,
-                Error = error
-            };
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatCompleted, completed,
-                CancellationToken.None); // intentional: completion report must reach orchestrator even when chatToken is cancelled
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to report chat completion for session {SessionId}", sessionId);
-        }
-    }
-
-    private async Task<(int exitCode, string? error)> ExecuteChatViaOpenCodeAsync(
-        ChatPromptMessage message, string chatWorkspace, OutputBatcher outputBatcher, CancellationToken ct)
-    {
-        await using var provider = new OpenCodeAgentProvider(_httpClientFactory, _logger);
-        await provider.EnsureSessionAsync(chatWorkspace, ct);
-
-        var result = await provider.ExecuteAsync(
-            new AgentRequest
-            {
-                Prompt = message.Prompt,
-                WorkspacePath = chatWorkspace,
-                UseResume = message.UseResume,
-                // NOTE [WARNING]: EnvironmentVariables (message.ProjectSecrets) is not forwarded here.
-                // Secrets are silently dropped for the OpenCode provider path — the "Loaded N secret(s)"
-                // log line is emitted before this branch, implying injection that never happens.
-                // This is a behavioral regression vs the old process-wide injection which applied to all
-                // providers. Fix by adding EnvironmentVariables = message.ProjectSecrets once the
-                // OpenCodeAgentProvider's AgentRequest→ProcessStartInfo chain supports per-process injection.
-                Timeout = PipelineConstants.DefaultAgentTimeout
-            },
-            ct,
-            onOutputLine: async line => await outputBatcher.AddLineAsync(line, ct));
-
-        var exitCode = result.ExitCode;
-
-        // NOTE: Do NOT re-emit result.OutputLines here. The onOutputLine callback
-        // already delivered content to the batcher during ExecuteAsync — either via
-        // SSE streaming (message.part.updated) or via the HTTP response fallback
-        // (when SSE didn't emit). Re-iterating OutputLines causes duplicate display.
-
-        string? error = exitCode != ExitCodes.Success
-            ? string.Join("\n", result.OutputLines.TakeLast(3))
-            : null;
-
-        return (exitCode, error);
-    }
-
-    private async Task<(int exitCode, string? error)> ExecuteChatViaKiroCliAsync(
-        ChatPromptMessage message, string chatWorkspace, OutputBatcher outputBatcher, CancellationToken ct)
-    {
-        // On the first prompt (no --resume), Kiro CLI suppresses response text because
-        // tool trust isn't established yet. Send a lightweight warm-up prompt first to
-        // establish the session, then send the real prompt with --resume.
-        if (!message.UseResume)
-        {
-            _logger.Information("Sending warm-up prompt to establish chat session");
-            // NOTE [WARNING]: Warm-up prompt does not forward environmentVariables (message.ProjectSecrets).
-            // If secrets are required during session establishment (e.g. MCP server auth tokens),
-            // the warm-up child process will not have them. Safe for now because the warm-up prompt
-            // is a throwaway session-initialiser that should not need project secrets, but this
-            // asymmetry should be re-evaluated if warm-up behaviour changes.
-            await _orchestrator.ExecutePromptAsync(
-                AgentDefaults.ChatWarmUpPrompt,
-                chatWorkspace,
-                useResume: false,
-                ct);
-        }
-
-        // Execute the actual user prompt (always with --resume after warm-up).
-        // Project secrets are passed per-process via environmentVariables — they are not
-        // set on the parent process environment.
-        var exitCode = await _orchestrator.ExecutePromptAsync(
-            message.Prompt,
-            chatWorkspace,
-            useResume: true,
-            ct,
-            onOutputLine: async line =>
-            {
-                var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
-                await outputBatcher.AddLineAsync(clean, ct);
-            },
-            environmentVariables: message.ProjectSecrets);
-
-        return (exitCode, null);
-    }
-
-    private async Task HandleCancelChatAsync(string sessionId)
-    {
-        var (activeSessionId, chatTask) = _slotManager.GetChatSlotSnapshot();
-
-        if (activeSessionId != sessionId)
-        {
-            _logger.Warning("Received CancelChat for {SessionId} but active session is {ActiveSessionId}",
-                sessionId, activeSessionId);
-            return;
-        }
-
-        _logger.Information("Cancelling chat session {SessionId}", sessionId);
-        _slotManager.CancelChatIfSession(sessionId);
-
-        if (chatTask is not null)
-        {
-            var completed = await Task.WhenAny(chatTask, Task.Delay(TimeSpan.FromSeconds(10), _hostApplicationLifetime.ApplicationStopping));
-            if (completed != chatTask)
-                _logger.Warning("Chat task did not complete within timeout after cancellation for session {SessionId}", sessionId);
-        }
-
-        if (_isChatMode)
-        {
-            // Signal chat end source so ConnectAndRunAsync returns
-            _connectionLifecycle.SignalChatEnd();
-            // DO NOT call SignalAgentReadyAsync — chat pod must not return to idle pool
-            _hostApplicationLifetime.StopApplication();
-        }
-        else
-        {
-            // Signal ready — the chat session is over, agent can accept jobs again
-            await SignalAgentReadyAsync();
-        }
-    }
-
-    private async Task HandleFetchModelsAsync(FetchModelsRequest request)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = Environment.GetEnvironmentVariable(AgentDefaults.EnvKiroCliPath) ?? AgentDefaults.KiroCliPath,
-                Arguments = "chat --list-models --format json",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(psi);
-            if (process is null)
-            {
-                await ReportFetchModelsError(request.RequestId, "Failed to start kiro-cli process.");
-                return;
-            }
-
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            var output = await process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
-            await process.WaitForExitAsync(timeoutCts.Token);
-
-            if (process.ExitCode != 0)
-            {
-                var stderr = await process.StandardError.ReadToEndAsync(CancellationToken.None); // intentional: process already exited; timeoutCts.Token may be expired
-                await ReportFetchModelsError(request.RequestId, $"kiro-cli exited with code {process.ExitCode}: {stderr}");
-                return;
-            }
-
-            using var doc = System.Text.Json.JsonDocument.Parse(output);
-            var models = new List<AgentModelInfo>();
-            if (doc.RootElement.TryGetProperty("models", out var modelsArray))
-            {
-                foreach (var m in modelsArray.EnumerateArray())
-                {
-                    models.Add(new AgentModelInfo
-                    {
-                        ModelId = m.GetProperty("model_id").GetString() ?? "",
-                        Description = m.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
-                        RateMultiplier = m.TryGetProperty("rate_multiplier", out var r) ? r.GetDouble() : 1.0
-                    });
-                }
-            }
-
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
-            {
-                RequestId = request.RequestId,
-                Models = models
-            }, CancellationToken.None); // intentional: process already exited successfully; timeoutCts.Token may be expired
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to fetch models for request {RequestId}", request.RequestId);
-            await ReportFetchModelsError(request.RequestId, $"Failed to fetch models: {ex.Message}");
-        }
-    }
-
-    private async Task ReportFetchModelsError(string requestId, string error)
-    {
-        try
-        {
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
-            {
-                RequestId = requestId,
-                Models = [],
-                Error = error
-            }, CancellationToken.None); // intentional: error report must reach orchestrator regardless of cancellation
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to report FetchModels error for request {RequestId}", requestId);
-        }
-    }
-
-    private async Task HandleAssignConsolidationJobAsync(ConsolidationJobMessage message)
-    {
-        var (accepted, activity) = await TryReceiveJobAsync(message.JobId, "consolidation");
-        if (!accepted) return;
-        using var receiveActivity = activity; // caller owns the activity on the success path
-
-        _logger.Information("Accepted consolidation job {JobId} of type {Type}",
-            message.JobId, message.Type);
-
-        // Consolidation jobs do not send JobAccepted to the orchestrator, so the task is
-        // dispatched immediately after slot acquisition (no ordering constraint to preserve).
-        var jobToken = _slotManager.JobCancellationToken!.Value;
-        var activeTask = Task.Run(async () => await RunConsolidationTaskAsync(message, jobToken), CancellationToken.None);
-        _slotManager.SetActiveJobTask(activeTask);
-    }
-
-    private async Task RunConsolidationTaskAsync(ConsolidationJobMessage message, CancellationToken jobToken)
-    {
-        try
-        {
-            await _consolidationExecutor.ExecuteAsync(
-                message, _connectionLifecycle.Connection, jobToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Consolidation job {JobId} failed with unhandled error", message.JobId);
-            await ReportConsolidationFailureAsync(message.JobId, ex.Message);
-        }
-        finally
-        {
-            await _slotManager.ReleaseJobSlotAndSignalReadyAsync();
-        }
-    }
-
-    private async Task ReportConsolidationFailureAsync(string jobId, string errorMessage)
-    {
-        try
-        {
-            var failResult = new ConsolidationJobResult
-            {
-                JobId = jobId,
-                Success = false,
-                ErrorMessage = errorMessage
-            };
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, failResult,
-                CancellationToken.None); // intentional: failure report must reach orchestrator even when jobToken is cancelled
-        }
-        catch (Exception reportEx)
-        {
-            _logger.Error(reportEx, "Failed to report consolidation failure for job {JobId}", jobId);
-        }
-    }
-
-    /// <summary>
-    /// Writes MCP server configuration to the specified file path.
-    /// Delegates to <see cref="McpConfigWriter.WriteConfig"/> for the shared implementation.
-    /// </summary>
-    private static void WriteMcpConfig(string fullPath, IReadOnlyList<McpServerConfig> mcpServers)
-        => McpConfigWriter.WriteConfig(fullPath, mcpServers);
 
     private async Task SignalAgentReadyAsync()
     {

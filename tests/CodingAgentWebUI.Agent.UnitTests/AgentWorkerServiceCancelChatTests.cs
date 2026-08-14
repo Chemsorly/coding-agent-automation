@@ -183,10 +183,9 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         SetPrivateField(slotManager, "_chatCts", new CancellationTokenSource());
         SetPrivateField(slotManager, "_activeChatTask", Task.CompletedTask);
 
-        // Act — invoke HandleCancelChatAsync via reflection
-        var handler = GetPrivateMethod(service, "HandleCancelChatAsync");
-        var task = (Task)handler.Invoke(service, [sessionId])!;
-        await task;
+        // Act
+        var chatJobHandler = GetChatJobHandler(service);
+        await chatJobHandler.HandleCancelChatAsync(sessionId);
 
         // Assert 1: StopApplication() must have been called in chat mode
         // (This assertion will FAIL until 6.2 adds the chat-mode branch)
@@ -230,9 +229,8 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         SetPrivateField(slotManager, "_activeChatTask", Task.CompletedTask);
 
         // Act
-        var handler = GetPrivateMethod(service, "HandleCancelChatAsync");
-        var task = (Task)handler.Invoke(service, [sessionId])!;
-        await task;
+        var chatJobHandler = GetChatJobHandler(service);
+        await chatJobHandler.HandleCancelChatAsync(sessionId);
 
         // Assert — StopApplication must NOT be called in non-chat mode
         mockLifetime.Verify(l => l.StopApplication(), Times.Never,
@@ -273,9 +271,8 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
             "before cancel, _chatEndSource must not be signalled");
 
         // Act — HandleCancelChatAsync should call lifecycle.SignalChatEnd()
-        var handler = GetPrivateMethod(service, "HandleCancelChatAsync");
-        var task = (Task)handler.Invoke(service, [sessionId])!;
-        await task;
+        var chatJobHandler = GetChatJobHandler(service);
+        await chatJobHandler.HandleCancelChatAsync(sessionId);
 
         // Assert — _chatEndSource must now be completed (SignalChatEnd was called)
         // This assertion FAILS until 6.2 adds _connectionLifecycle.SignalChatEnd() call
@@ -341,9 +338,8 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         };
 
         // Act — invoke HandleChatPromptAsync; it runs a background Task.Run
-        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
+        var chatJobHandler = GetChatJobHandler(service);
+        await chatJobHandler.HandleChatPromptAsync(message);
 
         // Wait for background task to complete
         var chatTask = GetPrivateField<Task?>(slotManager, "_activeChatTask");
@@ -408,9 +404,8 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
         };
 
         // Act
-        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
+        var chatJobHandler = GetChatJobHandler(service);
+        await chatJobHandler.HandleChatPromptAsync(message);
 
         var chatTask = GetPrivateField<Task?>(slotManager, "_activeChatTask");
         if (chatTask is not null)
@@ -467,5 +462,13 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException($"Field '{fieldName}' not found on {obj.GetType().Name}");
         return (T?)field.GetValue(obj);
+    }
+
+    private static ChatJobHandler GetChatJobHandler(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_chatJobHandler",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_chatJobHandler' not found");
+        return (ChatJobHandler)field.GetValue(service)!;
     }
 }

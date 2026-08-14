@@ -1,7 +1,6 @@
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using KiroCliLib.Core;
 using Microsoft.Extensions.Hosting;
 
 namespace CodingAgentWebUI.Agent;
@@ -13,11 +12,10 @@ namespace CodingAgentWebUI.Agent;
 public sealed record AgentWorkerServiceDependencies(
     AgentConnectionLifecycle ConnectionLifecycle,
     AgentJobSlotManager SlotManager,
+    ChatJobHandler ChatHandler,
+    ConsolidationJobHandler ConsolidationHandler,
     AgentId AgentId,
     IPipelineExecutor Executor,
-    IConsolidationExecutor ConsolidationExecutor,
     IJobCompletionReporter CompletionReporter,
-    IKiroCliOrchestrator Orchestrator,
-    System.Net.Http.IHttpClientFactory HttpClientFactory,
     IHostApplicationLifetime HostApplicationLifetime,
     Serilog.ILogger Logger);

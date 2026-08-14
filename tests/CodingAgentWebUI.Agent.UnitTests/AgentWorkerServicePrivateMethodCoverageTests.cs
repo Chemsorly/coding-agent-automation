@@ -56,10 +56,10 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     public void SourceCode_ReportChatCompletedAsync_PassesCancellationTokenNoneWithComment()
     {
         var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
 
         // Extract just the ReportChatCompletedAsync method body to avoid false positives
-        var methodStart = source.IndexOf("private async Task ReportChatCompletedAsync(", StringComparison.Ordinal);
+        var methodStart = source.IndexOf("public async Task ReportChatCompletedAsync(", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
         if (methodEnd < 0)
             methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
@@ -99,12 +99,14 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     public void SourceCode_ReportConsolidationFailureAsync_PassesCancellationTokenNoneWithComment()
     {
         var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ConsolidationJobHandler.cs"));
 
-        var methodStart = source.IndexOf("private async Task ReportConsolidationFailureAsync(", StringComparison.Ordinal);
+        var methodStart = source.IndexOf("public async Task ReportConsolidationFailureAsync(", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
         if (methodEnd < 0)
             methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
+        if (methodEnd < 0)
+            methodEnd = source.Length;
         var methodBody = source.Substring(methodStart, methodEnd - methodStart);
 
         methodBody.Should().Contain("CancellationToken.None",
@@ -121,12 +123,14 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     public void SourceCode_ReportFetchModelsError_PassesCancellationTokenNoneWithComment()
     {
         var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
 
-        var methodStart = source.IndexOf("private async Task ReportFetchModelsError(", StringComparison.Ordinal);
+        var methodStart = source.IndexOf("public async Task ReportFetchModelsError(", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
         if (methodEnd < 0)
             methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
+        if (methodEnd < 0)
+            methodEnd = source.Length;
         var methodBody = source.Substring(methodStart, methodEnd - methodStart);
 
         methodBody.Should().Contain("CancellationToken.None",
@@ -146,9 +150,9 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     public void SourceCode_HandleFetchModelsAsync_PassesCancellationTokenNone()
     {
         var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
 
-        var methodStart = source.IndexOf("private async Task HandleFetchModelsAsync(", StringComparison.Ordinal);
+        var methodStart = source.IndexOf("public async Task HandleFetchModelsAsync(", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
         if (methodEnd < 0)
             methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
@@ -224,10 +228,10 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     public void SourceCode_RunChatTaskAsync_ReleaseChatSlotIsInsideFinallyBlock()
     {
         var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
 
         // Extract just the RunChatTaskAsync method body to avoid false positives from other methods
-        var methodStart = source.IndexOf("private async Task RunChatTaskAsync(", StringComparison.Ordinal);
+        var methodStart = source.IndexOf("public async Task RunChatTaskAsync(", StringComparison.Ordinal);
         var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
         if (methodEnd < 0)
             methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
@@ -617,14 +621,18 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         var lifetime = Mock.Of<IHostApplicationLifetime>();
         var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
             new AgentId("test"), lifetime, logger);
+
+        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobHandler(lifecycle, slotManager, mockOrchestrator.Object, lifetime, logger);
         var consolidationExecutor = new LocalConsolidationExecutor(
             mockOrchestrator.Object, Mock.Of<System.Net.Http.IHttpClientFactory>(), logger);
+        var consolidationHandler = new ConsolidationJobHandler(lifecycle, slotManager, consolidationExecutor, logger);
 
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
-            lifecycle, slotManager, new AgentId("test"),
-            throwingExecutor.Object, consolidationExecutor,
-            mockReporter.Object, mockOrchestrator.Object,
-            Mock.Of<System.Net.Http.IHttpClientFactory>(), lifetime, logger));
+            lifecycle, slotManager,
+            chatHandler, consolidationHandler,
+            new AgentId("test"),
+            throwingExecutor.Object,
+            mockReporter.Object, lifetime, logger));
 
         slotManager.TryAcquireJobSlot("throw-job", out _);
 
@@ -646,8 +654,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     public async Task ReportChatCompletedAsync_HubThrows_DoesNotThrow()
     {
         var service = TestAgentWorkerServiceFactory.Create();
-        var act = async () => await (Task)GetPrivateMethod(service, "ReportChatCompletedAsync")
-            .Invoke(service, ["sess-1", 0, (string?)null])!;
+        var act = async () => await (Task)GetMethod(GetChatJobHandler(service), "ReportChatCompletedAsync")
+            .Invoke(GetChatJobHandler(service), ["sess-1", 0, (string?)null])!;
         await act.Should().NotThrowAsync();
     }
 
@@ -655,8 +663,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     public async Task ReportChatCompletedAsync_WithError_HubThrows_DoesNotThrow()
     {
         var service = TestAgentWorkerServiceFactory.Create();
-        var act = async () => await (Task)GetPrivateMethod(service, "ReportChatCompletedAsync")
-            .Invoke(service, ["sess-2", 1, "some error"])!;
+        var act = async () => await (Task)GetMethod(GetChatJobHandler(service), "ReportChatCompletedAsync")
+            .Invoke(GetChatJobHandler(service), ["sess-2", 1, "some error"])!;
         await act.Should().NotThrowAsync();
     }
 
@@ -680,8 +688,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             PipelineConfiguration = new PipelineConfiguration()
         };
 
-        await (Task)GetPrivateMethod(service, "HandleAssignConsolidationJobAsync")
-            .Invoke(service, [message])!;
+        await (Task)GetMethod(GetConsolidationJobHandler(service), "HandleAssignConsolidationJobAsync")
+            .Invoke(GetConsolidationJobHandler(service), [message])!;
 
         GetPrivateField<JobId?>(slotManager, "_activeJobId")
             .Should().Be((JobId)"existing-consolidation");
@@ -716,11 +724,15 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             new PipelineConfiguration(), Mock.Of<IQualityGateValidator>(), logger,
             AgentIdentity: new AgentId("test")));
 
+        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobHandler(lifecycle, slotManager, mockOrchestrator.Object, lifetime, logger);
+        var consolidationHandler = new ConsolidationJobHandler(lifecycle, slotManager, throwingConsolidation.Object, logger);
+
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
-            lifecycle, slotManager, new AgentId("test"),
-            pipelineExecutor, throwingConsolidation.Object,
-            signalRReporter, mockOrchestrator.Object,
-            Mock.Of<System.Net.Http.IHttpClientFactory>(), lifetime, logger));
+            lifecycle, slotManager,
+            chatHandler, consolidationHandler,
+            new AgentId("test"),
+            pipelineExecutor,
+            signalRReporter, lifetime, logger));
 
         slotManager.TryAcquireJobSlot("consolidation-throw-job", out _);
 
@@ -733,8 +745,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         };
 
         using var cts = new CancellationTokenSource();
-        await (Task)GetPrivateMethod(service, "RunConsolidationTaskAsync")
-            .Invoke(service, [message, cts.Token])!;
+        await (Task)GetMethod(GetConsolidationJobHandler(service), "RunConsolidationTaskAsync")
+            .Invoke(GetConsolidationJobHandler(service), [message, cts.Token])!;
 
         // Slot released in the finally block even when executor throws
         GetPrivateField<JobId?>(slotManager, "_activeJobId")
@@ -747,8 +759,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     public async Task ReportConsolidationFailureAsync_HubThrows_DoesNotThrow()
     {
         var service = TestAgentWorkerServiceFactory.Create();
-        var act = async () => await (Task)GetPrivateMethod(service, "ReportConsolidationFailureAsync")
-            .Invoke(service, ["job-id", "error msg"])!;
+        var act = async () => await (Task)GetMethod(GetConsolidationJobHandler(service), "ReportConsolidationFailureAsync")
+            .Invoke(GetConsolidationJobHandler(service), ["job-id", "error msg"])!;
         await act.Should().NotThrowAsync();
     }
 
@@ -768,8 +780,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             PipelineConfiguration = new PipelineConfiguration()
         };
 
-        await (Task)GetPrivateMethod(service, "HandleAssignConsolidationJobAsync")
-            .Invoke(service, [message])!;
+        await (Task)GetMethod(GetConsolidationJobHandler(service), "HandleAssignConsolidationJobAsync")
+            .Invoke(GetConsolidationJobHandler(service), [message])!;
 
         // Background task was started
         GetPrivateField<Task?>(slotManager, "_activeJobTask")
@@ -805,8 +817,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         };
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var runTask = (Task)GetPrivateMethod(service, "RunChatTaskAsync")
-            .Invoke(service, [message, cts.Token])!;
+        var runTask = (Task)GetMethod(GetChatJobHandler(service), "RunChatTaskAsync")
+            .Invoke(GetChatJobHandler(service), [message, cts.Token])!;
         // TODO: Task.WhenAny does not re-throw if runTask faults; assertions below execute
         // even on a timeout or unhandled exception, potentially checking state that was never
         // established. Consider awaiting runTask directly (or checking runTask.IsCompletedSuccessfully)
@@ -879,8 +891,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         // Directly await the task (not Task.WhenAny) so any unexpected fault surfaces immediately
         // rather than being masked by a timeout producing a false-green result.
-        await (Task)GetPrivateMethod(service, "RunChatTaskAsync")
-            .Invoke(service, [message, cts.Token])!;
+        await (Task)GetMethod(GetChatJobHandler(service), "RunChatTaskAsync")
+            .Invoke(GetChatJobHandler(service), [message, cts.Token])!;
 
         GetPrivateField<string?>(slotManager, "_activeChatSessionId")
             .Should().BeNull("chat slot must be released unconditionally via the finally block, " +
@@ -904,8 +916,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             UseResume = false
         };
 
-        var task = (Task<(int exitCode, string? error)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, cts.Token])!;
+        var task = (Task<(int exitCode, string? error)>)GetMethod(GetChatJobHandler(service), "ExecuteChatWithOutputAsync")
+            .Invoke(GetChatJobHandler(service), [message, batcher, cts.Token])!;
         var (exitCode, _) = await task;
 
         // OCE is caught → Cancelled (1), or workspace succeeded before cancel → GeneralFailure (1) or 0
@@ -938,8 +950,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             UseResume = true
         };
 
-        var task = (Task<(int exitCode, string? error)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, CancellationToken.None])!;
+        var task = (Task<(int exitCode, string? error)>)GetMethod(GetChatJobHandler(service), "ExecuteChatWithOutputAsync")
+            .Invoke(GetChatJobHandler(service), [message, batcher, CancellationToken.None])!;
         var (exitCode, error) = await task;
 
         exitCode.Should().Be(1, "general exception → GeneralFailure exit code 1");
@@ -965,8 +977,11 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             var request = new FetchModelsRequest { RequestId = "test-req-error" };
 
             // Act: invoke via reflection — exception from hub is caught internally
-            var act = async () => await (Task)GetPrivateMethod(service, "HandleFetchModelsAsync")
-                .Invoke(service, [request])!;
+            // TODO: Indentation inconsistency — the .Invoke(...) continuation is aligned at column 12 instead of
+            // the expected column 16 (matching the async lambda body). This obscures the two-part method call chain
+            // and could confuse readers about grouping. Reformat to align .Invoke() under GetMethod().
+            var act = async () => await (Task)GetMethod(GetChatJobHandler(service), "HandleFetchModelsAsync")
+            .Invoke(GetChatJobHandler(service), [request])!;
 
             // Assert: method must not propagate exceptions (all errors caught internally)
             await act.Should().NotThrowAsync(
@@ -1013,8 +1028,10 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
                 var request = new FetchModelsRequest { RequestId = "test-req-success" };
 
                 // Act: invoke via reflection — InvokeAsync will fail (no hub) but exception is caught
-                var act = async () => await (Task)GetPrivateMethod(service, "HandleFetchModelsAsync")
-                    .Invoke(service, [request])!;
+                // TODO: Indentation inconsistency — same as the error-path test above. The .Invoke(...) continuation
+                // is aligned at column 12 instead of column 16. Reformat to align under GetMethod().
+                var act = async () => await (Task)GetMethod(GetChatJobHandler(service), "HandleFetchModelsAsync")
+            .Invoke(GetChatJobHandler(service), [request])!;
 
                 // Assert: method must complete without propagating exceptions
                 await act.Should().NotThrowAsync(
@@ -1044,6 +1061,31 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     private static MethodInfo GetPrivateMethod(object obj, string name) =>
         obj.GetType().GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)
         ?? throw new InvalidOperationException($"Method '{name}' not found");
+
+    /// <summary>
+    /// Gets a public method on a handler class by name. Used for ChatJobHandler and
+    /// ConsolidationJobHandler methods that moved from private on AgentWorkerService
+    /// to public on the extracted handler class.
+    /// </summary>
+    private static MethodInfo GetMethod(object obj, string name) =>
+        obj.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.Instance)
+        ?? throw new InvalidOperationException($"Method '{name}' not found on {obj.GetType().Name}");
+
+    private static ChatJobHandler GetChatJobHandler(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_chatJobHandler",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_chatJobHandler' not found");
+        return (ChatJobHandler)field.GetValue(service)!;
+    }
+
+    private static ConsolidationJobHandler GetConsolidationJobHandler(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_consolidationJobHandler",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_consolidationJobHandler' not found");
+        return (ConsolidationJobHandler)field.GetValue(service)!;
+    }
 
     private static void SetPrivateField(object obj, string name, object? value)
     {
@@ -1126,8 +1168,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         };
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var runTask = (Task)GetPrivateMethod(service, "RunChatTaskAsync")
-            .Invoke(service, [message, cts.Token])!;
+        var runTask = (Task)GetMethod(GetChatJobHandler(service), "RunChatTaskAsync")
+            .Invoke(GetChatJobHandler(service), [message, cts.Token])!;
         // TODO [WARNING]: Task.WhenAny does not re-throw if runTask faults or times out.
         // If runTask does not complete within 5 seconds (CI slowdown, deadlock, early workspace-creation
         // return), capturedEnvVars remains null and capturedGlobalEnvVar remains empty, making timeout
@@ -1189,8 +1231,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         };
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var runTask = (Task)GetPrivateMethod(service, "RunChatTaskAsync")
-            .Invoke(service, [message, cts.Token])!;
+        var runTask = (Task)GetMethod(GetChatJobHandler(service), "RunChatTaskAsync")
+            .Invoke(GetChatJobHandler(service), [message, cts.Token])!;
         // TODO [WARNING]: Task.WhenAny does not re-throw if runTask faults or times out.
         // A CI slowdown or the silent workspace-creation early-return makes this indistinguishable
         // from a genuine pass. Consider awaiting runTask directly to separate timeout from regression.
@@ -1232,8 +1274,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             ProjectSecrets = null   // null = no secrets, backward compat
         };
 
-        var task = (Task<(int, string?)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, CancellationToken.None])!;
+        var task = (Task<(int, string?)>)GetMethod(GetChatJobHandler(service), "ExecuteChatWithOutputAsync")
+            .Invoke(GetChatJobHandler(service), [message, batcher, CancellationToken.None])!;
         await task;
 
         // TODO [WARNING]: sentinelKey is a randomly-generated key that is never set anywhere,
@@ -1305,8 +1347,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             ProjectSteeringContent = "# Instructions\nUse TDD."
         };
 
-        var task = (Task<(int, string?)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, CancellationToken.None])!;
+        var task = (Task<(int, string?)>)GetMethod(GetChatJobHandler(service), "ExecuteChatWithOutputAsync")
+            .Invoke(GetChatJobHandler(service), [message, batcher, CancellationToken.None])!;
         await task;
 
         steeringFilesWhenInvoked.Should().NotBeEmpty("orchestrator must have been invoked");
@@ -1346,8 +1388,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             ProjectSteeringContent = "# Instructions\nUse TDD."
         };
 
-        var task = (Task<(int, string?)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, CancellationToken.None])!;
+        var task = (Task<(int, string?)>)GetMethod(GetChatJobHandler(service), "ExecuteChatWithOutputAsync")
+            .Invoke(GetChatJobHandler(service), [message, batcher, CancellationToken.None])!;
         await task;
 
         var steeringPath = Path.Combine(chatWorkspace, ".kiro", "steering", "pipeline-project.md");
@@ -1387,8 +1429,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             ProjectSteeringContent = null   // null = no project selected
         };
 
-        var task = (Task<(int, string?)>)GetPrivateMethod(service, "ExecuteChatWithOutputAsync")
-            .Invoke(service, [message, batcher, CancellationToken.None])!;
+        var task = (Task<(int, string?)>)GetMethod(GetChatJobHandler(service), "ExecuteChatWithOutputAsync")
+            .Invoke(GetChatJobHandler(service), [message, batcher, CancellationToken.None])!;
         await task;
 
         var steeringPath = Path.Combine(chatWorkspace, ".kiro", "steering", "pipeline-project.md");

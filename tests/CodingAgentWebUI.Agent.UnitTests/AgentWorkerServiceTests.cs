@@ -54,9 +54,8 @@ public class AgentWorkerServiceTests : IDisposable
     public void Constructor_ThrowsOnNullConnectionLifecycle()
     {
         var mockLogger = new Mock<Serilog.ILogger>();
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object));
+        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), null!, null!, new AgentId("test-agent"), CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.ConnectionLifecycle");
     }
 
@@ -64,22 +63,23 @@ public class AgentWorkerServiceTests : IDisposable
     public void Constructor_ThrowsOnNullExecutor()
     {
         var mockLogger = new Mock<Serilog.ILogger>();
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var (_, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (chatHandler, consolidationHandler) = CreateHandlersForLifecycle(lifecycle, slotManager, mockLogger.Object);
 
         var act = () => new AgentWorkerService(
-            new AgentWorkerServiceDependencies(lifecycle, slotManager, new AgentId("test-agent"), null!, CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object));
+            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, consolidationHandler, new AgentId("test-agent"), null!, Mock.Of<IJobCompletionReporter>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Executor");
     }
 
     [Fact]
     public void Constructor_ThrowsOnNullLogger()
     {
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var (_, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var logger = new Mock<Serilog.ILogger>().Object;
+        var (chatHandler, consolidationHandler) = CreateHandlersForLifecycle(lifecycle, slotManager, logger);
 
         var act = () => new AgentWorkerService(
-            new AgentWorkerServiceDependencies(lifecycle, slotManager, new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), null!));
+            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, consolidationHandler, new AgentId("test-agent"), CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), Mock.Of<IHostApplicationLifetime>(), null!));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
     }
 
@@ -304,8 +304,8 @@ public class AgentWorkerServiceTests : IDisposable
         SetPrivateField(GetSlotManager(service), "_activeChatTask", Task.CompletedTask);
 
         // Act — should not throw ObjectDisposedException
-        var handler = GetPrivateMethod(service, "HandleCancelChatAsync");
-        var task = (Task)handler.Invoke(service, ["session-1"])!;
+        var chatJobHandler = GetChatJobHandler(service);
+        var task = chatJobHandler.HandleCancelChatAsync("session-1");
         await task;
 
         Assert.True(task.IsCompletedSuccessfully, "task should complete successfully without throwing");
@@ -394,9 +394,8 @@ public class AgentWorkerServiceTests : IDisposable
         };
 
         // Act
-        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
+        var chatJobHandler = GetChatJobHandler(service);
+        await chatJobHandler.HandleChatPromptAsync(message);
 
         // Wait for the background Task.Run to invoke the orchestrator (with timeout)
         var completed = await Task.WhenAny(invoked.Task, Task.Delay(5000));
@@ -440,9 +439,8 @@ public class AgentWorkerServiceTests : IDisposable
         };
 
         // Act
-        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
+        var chatJobHandler = GetChatJobHandler(service);
+        await chatJobHandler.HandleChatPromptAsync(message);
 
         // Assert — chat session should not be set (rejected)
         var activeChatSession = GetPrivateField<string?>(GetSlotManager(service), "_activeChatSessionId");
@@ -543,9 +541,8 @@ public class AgentWorkerServiceTests : IDisposable
         };
 
         // Act — invoke the handler; the try/catch around JobRejected should swallow the error
-        var handler = GetPrivateMethod(service, "HandleAssignConsolidationJobAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
+        var consolidationJobHandler = GetConsolidationJobHandler(service);
+        await consolidationJobHandler.HandleAssignConsolidationJobAsync(message);
 
         // Assert — handler completed without throwing, active job unchanged
         var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
@@ -586,8 +583,8 @@ public class AgentWorkerServiceTests : IDisposable
         SetPrivateField(GetSlotManager(service), "_chatCts", chatCts);
 
         // Act — invoke cancel handler; it should wait for the chat task
-        var handler = GetPrivateMethod(service, "HandleCancelChatAsync");
-        var cancelTask = (Task)handler.Invoke(service, ["session-1"])!;
+        var chatJobHandler = GetChatJobHandler(service);
+        var cancelTask = chatJobHandler.HandleCancelChatAsync("session-1");
 
         // The cancel task should not complete while chat task is pending.
         // Use a deterministic signal: if cancelTask completes before we signal chatTaskCompletion,
@@ -620,8 +617,8 @@ public class AgentWorkerServiceTests : IDisposable
         SetPrivateField(GetSlotManager(service), "_chatCts", chatCts);
 
         // Act — cancel handler should time out after ~10s and still complete
-        var handler = GetPrivateMethod(service, "HandleCancelChatAsync");
-        var cancelTask = (Task)handler.Invoke(service, ["session-hang"])!;
+        var chatJobHandler = GetChatJobHandler(service);
+        var cancelTask = chatJobHandler.HandleCancelChatAsync("session-hang");
 
         // Should complete within 15s (10s timeout + buffer)
         var completed = await Task.WhenAny(cancelTask, Task.Delay(15000));
@@ -641,9 +638,8 @@ public class AgentWorkerServiceTests : IDisposable
         };
 
         // Act
-        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
+        var chatJobHandler = GetChatJobHandler(service);
+        await chatJobHandler.HandleChatPromptAsync(message);
 
         // Assert — both should be set atomically (or both cleared if chat task already ran)
         // Since the chat task runs in background, check immediately after handler returns
@@ -689,9 +685,8 @@ public class AgentWorkerServiceTests : IDisposable
         };
 
         // Act
-        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
+        var chatJobHandler = GetChatJobHandler(service);
+        await chatJobHandler.HandleChatPromptAsync(message);
 
         // Wait for background task
         var chatTask = GetPrivateField<Task?>(GetSlotManager(service), "_activeChatTask");
@@ -744,9 +739,8 @@ public class AgentWorkerServiceTests : IDisposable
         };
 
         // Act
-        var handler = GetPrivateMethod(service, "HandleChatPromptAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
+        var chatJobHandler = GetChatJobHandler(service);
+        await chatJobHandler.HandleChatPromptAsync(message);
 
         // Wait for background task
         var chatTask = GetPrivateField<Task?>(GetSlotManager(service), "_activeChatTask");
@@ -927,6 +921,30 @@ public class AgentWorkerServiceTests : IDisposable
             mockOrchestrator.Object,
             mockHttpClientFactory.Object,
             mockLogger.Object);
+    }
+
+    private static (ChatJobHandler chatHandler, ConsolidationJobHandler consolidationHandler)
+        CreateHandlersForLifecycle(AgentConnectionLifecycle lifecycle, AgentJobSlotManager slotManager, Serilog.ILogger logger)
+    {
+        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobHandler(lifecycle, slotManager, logger: logger);
+        var consolidationHandler = TestAgentWorkerServiceFactory.CreateConsolidationJobHandler(lifecycle, slotManager, logger: logger);
+        return (chatHandler, consolidationHandler);
+    }
+
+    private static ChatJobHandler GetChatJobHandler(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_chatJobHandler",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_chatJobHandler' not found");
+        return (ChatJobHandler)field.GetValue(service)!;
+    }
+
+    private static ConsolidationJobHandler GetConsolidationJobHandler(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_consolidationJobHandler",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_consolidationJobHandler' not found");
+        return (ConsolidationJobHandler)field.GetValue(service)!;
     }
 
     private static AgentWorkerService CreateService()

@@ -9,7 +9,8 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// <summary>
 /// Shared factory for creating <see cref="AgentWorkerService"/> instances in tests.
 /// Encapsulates the construction of <see cref="AgentConnectionLifecycle"/>,
-/// <see cref="AgentJobSlotManager"/>, and the coordinator service.
+/// <see cref="AgentJobSlotManager"/>, <see cref="ChatJobHandler"/>,
+/// <see cref="ConsolidationJobHandler"/>, and the coordinator service.
 /// </summary>
 internal static class TestAgentWorkerServiceFactory
 {
@@ -47,14 +48,21 @@ internal static class TestAgentWorkerServiceFactory
             new AgentId("test-agent"),
             lifetime, mockLogger);
 
+        var chatHandler = CreateChatJobHandler(
+            lifecycle, slotManager, mockOrchestrator, lifetime, mockLogger,
+            isOpenCodeProvider: (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
+                .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase),
+            isChatMode: string.Equals(
+                Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase));
+        var consolidationHandler = CreateConsolidationJobHandler(lifecycle, slotManager, mockOrchestrator, mockLogger);
+
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
+            chatHandler,
+            consolidationHandler,
             new AgentId("test-agent"),
             CreateMockExecutor(mockOrchestrator),
-            CreateMockConsolidationExecutor(mockOrchestrator),
             reporter,
-            mockOrchestrator,
-            Mock.Of<IHttpClientFactory>(),
             lifetime,
             mockLogger));
 
@@ -71,6 +79,53 @@ internal static class TestAgentWorkerServiceFactory
         Serilog.ILogger? logger = null)
     {
         return CreateWithComponents(hostLifetime, completionReporter, orchestrator, logger).Service;
+    }
+
+    /// <summary>
+    /// Creates a standalone <see cref="ChatJobHandler"/> for direct unit testing.
+    /// </summary>
+    public static ChatJobHandler CreateChatJobHandler(
+        AgentConnectionLifecycle connectionLifecycle,
+        AgentJobSlotManager slotManager,
+        KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
+        IHostApplicationLifetime? hostLifetime = null,
+        Serilog.ILogger? logger = null,
+        Func<Task>? signalAgentReady = null,
+        bool isOpenCodeProvider = false,
+        bool isChatMode = false)
+    {
+        var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
+        var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
+        var lifetime = hostLifetime ?? Mock.Of<IHostApplicationLifetime>();
+        return new ChatJobHandler(
+            connectionLifecycle,
+            slotManager,
+            mockOrchestrator,
+            Mock.Of<IHttpClientFactory>(),
+            lifetime,
+            signalAgentReady ?? (() => Task.CompletedTask),
+            agentId: "test-agent",
+            isOpenCodeProvider: isOpenCodeProvider,
+            isChatMode: isChatMode,
+            logger: mockLogger);
+    }
+
+    /// <summary>
+    /// Creates a standalone <see cref="ConsolidationJobHandler"/> for direct unit testing.
+    /// </summary>
+    public static ConsolidationJobHandler CreateConsolidationJobHandler(
+        AgentConnectionLifecycle connectionLifecycle,
+        AgentJobSlotManager slotManager,
+        KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
+        Serilog.ILogger? logger = null)
+    {
+        var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
+        var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
+        return new ConsolidationJobHandler(
+            connectionLifecycle,
+            slotManager,
+            CreateMockConsolidationExecutor(mockOrchestrator),
+            mockLogger);
     }
 
     public static HubConnectionManager CreateTestHubManager(Serilog.ILogger? logger = null)
