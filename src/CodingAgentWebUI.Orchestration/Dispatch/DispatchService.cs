@@ -32,6 +32,7 @@ public sealed class DispatchService : LeaderElectedPollingService
     private readonly ILabelSwapService? _labelSwapper;
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IOrchestratorRunService? _runService;
+    private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly DispatchStateBuilder _stateBuilder;
     private volatile bool _startupValidationRun;
 
@@ -47,25 +48,12 @@ public sealed class DispatchService : LeaderElectedPollingService
 
     /// <summary>
     /// Constructor overload accepting a pre-built JobTemplateStore (for testing).
-    /// Resolves <see cref="DispatchServiceOptions"/> once and delegates to the innermost
-    /// constructor to eliminate the double <see cref="DispatchServiceOptionsFactory.Create"/> call.
     /// </summary>
     internal DispatchService(
         DispatchServiceCoreDependencies coreDeps,
         IConfiguration configuration,
         JobTemplateStore templateProvider)
-        : this(coreDeps, templateProvider, DispatchServiceOptionsFactory.Create(configuration))
-    { }
-
-    /// <summary>
-    /// Innermost constructor accepting a pre-built <see cref="DispatchServiceOptions"/>.
-    /// All field assignments live here; the outer constructors simply compute options and delegate.
-    /// </summary>
-    internal DispatchService(
-        DispatchServiceCoreDependencies coreDeps,
-        JobTemplateStore templateProvider,
-        DispatchServiceOptions options)
-        : base(coreDeps.LeaderElection, options.RateLimitPerSecond)
+        : base(coreDeps.LeaderElection, DispatchServiceOptionsFactory.Create(configuration).RateLimitPerSecond)
     {
         _dbFactory = coreDeps.DbFactory;
         _lifecycle = coreDeps.Lifecycle;
@@ -73,9 +61,27 @@ public sealed class DispatchService : LeaderElectedPollingService
         _agentProfileStore = coreDeps.AgentProfileStore;
         _runService = coreDeps.RunService;
         _templateProvider = templateProvider;
-        _options = options;
-        ArgumentNullException.ThrowIfNull(coreDeps.StateBuilder, nameof(coreDeps.StateBuilder));
-        _stateBuilder = coreDeps.StateBuilder;
+        // TODO: DispatchServiceOptionsFactory.Create(configuration) is called twice: once in the base-constructor
+        // initializer expression (to extract RateLimitPerSecond) and again here to populate _options. This creates
+        // two DispatchServiceOptions instances from the same IConfiguration. If the factory is ever made non-idempotent
+        // or side-effectful, the rate limiter and _options.PollIntervalSeconds could silently diverge.
+        // Fix: use a `this(...)` constructor chain or a static helper to resolve options once before base() is called.
+        // See DotNetSpecialist WARNING (Issue #1912).
+        _options = DispatchServiceOptionsFactory.Create(configuration);
+        _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
+        // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
+        // coreDeps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
+        // singleton is always passed, so this path is never taken at runtime. If _dbFactory or _lifecycle
+        // are null in a test scenario, the new DispatchStateBuilder(...) expression will compile fine
+        // but throw a NullReferenceException at the first BuildStateAsync call rather than at construction,
+        // making failures harder to diagnose. Consider removing the fallback and requiring StateBuilder
+        // explicitly. See DotNetSpecialist WARNING (Issue #1910).
+        _stateBuilder = coreDeps.StateBuilder ?? new DispatchStateBuilder(
+            _dbFactory,
+            _lifecycle,
+            _templateProvider,
+            new DispatchTemplateResolver(_agentProfileStore, _templateProvider),
+            _options);
     }
 
     internal static JobTemplateStore LoadTemplateProvider(IConfiguration configuration)
@@ -121,20 +127,11 @@ public sealed class DispatchService : LeaderElectedPollingService
 
         await using (state.Db)
         {
-            // TODO: RateLimiter! uses the null-forgiving operator on the nullable base-class property
-            // (TokenBucketRateLimiter?). Both constructors always pass rateLimitPerSecond so RateLimiter
-            // is non-null in practice, but the operator suppresses compile-time null warnings. A future
-            // refactor that omits the parameter would produce a NullReferenceException at runtime with no
-            // compile-time signal. Consider replacing ! with a null-check guard:
-            // RateLimiter ?? throw new InvalidOperationException("RateLimiter is not initialized.")
-            await foreach (var candidate in _stateBuilder.GetEligibleCandidatesAsync(
-                state, LeaderElection, RateLimiter!,
-                ServiceName,
-                async (item, msg, token) => await _lifecycle.FailWorkItemAsync(item.Id, msg, token),
-                ct))
+            foreach (var item in state.PendingItems)
             {
-                await DispatchSingleItemAsync(state.Db, candidate.Item, candidate.Template,
-                    candidate.IsKiroAgent, state.AvailablePvcs, state.ConcurrencyBySelector, ct);
+                if (!await ProcessDispatchCandidateAsync(state.Db, item,
+                        state.ConcurrencyBySelector, state.AvailablePvcs, ct))
+                    break;
             }
         }
 
@@ -162,6 +159,47 @@ public sealed class DispatchService : LeaderElectedPollingService
             var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
             await ValidateAgentProfileTemplateMappingAsync(profiles, _templateProvider, Log);
         }
+    }
+
+    /// <summary>
+    /// Processes a single pending work item through eligibility checks and dispatch.
+    /// Returns false if the dispatch loop should stop (rate limit hit or cancellation).
+    /// </summary>
+    private async Task<bool> ProcessDispatchCandidateAsync(
+        PipelineDbContext db,
+        PendingWorkItemProjection item,
+        Dictionary<string, int> concurrencyBySelector,
+        List<string> availablePvcs,
+        CancellationToken ct)
+    {
+        if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
+            return false;
+
+        using var lease = await (RateLimiter ?? throw new InvalidOperationException(
+            "DispatchService requires a rate limiter but RateLimiter is null. " +
+            "Ensure the constructor passes rateLimitPerSecond to the base class."))
+            .AcquireAsync(1, ct);
+        if (!lease.IsAcquired)
+        {
+            Log.Warning("DispatchService: rate limit hit, stopping dispatch cycle");
+            return false;
+        }
+
+        var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
+
+        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
+        switch (result.Outcome)
+        {
+            case EligibilityOutcome.AtConcurrencyLimit:
+            case EligibilityOutcome.NoPvcAvailable:
+                return true;
+            case EligibilityOutcome.NoTemplate:
+                await _lifecycle.FailWorkItemAsync(item.Id, result.ErrorMessage!, ct);
+                return true;
+        }
+
+        await DispatchSingleItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
+        return true;
     }
 
     private async Task DispatchSingleItemAsync(

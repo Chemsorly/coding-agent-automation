@@ -32,6 +32,14 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// The rate limiter created from <c>rateLimitPerSecond</c> passed to the constructor,
     /// or <c>null</c> if the subclass did not request one.
     /// </summary>
+    // TODO: The nullable annotation (TokenBucketRateLimiter?) is technically accurate for the base class
+    // (some subclasses legitimately omit rateLimitPerSecond and receive null), but subclasses that require
+    // a rate limiter (DispatchService, ConsolidationDispatchHandler) enforce non-null at call sites via
+    // '?? throw new InvalidOperationException(...)'. This inconsistency means the compiler will continue to
+    // warn that RateLimiter may be null in any subclass, and future subclasses may copy the guard pattern
+    // without realising there is no base-class mechanism enforcing that the parameter was supplied.
+    // Consider splitting the design: e.g. a non-nullable required accessor or an explicit
+    // RequireRateLimiter() helper on the base class that throws with context. See DotNetSpecialist WARNING.
     protected TokenBucketRateLimiter? RateLimiter { get; }
 
     /// <summary>
