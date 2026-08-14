@@ -46,4 +46,14 @@ public static class AgentLabels
     {
         Done, Error, NeedsRefinement, WontDo, Cancelled
     };
+
+    /// <summary>
+    /// Labels that require explicit human action to set. Agents may not set these via RequestLabelChange.
+    /// Every member of this set must also be present in <see cref="All"/>; labels absent from <c>All</c>
+    /// would be rejected by the prior guard and never reach the gated-label check.
+    /// </summary>
+    public static readonly IReadOnlySet<string> DispatchGatedLabels = new HashSet<string>
+    {
+        EpicApproved
+    };
 }

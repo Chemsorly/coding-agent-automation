@@ -503,4 +503,61 @@ public sealed class AgentHubPipelineReportingTests
 
         mockIssueOps.Verify(s => s.SwapLabelAsync(run, string.Empty, It.IsAny<LabelTargetKind>()), Times.Once);
     }
+
+    // TODO: Add a test that passes a valid, non-gated pipeline label (e.g. AgentLabels.Done) and
+    // asserts that SwapLabelAsync IS called. This covers the acceptance criterion
+    // "RequestLabelChange with a non-gated label continues to work as before" and would catch
+    // regressions where DispatchGatedLabels accidentally matches too broadly or the condition
+    // logic is inverted. See review finding on AgentHubPipelineReportingTests line ~503.
+
+    [Fact]
+    public async Task RequestLabelChange_EpicApproved_IsIgnored_WithWarning()
+    {
+        // agent:epic-approved is a valid pipeline label (in AgentLabels.All) but is human-gated.
+        // RequestLabelChange must reject it, log a Warning, and never call SwapLabelAsync.
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var mockIssueOps = new Mock<IHubIssueOperations>();
+        var hub = new AgentHub(new AgentHubDependencies(
+            _mockFacade.Object,
+            Mock.Of<IChatNotifier>(),
+            _mockChangeNotifier.Object,
+            null!,
+            Mock.Of<IConsolidationService>(),
+            new ConsolidationBadgeService(),
+            mockIssueOps.Object,
+            Mock.Of<IAgentJobLifecycleService>(),
+            Mock.Of<IAgentTokenRefreshService>(),
+            Mock.Of<IGateCommentFormatter>(),
+            _mockLogger.Object,
+            Mock.Of<IAgentOrphanRecoveryService>()));
+
+        var mockContext = new Mock<HubCallerContext>();
+        mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
+        hub.Context = mockContext.Object;
+
+        await hub.RequestLabelChange("job-1", AgentLabels.EpicApproved);
+
+        mockIssueOps.Verify(
+            s => s.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>()),
+            Times.Never,
+            "SwapLabelAsync must not be called for a human-gated label");
+
+        // Serilog resolves Warning("...", newLabel, jobId.Value) to Warning<T0,T1>(string, T0, T1).
+        // Moq must match the exact generic overload. Use It.IsAny on all arguments to reliably
+        // intercept the call, then verify it was called exactly once.
+        // TODO: Tighten the template argument from It.IsAny<string>() to
+        // It.Is<string>(s => s.Contains("gated") || s.Contains("epic-approved")) so the assertion
+        // exclusively verifies the gated-label rejection Warning rather than any Warning<string,string>
+        // call. The current loose matcher becomes fragile if a future guard added before the gated-label
+        // check also logs a two-argument Warning (it could produce false passes or spurious failures).
+        _mockLogger.Verify(
+            l => l.Warning(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>()),
+            Times.Once,
+            "A Warning must be logged when a gated label is rejected");
+    }
 }

@@ -205,6 +205,14 @@ public sealed partial class AgentHub
             return;
         }
 
+        if (!string.IsNullOrEmpty(newLabel) && AgentLabels.DispatchGatedLabels.Contains(newLabel))
+        {
+            _logger.Warning(
+                "Agent requested gated label '{Label}' for job {JobId} — requires human approval, ignoring",
+                newLabel, jobId.Value);
+            return;
+        }
+
         // Derive targetKind from the run's RunType rather than trusting the caller-supplied value.
         // This prevents a buggy or compromised agent from routing label operations to the wrong entity.
         var kind = GetLabelTargetKind(run);
