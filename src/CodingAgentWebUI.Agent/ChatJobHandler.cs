@@ -79,17 +79,9 @@ public sealed class ChatJobHandler
         int exitCode = ExitCodes.GeneralFailure;
         string? error = null;
 
-        try
-        {
-            // Scoped so the batcher is disposed (flushing remaining lines)
-            // BEFORE reporting completion to the orchestrator.
-            (exitCode, error) = await ExecuteWithBatchedOutputAsync(message, chatToken);
-        }
-        finally
-        {
-            // No secret cleanup required — secrets are no longer injected into the
-            // process-wide environment. They are passed per-process via ProcessStartInfo.Environment.
-        }
+        // Dispose the batcher before reporting completion — flushes any remaining buffered lines
+        // to the orchestrator BEFORE the completion message signals the session is done.
+        (exitCode, error) = await ExecuteWithBatchedOutputAsync(message, chatToken);
 
         try
         {

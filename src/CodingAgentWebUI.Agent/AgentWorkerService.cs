@@ -8,6 +8,7 @@ using KiroCliLib.Core;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Hosting;
 using Polly;
+
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
