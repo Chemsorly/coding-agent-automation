@@ -13,41 +13,15 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 /// </summary>
 public sealed class WorkItemStatusOrdinalStabilityTests
 {
-    [Fact]
-    public void Pending_HasOrdinal_0()
-    {
-        ((int)WorkItemStatus.Pending).Should().Be(0);
-    }
-
-    [Fact]
-    public void Dispatched_HasOrdinal_1()
-    {
-        ((int)WorkItemStatus.Dispatched).Should().Be(1);
-    }
-
-    [Fact]
-    public void Running_HasOrdinal_2()
-    {
-        ((int)WorkItemStatus.Running).Should().Be(2);
-    }
-
-    [Fact]
-    public void Succeeded_HasOrdinal_3()
-    {
-        ((int)WorkItemStatus.Succeeded).Should().Be(3);
-    }
-
-    [Fact]
-    public void Failed_HasOrdinal_4()
-    {
-        ((int)WorkItemStatus.Failed).Should().Be(4);
-    }
-
-    [Fact]
-    public void Cancelled_HasOrdinal_5()
-    {
-        ((int)WorkItemStatus.Cancelled).Should().Be(5);
-    }
+    [Theory]
+    [InlineData(WorkItemStatus.Pending,    0)]
+    [InlineData(WorkItemStatus.Dispatched, 1)]
+    [InlineData(WorkItemStatus.Running,    2)]
+    [InlineData(WorkItemStatus.Succeeded,  3)]
+    [InlineData(WorkItemStatus.Failed,     4)]
+    [InlineData(WorkItemStatus.Cancelled,  5)]
+    public void Member_HasExpectedOrdinal(WorkItemStatus status, int expectedOrdinal)
+        => ((int)status).Should().Be(expectedOrdinal);
 
     [Fact]
     public void TerminalStatuses_MatchDbPartialIndexFilter()
