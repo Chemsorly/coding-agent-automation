@@ -55,16 +55,16 @@ public class IConsolidationExecutorTests
         act.Should().Throw<ArgumentNullException>().WithParameterName("consolidationExecutor");
     }
 
-    // ── AgentWorkerService depends on interface ──────────────────────────
+    // ── ConsolidationJobHandler depends on interface ─────────────────────
 
     [Fact]
-    public void SourceCode_AgentWorkerService_DependsOnIConsolidationExecutor()
+    public void SourceCode_ConsolidationJobHandler_DependsOnIConsolidationExecutor()
     {
         var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ConsolidationJobHandler.cs"));
 
         sourceCode.Should().Contain("IConsolidationExecutor",
-            "AgentWorkerService must depend on IConsolidationExecutor interface, not concrete LocalConsolidationExecutor");
+            "ConsolidationJobHandler must depend on IConsolidationExecutor interface, not concrete LocalConsolidationExecutor");
     }
 
     // ── Interface definition ─────────────────────────────────────────────
