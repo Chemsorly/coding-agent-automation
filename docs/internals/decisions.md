@@ -5,8 +5,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Usage:** Agents MUST read this file before proposing changes to understand constraints and deliberate choices. If a decision here contradicts what seems "obvious," the decision wins — the human made it for a reason.
 
 <!-- Intent Extraction Sessions -->
-<!-- Session: 9 | Last run: 2026-07-25 | Decisions captured: 51 -->
-<!-- Queued for next session: automated calibration design (when clear idea emerges), decomposition file limit increase to 12 (pending confirmation) -->
+<!-- Session: 10 | Last run: 2026-08-14 | Decisions captured: 57 -->
+<!-- Queued for next session: automated calibration design (when clear mechanism emerges), Agent Coding page layout redesign, housekeeping feature calibration (after 50+ runs accumulate data) -->
 
 ---
 
@@ -255,6 +255,36 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 ---
 
+### GitHub mergeability mapping: correctness-driven, conservative null for unknown states
+
+**Date:** 2026-08-14
+**Category:** architecture
+
+**Decision:** In `GitHubRepositoryProvider.IsPullRequestBehindBaseAsync`, the `mergeable_state` values `"blocked"` and `"unstable"` map to `null` (CI in-flight, keep concurrency slot), NOT `false` (done). All unrecognized future states also default to `null`. This is a correctness requirement, not a preference: GitHub returns `"blocked"` for the entire CI run duration when required status checks are configured — mapping it to `false` would free the housekeeping concurrency slot immediately after initial mergeability computation (seconds), before CI runs at all, defeating the concurrency gate. The `null` semantic means "outcome unknown, slot remains in-flight until provider state resolves." No strong opinion on the internal representation; the behavior being correct is the only requirement.
+
+**Context:** `"clean"` (CI passed, up-to-date), `"dirty"` (merge conflict), `"draft"`, and `"has_hooks"` map to `false` (slot free). Slot semantics: `true` = update needed, `false` = done/unupdatable, `null` = CI running. Documented in spec 040 design.md decision table.
+
+**Alternatives considered:** Map `"blocked"` → `false` (incorrect — defeats the concurrency gate), map unknowns → `false` (aggressive slot-free, risks race conditions on new GitHub states).
+
+**Reassess when:** GitHub changes `mergeable_state` semantics, or a new state is added that needs explicit classification. Default behavior (new states → `null`) is the safe fallback.
+
+---
+
+### DispatchGatedLabels: extensible set for human-approval-required label transitions
+
+**Date:** 2026-08-14
+**Category:** architecture
+
+**Decision:** `AgentLabels.DispatchGatedLabels` is a general-purpose extensibility mechanism — a `HashSet<string>` of labels that agents are not permitted to self-set via `RequestLabelChange`. Currently contains only `EpicApproved` (the human gate between epic Phase 1 analysis and Phase 2 execution). When a new pipeline state requires explicit human approval before proceeding (e.g., a hypothetical `agent:deploy-approved` or `agent:escalate-approved`), that label belongs in this set. The hub logs a Warning and silently ignores any agent attempt to self-set a gated label — the agent cannot escalate its own privileges by setting its own transition label.
+
+**Context:** Implemented as a guard in `AgentHub.Pipeline.cs` (`RequestLabelChange`). The `targetKind` parameter from the caller is also overridden server-side from `run.RunType` to prevent routing manipulation. Currently only `EpicApproved` is gated; future cases may arise as the pipeline gains more multi-step workflows with human checkpoints.
+
+**Alternatives considered:** Per-label config for gating (overcomplicated), webhook-based approval gates (different mechanism — label-based is simpler for GitHub-native workflows).
+
+**Reassess when:** A new human-approval gate is added that does not fit the label model (e.g., requires a UI action or API call rather than a label change). For label-based gates, always add to `DispatchGatedLabels`.
+
+---
+
 ### Cleanup step before PR is intentional quality polish
 
 **Date:** 2026-07-04
@@ -469,18 +499,33 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 ---
 
-### Dispatch fairness: equal round-robin is sufficient, not intentional design
+### Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation
 
-**Date:** 2026-07-04
+**Date:** 2026-08-14 (supersedes 2026-07-04 "equal round-robin" entry)
 **Category:** configuration
 
-**Decision:** `DispatchFairRoundRobinAsync` uses strict three-way interleaving (issues → PRs → decomposition) with no weighting. This is NOT a deliberate fairness model — it's the simplest approach that works at current scale. No work type is prioritized over another. `MaxConcurrentDecompositions` is the only differentiation (caps decomposition parallelism). The system doesn't need weighted scheduling yet.
+**Decision:** Dispatch uses a static priority ordering: Review (PRs) first, then Decomposition, then Implementation (Issues), then Consolidation (lowest, dispatched via separate path). Within each tier, FIFO order is preserved. The ordering is a hardcoded `DispatchTurn[]` array in `DispatchScheduler` and a priority-bucket scan in `JobDeduplicationGuardService` — not configurable at runtime. Starvation prevention is explicitly out of scope.
 
-**Context:** Argo Workflows uses priority classes. Kubernetes uses ResourceQuotas. Most agent orchestrators at this maturity use FIFO or simple round-robin. Weighted fair queuing adds complexity for a problem that doesn't exist yet.
+**Context:** Implemented in #1931. The rationale: Review jobs unblock humans actively waiting on feedback (highest latency sensitivity). Decomposition unblocks multiple future Implementation runs — one decomposed epic creates N tasks, so decomposing early has compound throughput value. Implementation is background work; it runs to completion regardless. Consolidation is housekeeping. The previous design (strict three-way round-robin with no weighting) was replaced because a Review job enqueued after 10 Implementation jobs would wait behind all of them — visibly bad UX when a developer is watching for review feedback. Static ordering (no configuration) was chosen over configurable weights; starvation of Implementation by Decomposition is acknowledged as a theoretical risk but not prioritized.
 
-**Alternatives considered:** Weighted scheduling (3:1:1 issue:PR:decomp), configurable per-project priorities, deadline-aware scheduling.
+**Alternatives considered:** Configurable priority weights (adds complexity for a problem not yet observed in practice), age-based starvation promotion (deferred), keeping round-robin (replaced because it ignores latency sensitivity by job type).
 
-**Reassess when:** Multiple teams share infrastructure and implementation work is visibly starved by review/decomposition volume. Or when the system serves >10 concurrent projects with different priority needs.
+**Reassess when:** Multiple teams share infrastructure and Implementation work is visibly starved by Decomposition/Review volume, or when a configurable priority weight becomes a concrete request.
+
+---
+
+### Housekeeping auto-update concurrency: 1 is the correct permanent default
+
+**Date:** 2026-08-14
+**Category:** configuration
+
+**Decision:** `HousekeepingConcurrencyLimit = 1` (one branch update in-flight per repo provider per poll tick) is not a conservative "start low and tune" default — it is the correct long-term default for the current deployment topology. The housekeeping feature serves as a de-facto merge queue: updates are serial because GitHub's merge queue itself is serial. Having more than one simultaneous branch update in-flight does not improve throughput in this model; the work happens server-side (CI runs), not client-side (API calls). The property is configurable for teams with different CI topologies, but the default reflects that serial is almost always correct.
+
+**Context:** `HousekeepingConcurrencyLimit` is `PipelineConfiguration` Key(72). Added in spec 040 (auto-branch-updater). Per-template override is available.
+
+**Alternatives considered:** Higher default (e.g., 3) for parallel CI topologies — rejected because the current deployment has a single merge queue; concurrent updates would queue behind each other at the CI level anyway, buying nothing.
+
+**Reassess when:** A deployment accumulates multiple repos with independent CI pipelines where parallel branch updates would genuinely reduce wall-clock time to merge.
 
 ---
 
@@ -678,6 +723,36 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Alternatives considered:** K8s-only (locks out non-K8s users), single mode (loses progressive adoption), deprecate Legacy immediately.
 
 **Reassess when:** The decision to go K8s-only becomes clear (likely after CRD-based dispatch proves itself in production), or if Legacy mode maintenance becomes a test burden without active users.
+
+---
+
+### MaxDecompositionSubIssueFiles=12: research-based, low-confidence default
+
+**Date:** 2026-08-14
+**Category:** configuration
+
+**Decision:** `MaxDecompositionSubIssueFiles = 12` (valid range 1–30, `[ProjectOverridable]`). The value was raised from 5 based on research showing agents routinely handle 10–15 file changes (the consolidation loop demonstrates this empirically). It was NOT chosen via A/B testing on decomposed sub-issues — the decomposition feature is rarely used, so no usage data exists yet. The default should be kept at 12 with low confidence; it is the best available estimate, not an empirically validated optimum. If `agent:error` or `agent:wont-do` rates on decomposed sub-issues become measurable, calibrate from that data.
+
+**Context:** Previous default was 5 (too conservative — artificially fragmented refactors). The upper bound of 30 is a safety rail, not a recommendation. Per-project override allows teams with complex codebases to lower the limit.
+
+**Alternatives considered:** Keep at 5 (overly conservative), increase to 20+ (no evidence agents succeed at that scope on decomposed sub-issues), per-template override instead of per-project (no demand yet).
+
+**Reassess when:** Decomposition feature accumulates enough runs (50+) to compute `agent:done` vs `agent:error`/`agent:wont-do` rates on sub-issues. If error rate increases with file count, lower the default.
+
+---
+
+### MaxConsolidationDispatchRetries: promote to PipelineConfiguration — tracked by #2025
+
+**Date:** 2026-08-14
+**Category:** configuration
+
+**Decision:** `MaxConsolidationDispatchRetries` must use the same configuration mechanism as all other retry limits (`MaxRetries`, `MaxAnalysisRetries`): a `PipelineConfiguration` property with a nullable per-project override and `[ProjectOverridable]`. The current `internal const int = 5` in `JobQueueDrainService` is technical debt — it was left as a const with a TODO comment. There is no justification for treating consolidation dispatch retries differently from other retry values. Default value stays 5 (no behavior change). Currently broken — #2025 tracks the fix.
+
+**Context:** All other dispatch retry limits live in `PipelineConfiguration`. The const was added for expediency with an explicit TODO. Agents adding new retry limits should follow the `PipelineConfiguration` property pattern, not the hardcoded const pattern.
+
+**Alternatives considered:** Keep as const (inconsistency is a maintenance hazard — future agents see an ambiguous precedent).
+
+**Reassess when:** After #2025 is implemented. Once fixed, this decision is stable — no further reassessment needed.
 
 ---
 
@@ -1072,7 +1147,6 @@ Human-authored intent behind non-obvious design choices. This file is the author
 - "MaxRunsPerCycle=0 unlimited" scoped by "Agent lifetime dual model" (bounded by agent count in docker-compose, MaxConcurrentPods in K8s)
 - "Cleanup step before PR" enables "Confidence gate is fail-closed" (cleanup reduces false negatives from cosmetic issues)
 - "MaxRetries=3 arbitrary default" scoped by "Draft PR is the retry-exhausted fallback" (exhausted retries → draft PR, not failure)
-- "Dispatch fairness: equal round-robin" scoped by "Dispatch priority is FIFO" (both reflect "sufficient at current scale" philosophy)
 - "Label swap: add-first ordering" scoped by "Token vending: private keys never leave orchestrator" (both assume imperfect external APIs)
 - "External CI re-push" scoped by "Partial failure contract" (CI is on the critical path — failure is retried, not ignored)
 - "Project overrides: deep-merge (#1044 resolved)" constrains "No schema versioning" (merge requires distinguishing "not set" from "set to default")
@@ -1094,7 +1168,6 @@ Human-authored intent behind non-obvious design choices. This file is the author
 - "NonCompliant AC as CRITICAL" scoped by "MaxRetries=3 arbitrary default" (retry budget bounds the cost of AC false negatives)
 - "Feedback loop: data collection only" correlates with "Refactoring proposal quality bar" (outcome tracking informs quality bar but doesn't auto-adjust it)
 - "Prompt versioning: out of scope" scoped by "Target user: single operator" (multi-team would require versioning)
-
 - "Code review iteration: CRITICAL-only re-review" scoped by "Adversarial review is default pattern" (review agents produce severity-graded findings that drive the decision tree)
 - "Code review iteration: CRITICAL-only re-review" correlates with "Cleanup step before PR" (cleanup handles cosmetic issues that warnings might leave)
 - "Epic decomposition: two-phase with human gate" scoped by "Refactoring auto-dispatch with dependencies" (simple refactoring is autonomous; complex epics require human gate)
@@ -1102,12 +1175,20 @@ Human-authored intent behind non-obvious design choices. This file is the author
 - "Brain knowledge: experimental, append-only" scoped by "Filesystem-as-context" (brain is delivered to agents via filesystem like all other context)
 - "Image extraction: experimental with security hardening" scoped by "Token vending: private keys never leave orchestrator" (both reflect defense-in-depth philosophy)
 
+- "Dispatch priority: static ordering Review > Decomp > Impl > Consolidation" supersedes "Dispatch fairness: equal round-robin" (session 10 correction)
+- "Housekeeping auto-update concurrency: 1 is permanent default" scoped by "Agent lifetime: pull→push evolution" (serial default fits current deployment's serial merge queue)
+- "GitHub mergeability mapping: conservative null for unknown states" scoped by "Housekeeping auto-update concurrency" (null-state concurrency slot semantics are the correctness invariant the feature depends on)
+- "DispatchGatedLabels: extensible set for human-approval-required transitions" scoped by "Label lifecycle needs formalization (#1046)" (gated labels are one axis of the label state machine)
+- "DispatchGatedLabels: extensible" correlates with "Epic decomposition: two-phase with human gate" (EpicApproved is currently the only gated label, but the set is designed for future approval gates)
+- "MaxDecompositionSubIssueFiles=12: research-based low-confidence" scoped by "Epic decomposition: two-phase with human gate" (sub-issue scope constraint operationalizes 'achievable in one agent run')
+- "MaxConsolidationDispatchRetries → #2025" constrains "Dispatch priority: static ordering" (consolidation is lowest priority; its retry mechanism must be consistent with other priority-tier retry config)
+
 ### Coverage Gaps (auto-detected)
 - Automated calibration design remains explicitly deferred
-- Decomposition file limit increase (≤5 → ~12) — pending implementation
 - Agent Coding page layout redesign (open since session 6)
+- Housekeeping feature calibration data — no empirical data yet on concurrency behavior in production; revisit after 50+ housekeeping cycles
 
 ### Queued Questions (for next session)
 - Automated calibration design — when a clear mechanism emerges, revisit
-- Decomposition sub-issue file limit increase (5 → ~12) — pending confirmation and implementation
 - Agent Coding page layout redesign proposals (from session 6, still open)
+- Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct? Are there repos where >1 would help?
