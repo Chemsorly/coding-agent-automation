@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// <summary>
 /// Tests for <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/>.
 /// Validates the extracted PVC resolution query logic matches the original behavior.
-/// Issue #1630: eliminates duplicated PVC resolution between DispatchService and ConsolidationDispatchHandler.
+/// Issue #1630: eliminates duplicated PVC resolution between DispatchService and ConsolidationWorkItemDispatchService.
 /// </summary>
 public class DispatchLifecycleServicePvcQueryTests : IDisposable
 {

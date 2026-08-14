@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Shared K8s Job dispatch lifecycle extracted from DispatchService.
 /// Handles: PVC selection, WorkItem load, pre-write, K8s Job creation, secret creation,
 /// race detection, status transition to Dispatched, and metric recording.
-/// Used by both DispatchService (regular items) and ConsolidationDispatchHandler (consolidation items).
+/// Used by both DispatchService (regular items) and ConsolidationWorkItemDispatchService (consolidation items).
 /// </summary>
 internal sealed class DispatchLifecycleService
 {
@@ -39,7 +39,7 @@ internal sealed class DispatchLifecycleService
 
     /// <summary>
     /// Queries the database for claimed PVCs, excludes inflight claims, and returns available PVCs
-    /// from the given pool. Used by both DispatchService and ConsolidationDispatchHandler.
+    /// from the given pool. Used by both DispatchService and ConsolidationWorkItemDispatchService.
     /// </summary>
     /// <param name="db">Database context for querying claimed PVCs.</param>
     /// <param name="pvcPool">Configured PVC pool to check availability against.</param>
