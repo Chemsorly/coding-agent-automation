@@ -153,11 +153,8 @@ public class WorkItemMetricsBackgroundServiceTests : IDisposable
 
         // 2. Use a switchable factory: starts non-throwing so the first tick succeeds,
         //    then can be flipped to throw to trigger the error-reset path.
-        // TODO: [WARNING] Both _dbFactory (seeding above) and SwitchableDbContextFactory share the same
-        //   in-memory database via _dbOptions, so the seeded WorkItem is visible to 'switchable'. This is
-        //   an implicit coupling — if _dbOptions were changed to use isolated databases per factory instance
-        //   the seed would no longer be visible and the first tick would report nothing, causing NotBeEmpty()
-        //   to fail. Document or enforce this shared-DB assumption if _dbOptions is ever refactored.
+        //    Both _dbFactory (used for seeding above) and SwitchableDbContextFactory share the same
+        //    in-memory database via _dbOptions, so the seeded WorkItem is visible to 'switchable'.
         var switchable = new SwitchableDbContextFactory(_dbOptions);
         var service = new WorkItemMetricsBackgroundService(switchable);
         using var cts = new CancellationTokenSource();
@@ -182,12 +179,6 @@ public class WorkItemMetricsBackgroundServiceTests : IDisposable
 
         // 5. Poll until measurements are empty — proves the service reset its cache on error.
         //    Allow up to 15s: the PeriodicTimer fires every 10s, plus execution margin.
-        // TODO: [WARNING] The loop exits on the first iteration where _measurements.Count == 0 after
-        //   RecordObservableInstruments(). If ShouldThrow is set but the PeriodicTimer has not yet fired,
-        //   the cache still holds non-empty data, so this is safe. However the 15s deadline leaves only
-        //   ~5s of margin after the 10s timer fires — on heavily loaded CI this could cause flaky failures
-        //   or (if the timer fires just before the deadline) the loop may exit vacuously. Consider increasing
-        //   the deadline or sourcing it from a constant tied to the service's timer interval.
         deadline = DateTime.UtcNow.AddSeconds(15);
         while (DateTime.UtcNow < deadline)
         {
@@ -241,13 +232,6 @@ public class WorkItemMetricsBackgroundServiceTests : IDisposable
         public TestDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
         public PipelineDbContext CreateDbContext() => new TestPipelineDbContext(_options);
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(CreateDbContext());
-    }
-
-    private sealed class ThrowingDbContextFactory : IDbContextFactory<PipelineDbContext>
-    {
-        public PipelineDbContext CreateDbContext() => throw new InvalidOperationException("Simulated DB failure");
-        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) =>
-            throw new InvalidOperationException("Simulated DB failure");
     }
 
     private sealed class SwitchableDbContextFactory : IDbContextFactory<PipelineDbContext>
