@@ -83,24 +83,6 @@ public class DispatchSchedulerTests
     #region Static Helper Tests
 
     [Fact]
-    public void NextTurn_Issues_ReturnsPullRequests()
-    {
-        DispatchScheduler.NextTurn(DispatchTurn.Issues).Should().Be(DispatchTurn.PullRequests);
-    }
-
-    [Fact]
-    public void NextTurn_PullRequests_ReturnsDecomposition()
-    {
-        DispatchScheduler.NextTurn(DispatchTurn.PullRequests).Should().Be(DispatchTurn.Decomposition);
-    }
-
-    [Fact]
-    public void NextTurn_Decomposition_ReturnsIssues()
-    {
-        DispatchScheduler.NextTurn(DispatchTurn.Decomposition).Should().Be(DispatchTurn.Issues);
-    }
-
-    [Fact]
     public void HasEligible_EmptyQueues_ReturnsFalse()
     {
         var templates = new List<PipelineJobTemplate> { CreateTemplate("t1") };
@@ -612,10 +594,10 @@ public class DispatchSchedulerTests
 
     #endregion
 
-    #region ExecuteTurnAsync / ComputeQueueAvailability / TrySelectNextTurn coverage
+    #region ExecuteTurnAsync / ComputeQueueAvailability / TrySelectHighestPriorityQueue coverage
 
     /// <summary>
-    /// When hasIssues=false but hasPrs=true, TrySelectNextTurn skips the Issues turn and selects PullRequests.
+    /// When hasIssues=false but hasPrs=true, TrySelectHighestPriorityQueue skips the Issues turn and selects PullRequests.
     /// </summary>
     [Fact]
     public async Task FairRoundRobin_NoIssues_StartsDispatchingFromPRQueue()
@@ -798,7 +780,7 @@ public class DispatchSchedulerTests
     }
 
     /// <summary>
-    /// AllQueuesEmpty — TrySelectNextTurn returns found=false, loop breaks immediately, ProcessedCount=0.
+    /// AllQueuesEmpty — TrySelectHighestPriorityQueue returns found=false, loop breaks immediately, ProcessedCount=0.
     /// </summary>
     [Fact]
     public async Task FairRoundRobin_AllQueuesEmpty_BreaksImmediately()
@@ -834,7 +816,7 @@ public class DispatchSchedulerTests
 
     /// <summary>
     /// Only issues remain (PRs and decomp empty). Verifies remaining turns are skipped when
-    /// a queue type has no eligible items (exercising TrySelectNextTurn skip-ahead path).
+    /// a queue type has no eligible items (exercising TrySelectHighestPriorityQueue skip-ahead path).
     /// </summary>
     [Fact]
     public async Task FairRoundRobin_OnlyIssues_AllBudgetUsedByIssueQueue()
@@ -874,67 +856,67 @@ public class DispatchSchedulerTests
 
     #endregion
 
-    #region Priority Ordering — TrySelectNextTurn and DispatchFairRoundRobinAsync (#1931)
+    #region Priority Ordering — TrySelectHighestPriorityQueue and DispatchFairRoundRobinAsync (#1931)
 
     /// <summary>
-    /// TrySelectNextTurn returns PullRequests when both PRs and Issues are available.
+    /// TrySelectHighestPriorityQueue returns PullRequests when both PRs and Issues are available.
     /// </summary>
     [Fact]
-    public void TrySelectNextTurn_HasPrsAndIssues_SelectsPullRequestsFirst()
+    public void TrySelectHighestPriorityQueue_HasPrsAndIssues_SelectsPullRequestsFirst()
     {
-        var (found, turn) = DispatchScheduler.TrySelectNextTurn(
-            DispatchTurn.Issues, hasIssues: true, hasPrs: true, hasDecomp: false);
+        var (found, turn) = DispatchScheduler.TrySelectHighestPriorityQueue(
+            hasIssues: true, hasPrs: true, hasDecomp: false);
 
         found.Should().BeTrue();
         turn.Should().Be(DispatchTurn.PullRequests);
     }
 
     /// <summary>
-    /// TrySelectNextTurn returns Decomposition when Decomposition and Issues are available but no PRs.
+    /// TrySelectHighestPriorityQueue returns Decomposition when Decomposition and Issues are available but no PRs.
     /// </summary>
     [Fact]
-    public void TrySelectNextTurn_HasDecompAndIssues_SelectsDecompositionFirst()
+    public void TrySelectHighestPriorityQueue_HasDecompAndIssues_SelectsDecompositionFirst()
     {
-        var (found, turn) = DispatchScheduler.TrySelectNextTurn(
-            DispatchTurn.Issues, hasIssues: true, hasPrs: false, hasDecomp: true);
+        var (found, turn) = DispatchScheduler.TrySelectHighestPriorityQueue(
+            hasIssues: true, hasPrs: false, hasDecomp: true);
 
         found.Should().BeTrue();
         turn.Should().Be(DispatchTurn.Decomposition);
     }
 
     /// <summary>
-    /// TrySelectNextTurn returns Issues when only Issues queue is non-empty.
+    /// TrySelectHighestPriorityQueue returns Issues when only Issues queue is non-empty.
     /// </summary>
     [Fact]
-    public void TrySelectNextTurn_OnlyIssues_SelectsIssues()
+    public void TrySelectHighestPriorityQueue_OnlyIssues_SelectsIssues()
     {
-        var (found, turn) = DispatchScheduler.TrySelectNextTurn(
-            DispatchTurn.Issues, hasIssues: true, hasPrs: false, hasDecomp: false);
+        var (found, turn) = DispatchScheduler.TrySelectHighestPriorityQueue(
+            hasIssues: true, hasPrs: false, hasDecomp: false);
 
         found.Should().BeTrue();
         turn.Should().Be(DispatchTurn.Issues);
     }
 
     /// <summary>
-    /// TrySelectNextTurn returns found=false when all queues are empty.
+    /// TrySelectHighestPriorityQueue returns found=false when all queues are empty.
     /// </summary>
     [Fact]
-    public void TrySelectNextTurn_NoneEligible_ReturnsFalse()
+    public void TrySelectHighestPriorityQueue_NoneEligible_ReturnsFalse()
     {
-        var (found, _) = DispatchScheduler.TrySelectNextTurn(
-            DispatchTurn.Issues, hasIssues: false, hasPrs: false, hasDecomp: false);
+        var (found, _) = DispatchScheduler.TrySelectHighestPriorityQueue(
+            hasIssues: false, hasPrs: false, hasDecomp: false);
 
         found.Should().BeFalse();
     }
 
     /// <summary>
-    /// TrySelectNextTurn returns PullRequests when all three queues are non-empty (PRs have highest priority).
+    /// TrySelectHighestPriorityQueue returns PullRequests when all three queues are non-empty (PRs have highest priority).
     /// </summary>
     [Fact]
-    public void TrySelectNextTurn_AllEligible_SelectsPullRequestsFirst()
+    public void TrySelectHighestPriorityQueue_AllEligible_SelectsPullRequestsFirst()
     {
-        var (found, turn) = DispatchScheduler.TrySelectNextTurn(
-            DispatchTurn.Issues, hasIssues: true, hasPrs: true, hasDecomp: true);
+        var (found, turn) = DispatchScheduler.TrySelectHighestPriorityQueue(
+            hasIssues: true, hasPrs: true, hasDecomp: true);
 
         found.Should().BeTrue();
         turn.Should().Be(DispatchTurn.PullRequests);
