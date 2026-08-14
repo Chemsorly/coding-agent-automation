@@ -1100,6 +1100,150 @@ public class AgentJobDispatcherTests : IDisposable
 
     #endregion
 
+    #region ProviderConfigId Validation (default struct guard)
+
+    [Fact]
+    public async Task TryDispatchAsync_DefaultIssueProviderId_ThrowsArgumentException()
+    {
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.TryDispatchAsync(
+            "issue-1", default(ProviderConfigId), "rp", null, null, "test", CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("issueProviderId");
+    }
+
+    [Fact]
+    public async Task TryDispatchAsync_DefaultRepoProviderId_ThrowsArgumentException()
+    {
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.TryDispatchAsync(
+            "issue-1", "ip", default(ProviderConfigId), null, null, "test", CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("repoProviderId");
+    }
+
+    [Fact]
+    public async Task TryDispatchReviewAsync_DefaultIssueProviderId_ThrowsArgumentException()
+    {
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.TryDispatchReviewAsync(new ReviewDispatchRequest
+        {
+            PrIdentifier = "1",
+            PrBranchName = "branch",
+            PrTitle = "title",
+            PrUrl = "https://example.com/pull/1",
+            PrTargetBranch = "main",
+            IssueProviderId = default(ProviderConfigId),
+            RepoProviderId = "rp",
+            InitiatedBy = "test"
+        }, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("IssueProviderId");
+    }
+
+    [Fact]
+    public async Task TryDispatchReviewAsync_DefaultRepoProviderId_ThrowsArgumentException()
+    {
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.TryDispatchReviewAsync(new ReviewDispatchRequest
+        {
+            PrIdentifier = "1",
+            PrBranchName = "branch",
+            PrTitle = "title",
+            PrUrl = "https://example.com/pull/1",
+            PrTargetBranch = "main",
+            IssueProviderId = "ip",
+            RepoProviderId = default(ProviderConfigId),
+            InitiatedBy = "test"
+        }, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("RepoProviderId");
+    }
+
+    [Fact]
+    public async Task TryDispatchDecompositionAsync_DefaultIssueProviderId_ThrowsArgumentException()
+    {
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.TryDispatchDecompositionAsync(
+            "epic-1", "Epic Title", PipelineRunType.DecompositionAnalysis,
+            default(ProviderConfigId), "rp", null, "test", CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("issueProviderId");
+    }
+
+    [Fact]
+    public async Task TryDispatchDecompositionAsync_DefaultRepoProviderId_ThrowsArgumentException()
+    {
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.TryDispatchDecompositionAsync(
+            "epic-1", "Epic Title", PipelineRunType.DecompositionAnalysis,
+            "ip", default(ProviderConfigId), null, "test", CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("repoProviderId");
+    }
+
+    [Fact]
+    public async Task DispatchToAgentDirectAsync_DefaultIssueProviderId_ThrowsArgumentException()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-val-ip",
+            Hostname = "host",
+            Labels = new[] { "dotnet" }
+        }, "conn-val-ip");
+
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.DispatchToAgentDirectAsync(
+            agent,
+            new PendingJob
+            {
+                IssueIdentifier = "issue-1",
+                IssueProviderId = default(ProviderConfigId),
+                RepoProviderId = "rp",
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "test"
+            },
+            Array.Empty<string>(),
+            CancellationToken.None);
+        // TODO: [WARNING] "IssueProviderId" (PascalCase) reflects nameof(job.IssueProviderId) in the guard.
+        // Other dispatch tests use camelCase parameter names (e.g. "issueProviderId"). If the guard is
+        // made idiomatic (changed to nameof(job)), this assertion must change to "job" to match.
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("IssueProviderId");
+    }
+
+    [Fact]
+    public async Task DispatchToAgentDirectAsync_DefaultRepoProviderId_ThrowsArgumentException()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-val-rp",
+            Hostname = "host",
+            Labels = new[] { "dotnet" }
+        }, "conn-val-rp");
+
+        var dispatcher = CreateDispatcher();
+        var act = () => dispatcher.DispatchToAgentDirectAsync(
+            agent,
+            new PendingJob
+            {
+                IssueIdentifier = "issue-1",
+                IssueProviderId = "ip",
+                RepoProviderId = default(ProviderConfigId),
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "test"
+            },
+            Array.Empty<string>(),
+            CancellationToken.None);
+        // TODO: [WARNING] "RepoProviderId" (PascalCase) reflects nameof(job.RepoProviderId) in the guard.
+        // Other dispatch tests use camelCase parameter names (e.g. "repoProviderId"). If the guard is
+        // made idiomatic (changed to nameof(job)), this assertion must change to "job" to match.
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithParameterName("RepoProviderId");
+    }
+
+    #endregion
+
     #region Execution Error Paths
 
     // TODO: Add test DispatchToAgentAsync_ProfileResolutionFails_ReturnsFalse_AgentRemainsIdle
