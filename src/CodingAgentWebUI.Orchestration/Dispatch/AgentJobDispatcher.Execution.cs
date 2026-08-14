@@ -365,6 +365,18 @@ public sealed partial class AgentJobDispatcher
 
         if (_lifecycleManager is not null)
         {
+            // TODO: [WARNING] new ProviderConfigId(message.RepoProviderConfigId ?? "") intentionally
+            // bypasses ProviderConfigId's implicit operator (which calls ArgumentException.ThrowIfNullOrEmpty),
+            // creating an instance with Value = "" for consolidation jobs that have no repo provider.
+            // This is a deliberate escape hatch: the ?? "" coalescing handles null, and the constructor
+            // (unlike the implicit operator) accepts empty strings. AgentAcceptedRunAsync passes the value
+            // to TrySwapLabelAsync (best-effort, exception-safe), so the empty value does not cause a
+            // runtime failure today. However, ProviderConfigId's invariant (non-empty Value) is silently
+            // violated here. If a future caller of AgentAcceptedRunAsync performs a strict operation on
+            // the provider config ID (e.g., a database write that rejects empty strings), this will fail
+            // silently. Consider introducing a ProviderConfigId.Empty static or a dedicated
+            // ProviderConfigId.ForConsolidation() factory method to make the intent explicit and
+            // allow callers to guard against the empty case explicitly.
             await _lifecycleManager.AgentAcceptedRunAsync(
                 runId, agent.AgentId,
                 message.IssueIdentifier,

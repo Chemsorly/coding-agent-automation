@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -1653,7 +1654,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var snapshot = BuildSnapshot([template]);
 
         // Should return immediately without touching any provider
-        await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), CancellationToken.None);
+        var act = () => svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]

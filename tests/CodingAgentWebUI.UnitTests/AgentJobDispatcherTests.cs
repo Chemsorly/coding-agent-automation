@@ -761,6 +761,10 @@ public class AgentJobDispatcherTests : IDisposable
         // should pass "" or null for repoProviderId so the old buggy guard
         // !string.IsNullOrEmpty(message.RepoProviderConfigId) would have short-circuited,
         // proving the fix is what makes the test pass rather than the non-empty input value.
+        // NOTE: With both IDs non-empty, the old guard would also have passed this test — it does
+        // not distinguish between old (broken) and new (fixed) behaviour. This test only confirms
+        // the non-null lifecycle manager branch is reachable with valid inputs; the actual
+        // regression proof is in AssignAndSendAsync_WithLifecycleManager_EmptyRepoProviderConfigId_CallsAgentAcceptedRunAsync.
         var result = await dispatcher.DispatchToAgentAsync(
             agent, "issue-lm-track", "ip", "rp", null, null, "user",
             Array.Empty<string>(), CancellationToken.None);
@@ -851,6 +855,23 @@ public class AgentJobDispatcherTests : IDisposable
         // Verify AgentAcceptedRunAsync was called — that the lifecycle tracking path was entered
         // at all. With the old buggy guard (!string.IsNullOrEmpty("") == false), this Verify
         // would fail because the call would never happen.
+        // TODO: [WARNING] (TestQualityReviewer) This test relies on Moq's default Task-return
+        // behaviour for _mockAgentComm.AssignJobAsync (Moq 4.2+ returns Task.CompletedTask by
+        // default for unmocked Task-returning methods). If the default behaviour changes or
+        // MockBehavior.Strict is adopted, this test will throw a NullReferenceException before
+        // reaching the AgentAcceptedRunAsync Verify. Add an explicit setup:
+        //   _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+        //       .Returns(Task.CompletedTask);
+        // to make the test's intent unambiguous and future-proof.
+        // TODO: [WARNING] (TestQualityReviewer) The Verify only confirms AgentAcceptedRunAsync was
+        // called; it does not assert that agent.ActiveJobId is set or agent.Status equals Busy.
+        // Because _lifecycleManager is mocked to a no-op, neither property is actually updated.
+        // The acceptance criterion "ActiveJobId is set for consolidation jobs" is not verified
+        // end-to-end here. To fully cover this property either (a) use a real IRunLifecycleManager
+        // with a real AgentRegistryService, or (b) add a Callback to the mock that sets
+        // agent.ActiveJobId = runId and calls _registry.TransitionStatus(Busy), then assert those
+        // values after the call. Without such assertions a future refactor removing the ActiveJobId
+        // assignment from AgentAcceptedRunAsync would not be caught by this test.
         // TODO: [WARNING] (TestQualityReviewer) Also add a variant where RepoProviderConfigId = null
         // to verify the ?? "" null-coalescing handles null and does not throw. No test currently
         // exercises the null path through AssignAndSendAsync.
