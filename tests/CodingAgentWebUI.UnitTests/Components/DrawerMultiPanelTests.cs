@@ -67,7 +67,8 @@ public class DrawerMultiPanelTests : BunitContext
             WorkDistributor = null,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            HousekeepingService = null
+            HousekeepingService = null,
+            LeaderElection = null
         }));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 

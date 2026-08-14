@@ -18,4 +18,13 @@ public sealed record PipelineLoopServiceDependencies
     public required IDispatchOrchestrationService? DispatchOrchestration { get; init; }
     public required IDependencyChecker? DependencyChecker { get; init; }
     public required IHousekeepingService? HousekeepingService { get; init; }
+
+    /// <summary>
+    /// Optional leader-election gate. When non-null (K8s or SignalR+DB modes),
+    /// <see cref="Services.PipelineLoopService"/> waits for leadership before activating
+    /// its poll loop and stops cleanly on leadership loss. When null (Legacy mode or
+    /// any mode without <c>ILeaderElectionService</c> registered), the loop runs
+    /// unconditionally as before.
+    /// </summary>
+    public required ILeaderGate? LeaderElection { get; init; }
 }
