@@ -102,15 +102,6 @@ public class ReconciliationServiceCleanupIntegrationTests : IDisposable
         await InsertWorkItem(activeId, "owner/repo#active", WorkItemStatus.Running,
             createdAt: DateTimeOffset.UtcNow.AddDays(-30));
 
-        // TODO: Add a precondition guard assertion here to verify the item was inserted
-        // before calling cleanup. If InsertWorkItem fails silently the test passes vacuously
-        // because there is nothing to delete. e.g.:
-        //   await using (var preDb = await _dbFactory.CreateDbContextAsync())
-        //       (await preDb.WorkItems.FindAsync(activeId))
-        //           .Should().NotBeNull("precondition: item must exist before cleanup");
-        // Also consider adding coverage for other non-terminal statuses (Pending, Dispatched,
-        // Cancelling) to ensure the production cleanup predicate does not accidentally match them.
-
         var service = CreateService(retentionDays: 7);
         await service.CleanupStaleWorkItemsAsync(CancellationToken.None);
 
@@ -139,21 +130,11 @@ public class ReconciliationServiceCleanupIntegrationTests : IDisposable
         // Set _isLeader = true so the service behaves as the current leader
         var isLeaderField = typeof(LeaderElectionService).GetField("_isLeader",
             BindingFlags.NonPublic | BindingFlags.Instance);
-        // TODO: Replace null-conditional (?.) with a fail-fast null check that throws
-        // InvalidOperationException when the field is not found. The current ?.SetValue silently
-        // skips the assignment if _isLeader is ever renamed, leaving IsLeader=false, which causes
-        // CleanupStaleWorkItemsAsync to skip cleanup and both tests to pass vacuously.
-        // Pattern used by the unit test helper (SetLeaderState in ReconciliationServiceLifecycleTests)
-        // uses !.SetValue which throws immediately — use the same approach here.
         isLeaderField?.SetValue(leaderElection, true);
 
         // Initialize _leaderCts so LeaderToken returns a non-cancelled token
         var leaderCtsField = typeof(LeaderElectionService).GetField("_leaderCts",
             BindingFlags.NonPublic | BindingFlags.Instance);
-        // TODO: Same null-conditional silent-failure risk as isLeaderField above. Use fail-fast
-        // null check. Also: the CancellationTokenSource allocated here and the LeaderElectionService
-        // local are never disposed — wrap leaderElection in a using block (it implements IDisposable)
-        // to avoid leaking the CancellationTokenSource held by LeaderElectionService._leaderCts.
         leaderCtsField?.SetValue(leaderElection, new CancellationTokenSource());
 
         return new ReconciliationService(
@@ -200,19 +181,6 @@ public class ReconciliationServiceCleanupIntegrationTests : IDisposable
     /// Without these converters, EF Core 10 SQLite cannot translate DateTimeOffset comparisons
     /// in ExecuteDelete statements — they are stored as UTC ticks (long) for reliable comparison.
     /// </summary>
-    // TODO: The issue body specifies "real Postgres, not InMemory" as the intended backend for
-    // the promoted tests. SQLite satisfies the letter of the acceptance criteria (supports
-    // ExecuteDeleteAsync) but diverges from the stated intent. Postgres-specific bugs (timezone
-    // handling, DateTimeOffset cutoff semantics, index use) will not be caught by SQLite tests.
-    // Consider wiring these tests to the integration test project's Postgres-backed factory if
-    // Postgres becomes available in the test environment, or add a note explaining why SQLite
-    // is the accepted long-term trade-off.
-    //
-    // TODO: OnModelCreating iterates modelBuilder.Model.GetEntityTypes() in two separate loops
-    // (first to strip RowVersion/indexes/JSONB, then to apply DateTimeOffset converters). If a
-    // future entity type triggers a model-build failure in the first loop, the second loop
-    // (converters) never runs, causing hard-to-diagnose failures. Consider merging into a single
-    // pass or applying converters first to reduce ordering fragility.
     private sealed class TestSqlitePipelineDbContext : PipelineDbContext
     {
         public TestSqlitePipelineDbContext(DbContextOptions<PipelineDbContext> options)
