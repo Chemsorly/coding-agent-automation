@@ -55,7 +55,7 @@ graph TB
 
 ## Docker Compose
 
-The `docker-compose.yml` defines 8 services: 1 orchestrator + 2 Kiro .NET agents + 1 Kiro Python agent + 1 Kiro Java agent + 1 OpenCode .NET agent + 1 OpenCode Python agent + 1 OpenCode Java agent.
+The `docker-compose.yml` defines 9 services: 1 orchestrator + 2 Kiro .NET agents + 1 Kiro Python agent + 1 Kiro Java agent + 1 OpenCode .NET agent + 1 OpenCode Python agent + 1 OpenCode Java agent.
 
 To add more agents, copy a service definition with a new name and volume — don't use `--scale` (each agent needs its own named volume to avoid SQLite corruption).
 
@@ -161,7 +161,7 @@ The orchestrator generates short-lived GitHub installation tokens for agents on 
 
 ### Per-Process Environment Variables
 
-Secrets and environment variables injected for a pipeline run (via setup steps or project secrets) are scoped to the **child agent process only**. They are set on `ProcessStartInfo.Environment` before the process launches and do not affect the orchestrator process or any other running agent. This means there is no risk of secret leakage between concurrent runs or into the orchestrator's own environment.
+Secrets and environment variables injected for a pipeline run (via setup steps or project secrets) are scoped to the **child agent process only**. They are set on `ProcessStartInfo.Environment` before the process launches and do not affect the orchestrator process, any other running agent, or any subsequently spawned processes outside that child. This means there is no risk of secret leakage between concurrent runs or into the orchestrator's own environment.
 
 ---
 
@@ -362,9 +362,9 @@ Bound from the `LeaderElection:Postgres` configuration section:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `LockKey` | `1` | Advisory lock key (bigint). All replicas must use the same key. |
+| `LockKey` | `0x0CAA_1EAD` (212926893) | Advisory lock key (bigint). All replicas must use the same key. Derived from "caa-leader". |
 | `RenewalInterval` | 5s | How often to re-check/renew the advisory lock |
-| `RetryDelay` | 2s | Delay between acquisition attempts when not the leader |
+| `RetryDelay` | 5s | Delay between acquisition attempts when not the leader |
 
 ### Credential Pool Initialization (Kubernetes Mode)
 

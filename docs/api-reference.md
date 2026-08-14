@@ -324,6 +324,10 @@ Download pipeline run history as a JSON file.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `feedbackOnly` | boolean | `false` | When `true`, only returns runs that have structured feedback attached |
+| `page` | integer | — | Page number (1-based). When provided, returns a page slice instead of the full list |
+| `pageSize` | integer | `50` | Page size. Only used when `page` is provided |
+
+> **Note:** `feedbackOnly` is applied to the page slice when pagination is active — it does not filter across all pages before slicing. For full cross-run filtering, omit pagination and use `feedbackOnly` alone.
 
 **Example request:**
 
