@@ -608,11 +608,6 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         await InsertWorkItem(workItemId, "owner/repo#startup3", WorkItemStatus.Dispatched,
             k8sJobName: "caa-live-job", claimedPvcName: "pvc-startup-3");
 
-        // TODO [WARNING]: The explicit setup returns { Body = new V1Job() }, but the production JobExistsAsync
-        // currently treats any non-exception return (including null body) as "job exists". If JobExistsAsync is
-        // ever changed to check result != null before returning true, a null-body mock would fail silently here.
-        // Consider asserting _mockBatchV1.Verify(..., Times.Once) to confirm the mock was actually invoked, which
-        // would also distinguish "job found" from "code threw a swallowed exception and never ran". (#1965)
         // Simulate K8s confirming the job exists
         _mockBatchV1
             .Setup(b => b.ReadNamespacedJobWithHttpMessagesAsync(
@@ -627,10 +622,6 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         // Act
         await InvokeRunStartupReconciliationAsync(service);
 
-        // TODO [WARNING]: This assertion (ClaimedPvcName unchanged) would also pass if RunStartupReconciliationAsync
-        // swallowed an exception before processing anything — the outer try/catch in ReconciliationService.Startup.cs
-        // catches all exceptions without re-throwing. A Verify() call on _mockBatchV1 would confirm the reconciliation
-        // path actually ran and reached the K8s check, rather than silently short-circuiting. (#1965)
         // Assert: PVC claim must be retained — job is still alive
         await using var db = await _dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.FindAsync(workItemId);
