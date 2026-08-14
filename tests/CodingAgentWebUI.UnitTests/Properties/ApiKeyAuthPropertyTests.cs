@@ -20,11 +20,6 @@ public class ApiKeyAuthPropertyTests
     /// matching AgentApiKeyAuthHandler.HandleAuthenticateAsync.
     /// **Validates: Requirements 1.8, 18.3**
     /// </summary>
-    // TODO: These property tests re-implement the SHA256+FixedTimeEquals logic inline rather than
-    // calling AgentApiKeyAuthHandler directly. A regression that removes the SHA256 step only from
-    // the production handler (without touching these tests) would not be caught here. To fully
-    // satisfy the regression-detection guarantee, consider adding an integration-style property that
-    // constructs AgentApiKeyAuthHandler with a test configuration and exercises it end-to-end.
     [Property(MaxTest = 20)]
     public void InvalidApiKey_IsRejected(NonEmptyString configuredKey, NonEmptyString providedKey)
     {
@@ -57,12 +52,6 @@ public class ApiKeyAuthPropertyTests
     /// matching AgentApiKeyAuthHandler.HandleAuthenticateAsync.
     /// **Validates: Requirements 1.8, 18.3**
     /// </summary>
-    // TODO: This test is tautological — both configuredHash and providedHash are SHA256 of the same
-    // input, so FixedTimeEquals always receives two identical 32-byte digests. The assertion passes
-    // whether or not SHA256 is applied (raw bytes of the same string also compare equal). To provide
-    // real regression signal, this test should invoke AgentApiKeyAuthHandler directly or use a shared
-    // helper that mirrors the handler path, so a handler regression (e.g. hashing only one side)
-    // would be detectable.
     [Property(MaxTest = 20)]
     public void ValidApiKey_IsAccepted(NonEmptyString apiKey)
     {
