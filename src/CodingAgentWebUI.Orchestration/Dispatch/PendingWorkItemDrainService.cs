@@ -153,13 +153,25 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         }
 
         // --- Pipeline items ---
-        // TODO: connectionId is out string? (nullable) from TryResolveAgentForItem but is passed here with
-        // null-forgiving operator (!). If resolveResult.ConnectionId is ever null (e.g. agent registered
-        // without a connection ID), the null-forgiving silently passes null to DispatchPipelineItemAsync
-        // which then forwards it to _agentComm.AssignJobAsync, causing a NullReferenceException at point
-        // of use. Add a null-check on connectionId before this call and treat null as a resolution failure.
-        // See review finding: Correctness WARNING PendingWorkItemDrainService.cs:150
-        if (!await DispatchPipelineItemAsync(item, request!, agentId, connectionId!, ct)) return true;
+        // TODO: If the same agent is the only available agent and its ConnectionId is persistently null
+        // (e.g., registered but SignalR connection never established), this guard will resolve/release
+        // that agent O(n) times per drain cycle for n pending items, flooding logs and wasting CPU every
+        // poll interval. Consider treating null ConnectionId as "no usable agent" (return false to stop
+        // the drain), or tracking the broken agent ID to skip it for subsequent items in the same batch.
+        // TODO: A persistently-null ConnectionId is indistinguishable from a transient one here — no
+        // RetryCount increment or log-level escalation occurs. The work item loops forever at Pending
+        // without any observable signal beyond a LogWarning per cycle. Consider incrementing RetryCount
+        // or escalating to LogError after repeated null-ConnectionId encounters for the same work item.
+        if (connectionId is null)
+        {
+            _logger.LogWarning(
+                "PendingWorkItemDrainService: resolved agent {AgentId} has null ConnectionId for WorkItem {WorkItemId} — releasing agent and skipping",
+                agentId, item.Id);
+            _agentResolver.ReleaseAgent(agentId);
+            return true; // continue to next item — this is a per-item transient condition, not "no agents"
+        }
+
+        if (!await DispatchPipelineItemAsync(item, request!, agentId, connectionId, ct)) return true;
 
         // Determine provider and target kind from run type, then delegate to shared label swap service.
         // The run-type selection logic (what to label) stays here; how to label (retry, reconciliation)
