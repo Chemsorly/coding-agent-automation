@@ -416,7 +416,19 @@ public class DispatchServiceStartupValidationTests : IDisposable
             new DispatchServiceCoreDependencies(_dbFactory,
                 CreateAlwaysLeaderElection(),
                 new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options),
-                AgentProfileStore: agentProfileStore),
+                AgentProfileStore: agentProfileStore,
+                // TODO: This constructs a second independent DispatchLifecycleService instance for
+                // DispatchStateBuilder, separate from the one in DispatchServiceCoreDependencies above.
+                // In production a single shared lifecycle instance is DI-injected into both. If
+                // DispatchLifecycleService carries any stateful PVC-claim or lease-tracking logic,
+                // divergence between the two instances can produce test results that don't match
+                // production behaviour. Refactor to share a single lifecycle instance.
+                StateBuilder: new DispatchStateBuilder(
+                    _dbFactory,
+                    new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options),
+                    templateStore,
+                    new DispatchTemplateResolver(agentProfileStore, templateStore),
+                    options)),
             config,
             templateStore);
     }
