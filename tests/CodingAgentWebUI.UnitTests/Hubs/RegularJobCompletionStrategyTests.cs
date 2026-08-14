@@ -216,6 +216,46 @@ public sealed class RegularJobCompletionStrategyTests
         _changeNotifier.Verify(c => c.NotifyChange(), Times.Once);
     }
 
+    [Fact]
+    public async Task WhenDefensiveCleanupIsCancelledToken_TransitionStillAttempted()
+    {
+        // Regression guard: DefensiveRunCleanupAsync must use CancellationToken.None, not the
+        // caller-supplied ct, so the transition is attempted even when ct is already cancelled
+        // (e.g., during host shutdown).
+        var run = MakeRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FailureReason = null,
+            FailureCategory = null
+        };
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // ct is already cancelled — simulates host shutdown
+
+        // TODO [WARNING]: The mock throws unconditionally regardless of the CancellationToken state,
+        // so the pre-cancelled token above is scenery rather than the mechanism that triggers the
+        // defensive path. A more precise test would set up CompleteRunAsync to throw
+        // OperationCanceledException when called with a cancelled token (matching the actual
+        // shutdown-cancellation scenario), ensuring the defensive path fires for the right reason.
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync(It.IsAny<RunId>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ThrowsAsync(new InvalidOperationException("DB failure"));
+
+        var strategy = CreateStrategy();
+        await strategy.ExecuteAsync(new JobId("job-1"), run, payload, null, cts.Token);
+
+        // Must call TransitionWorkItemAsync with CancellationToken.None, not the pre-cancelled token
+        _facade.Verify(f => f.TransitionWorkItemAsync(
+            "job-1",
+            It.IsAny<WorkItemStatus>(),
+            It.Is<CancellationToken>(ct => ct == CancellationToken.None),
+            It.IsAny<string?>(),
+            It.IsAny<FailureReason?>()), Times.Once);
+    }
+
     // ── Agent isolation ───────────────────────────────────────────────────────
 
     [Fact]

@@ -87,7 +87,11 @@ public class DispatchServiceLabelSwapTests : IDisposable
                 _dbFactory,
                 CreateAlwaysLeaderElection(),
                 lifecycle,
-                LabelSwapper: labelSwapper),
+                LabelSwapper: labelSwapper,
+                StateBuilder: new DispatchStateBuilder(
+                    _dbFactory, lifecycle, templateProvider,
+                    new DispatchTemplateResolver(null, templateProvider),
+                    options)),
             config,
             templateProvider);
     }

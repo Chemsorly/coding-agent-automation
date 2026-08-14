@@ -2,6 +2,8 @@ using System.Net.Http;
 using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -453,88 +455,51 @@ public class AgentWorkerServiceTests : IDisposable
     public async Task HandleAssignJob_WhenExecutorThrowsOCE_CompletionPayloadHasFinalLabelCancelled()
     {
         // Regression test: When the executor throws OperationCanceledException
-        // (agent pod SIGTERM during execution), the outer catch in HandleAssignJobAsync
-        // builds a JobCompletionPayload. This payload MUST include FinalLabel = "agent:cancelled"
-        // so the orchestrator's ReportJobCompleted handler applies the correct label.
+        // (agent pod SIGTERM during execution), AgentJobRunner must produce a JobCompletionPayload
+        // with FinalLabel = "agent:cancelled" so the orchestrator applies the correct label.
         //
-        // Previously, FinalLabel was not set in the outer catch — only in the inner
-        // LocalPipelineExecutor catch. If the executor didn't unwind cleanly within the
-        // 5-second shutdown timeout, the outer catch produced a payload without FinalLabel,
-        // causing the orchestrator to derive the label from FinalStep → agent:error.
+        // Previously, FinalLabel was not set — only in the inner LocalPipelineExecutor catch.
+        // If the executor didn't unwind cleanly within the shutdown timeout, the outer catch
+        // produced a payload without FinalLabel, causing the orchestrator to derive
+        // the label from FinalStep → agent:error.
+        //
+        // This test exercises AgentJobRunner.ExecuteAsync directly with a delegate that
+        // throws OperationCanceledException, verifying the OCE catch path sets FinalLabel.
+        //
+        // TODO [WARNING]: This test no longer exercises the wiring between RunJobTaskAsync and
+        // AgentJobRunner.ExecuteAsync. It verifies that AgentJobRunner's OCE catch path sets
+        // FinalLabel = "agent:cancelled", but it does not verify that RunJobTaskAsync passes
+        // cancelledLabel: AgentLabels.Cancelled when calling AgentJobRunner.ExecuteAsync. If
+        // RunJobTaskAsync were modified to pass a different cancelledLabel (or to call a different
+        // runner method), this test would continue to pass while the regression existed. A
+        // complementary test that exercises RunJobTaskAsync end-to-end would close this gap.
 
         // Arrange
-        var service = CreateService();
         var message = CreateTestJobAssignment("cancel-test-job");
-
-        // Pre-cancel the job CTS to simulate SIGTERM arriving during execution.
-        // The executor will receive an already-cancelled token and throw OCE immediately.
-        var cts = new CancellationTokenSource();
+        using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        // Invoke the handler — it will:
-        // 1. Acquire job slot
-        // 2. Try JobAccepted (fails on disconnected hub — caught)
-        // 3. Start Task.Run with the executor
-        // 4. Executor gets cancelled token → throws OperationCanceledException
-        // 5. Outer catch builds completion payload
-        // 6. Try ReportJobCompleted (fails on disconnected hub — caught, buffered)
-        var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
-        var task = (Task)handler.Invoke(service, [message])!;
-        await task;
+        // Act: invoke AgentJobRunner directly with a delegate that throws OCE
+        // (simulating the executor receiving a cancelled token and unwinding immediately)
+        await using var outputBatcher = new OutputBatcher();
+        var payload = await AgentJobRunner.ExecuteAsync(
+            execute: (_, _, _, _, ct) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                return Task.FromResult(new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow });
+            },
+            assignment: message,
+            connection: TestAgentWorkerServiceFactory.CreateTestHubManager().Connection,
+            outputBatcher: outputBatcher,
+            onStepChanged: _ => { },
+            cancelledLabel: AgentLabels.Cancelled,
+            ct: cts.Token);
 
-        // Give the background Task.Run a moment to execute the catch block
-        await Task.Delay(500);
-
-        // Assert: Check the critical message buffer for the buffered completion.
-        // When the hub is disconnected, ReportJobCompleted fails and the payload is
-        // buffered in the SignalRCompletionReporter's CriticalMessageBuffer for replay on reconnection.
-        var reporter = GetPrivateField<IJobCompletionReporter>(service, "_completionReporter")!;
-        var hasPending = reporter is SignalRCompletionReporter signalR && signalR.HasPendingMessages;
-
-        if (hasPending)
-        {
-            // Verify the job slot is still held (buffer non-empty → slot held for replay)
-            var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
-            activeJobId.Should().Be((JobId)"cancel-test-job",
-                "job slot should be held when buffer has pending messages");
-        }
-        else
-        {
-            // Buffer empty means ReportJobCompleted succeeded (unlikely with disconnected hub)
-            // or the task hasn't completed yet. Either way, verify FinalStep through the
-            // observable consequence: if the fix is in place, the completion payload's FinalLabel
-            // is "agent:cancelled". Without the fix, it's null.
-            // Since we can't directly inspect the payload after it was sent/buffered,
-            // verify via the simpler invariant: the code MUST produce a payload with
-            // FinalLabel when FinalStep is Cancelled.
-        }
-
-        // The definitive assertion: read the source code's catch block output.
-        // We verify this by constructing the same payload the outer catch SHOULD produce
-        // and asserting the fix is present. This acts as a compile-time contract.
-        var expectedPayload = BuildCancelledPayload(message);
-        expectedPayload.FinalLabel.Should().Be("agent:cancelled",
-            "the outer OperationCanceledException catch must set FinalLabel = AgentLabels.Cancelled");
-        expectedPayload.FinalStep.Should().Be(PipelineStep.Cancelled);
-    }
-
-    /// <summary>
-    /// Mirrors the payload construction in AgentWorkerService.HandleAssignJobAsync's
-    /// OperationCanceledException catch block. If this doesn't compile or the assertion
-    /// fails, the production code is missing the FinalLabel assignment.
-    /// </summary>
-    private static JobCompletionPayload BuildCancelledPayload(JobAssignmentMessage message)
-    {
-        // This MUST match the production code's outer catch block exactly.
-        // If the fix is not applied, this will diverge from production and the
-        // assertion above catches it via code review.
-        return new JobCompletionPayload
-        {
-            FinalStep = PipelineStep.Cancelled,
-            CompletedAt = DateTimeOffset.UtcNow,
-            IsRework = message.LinkedPullRequest is not null,
-            FinalLabel = AgentLabels.Cancelled  // THE FIX: this line must exist in production code too
-        };
+        // Assert
+        payload.FinalLabel.Should().Be("agent:cancelled",
+            "AgentJobRunner must set FinalLabel = AgentLabels.Cancelled when OCE is caught");
+        payload.FinalStep.Should().Be(PipelineStep.Cancelled,
+            "FinalStep must be Cancelled when the job was cancelled via OCE");
     }
 
     // ── Bug Fix Characterization Tests ─────────────────────────────────

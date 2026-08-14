@@ -29,6 +29,7 @@ public class WorkItemEndpointsTests : IDisposable
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<IOrchestratorRunService> _runService;
+    private readonly Mock<IProjectStore> _projectStore;
     private readonly WorkItemTransitionService _transitionService;
 
     public WorkItemEndpointsTests()
@@ -43,6 +44,7 @@ public class WorkItemEndpointsTests : IDisposable
 
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
         _runService = new Mock<IOrchestratorRunService>();
+        _projectStore = new Mock<IProjectStore>();
         _transitionService = new WorkItemTransitionService(
             _dbFactory, NullLogger<WorkItemTransitionService>.Instance);
     }
@@ -75,7 +77,7 @@ public class WorkItemEndpointsTests : IDisposable
     [Fact]
     public async Task GetAssignment_ReturnsNotFound_WhenWorkItemDoesNotExist()
     {
-        var result = await WorkItemEndpoints.GetAssignment(Guid.NewGuid(), _dbFactory);
+        var result = await WorkItemEndpoints.GetAssignment(Guid.NewGuid(), _dbFactory, _projectStore.Object);
 
         result.Should().BeOfType<NotFound>();
     }
@@ -87,7 +89,7 @@ public class WorkItemEndpointsTests : IDisposable
         var payload = JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, WorkItemStatus.Succeeded, payload);
 
-        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
+        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory, _projectStore.Object);
 
         result.Should().BeOfType<StatusCodeHttpResult>();
         ((StatusCodeHttpResult)result).StatusCode.Should().Be(410);
@@ -100,7 +102,7 @@ public class WorkItemEndpointsTests : IDisposable
         var payload = JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, WorkItemStatus.Dispatched, payload);
 
-        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
+        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory, _projectStore.Object);
 
         result.Should().BeOfType<Ok<JobAssignmentMessage>>();
         var okResult = (Ok<JobAssignmentMessage>)result;
@@ -116,7 +118,7 @@ public class WorkItemEndpointsTests : IDisposable
         var id = Guid.NewGuid();
         await SeedWorkItemAsync(id, WorkItemStatus.Dispatched, payload: null);
 
-        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
+        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory, _projectStore.Object);
 
         result.Should().BeOfType<NotFound>();
     }
@@ -207,7 +209,7 @@ public class WorkItemEndpointsTests : IDisposable
         var payload = JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, WorkItemStatus.Pending, payload);
 
-        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
+        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory, _projectStore.Object);
 
         result.Should().BeOfType<Ok<JobAssignmentMessage>>();
         var okResult = (Ok<JobAssignmentMessage>)result;
@@ -223,7 +225,7 @@ public class WorkItemEndpointsTests : IDisposable
         var payload = JsonSerializer.Serialize(sourcePayload, PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, WorkItemStatus.Running, payload);
 
-        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
+        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory, _projectStore.Object);
 
         var okResult = (Ok<JobAssignmentMessage>)result;
         var dto = okResult.Value!;
@@ -250,10 +252,92 @@ public class WorkItemEndpointsTests : IDisposable
         var payload = JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, terminalStatus, payload);
 
-        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
+        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory, _projectStore.Object);
 
         result.Should().BeOfType<StatusCodeHttpResult>();
         ((StatusCodeHttpResult)result).StatusCode.Should().Be(410);
+    }
+
+    // ── GET /api/work-items/{id}/assignment — ProjectSecrets injection ────
+
+    [Fact]
+    public async Task GetAssignment_InjectsProjectSecrets_WhenProjectHasSecrets()
+    {
+        // Arrange
+        var id = Guid.NewGuid();
+        var payload = JsonSerializer.Serialize(
+            CreateTestPayload(projectId: "proj-1"), PipelineJsonOptions.Default);
+        await SeedWorkItemAsync(id, WorkItemStatus.Dispatched, payload);
+
+        var project = new PipelineProject
+        {
+            Id = "proj-1",
+            Name = "Test Project",
+            Secrets = new Dictionary<string, string> { ["API_KEY"] = "secret-value", ["DB_PASS"] = "hunter2" }
+        };
+        _projectStore
+            .Setup(s => s.GetProjectByIdAsync("proj-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        // Act
+        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory, _projectStore.Object);
+
+        // Assert
+        result.Should().BeOfType<Ok<JobAssignmentMessage>>();
+        var okResult = (Ok<JobAssignmentMessage>)result;
+        okResult.Value!.ProjectSecrets.Should().NotBeNull();
+        okResult.Value.ProjectSecrets.Should().ContainKey("API_KEY").WhoseValue.Should().Be("secret-value");
+        okResult.Value.ProjectSecrets.Should().ContainKey("DB_PASS").WhoseValue.Should().Be("hunter2");
+    }
+
+    [Fact]
+    public async Task GetAssignment_DoesNotInjectSecrets_WhenProjectHasNoSecrets()
+    {
+        // Arrange
+        var id = Guid.NewGuid();
+        var payload = JsonSerializer.Serialize(
+            CreateTestPayload(projectId: "proj-no-secrets"), PipelineJsonOptions.Default);
+        await SeedWorkItemAsync(id, WorkItemStatus.Dispatched, payload);
+
+        var project = new PipelineProject
+        {
+            Id = "proj-no-secrets",
+            Name = "Empty Secrets Project",
+            Secrets = null
+        };
+        _projectStore
+            .Setup(s => s.GetProjectByIdAsync("proj-no-secrets", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        // Act
+        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory, _projectStore.Object);
+
+        // Assert
+        result.Should().BeOfType<Ok<JobAssignmentMessage>>();
+        var okResult = (Ok<JobAssignmentMessage>)result;
+        okResult.Value!.ProjectSecrets.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetAssignment_DoesNotInjectSecrets_WhenProjectIdIsNull()
+    {
+        // Arrange — CreateTestPayload() does not set ProjectId (null by default)
+        var id = Guid.NewGuid();
+        var payload = JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default);
+        await SeedWorkItemAsync(id, WorkItemStatus.Dispatched, payload);
+
+        // Act
+        var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory, _projectStore.Object);
+
+        // Assert
+        result.Should().BeOfType<Ok<JobAssignmentMessage>>();
+        var okResult = (Ok<JobAssignmentMessage>)result;
+        okResult.Value!.ProjectSecrets.Should().BeNull();
+
+        // Store must NOT be called when ProjectId is absent
+        _projectStore.Verify(
+            s => s.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ── POST /api/work-items/{id}/status — Additional scenarios ──────────
@@ -393,7 +477,7 @@ public class WorkItemEndpointsTests : IDisposable
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    private static JobDistributionRequest CreateTestPayload() => new()
+    private static JobDistributionRequest CreateTestPayload(string? projectId = null) => new()
     {
         IssueIdentifier = "owner/repo#1",
         IssueProviderConfigId = "ipc-1",
@@ -402,6 +486,7 @@ public class WorkItemEndpointsTests : IDisposable
         TaskType = WorkItemTaskType.Implementation,
         AgentSelector = "kiro",
         TimeoutSeconds = 3600,
+        ProjectId = projectId,
         IssueDetail = new IssueDetail
         {
             Identifier = "1",
