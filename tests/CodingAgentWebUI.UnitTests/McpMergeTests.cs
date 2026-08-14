@@ -195,15 +195,9 @@ public class McpMergeTests
                 && x.Command == y.Command;
         }
 
-        // TODO [WARNING]: GetHashCode does not null-guard obj.Name. If a McpServerConfig is
-        // constructed without setting Name (e.g., via reflection bypassing `required`), this will
-        // throw NullReferenceException. Additionally, ToLowerInvariant() and OrdinalIgnoreCase can
-        // diverge for non-ASCII characters (e.g., Turkish dotless-i); prefer
-        // StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Name) to guarantee the
-        // Equals(x,y) → GetHashCode(x)==GetHashCode(y) contract for all Unicode inputs.
         public int GetHashCode(McpServerConfig obj) =>
             HashCode.Combine(
-                obj.Name.ToLowerInvariant(),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Name ?? string.Empty),
                 obj.Disabled,
                 obj.Type,
                 obj.Command);
