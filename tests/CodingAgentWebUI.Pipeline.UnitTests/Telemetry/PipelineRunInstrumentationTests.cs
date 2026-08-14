@@ -272,10 +272,6 @@ public class PipelineRunInstrumentationTests : IDisposable
         duration[0].Value.Should().BeLessThan(0.5);
     }
 
-    // TODO: This test does not truly verify idempotency of timing freeze. The assertion BeGreaterThan(0)
-    // would pass even if StopTiming were a no-op because Dispose() also calls _stopwatch.Stop().
-    // Strengthen by asserting duration is frozen at the first StopTiming call (e.g., BeLessThan(0.05))
-    // with a Thread.Sleep after the first call, similar to StopTiming_FreezesElapsedDuration.
     [Fact]
     public void StopTiming_IsIdempotent()
     {
@@ -284,17 +280,20 @@ public class PipelineRunInstrumentationTests : IDisposable
         var instrumentation = PipelineRunInstrumentation.Start(
             "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
         using var mres4 = new ManualResetEventSlim(false);
-        mres4.Wait(10);
+        mres4.Wait(10); // Ensure non-zero duration before freeze
 
         instrumentation.StopTiming();
-        instrumentation.StopTiming();
-        instrumentation.StopTiming();
+        using var mres5 = new ManualResetEventSlim(false);
+        mres5.Wait(500); // 500ms after freeze point — must not be included in duration (unfrozen would exceed 0.5s threshold)
 
+        instrumentation.StopTiming(); // should be no-ops
+        instrumentation.StopTiming();
         instrumentation.Dispose();
 
         var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
         duration.Should().HaveCount(1);
-        duration[0].Value.Should().BeGreaterThan(0);
+        duration[0].Value.Should().BeLessThan(0.5,
+            "StopTiming should freeze elapsed time at first call; subsequent calls must not extend it");
     }
 
     [Fact]
