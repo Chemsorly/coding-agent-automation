@@ -36,6 +36,8 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleImplementation { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleReview { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleDecomposition { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleHousekeeping { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleBranchCleanup { get; set; }
     [Parameter] public EventCallback<PipelineJobTemplate> OnConfirmRemove { get; set; }
     [Parameter] public EventCallback<(TemplateId TemplateId, string SourceProjectId, string TargetProjectId)> OnMoveTemplate { get; set; }
     [Parameter] public EventCallback OnShowAddForm { get; set; }
@@ -48,12 +50,16 @@ public partial class TemplateTableSection
 
     private string? _moveMenuTemplateId;
     private string? _expandedPreviewTemplateId;
+    private string? _expandedFeaturesTemplateId;
 
     private void ToggleMoveMenu(string? templateId) =>
         _moveMenuTemplateId = _moveMenuTemplateId == templateId ? null : templateId;
 
     private void ToggleLabelPreview(string templateId) =>
         _expandedPreviewTemplateId = _expandedPreviewTemplateId == templateId ? null : templateId;
+
+    private void ToggleFeatureExpand(string templateId) =>
+        _expandedFeaturesTemplateId = _expandedFeaturesTemplateId == templateId ? null : templateId;
 
     private async Task MoveTemplate(TemplateId templateId, string sourceProjectId, string targetProjectId)
     {
@@ -160,6 +166,9 @@ public partial class TemplateTableSection
         public string RepoProviderId { get; set; } = "";
         public string BrainProviderId { get; set; } = "";
         public string PipelineProviderId { get; set; } = "";
+        public bool HousekeepingEnabled { get; set; } = false;
+        public int? HousekeepingConcurrencyLimit { get; set; } = null;
+        public bool HousekeepingBranchCleanupEnabled { get; set; } = false;
         public bool BrainReadOnly { get; set; }
         public bool ImplementationEnabled { get; set; } = true;
         public bool ReviewEnabled { get; set; } = true;

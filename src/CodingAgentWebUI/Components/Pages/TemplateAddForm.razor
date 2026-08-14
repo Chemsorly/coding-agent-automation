@@ -100,6 +100,31 @@
             <span class="form-hint-icon" title="When enabled, this template dispatches epic decomposition jobs from agent:epic labeled issues.">?</span>
         </label>
     </div>
+    <div class="form-group form-checkbox">
+        <label>
+            <input type="checkbox" @bind="Form.HousekeepingEnabled" />
+            Housekeeping
+            <span class="form-hint-icon" title="When enabled, the poll cycle automatically triggers server-side branch updates on agent:done PRs that are behind the base branch.">?</span>
+        </label>
+    </div>
+    @if (Form.HousekeepingEnabled)
+    {
+        <div class="form-group">
+            <div class="label-with-hint">
+                <label>Housekeeping Concurrency Limit</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Max PRs allowed in 'update triggered, CI running' state per repository at once. Leave blank to inherit global setting.">?</span>
+            </div>
+            <input type="number" @bind="Form.HousekeepingConcurrencyLimit" min="1" placeholder="Inherited from global" />
+            <span class="form-hint">Leave blank to inherit the global setting.</span>
+        </div>
+    }
+    <div class="form-group form-checkbox">
+        <label>
+            <input type="checkbox" @bind="Form.HousekeepingBranchCleanupEnabled" />
+            Branch Cleanup
+            <span class="form-hint-icon" title="When enabled, periodically deletes stale agent branches that have no open PR and whose linked issue is not actively being worked on.">?</span>
+        </label>
+    </div>
     <div class="form-buttons">
         <button class="btn-save" @onclick="() => OnSave.InvokeAsync()">Save</button>
         <button class="btn-cancel" @onclick="() => OnCancel.InvokeAsync()">Cancel</button>

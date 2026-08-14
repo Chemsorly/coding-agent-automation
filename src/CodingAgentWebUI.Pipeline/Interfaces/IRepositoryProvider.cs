@@ -201,6 +201,52 @@ public interface IRepositoryProvider : IAsyncDisposable
     bool SupportsInlineReviewComments => false;
 
     /// <summary>
+    /// Whether this provider supports server-side branch updates via
+    /// <see cref="UpdatePullRequestBranchAsync"/> without requiring a local workspace clone.
+    /// Default: false (default-deny for providers that have not implemented it).
+    /// </summary>
+    bool SupportsServerSideBranchUpdate => false;
+
+    /// <summary>
+    /// Returns the mergeability status of the PR branch relative to the base branch.
+    /// </summary>    /// <returns>
+    /// <see cref="PrMergeabilityStatus.Behind"/> if the branch is behind and a server-side update should be triggered;
+    /// <see cref="PrMergeabilityStatus.UpToDate"/> if the branch is clean and no action is needed;
+    /// <see cref="PrMergeabilityStatus.Conflicted"/> if there is a merge conflict — the linked issue should be re-queued for rework;
+    /// <see cref="PrMergeabilityStatus.Blocked"/> if required checks are still running or mergeability is being computed — keep the in-flight slot;
+    /// <see cref="PrMergeabilityStatus.Unknown"/> for any unrecognised value — conservative wait.
+    /// CRITICAL: GitHub <c>"blocked"</c> MUST map to <see cref="PrMergeabilityStatus.Blocked"/>, NOT <see cref="PrMergeabilityStatus.UpToDate"/>.
+    /// GitHub returns <c>"blocked"</c> for the full CI run duration when required checks are configured.
+    /// </returns>
+    Task<PrMergeabilityStatus> IsPullRequestBehindBaseAsync(int prNumber, CancellationToken ct)
+        => Task.FromResult(PrMergeabilityStatus.Unknown);
+
+    /// <summary>
+    /// Triggers a server-side branch update (e.g. GitHub: <c>PUT .../update-branch</c>;
+    /// GitLab: <c>PUT .../rebase</c>). Does not require a local workspace clone.
+    /// The update is asynchronous on the provider side — the method returns after the
+    /// HTTP call completes (typically 202 Accepted), not after CI finishes.
+    /// </summary>
+    Task UpdatePullRequestBranchAsync(int prNumber, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support UpdatePullRequestBranchAsync.");
+
+    /// <summary>
+    /// Lists all remote branches whose name starts with the agent branch prefix
+    /// (<see cref="PipelineConstants.BranchPrefix"/>). Returns branch names only (not full refs).
+    /// Default: empty list (conservative for providers that have not implemented it).
+    /// </summary>
+    Task<IReadOnlyList<string>> ListAgentBranchesAsync(CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+
+    /// <summary>
+    /// Deletes a remote branch by name. No-op if the branch does not exist.
+    /// </summary>
+    Task DeleteBranchAsync(string branchName, CancellationToken ct)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not support DeleteBranchAsync.");
+
+    /// <summary>
     /// Submits a review with optional inline comments. When <see cref="ReviewSubmission.Comments"/>
     /// is empty, produces the same result as the body-only overload.
     /// Default implementation falls back to the existing body-only overload.

@@ -26,7 +26,6 @@ public sealed class NotificationService
                 _entries.RemoveLast();
             _unreadCount++;
         }
-        OnChange?.Invoke();
     }
 
     public IReadOnlyList<NotificationEntry> GetAll()
@@ -38,8 +37,5 @@ public sealed class NotificationService
     {
         bool changed;
         lock (_lock) { changed = _unreadCount != 0; _unreadCount = 0; }
-        if (changed) OnChange?.Invoke();
     }
-
-    public event Action? OnChange;
 }

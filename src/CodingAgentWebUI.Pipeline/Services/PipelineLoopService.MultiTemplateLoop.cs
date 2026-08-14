@@ -38,7 +38,7 @@ public sealed partial class PipelineLoopService
     {
         var failuresBefore = BuildTemplateFailureBaseline(snapshot.PollableTemplates);
 
-        var (issueQueues, prQueues, decompositionQueues) = await _poller.PollTemplateQueuesAsync(
+        var (issueQueues, prQueues, decompositionQueues, agentDonePrQueues) = await _poller.PollTemplateQueuesAsync(
             snapshot.PollableTemplates, snapshot.MaxPagesToFetch, _templateStatuses,
             i => CurrentCycleTemplateIndex = i,
             msg => { lock (_lock) { StatusMessage = msg; } },
@@ -79,6 +79,8 @@ public sealed partial class PipelineLoopService
         FailedCount += dispatchResult.FailedCount;
         CurrentIssueIdentifier = null;
 
+        await RunHousekeepingAsync(snapshot, agentDonePrQueues, ct);
+
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
         lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.PollInterval.TotalSeconds}s."; }
@@ -92,6 +94,46 @@ public sealed partial class PipelineLoopService
         return templates.DistinctBy(t => t.Id).ToDictionary(
             t => t.Id,
             t => _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0);
+    }
+
+    /// <summary>
+    /// Housekeeping step: trigger server-side branch updates on eligible agent:done PRs.
+    /// Called even when <paramref name="agentDonePrQueues"/> is empty — eviction pass must run to free slots.
+    /// <paramref name="agentDonePrQueues"/> is not counted in <see cref="EmitCyclePollMetrics"/> — not dispatched work items.
+    /// Deduplicated by <c>RepoProviderId</c>: if multiple templates share the same repo, only the
+    /// first (lowest index in <c>PollableTemplates</c>) processes that repo this cycle.
+    /// </summary>
+    // TODO: agentDonePrQueues should be IReadOnlyDictionary<string, IReadOnlyList<PullRequestSummary>>
+    // since this method only reads from it (.TryGetValue). The mutable concrete type widens the
+    // apparent contract unnecessarily. Carried forward from the pre-refactor inline block.
+    internal async Task RunHousekeepingAsync(
+        CycleSnapshot snapshot,
+        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
+        CancellationToken ct)
+    {
+        if (_housekeepingService is not { } housekeepingService) return;
+
+        var processedRepos = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var template in snapshot.PollableTemplates)
+        {
+            if (!template.HousekeepingEnabled) continue;
+            if (!processedRepos.Add(template.RepoProviderId)) continue; // already processed this repo this cycle
+            if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId, out var repoProvider)) continue;
+            if (!repoProvider.SupportsServerSideBranchUpdate) continue;
+            if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var issueProvider)) continue;
+
+            var donePrs = agentDonePrQueues.TryGetValue(template.Id, out var d) ? d : [];
+            var limit = Math.Max(1,
+                template.HousekeepingConcurrencyLimit ?? snapshot.Config.HousekeepingConcurrencyLimit);
+
+            await housekeepingService.ExecuteAsync(
+                repoProvider, template.RepoProviderId,
+                issueProvider, template.IssueProviderId,
+                donePrs, limit,
+                template.HousekeepingBranchCleanupEnabled,
+                snapshot.Config.HousekeepingBranchCleanupIntervalMinutes,
+                ct);
+        }
     }
 
     /// <summary>
@@ -129,7 +171,7 @@ public sealed partial class PipelineLoopService
     /// <summary>
     /// Snapshot record bundling all cycle-immutable state from Steps 1–2.
     /// </summary>
-    private sealed record CycleSnapshot(
+    internal sealed record CycleSnapshot(
         PipelineConfiguration Config,
         IReadOnlyList<PipelineProject> Projects,
         IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> FlattenedTemplates,
@@ -223,7 +265,7 @@ public sealed partial class PipelineLoopService
     private async Task ReconcileRepoProviderCacheAsync(List<PipelineJobTemplate> enabledTemplates, CancellationToken ct)
     {
         var neededRepoIds = enabledTemplates
-            .Where(t => t.ReviewEnabled || t.DecompositionEnabled)
+            .Where(t => t.ReviewEnabled || t.DecompositionEnabled || t.HousekeepingEnabled)
             .Select(t => t.RepoProviderId)
             .ToHashSet();
         if (neededRepoIds.Count == 0) return;

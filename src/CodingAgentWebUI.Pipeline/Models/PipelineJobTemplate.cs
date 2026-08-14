@@ -56,4 +56,31 @@ public sealed record PipelineJobTemplate
     /// <summary>Whether this template dispatches PR review jobs. Default true.</summary>
     [Key(10)]
     public bool ReviewEnabled { get; init; } = true;
+
+    // ── Housekeeping settings ─────────────────────────────────────────────
+
+    /// <summary>
+    /// When true, the poll cycle automatically triggers server-side branch updates on
+    /// agent:done PRs that are behind the base branch. Default: false.
+    /// Does not carry [ProjectOverridable] — this is tied to a specific repo provider
+    /// on the template; project-level override has no meaningful semantics here.
+    /// </summary>
+    [Key(11)]
+    public bool HousekeepingEnabled { get; init; } = false;
+
+    /// <summary>
+    /// Per-template override for the concurrency limit on branch update operations.
+    /// When null, inherits <see cref="PipelineConfiguration.HousekeepingConcurrencyLimit"/>.
+    /// The limit is enforced per repository (RepoProviderId), not per template.
+    /// </summary>
+    [Key(12)]
+    public int? HousekeepingConcurrencyLimit { get; init; } = null;
+
+    /// <summary>
+    /// When true, the poll cycle deletes remote agent branches that have no open PR
+    /// and whose linked issue is not actively being worked on. Default: false.
+    /// Runs at the interval defined by <see cref="PipelineConfiguration.HousekeepingBranchCleanupIntervalMinutes"/>.
+    /// </summary>
+    [Key(13)]
+    public bool HousekeepingBranchCleanupEnabled { get; init; } = false;
 }

@@ -364,9 +364,6 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LastProgressAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<bool>("NeedsLabelReconciliation")
-                        .HasColumnType("boolean");
-
                     b.Property<DateTimeOffset?>("OriginalEnqueuedAt")
                         .HasColumnType("timestamp with time zone");
 

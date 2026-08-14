@@ -1,4 +1,3 @@
-using System.Threading.RateLimiting;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Orchestration.LeaderElection;
@@ -8,7 +7,6 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Serilog;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
@@ -20,7 +18,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Rate-limited: default 10 Jobs/s. Skips items whose selector group is at concurrency limit.
 /// Consolidation items are handled by <see cref="ConsolidationDispatchHandler"/>.
 /// </summary>
-public sealed class DispatchService : BackgroundService
+public sealed class DispatchService : LeaderElectedPollingService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<DispatchService>();
 
@@ -28,7 +26,6 @@ public sealed class DispatchService : BackgroundService
     internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateStore _templateProvider;
@@ -36,9 +33,11 @@ public sealed class DispatchService : BackgroundService
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IOrchestratorRunService? _runService;
     private readonly DispatchEligibilityChecker _eligibilityChecker;
-    private readonly TokenBucketRateLimiter _rateLimiter;
     private readonly DispatchStateBuilder _stateBuilder;
     private volatile bool _startupValidationRun;
+
+    protected override string ServiceName => "DispatchService";
+    protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
     internal DispatchService(
         DispatchServiceCoreDependencies coreDeps,
@@ -54,17 +53,22 @@ public sealed class DispatchService : BackgroundService
         DispatchServiceCoreDependencies coreDeps,
         IConfiguration configuration,
         JobTemplateStore templateProvider)
+        : base(coreDeps.LeaderElection, DispatchServiceOptionsFactory.Create(configuration).RateLimitPerSecond)
     {
         _dbFactory = coreDeps.DbFactory;
-        _leaderElection = coreDeps.LeaderElection;
         _lifecycle = coreDeps.Lifecycle;
         _labelSwapper = coreDeps.LabelSwapper;
         _agentProfileStore = coreDeps.AgentProfileStore;
         _runService = coreDeps.RunService;
         _templateProvider = templateProvider;
+        // TODO: DispatchServiceOptionsFactory.Create(configuration) is called twice: once in the base-constructor
+        // initializer expression (to extract RateLimitPerSecond) and again here to populate _options. This creates
+        // two DispatchServiceOptions instances from the same IConfiguration. If the factory is ever made non-idempotent
+        // or side-effectful, the rate limiter and _options.PollIntervalSeconds could silently diverge.
+        // Fix: use a `this(...)` constructor chain or a static helper to resolve options once before base() is called.
+        // See DotNetSpecialist WARNING (Issue #1912).
         _options = DispatchServiceOptionsFactory.Create(configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
-        _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
         // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
         // coreDeps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
         // singleton is always passed, so this path is never taken at runtime. If _dbFactory or _lifecycle
@@ -96,89 +100,19 @@ public sealed class DispatchService : BackgroundService
         return provider;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        Log.Information("DispatchService started — waiting for leader election");
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            await WaitForLeadershipAsync(stoppingToken);
-
-            if (stoppingToken.IsCancellationRequested) break;
-
-            Log.Information("DispatchService: leader acquired, entering poll loop");
-
-            // Reset so validation re-runs on each leadership tenure.
-            // Allows detection of ConfigMap changes during leadership loss/re-acquisition.
-            _startupValidationRun = false;
-
-            // Create linked token: cancels on EITHER host stop OR leadership loss.
-            // The using block must remain here so the CTS is disposed after RunLeaderPollLoopAsync
-            // returns — not inside the extracted method.
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            await RunLeaderPollLoopAsync(ct);
-
-            if (!stoppingToken.IsCancellationRequested)
-            {
-                Log.Information("DispatchService: leadership lost, re-entering wait loop");
-            }
-        }
-
-        Log.Information("DispatchService: exiting (stopping)");
-    }
-
     /// <summary>
-    /// Waits until this instance becomes the leader or <paramref name="stoppingToken"/> is cancelled.
+    /// Resets <see cref="_startupValidationRun"/> at the start of each leadership tenure so that
+    /// startup validation re-runs on re-acquisition (e.g. to detect ConfigMap changes).
+    /// The base class emits the "leader acquired, entering poll loop" log message.
     /// </summary>
-    private async Task WaitForLeadershipAsync(CancellationToken stoppingToken)
+    protected override async Task RunLeadershipTermAsync(CancellationToken ct)
     {
-        while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
-        {
-            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-        }
-    }
-
-    /// <summary>
-    /// Runs the poll loop while this instance holds leadership. Returns when
-    /// <paramref name="linkedCt"/> is cancelled (either host stop or leadership loss).
-    /// </summary>
-    private async Task RunLeaderPollLoopAsync(CancellationToken linkedCt)
-    {
-        while (!linkedCt.IsCancellationRequested)
-        {
-            try
-            {
-                await PollAndDispatchAsync(linkedCt);
-            }
-            catch (OperationCanceledException) when (linkedCt.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "DispatchService: unhandled error in poll cycle");
-            }
-
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), linkedCt);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-        }
+        _startupValidationRun = false;
+        await base.RunLeadershipTermAsync(ct);
     }
 
     /// <inheritdoc/>
-    public override void Dispose()
-    {
-        _rateLimiter.Dispose();
-        base.Dispose();
-    }
+    protected override Task OnPollCycleAsync(CancellationToken ct) => PollAndDispatchAsync(ct);
 
     private async Task PollAndDispatchAsync(CancellationToken ct)
     {
@@ -238,10 +172,15 @@ public sealed class DispatchService : BackgroundService
         List<string> availablePvcs,
         CancellationToken ct)
     {
-        if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
+        if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
             return false;
 
-        using var lease = await _rateLimiter.AcquireAsync(1, ct);
+        // TODO: RateLimiter! uses the null-forgiving operator on the nullable base property (TokenBucketRateLimiter?).
+        // Both constructors always pass rateLimitPerSecond so RateLimiter is non-null in practice, but if a future
+        // constructor omits the parameter this will throw NullReferenceException at runtime with no compile-time warning.
+        // Consider replacing ! with a null check: RateLimiter ?? throw new InvalidOperationException(...)
+        // See DotNetSpecialist WARNING / Correctness WARNING (Issue #1912).
+        using var lease = await RateLimiter!.AcquireAsync(1, ct);
         if (!lease.IsAcquired)
         {
             Log.Warning("DispatchService: rate limit hit, stopping dispatch cycle");

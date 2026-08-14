@@ -126,7 +126,8 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             Logger = MockLogger.Object,
             WorkDistributor = mockDistributor.Object,
             DispatchOrchestration = null,
-            DependencyChecker = null
+            DependencyChecker = null,
+            HousekeepingService = null
         });
 
         using var cts = new CancellationTokenSource();
@@ -217,7 +218,8 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             Logger = MockLogger.Object,
             WorkDistributor = null,
             DispatchOrchestration = null,
-            DependencyChecker = null
+            DependencyChecker = null,
+            HousekeepingService = null
         });
 
         // Act

@@ -337,10 +337,6 @@ public sealed class RunLifecycleManagerTests
         _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-1", "org/repo#1", AgentLabels.Cancelled, LabelTargetKind.Issue,
             It.IsAny<CancellationToken>()), Times.Once);
-
-        // TODO: Verify WorkItem is transitioned to Cancelled in DB. This test uses workItemTransition: null
-        // (legacy mode) so TransitionWorkItemAsync is a no-op. Add a test variant with a mock
-        // IWorkItemTransitionService to validate the DB transition path per acceptance criteria.
     }
 
     [Fact]
