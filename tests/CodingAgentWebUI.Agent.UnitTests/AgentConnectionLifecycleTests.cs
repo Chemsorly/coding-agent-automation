@@ -26,7 +26,7 @@ public partial class AgentConnectionLifecycleTests
     [Fact]
     public void Instance_IsAssignableTo_IAsyncDisposable()
     {
-        var (_, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (_, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
         lifecycle.Should().BeAssignableTo<IAsyncDisposable>();
     }
 
@@ -35,7 +35,7 @@ public partial class AgentConnectionLifecycleTests
     [Fact]
     public async Task DisposeAsync_DoesNotThrow()
     {
-        var (_, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (_, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         var act = async () => await lifecycle.DisposeAsync();
 
@@ -45,7 +45,7 @@ public partial class AgentConnectionLifecycleTests
     [Fact]
     public async Task DisposeAsync_Idempotent_DoesNotThrow()
     {
-        var (_, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (_, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         // First disposal
         await lifecycle.DisposeAsync();
@@ -62,7 +62,7 @@ public partial class AgentConnectionLifecycleTests
     [Fact]
     public async Task DisposeAsync_NullsHubManager_IsConnectedReturnsFalse()
     {
-        var (_, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (_, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         await lifecycle.DisposeAsync();
 
@@ -72,7 +72,7 @@ public partial class AgentConnectionLifecycleTests
     [Fact]
     public async Task DisposeAsync_NullsHubManager_ConnectionThrowsObjectDisposedException()
     {
-        var (_, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (_, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         await lifecycle.DisposeAsync();
 
@@ -85,7 +85,7 @@ public partial class AgentConnectionLifecycleTests
     [Fact]
     public async Task DisposeAsync_ThenShutdownAsync_DoesNotThrow()
     {
-        var (_, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (_, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         await lifecycle.DisposeAsync();
 
@@ -97,7 +97,7 @@ public partial class AgentConnectionLifecycleTests
     [Fact]
     public async Task ShutdownAsync_ThenDisposeAsync_DoesNotThrow()
     {
-        var (_, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (_, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         // ShutdownAsync first (will fail to deregister since not connected, but should not throw)
         await lifecycle.ShutdownAsync();
@@ -115,7 +115,7 @@ public partial class AgentConnectionLifecycleTests
     public async Task ConcurrentDisposeAndShutdown_NoObjectDisposedException()
     {
         // Run multiple concurrent calls to verify no ObjectDisposedException
-        var (_, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
+        var (_, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         var tasks = new List<Task>();
         for (var i = 0; i < 10; i++)

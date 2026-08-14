@@ -33,7 +33,7 @@ public class AgentConnectionLifecycleChatModeTests : IDisposable
         IHostApplicationLifetime? hostLifetime = null,
         Serilog.ILogger? logger = null)
     {
-        var (_, _, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents(
+        var (_, _, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents(
             hostLifetime: hostLifetime,
             logger: logger);
         return lifecycle;

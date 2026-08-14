@@ -36,8 +36,9 @@ internal static class AgentSignalRModeRegistration
                 try
                 {
                     var connectionLifecycle = sp.GetRequiredService<AgentConnectionLifecycle>();
+                    var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
                     await connectionLifecycle.Connection.InvokeAsync(
-                        HubMethodNames.AgentReady, agentId);
+                        HubMethodNames.AgentReady, agentId, lifetime.ApplicationStopping);
                 }
                 catch (Exception ex)
                 {
@@ -53,15 +54,56 @@ internal static class AgentSignalRModeRegistration
             sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             logger));
+        services.AddSingleton<ChatJobHandler>(sp =>
+        {
+            var agentId = sp.GetRequiredService<AgentId>().Value;
+            var isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
+                .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
+            var isChatMode = string.Equals(
+                Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
+            return new ChatJobHandler(new ChatJobHandlerDependencies(
+                sp.GetRequiredService<AgentConnectionLifecycle>(),
+                sp.GetRequiredService<AgentJobSlotManager>(),
+                sp.GetRequiredService<IKiroCliOrchestrator>(),
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<IHostApplicationLifetime>(),
+                SignalAgentReady: async () =>
+                {
+                    try
+                    {
+                        // TODO: [WARNING] AgentConnectionLifecycle and IHostApplicationLifetime are re-resolved
+                        // from the DI container on every invocation of this delegate. Since both are registered
+                        // as singletons this is safe today, but the pattern is inconsistent with the outer scope
+                        // (which captures the resolved instances via the outer `sp`). If either registration were
+                        // changed to scoped, the delegate would silently capture a different instance than
+                        // ChatJobHandler's own _connectionLifecycle field. Prefer capturing the singleton
+                        // instances from the outer factory scope rather than re-resolving on each call.
+                        var lifecycle = sp.GetRequiredService<AgentConnectionLifecycle>();
+                        var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
+                        await lifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, agentId, lifetime.ApplicationStopping);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Warning(ex, "Failed to send AgentReady signal from ChatJobHandler");
+                    }
+                },
+                IsOpenCodeProvider: isOpenCodeProvider,
+                IsChatMode: isChatMode,
+                Logger: logger));
+        });
+        services.AddSingleton<ConsolidationJobHandler>(sp => new ConsolidationJobHandler(
+            sp.GetRequiredService<AgentConnectionLifecycle>(),
+            sp.GetRequiredService<AgentJobSlotManager>(),
+            sp.GetRequiredService<IConsolidationExecutor>(),
+            logger));
         services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
+            sp.GetRequiredService<ChatJobHandler>(),
+            sp.GetRequiredService<ConsolidationJobHandler>(),
             sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IPipelineExecutor>(),
-            sp.GetRequiredService<IConsolidationExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
-            sp.GetRequiredService<IKiroCliOrchestrator>(),
-            sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             logger)));
         services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
