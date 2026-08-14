@@ -23,7 +23,11 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     private TaskCompletionSource _activationSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Lock _lock = new();
     private readonly TemplateCircuitBreaker _circuitBreaker = new();
-    private readonly ProviderCacheManager _cacheManager;
+    // TODO: _cacheManager is promoted to internal solely to enable direct field seeding in tests
+    // (svc._cacheManager.RepoProviders["rp-hk"] = ...). This exposes mutable provider dictionaries
+    // to all internal assembly consumers. Consider a narrower alternative such as an internal
+    // test-seeding method or constructor overload to restore the field to private readonly.
+    internal readonly ProviderCacheManager _cacheManager;
     private readonly TemplatePoller _poller;
     private readonly DispatchScheduler _dispatcher;
 
