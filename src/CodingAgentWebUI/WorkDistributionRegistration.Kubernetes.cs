@@ -95,7 +95,6 @@ public static partial class WorkDistributionRegistration
                 LabelSwapper: sp.GetService<ILabelService>() is { } ls
                     ? new LabelSwapService(
                         ls,
-                        sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
                         sp.GetRequiredService<ILogger<LabelSwapService>>(),
                         maxAttempts: 1)
                     : null,

@@ -371,17 +371,15 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
     [Fact]
     public async Task DrainPendingItems_LabelSwapFails_DelegatesReconciliationToLabelSwapService()
     {
-        // After the extract-class refactor (#1868), reconciliation flagging lives in LabelSwapService.
-        // The drain service calls SwapLabelWithRetryAsync exactly once and does not set
-        // NeedsLabelReconciliation itself — that is ILabelSwapService's responsibility.
-        // TODO: This test sets up _mockLabelSwapper to return Task.CompletedTask (success), which
-        // contradicts the test name "LabelSwapFails". The test correctly verifies delegation (the
-        // drain service calls ILabelSwapService exactly once and the item ends up Dispatched), but
-        // it no longer covers the end-to-end path where SwapLabelWithRetryAsync internally fails and
-        // sets NeedsLabelReconciliation=true. The old test asserted NeedsLabelReconciliation=true
-        // (end-to-end signal for acceptance criterion #3); no test in this file now exercises the
-        // full drain-service → real LabelSwapService → DB flag path. Consider adding an integration-
-        // level test using a real LabelSwapService (not a mock) to cover that scenario.
+        // After the extract-class refactor (#1868), the drain service delegates label swapping
+        // entirely to ILabelSwapService — it calls SwapLabelWithRetryAsync exactly once and does
+        // not perform any label-swap failure handling itself.
+        // TODO: This test name says "LabelSwapFails" but the mock setup makes the swap succeed
+        // (Task.CompletedTask). The test only verifies the success-path delegation — it cannot
+        // detect regressions in label-swap failure handling. Rename to
+        // DrainPendingItems_LabelSwap_DelegatesEntirelyToILabelSwapService (or similar) to match
+        // what is actually asserted, and consider adding an integration-level test using a real
+        // LabelSwapService (not a mock) to cover the failure path end-to-end.
         var workItemId = Guid.NewGuid();
         var request = new JobDistributionRequest
         {
