@@ -124,7 +124,24 @@ Issue and PR bodies can contain embedded images (screenshots, diagrams). The pip
 | `imageDownloadTimeoutSeconds` | 30 | Timeout in seconds for downloading a single image |
 | `totalImageDownloadTimeoutSeconds` | 60 | Total time budget in seconds for downloading all images |
 
-## Closed-Loop Mode
+### Housekeeping
+
+Controls automated PR branch management for templates with `HousekeepingEnabled: true`. On each poll cycle, the housekeeping service evaluates `agent:done` PRs: triggers server-side branch updates for PRs that are behind base (fire-and-forget, respects concurrency limit), and re-queues conflicted PRs for rework by swapping the linked issue label back to `agent:next`. Optionally runs stale branch cleanup on a configurable interval.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `housekeepingConcurrencyLimit` | `1` | Max PRs simultaneously in "update triggered, CI running" state per repository. Enforced per `RepoProviderId`, not per template. Minimum effective value: 1 (values ≤ 0 are clamped). Can be overridden per template via `HousekeepingConcurrencyLimit` on the `PipelineJobTemplate`. |
+| `housekeepingBranchCleanupIntervalMinutes` | `60` | How often (in minutes) stale agent branch cleanup runs per repository. Set to `0` to run every poll cycle. Only active when the template has `HousekeepingBranchCleanupEnabled: true`. |
+
+Per-template controls (on `PipelineJobTemplate`):
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `HousekeepingEnabled` | `false` | Master switch — enables PR mergeability polling and conflict rework for this template |
+| `HousekeepingConcurrencyLimit` | `null` | Per-template override for concurrency limit. When `null`, falls back to the global `housekeepingConcurrencyLimit` |
+| `HousekeepingBranchCleanupEnabled` | `false` | When `true`, deletes remote agent branches that have no open PR and whose linked issue carries no active label |
+
+
 
 The pipeline can run autonomously, polling for `agent:next` labeled issues and processing them sequentially. Enable it from the web UI's pipeline loop controls.
 
@@ -155,6 +172,7 @@ Templates are managed in the **Agent Coding** page. When creating or viewing a t
 | ImplementationEnabled | No | Whether this template processes issues for implementation (default: true) |
 | ReviewEnabled | No | Whether this template processes PRs for code review (default: true) |
 | DecompositionEnabled | No | Whether this template processes epics for decomposition (default: false) |
+| HousekeepingEnabled | No | Whether this template manages agent:done PRs for branch updates and stale cleanup (default: false) |
 
 ## Environment Variables
 
