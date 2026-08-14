@@ -18,16 +18,10 @@ public sealed partial class AgentJobDispatcher
         string? issueTitle = null,
         PipelineProject? project = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(initiatedBy);
-        // TODO: [WARNING] No validation for default(ProviderConfigId) (Value == null). The
-        // ArgumentNullException.ThrowIfNull guards that previously covered issueProviderId/repoProviderId
-        // as strings were removed during the ProviderConfigId migration. ProviderConfigId is a readonly
-        // record struct, so its default value has Value = null and bypasses the implicit string→ProviderConfigId
-        // conversion guard. A default-constructed or zero-value ProviderConfigId would propagate silently
-        // until .Value produces null downstream (e.g., composite key construction or GetProviderConfigByIdAsync).
-        // Consider adding: ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value, nameof(issueProviderId))
-        // and the equivalent for repoProviderId at the entry point of each public dispatch method.
+        ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value);
 
         // Check if already being processed
         if (_orchestration.IsIssueBeingProcessed(issueIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(issueIdentifier, issueProviderId))
@@ -64,6 +58,8 @@ public sealed partial class AgentJobDispatcher
     public async Task<bool> TryDispatchReviewAsync(ReviewDispatchRequest request, CancellationToken ct, PipelineProject? project = null)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
 
         // Check if already being processed
         if (IsIssueBeingProcessedOrQueued(request.PrIdentifier, request.IssueProviderId))
@@ -113,9 +109,11 @@ public sealed partial class AgentJobDispatcher
         string? decompositionSource = null,
         PipelineProject? project = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value, nameof(epicIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(epicIdentifier.Value);
         ArgumentNullException.ThrowIfNull(epicTitle);
         ArgumentNullException.ThrowIfNull(initiatedBy);
+        ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value);
 
         if (phaseType is not (PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition))
             throw new ArgumentOutOfRangeException(nameof(phaseType), phaseType, "Must be DecompositionAnalysis or Decomposition");
@@ -199,6 +197,8 @@ public sealed partial class AgentJobDispatcher
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(requiredLabels);
+        ArgumentException.ThrowIfNullOrEmpty(job.IssueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(job.RepoProviderId.Value);
 
         return job.RunType switch
         {

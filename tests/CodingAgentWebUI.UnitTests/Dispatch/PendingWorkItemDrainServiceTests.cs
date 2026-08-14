@@ -371,17 +371,15 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
     [Fact]
     public async Task DrainPendingItems_LabelSwapFails_DelegatesReconciliationToLabelSwapService()
     {
-        // After the extract-class refactor (#1868), reconciliation flagging lives in LabelSwapService.
-        // The drain service calls SwapLabelWithRetryAsync exactly once and does not set
-        // NeedsLabelReconciliation itself — that is ILabelSwapService's responsibility.
-        // TODO: This test sets up _mockLabelSwapper to return Task.CompletedTask (success), which
-        // contradicts the test name "LabelSwapFails". The test correctly verifies delegation (the
-        // drain service calls ILabelSwapService exactly once and the item ends up Dispatched), but
-        // it no longer covers the end-to-end path where SwapLabelWithRetryAsync internally fails and
-        // sets NeedsLabelReconciliation=true. The old test asserted NeedsLabelReconciliation=true
-        // (end-to-end signal for acceptance criterion #3); no test in this file now exercises the
-        // full drain-service → real LabelSwapService → DB flag path. Consider adding an integration-
-        // level test using a real LabelSwapService (not a mock) to cover that scenario.
+        // After the extract-class refactor (#1868), the drain service delegates label swapping
+        // entirely to ILabelSwapService — it calls SwapLabelWithRetryAsync exactly once and does
+        // not perform any label-swap failure handling itself.
+        // TODO: This test name says "LabelSwapFails" but the mock setup makes the swap succeed
+        // (Task.CompletedTask). The test only verifies the success-path delegation — it cannot
+        // detect regressions in label-swap failure handling. Rename to
+        // DrainPendingItems_LabelSwap_DelegatesEntirelyToILabelSwapService (or similar) to match
+        // what is actually asserted, and consider adding an integration-level test using a real
+        // LabelSwapService (not a mock) to cover the failure path end-to-end.
         var workItemId = Guid.NewGuid();
         var request = new JobDistributionRequest
         {
@@ -1080,6 +1078,86 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         item.RetryCount.Should().Be(1,
             "RetryCount must be incremented even when TransitionAsync(Dispatched) fails — " +
             "prevents infinite retry loops for items that consistently fail at dispatch stage");
+    }
+
+    [Fact]
+    public async Task DrainPendingItems_NullConnectionId_ReleasesAgentAndKeepsItemPending()
+    {
+        // Reproduction: connectionId! null-forgiving in ProcessPendingItemAsync suppresses the nullable
+        // warning on the string? out parameter from TryResolveAgentForItem. This test verifies the guard
+        // clause added in issue #1990: when ResolveAgent returns a non-null AgentResolveResult but with
+        // a null ConnectionId, the agent must be released and the work item must remain Pending.
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "org/repo#1990",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            RunId = workItemId.ToString(),
+            TimeoutSeconds = 3600
+        };
+        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#1990",
+                IssueProviderConfigId = "issue-provider-1",
+                Status = WorkItemStatus.Pending,
+                Payload = payload,
+                AgentSelector = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Setup: resolver returns a non-null result but with a null ConnectionId.
+        // null! bypasses the compile-time non-nullable annotation — the null flows as a runtime null,
+        // exactly simulating the edge case guarded by this fix.
+        // TODO: This setup relies on null! to pass a runtime null through the non-nullable ConnectionId
+        // parameter of AgentResolveResult (a sealed record). If a constructor guard is added to
+        // AgentResolveResult validating ConnectionId, this line will throw at setup rather than at the
+        // assertion, masking test intent. If AgentResolveResult is refactored, update this setup to use
+        // whatever mechanism the real production path uses to surface a null ConnectionId.
+        _mockResolver.Setup(r => r.ResolveAgent(""))
+            .Returns(new AgentResolveResult(null!, (AgentId)"agent-1"));
+
+        var service = CreateService();
+
+        // Act: trigger a single drain cycle
+        await InvokeDrainAsync(service);
+
+        // Assert: agent was released — must not be left stuck in Busy state
+        _mockResolver.Verify(r => r.ReleaseAgent((AgentId)"agent-1"), Times.Once);
+
+        // Assert: no SignalR dispatch was attempted
+        _mockAgentComm.Verify(
+            c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Assert: no label swap was attempted
+        _mockLabelSwapper.Verify(
+            l => l.SwapLabelWithRetryAsync(It.IsAny<Guid>(), It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Assert: work item remains Pending for retry on the next drain cycle
+        // TODO: This DB assertion is vacuously true — the production code path under test does not write
+        // to the DB at all in the null-ConnectionId branch, so the item stays Pending passively. The
+        // assertion cannot distinguish "correctly skipped" from "silently crashed before any DB write."
+        // The mock verifications on ReleaseAgent and AssignJobAsync above are the meaningful guards; this
+        // DB check is supplementary and would not catch a regression that introduced an unexpected write.
+        await using var checkDb = await _dbFactory.CreateDbContextAsync();
+        var item = await checkDb.WorkItems.FindAsync(workItemId);
+        item.Should().NotBeNull();
+        item!.Status.Should().Be(WorkItemStatus.Pending,
+            "WorkItem must remain Pending when ConnectionId is null — no dispatch occurred, no state was changed");
     }
 
     // TODO: Add negative test verifying RetryCount is NOT double-incremented when dispatchedSuccessfully

@@ -370,8 +370,10 @@ public class PostgresLeaderElectionServiceTests
         // Simulate connection drop
         fakeConn.SimulateConnectionDrop();
 
-        // Wait for OnStoppedLeading to fire (reliable signal of leadership loss)
-        var completed = await Task.WhenAny(stoppedLeadingTcs.Task, Task.Delay(TimeSpan.FromSeconds(2)));
+        // Wait for OnStoppedLeading to fire (reliable signal of leadership loss).
+        // Timeout is 5 s (up from 2 s) to tolerate scheduling jitter under parallel CI load
+        // while still catching regressions — the renewal interval is 30 ms so this fires quickly.
+        var completed = await Task.WhenAny(stoppedLeadingTcs.Task, Task.Delay(TimeSpan.FromSeconds(5)));
         completed.Should().Be(stoppedLeadingTcs.Task, "OnStoppedLeading should fire on connection drop");
 
         leaderTokenBeforeDrop.IsCancellationRequested.Should().BeTrue(

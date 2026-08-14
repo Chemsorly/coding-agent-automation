@@ -188,7 +188,11 @@ public class DispatchServiceMetricsTests : IDisposable
 
         return new DispatchService(
             new DispatchServiceCoreDependencies(_dbFactory, _leaderElection, lifecycle,
-                RunService: null, AgentProfileStore: _mockAgentProfileStore.Object),
+                RunService: null, AgentProfileStore: _mockAgentProfileStore.Object,
+                StateBuilder: new DispatchStateBuilder(
+                    _dbFactory, lifecycle, templateProvider,
+                    new DispatchTemplateResolver(_mockAgentProfileStore.Object, templateProvider),
+                    options)),
             config, templateProvider);
     }
 

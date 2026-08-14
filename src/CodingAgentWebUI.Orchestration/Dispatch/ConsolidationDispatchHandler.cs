@@ -31,59 +31,27 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
     private readonly IConsolidationJobPreparationService? _consolidationJobPreparer;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
     private readonly IProjectStore? _projectStore;
-    private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly DispatchStateBuilder _stateBuilder;
 
     protected override string ServiceName => "ConsolidationDispatchHandler";
     protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
     public ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps)
-        // Guard deps before the base-constructor dereferences deps.LeaderElection / deps.Configuration,
+        // Guard deps before the factory call dereferences deps.Configuration,
         // so a null argument throws ArgumentNullException instead of NullReferenceException.
-        // See DotNetSpecialist CRITICAL (Issue #1912).
-        : base((deps ?? throw new ArgumentNullException(nameof(deps))).LeaderElection,
-               DispatchServiceOptionsFactory.Create(deps.Configuration).RateLimitPerSecond)
-    {
-        _dbFactory = deps.DbFactory;
-        _lifecycle = deps.Lifecycle;
-        _transitionService = deps.TransitionService;
-        _consolidationRunStore = deps.ConsolidationRunStore;
-        _consolidationService = deps.ConsolidationService;
-        _consolidationJobPreparer = deps.ConsolidationJobPreparer;
-        _pipelineConfigStore = deps.PipelineConfigStore;
-        _projectStore = deps.ProjectStore;
-        // TODO: DispatchServiceOptionsFactory.Create(deps.Configuration) is called twice: once in the base-constructor
-        // initializer expression (to extract RateLimitPerSecond) and again here to populate _options. This creates
-        // two DispatchServiceOptions instances from the same IConfiguration. If the factory is ever made non-idempotent
-        // or side-effectful, the rate limiter and _options.PollIntervalSeconds could silently diverge.
-        // Fix: use a `this(...)` constructor chain or a static helper to resolve options once before base() is called.
-        // See DotNetSpecialist WARNING (Issue #1912).
-        _options = DispatchServiceOptionsFactory.Create(deps.Configuration);
-        _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
-        // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
-        // deps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
-        // singleton is always passed, so this path is never taken at runtime. However, a test that
-        // accidentally omits StateBuilder will get a second live builder instance instead of a fast-fail,
-        // making missing DI wiring invisible. Consider removing the fallback and requiring StateBuilder
-        // explicitly, or asserting that deps.StateBuilder is non-null in production paths.
-        // See DotNetSpecialist WARNING (Issue #1910).
-        _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
-            _dbFactory,
-            _lifecycle,
-            deps.TemplateProvider,
-            new DispatchTemplateResolver(deps.AgentProfileStore, deps.TemplateProvider),
-            _options);
-    }
+        // Resolves DispatchServiceOptions exactly once and delegates to the internal constructor.
+        : this(deps ?? throw new ArgumentNullException(nameof(deps)),
+               DispatchServiceOptionsFactory.Create(deps.Configuration))
+    { }
 
     /// <summary>
-    /// Test constructor accepting a pre-built <see cref="DispatchServiceOptions"/> instead of
-    /// <see cref="IConfiguration"/>. Accepts a 2-parameter signature (deps + options) to stay
-    /// well within the S107 threshold.
+    /// Internal constructor accepting a pre-built <see cref="DispatchServiceOptions"/> instead of
+    /// <see cref="IConfiguration"/>. All field assignments live here; the public constructor
+    /// computes options once and delegates. Also used directly by tests.
     /// </summary>
     internal ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps, DispatchServiceOptions options)
         // Guard deps and options before the base-constructor dereferences them,
         // so null arguments throw ArgumentNullException instead of NullReferenceException.
-        // See DotNetSpecialist CRITICAL (Issue #1912).
         : base((deps ?? throw new ArgumentNullException(nameof(deps))).LeaderElection,
                (options ?? throw new ArgumentNullException(nameof(options))).RateLimitPerSecond)
     {
@@ -96,15 +64,8 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         _pipelineConfigStore = deps.PipelineConfigStore;
         _projectStore = deps.ProjectStore;
         _options = options;
-        _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
-        // TODO: Same null-coalescing fallback as in the primary constructor — silently constructs a live
-        // DispatchStateBuilder when deps.StateBuilder is not provided. See DotNetSpecialist WARNING (Issue #1910).
-        _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
-            _dbFactory,
-            _lifecycle,
-            deps.TemplateProvider,
-            new DispatchTemplateResolver(deps.AgentProfileStore, deps.TemplateProvider),
-            _options);
+        ArgumentNullException.ThrowIfNull(deps.StateBuilder, nameof(deps.StateBuilder));
+        _stateBuilder = deps.StateBuilder;
     }
 
     /// <inheritdoc/>
@@ -130,56 +91,23 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
 
         await using (state.Db)
         {
-            foreach (var item in state.PendingItems)
+            // TODO: RateLimiter! uses the null-forgiving operator on the nullable base-class property
+            // (TokenBucketRateLimiter?). Both constructors always pass rateLimitPerSecond so RateLimiter
+            // is non-null in practice, but the operator suppresses compile-time null warnings. A future
+            // refactor that omits the parameter would produce a NullReferenceException at runtime with no
+            // compile-time signal. Consider replacing ! with a null-check guard:
+            // RateLimiter ?? throw new InvalidOperationException("RateLimiter is not initialized.")
+            await foreach (var candidate in _stateBuilder.GetEligibleCandidatesAsync(
+                state, LeaderElection, RateLimiter!,
+                ServiceName,
+                async (item, msg, token) =>
+                    await FailConsolidationWorkItemAsync(item.Id, msg, item.IssueIdentifier, token),
+                ct))
             {
-                if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
-                    break;
-
-                if (!await ProcessConsolidationItemAsync(state.Db, item,
-                        state.ConcurrencyBySelector, state.AvailablePvcs, ct))
-                    break;
+                await DispatchConsolidationItemAsync(state.Db, candidate.Item, candidate.Template,
+                    candidate.IsKiroAgent, state.AvailablePvcs, state.ConcurrencyBySelector, ct);
             }
         }
-    }
-
-    /// <summary>
-    /// Processes a single consolidation work item: rate-limit check, eligibility gating, and dispatch.
-    /// Returns false if the dispatch loop should stop (rate limit hit).
-    /// </summary>
-    private async Task<bool> ProcessConsolidationItemAsync(
-        PipelineDbContext db,
-        PendingWorkItemProjection item,
-        Dictionary<string, int> concurrencyBySelector,
-        List<string> availablePvcs,
-        CancellationToken ct)
-    {
-        // TODO: RateLimiter! uses the null-forgiving operator on the nullable base property (TokenBucketRateLimiter?).
-        // Both constructors always pass rateLimitPerSecond so RateLimiter is non-null in practice, but if a future
-        // constructor omits the parameter this will throw NullReferenceException at runtime with no compile-time warning.
-        // Consider replacing ! with a null check: RateLimiter ?? throw new InvalidOperationException(...)
-        // See DotNetSpecialist WARNING / Correctness WARNING (Issue #1912).
-        using var lease = await RateLimiter!.AcquireAsync(1, ct);
-        if (!lease.IsAcquired)
-        {
-            Log.Warning("ConsolidationDispatchHandler: rate limit hit, stopping dispatch cycle");
-            return false;
-        }
-
-        var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
-
-        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
-        switch (result.Outcome)
-        {
-            case EligibilityOutcome.AtConcurrencyLimit:
-            case EligibilityOutcome.NoPvcAvailable:
-                return true;
-            case EligibilityOutcome.NoTemplate:
-                await FailConsolidationWorkItemAsync(item.Id, result.ErrorMessage!, item.IssueIdentifier, ct);
-                return true;
-        }
-
-        await DispatchConsolidationItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
-        return true;
     }
 
     // ── Consolidation-specific dispatch ─────────────────────────────────

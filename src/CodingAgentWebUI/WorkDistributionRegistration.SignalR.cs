@@ -65,7 +65,6 @@ public static partial class WorkDistributionRegistration
         // in IssueProviderRegistration). maxAttempts=3: one initial + two retries with exponential backoff. (#1868)
         services.AddSingleton<ILabelSwapService>(sp => new LabelSwapService(
             sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<LabelSwapService>>(),
             maxAttempts: 3));
         services.AddSingleton<DispatchRevertHandler>(sp => new DispatchRevertHandler(
