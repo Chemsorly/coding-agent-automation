@@ -145,34 +145,62 @@ public class McpMergeTests
     // ── Property-based tests ─────────────────────────────────────────────────
 
     /// <summary>
-    /// Determinism: same inputs always produce the same output (same names in same order).
+    /// Determinism: same inputs always produce the same output — same servers with the same field values.
     /// </summary>
-    // TODO [WARNING]: This test only checks name sequence equality, not full config field equality.
-    // A non-deterministic implementation that shuffled Disabled/Type/Command values within the same
-    // name order would still pass. Consider comparing full server equality (Name + Disabled + Command)
-    // to verify the correct config is returned, not just the correct ordering.
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(McpArbitraries) })]
     public bool MergeMcpServers_IsDeterministic(McpServerConfig[] profileServers, McpServerConfig[] projectServers)
     {
         var r1 = DispatchOrchestrationService.MergeMcpServers(profileServers, projectServers);
         var r2 = DispatchOrchestrationService.MergeMcpServers(profileServers, projectServers);
-        return r1.Select(s => s.Name).SequenceEqual(r2.Select(s => s.Name));
+        return r1.SequenceEqual(r2, McpServerConfigComparer.Instance);
     }
 
     /// <summary>
     /// Idempotency: applying the same project MCPs twice produces the same result as applying once.
+    /// Feeding <paramref name="once"/> back as the profile ensures the shared-name override path
+    /// is always exercised in the second call. <paramref name="projectServers"/> uses
+    /// <see cref="NonEmptyMcpServerConfigArray"/> to guarantee it is always non-empty, so the
+    /// shared-name override path via the feed-back is unconditionally exercised on every test run.
     /// </summary>
-    // TODO [WARNING]: McpArbitraries deduplicates inputs by name before the test runs, so the merged
-    // output can never contain duplicate names. This means the idempotency invariant is trivially
-    // satisfied for all generated inputs — a bug that produced duplicates in edge cases would not be
-    // caught. Consider feeding the raw merged result back without pre-deduplication, or using a broader
-    // generator that includes inputs with duplicate names.
+    // TODO [WARNING]: When profileServers is empty (possible with McpServerConfigArrayArb, size 0–4),
+    // `once` consists only of projectServers entries, so the second call always finds every name in
+    // `once` present in `projectServers.Value`. The additive path (a profile server with no match in
+    // projectServers) is never exercised for those inputs, making the invariant trivially satisfied on
+    // roughly one-fifth of generated inputs. Consider using a non-empty generator for profileServers
+    // as well, or asserting that profile-only servers survive both calls.
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(McpArbitraries) })]
-    public bool MergeMcpServers_IsIdempotent(McpServerConfig[] profileServers, McpServerConfig[] projectServers)
+    public bool MergeMcpServers_IsIdempotent(McpServerConfig[] profileServers, NonEmptyMcpServerConfigArray projectServers)
     {
-        var once = DispatchOrchestrationService.MergeMcpServers(profileServers, projectServers).ToArray();
-        var twice = DispatchOrchestrationService.MergeMcpServers(once, projectServers);
-        return once.Select(s => s.Name).SequenceEqual(twice.Select(s => s.Name));
+        var once = DispatchOrchestrationService.MergeMcpServers(profileServers, projectServers.Value).ToArray();
+        var twice = DispatchOrchestrationService.MergeMcpServers(once, projectServers.Value);
+        return once.SequenceEqual(twice, McpServerConfigComparer.Instance);
+    }
+
+    /// <summary>
+    /// Compares <see cref="McpServerConfig"/> instances by the four scalar fields that define
+    /// server identity and configuration for merge purposes: Name (case-insensitive), Disabled,
+    /// Type, and Command.
+    /// </summary>
+    private sealed class McpServerConfigComparer : IEqualityComparer<McpServerConfig>
+    {
+        public static readonly McpServerConfigComparer Instance = new();
+
+        public bool Equals(McpServerConfig? x, McpServerConfig? y)
+        {
+            if (ReferenceEquals(x, y)) return true;
+            if (x is null || y is null) return false;
+            return string.Equals(x.Name, y.Name, StringComparison.OrdinalIgnoreCase)
+                && x.Disabled == y.Disabled
+                && x.Type == y.Type
+                && x.Command == y.Command;
+        }
+
+        public int GetHashCode(McpServerConfig obj) =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Name ?? string.Empty),
+                obj.Disabled,
+                obj.Type,
+                obj.Command);
     }
 }
 
@@ -202,10 +230,50 @@ public static class McpArbitraries
                 .Select(arr =>
                 {
                     // Deduplicate by name (keep last) to produce valid input arrays
+                    // TODO [WARNING]: This generator deduplicates within each individual array but does
+                    // not prevent overlap in names *across* the two independently generated arrays
+                    // (profileServers, projectServers). Future property tests that use McpArbitraries
+                    // and rely on profile/project name overlap should be aware that such overlap is
+                    // possible but not guaranteed (size 0 is included via Gen.Choose(0, 4)).
+                    // For tests that require a non-empty projectServers, use NonEmptyMcpServerConfigArray.
                     var seen = new Dictionary<string, McpServerConfig>(StringComparer.OrdinalIgnoreCase);
                     foreach (var s in arr) seen[s.Name] = s;
                     return seen.Values.ToArray();
                 }))
             .ToArbitrary();
     }
+
+    public static Arbitrary<NonEmptyMcpServerConfigArray> NonEmptyMcpServerConfigArrayArb()
+    {
+        var configGen = Gen.Elements(KnownNames)
+            .SelectMany(name => Gen.Elements(false, true)
+                .Select(disabled => new McpServerConfig
+                {
+                    Name = name,
+                    Type = "stdio",
+                    Command = "uvx",
+                    Args = [],
+                    Disabled = disabled
+                }));
+
+        return Gen.Choose(1, 4)
+            .SelectMany(count => Gen.ArrayOf(configGen, count)
+                .Select(arr =>
+                {
+                    var seen = new Dictionary<string, McpServerConfig>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var s in arr) seen[s.Name] = s;
+                    return new NonEmptyMcpServerConfigArray(seen.Values.ToArray());
+                }))
+            .ToArbitrary();
+    }
+}
+
+/// <summary>
+/// Wrapper for a non-empty <see cref="McpServerConfig"/> array, used with
+/// <see cref="McpArbitraries.NonEmptyMcpServerConfigArrayArb"/> to guarantee property tests
+/// always receive at least one project server (ensuring the override path is exercised).
+/// </summary>
+public sealed class NonEmptyMcpServerConfigArray(McpServerConfig[] value)
+{
+    public McpServerConfig[] Value { get; } = value;
 }
