@@ -385,8 +385,10 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
+#pragma warning disable S3236 // In init setters the CallerArgumentExpression captures 'value', not the property name; explicit paramName is required.
             ArgumentOutOfRangeException.ThrowIfLessThan(value, 0, nameof(AnalysisCommitThreshold));
             ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 1000, nameof(AnalysisCommitThreshold));
+#pragma warning restore S3236
             field = value;
         }
     } = PipelineConstants.DefaultAnalysisCommitThreshold;
@@ -431,8 +433,10 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
+#pragma warning disable S3236 // In init setters the CallerArgumentExpression captures 'value', not the property name; explicit paramName is required.
             ArgumentOutOfRangeException.ThrowIfLessThan(value, 1, nameof(MaxDecompositionSubIssues));
             ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20, nameof(MaxDecompositionSubIssues));
+#pragma warning restore S3236
             field = value;
         }
     } = 10;
@@ -522,8 +526,10 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
+#pragma warning disable S3236 // In init setters the CallerArgumentExpression captures 'value', not the property name; explicit paramName is required.
             ArgumentOutOfRangeException.ThrowIfLessThan(value, 1, nameof(MaxDecompositionSubIssueFiles));
             ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 30, nameof(MaxDecompositionSubIssueFiles));
+#pragma warning restore S3236
             field = value;
         }
     } = 12;
@@ -541,8 +547,10 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
+#pragma warning disable S3236 // In init setters the CallerArgumentExpression captures 'value', not the property name; explicit paramName is required.
             ArgumentOutOfRangeException.ThrowIfLessThan(value, 30, nameof(ModelFetchTimeoutSeconds));
             ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 600, nameof(ModelFetchTimeoutSeconds));
+#pragma warning restore S3236
             field = value;
         }
     } = 120;
