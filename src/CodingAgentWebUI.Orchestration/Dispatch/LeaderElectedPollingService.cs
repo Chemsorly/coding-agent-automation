@@ -53,7 +53,7 @@ public abstract class LeaderElectedPollingService : BackgroundService
     /// </param>
     protected LeaderElectedPollingService(ILeaderElectionService leaderElection, int? rateLimitPerSecond = null)
     {
-        // TODO: Add ArgumentNullException.ThrowIfNull(leaderElection) — see DotNetSpecialist WARNING (Issue #1912).
+        ArgumentNullException.ThrowIfNull(leaderElection);
         LeaderElection = leaderElection;
         RateLimiter = rateLimitPerSecond.HasValue
             ? RateLimiterFactory.CreateTokenBucket(rateLimitPerSecond.Value)
@@ -95,15 +95,11 @@ public abstract class LeaderElectedPollingService : BackgroundService
             {
                 await RunLeadershipTermAsync(ct);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
+            catch (OperationCanceledException)
             {
-                // Leadership lost — fall through to re-enter wait loop
-                // TODO: When host stop and leadership loss occur simultaneously, both ct and stoppingToken are
-                // cancelled at the same time. The filter evaluates to false (!stoppingToken.IsCancellationRequested
-                // is false), so the OCE propagates uncaught and BackgroundService logs it as an unhandled exception.
-                // This causes a spurious error log on clean shutdown with concurrent leadership loss.
-                // Consider catching the OCE unconditionally and checking stoppingToken after the catch to decide
-                // whether to re-enter the wait loop or exit. See DotNetSpecialist WARNING (Issue #1912).
+                if (stoppingToken.IsCancellationRequested)
+                    break; // Host stopping — exit the outer while loop cleanly
+                // Otherwise: leadership lost — fall through to re-enter wait loop
             }
 
             if (!stoppingToken.IsCancellationRequested)
