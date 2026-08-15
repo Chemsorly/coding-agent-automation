@@ -12,6 +12,11 @@ public sealed partial class PipelineLoopService
     /// </summary>
     private async Task RunMultiTemplateLoopAsync(CancellationToken stoppingToken)
     {
+        // TODO [WARNING]: _loopCts is read here without holding _lock. This is safe only because
+        // CleanupAsync is the sole disposer of _loopCts and it always runs *after* this method returns.
+        // If that ordering ever changes (e.g. a concurrent StopLoop path that disposes _loopCts while
+        // this method is still running), CreateLinkedTokenSource will throw ObjectDisposedException.
+        // Consider reading _loopCts?.Token under a short lock or snapshotting it in the caller.
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, _loopCts?.Token ?? CancellationToken.None);
         var ct = linkedCts.Token;
 

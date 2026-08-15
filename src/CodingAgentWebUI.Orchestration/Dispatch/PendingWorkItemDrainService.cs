@@ -25,7 +25,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly WorkItemTransitionService _transitionService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly ILabelSwapService _labelSwapper;
-    private readonly DispatchRevertHandler _revertHandler;
+    private readonly DispatchRevertService _revertHandler;
     private readonly IProjectStore? _projectStore;
     private readonly IConsolidationDispatchService? _consolidationDispatcher;
     private readonly IConsolidationRunStore? _consolidationRunStore;

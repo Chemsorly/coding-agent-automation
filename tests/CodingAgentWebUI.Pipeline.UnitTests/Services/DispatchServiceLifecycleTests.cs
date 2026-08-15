@@ -254,7 +254,7 @@ public class DispatchServiceLifecycleTests : IDisposable
         await using var db = await _dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.FindAsync(consolidationId);
         item!.Status.Should().Be(WorkItemStatus.Pending,
-            "Consolidation items must not be processed by DispatchService — ConsolidationDispatchHandler handles them");
+            "Consolidation items must not be processed by DispatchService — ConsolidationWorkItemDispatchService handles them");
 
         _mockKubeClient.Verify(
             k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
@@ -290,7 +290,7 @@ public class DispatchServiceLifecycleTests : IDisposable
 
         var consolidation = await db.WorkItems.FindAsync(consolidationId);
         consolidation!.Status.Should().Be(WorkItemStatus.Pending,
-            "Consolidation item must remain Pending — only ConsolidationDispatchHandler processes it");
+            "Consolidation item must remain Pending — only ConsolidationWorkItemDispatchService processes it");
 
         _mockKubeClient.Verify(
             k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),

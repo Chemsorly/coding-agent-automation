@@ -22,11 +22,11 @@ using Xunit;
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Tests for ConsolidationDispatchHandler handling of consolidation WorkItems (TaskType=Consolidation).
+/// Tests for ConsolidationWorkItemDispatchService handling of consolidation WorkItems (TaskType=Consolidation).
 /// Validates: Issue #1086 — K8s mode creates K8s Jobs for consolidation items.
 /// </summary>
 /// <remarks>
-/// TODO: Add a test: construct <c>ConsolidationDispatchHandler</c> without a
+/// TODO: Add a test: construct <c>ConsolidationWorkItemDispatchService</c> without a
 /// <c>IConsolidationJobPreparationService</c>, enqueue a pending consolidation item, call
 /// <c>PollAndDispatchConsolidationAsync</c>, and assert the work item transitions to Failed
 /// exactly once with the expected error message.
@@ -633,7 +633,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         result.Success.Should().BeTrue();
         result.Queued.Should().BeTrue();
 
-        // Step 2: Dispatch via ConsolidationDispatchHandler
+        // Step 2: Dispatch via ConsolidationWorkItemDispatchService
         _mockKubeClient
             .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -1015,7 +1015,7 @@ public class DispatchServiceConsolidationTests : IDisposable
     [Fact]
     public async Task Constructor_PublicIConfigurationOverload_PollsEmptyDbAndReturnsImmediately()
     {
-        // Exercises the public ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps)
+        // Exercises the public ConsolidationWorkItemDispatchService(ConsolidationWorkItemDispatchServiceDependencies deps)
         // constructor in the CodingAgentWebUI.Pipeline.UnitTests coverage domain.
         // Uses a real ConfigurationBuilder (not Mock<IConfiguration>) so that
         // DispatchServiceOptionsFactory.Create doesn't throw.
@@ -1038,8 +1038,8 @@ public class DispatchServiceConsolidationTests : IDisposable
         // Build with StateBuilder required
         var templateProvider = BuildTemplateProvider();
         var options = new DispatchServiceOptions();
-        var handler = new ConsolidationDispatchHandler(
-            new ConsolidationDispatchHandlerDependencies(
+        var handler = new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
                 _dbFactory,
                 _leaderElection,
                 lifecycle,
@@ -1184,12 +1184,12 @@ public class DispatchServiceConsolidationTests : IDisposable
             "DbContext must be disposed when BuildDispatchStateAsync throws OperationCanceledException");
     }
 
-    private ConsolidationDispatchHandler CreateService(ILabelService? labelService = null)
+    private ConsolidationWorkItemDispatchService CreateService(ILabelService? labelService = null)
     {
         return CreateServiceWithPvcPool(new[] { "pvc-test-1", "pvc-test-2" }, labelService);
     }
 
-    private ConsolidationDispatchHandler CreateServiceWithFactory(IDbContextFactory<PipelineDbContext> dbFactory)
+    private ConsolidationWorkItemDispatchService CreateServiceWithFactory(IDbContextFactory<PipelineDbContext> dbFactory)
     {
         var options = new DispatchServiceOptions
         {
@@ -1212,8 +1212,8 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         var templateProvider = BuildTemplateProvider();
 
-        return new ConsolidationDispatchHandler(
-            new ConsolidationDispatchHandlerDependencies(
+        return new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
                 dbFactory, _leaderElection, lifecycle, templateProvider, Mock.Of<IConfiguration>(), transitionService,
                 _mockRunStore.Object,
                 _mockConsolidationService.Object,
@@ -1233,7 +1233,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             options);
     }
 
-    private ConsolidationDispatchHandler CreateServiceWithPvcPool(string[] pvcPool, ILabelService? labelService = null)
+    private ConsolidationWorkItemDispatchService CreateServiceWithPvcPool(string[] pvcPool, ILabelService? labelService = null)
     {
         var options = new DispatchServiceOptions
         {
@@ -1252,8 +1252,8 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         var templateProvider = BuildTemplateProvider();
 
-        return new ConsolidationDispatchHandler(
-            new ConsolidationDispatchHandlerDependencies(
+        return new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
                 _dbFactory, _leaderElection, lifecycle, templateProvider, Mock.Of<IConfiguration>(), _transitionService,
                 _mockRunStore.Object,
                 _mockConsolidationService.Object,
@@ -1298,7 +1298,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         return JobTemplateStore.LoadFromJson(json);
     }
 
-    private ConsolidationDispatchHandler CreateServiceWithThreeLabelTemplate()
+    private ConsolidationWorkItemDispatchService CreateServiceWithThreeLabelTemplate()
     {
         var options = new DispatchServiceOptions
         {
@@ -1317,8 +1317,8 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         var templateProvider = BuildThreeLabelTemplateProvider();
 
-        return new ConsolidationDispatchHandler(
-            new ConsolidationDispatchHandlerDependencies(
+        return new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
                 _dbFactory, _leaderElection, lifecycle, templateProvider, Mock.Of<IConfiguration>(), _transitionService,
                 _mockRunStore.Object,
                 _mockConsolidationService.Object,
@@ -1371,7 +1371,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         await db.SaveChangesAsync();
     }
 
-    private static async Task InvokePollAndDispatch(ConsolidationDispatchHandler service)
+    private static async Task InvokePollAndDispatch(ConsolidationWorkItemDispatchService service)
     {
         await service.PollAndDispatchConsolidationAsync(CancellationToken.None);
     }

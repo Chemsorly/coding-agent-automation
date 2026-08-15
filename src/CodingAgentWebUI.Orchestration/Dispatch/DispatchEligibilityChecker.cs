@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Pure-logic eligibility checker for dispatch candidates. Evaluates whether a pending work item
 /// can be dispatched based on: concurrency limits, template resolution (with profile fallback),
 /// and PVC availability. Has no DB, SignalR, or K8s dependencies — all state is passed in.
-/// Used by both <see cref="DispatchService"/> and <see cref="ConsolidationDispatchHandler"/>.
+/// Used by both <see cref="DispatchService"/> and <see cref="ConsolidationWorkItemDispatchService"/>.
 /// </summary>
 internal sealed class DispatchEligibilityChecker
 {

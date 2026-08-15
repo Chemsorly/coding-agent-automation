@@ -14,20 +14,20 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Also manages in-memory PipelineRun registration at dispatch time.
 /// Extracted from <see cref="PendingWorkItemDrainService"/> to reduce its size (#1871).
 /// </summary>
-public sealed class DispatchRevertHandler
+public sealed class DispatchRevertService
 {
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly ISignalRWorkDistributorAgentResolver _agentResolver;
     private readonly IOrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
-    private readonly ILogger<DispatchRevertHandler> _logger;
+    private readonly ILogger<DispatchRevertService> _logger;
 
-    public DispatchRevertHandler(
+    public DispatchRevertService(
         IDbContextFactory<PipelineDbContext> dbFactory,
         ISignalRWorkDistributorAgentResolver agentResolver,
         IOrchestratorRunService runService,
         WorkItemTransitionService transitionService,
-        ILogger<DispatchRevertHandler> logger)
+        ILogger<DispatchRevertService> logger)
     {
         // TODO: Add ArgumentNullException.ThrowIfNull for all five parameters to match the
         // constructor guard pattern used by every other service in this directory
@@ -68,7 +68,7 @@ public sealed class DispatchRevertHandler
                 request, agentId, startedAt: item.DispatchedAt ?? item.CreatedAt);
             _runService.AddRun(recreatedRun);
             _logger.LogInformation(
-                "DispatchRevertHandler: re-created in-memory PipelineRun {RunId} for issue {IssueIdentifier} (orchestrator restart recovery)",
+                "DispatchRevertService: re-created in-memory PipelineRun {RunId} for issue {IssueIdentifier} (orchestrator restart recovery)",
                 request.RunId, request.IssueIdentifier);
         }
 
@@ -93,7 +93,7 @@ public sealed class DispatchRevertHandler
         Exception ex)
     {
         _logger.LogError(ex,
-            "DispatchRevertHandler: dispatch failed for WorkItem {WorkItemId}",
+            "DispatchRevertService: dispatch failed for WorkItem {WorkItemId}",
             item.Id);
         _agentResolver.ReleaseAgent(agentId);
 
@@ -135,7 +135,7 @@ public sealed class DispatchRevertHandler
             catch (Exception retryEx)
             {
                 _logger.LogWarning(retryEx,
-                    "DispatchRevertHandler: failed to increment RetryCount for WorkItem {WorkItemId} after dispatch-transition failure",
+                    "DispatchRevertService: failed to increment RetryCount for WorkItem {WorkItemId} after dispatch-transition failure",
                     item.Id);
             }
         }
@@ -174,7 +174,7 @@ public sealed class DispatchRevertHandler
         catch (Exception revertEx)
         {
             _logger.LogWarning(revertEx,
-                "DispatchRevertHandler: failed to revert WorkItem {WorkItemId} to Pending after dispatch failure — stuck-item detector will handle",
+                "DispatchRevertService: failed to revert WorkItem {WorkItemId} to Pending after dispatch failure — stuck-item detector will handle",
                 workItemId);
         }
     }

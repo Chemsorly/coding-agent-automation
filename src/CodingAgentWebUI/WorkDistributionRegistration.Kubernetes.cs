@@ -58,11 +58,11 @@ public static partial class WorkDistributionRegistration
                 options);
         });
 
-        // JobTemplateStore — single load, shared by DispatchService, ConsolidationDispatchHandler, and UI validation.
+        // JobTemplateStore — single load, shared by DispatchService, ConsolidationWorkItemDispatchService, and UI validation.
         services.AddSingleton<JobTemplateStore>(sp =>
             DispatchService.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
 
-        // DispatchStateBuilder — shared state-building logic for DispatchService and ConsolidationDispatchHandler.
+        // DispatchStateBuilder — shared state-building logic for DispatchService and ConsolidationWorkItemDispatchService.
         // TODO: DispatchServiceOptionsFactory.Create() is called once here and separately when DispatchLifecycleService
         // is registered, producing two distinct DispatchServiceOptions instances. Configuration is static at startup
         // (K8s rolling restarts pick up ConfigMap changes), so the instances will be identical in practice. If options
@@ -77,7 +77,7 @@ public static partial class WorkDistributionRegistration
                 // registered (e.g. in a non-Kubernetes deployment variant). DispatchTemplateResolver
                 // accepts a nullable store and silently suppresses agent-profile lookups when it is null,
                 // rather than failing at startup. This is consistent with the existing pattern in
-                // DispatchService and ConsolidationDispatchHandler, but the explicit singleton registration
+                // DispatchService and ConsolidationWorkItemDispatchService, but the explicit singleton registration
                 // here is the natural place to tighten it. See DotNetSpecialist WARNING (Issue #1910).
                 sp.GetService<IAgentProfileStore>(),
                 sp.GetRequiredService<JobTemplateStore>()),
@@ -104,9 +104,9 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<IConfiguration>(),
             sp.GetRequiredService<JobTemplateStore>()));
 
-        // ConsolidationDispatchHandler — handles consolidation work items
-        services.AddHostedService(sp => new ConsolidationDispatchHandler(
-            new ConsolidationDispatchHandlerDependencies(
+        // ConsolidationWorkItemDispatchService — handles consolidation work items
+        services.AddHostedService(sp => new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
                 sp.GetRequiredService<ILeaderElectionService>(),
                 sp.GetRequiredService<DispatchLifecycleService>(),
@@ -169,6 +169,6 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<ModelFetchService>(),
                 Logger: Log.Logger)));
 
-        Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ConsolidationDispatchHandler + ReconciliationService + LeaderElection registered");
+        Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ConsolidationWorkItemDispatchService + ReconciliationService + LeaderElection registered");
     }
 }

@@ -7,7 +7,7 @@ The pipeline is a state machine that progresses through a fixed sequence of step
 3. **Epic decomposition pipeline** — Processes epics through a two-phase workflow producing implementation-ready sub-issues (see [Epic Decomposition Pipeline](#epic-decomposition-pipeline) below)
 4. **Consolidation pipeline** — Brain consolidation, refactoring detection, and harness suggestion runs. Dispatched on-demand via the Consolidation page, not by the label-based loop. See [Feedback & Consolidation](feedback-and-consolidation.md) for details.
 
-The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are dispatched by a separate `ConsolidationDispatchHandler` and do not go through the label loop.
+The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are dispatched by a separate `ConsolidationWorkItemDispatchService` and do not go through the label loop.
 
 ## Dispatch Modes
 
@@ -426,7 +426,7 @@ When multiple work types are active in the same cycle, the scheduler uses a fixe
 | 2 | Decomposition | Phase 1 and Phase 2 epics |
 | 3 | Issues (Implementation) | Dispatched last |
 
-The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs (brain consolidation, refactoring detection, harness suggestions) are handled by a separate `ConsolidationDispatchHandler` and do not participate in this scheduler.
+The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs (brain consolidation, refactoring detection, harness suggestions) are handled by a separate `ConsolidationWorkItemDispatchService` and do not participate in this scheduler.
 
 ### Dispatch Budget Sharing
 
