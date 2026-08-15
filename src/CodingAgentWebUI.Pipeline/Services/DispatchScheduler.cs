@@ -9,6 +9,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Selects the highest-priority eligible queue type each iteration: PullRequests first,
 /// then Decomposition, then Issues (Implementation). Within each type, FIFO order is
 /// preserved by the per-queue dequeue logic.
+/// </summary>
 /// <remarks>
 /// Split into partial classes by work type for maintainability:
 /// <list type="bullet">
@@ -19,7 +20,6 @@ namespace CodingAgentWebUI.Pipeline.Services;
 ///   <item><description><c>DispatchScheduler.Helpers.cs</c> — shared dispatch helpers used by all round methods</description></item>
 /// </list>
 /// </remarks>
-/// </summary>
 internal sealed partial class DispatchScheduler
 {
     private const string UnknownProjectName = "Unknown";
