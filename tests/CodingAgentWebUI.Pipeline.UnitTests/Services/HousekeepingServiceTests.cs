@@ -180,7 +180,7 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Concurrency limit = 1: only lowest PR triggered ───────────────────────
+    // ── Concurrency limit = 1: exactly one PR triggered (random selection) ───
 
     [Fact]
     public async Task ExecuteAsync_LimitOne_OnlyLowestNumberTriggered()
@@ -193,8 +193,47 @@ public class HousekeepingServiceTests
 
         await ExecAsync(svc, provider, issues, [MakePr(20), MakePr(10)], limit: 1);
 
-        provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
-        provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Never);
+        // With limit=1 and random selection, exactly one PR update should be triggered.
+        // The selected PR number must be one of the valid input candidates {10, 20}.
+        var updatedPrNumbers = provider.Invocations
+            .Where(i => i.Method.Name == nameof(IRepositoryProvider.UpdatePullRequestBranchAsync))
+            .Select(i => (int)i.Arguments[0])
+            .ToList();
+        updatedPrNumbers.Should().HaveCount(1,
+            "limit=1 must allow exactly one branch update per tick");
+        updatedPrNumbers[0].Should().BeOneOf(new[] { 10, 20 },
+            because: "the selected PR must be drawn from the candidate input set");
+    }
+
+    // ── Random selection: multiple Behind PRs vary across calls ──────────────
+
+    [Fact]
+    public async Task ExecuteAsync_MultipleBehindPrs_LimitOne_SelectionVariesAcrossCallsRandom()
+    {
+        var selectedPrs = new HashSet<int>();
+
+        for (int i = 0; i < 50; i++)
+        {
+            var (svc, provider, issues, _) = Create();
+            provider.Setup(p => p.IsPullRequestBehindBaseAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(PrMergeabilityStatus.Behind);
+            provider.Setup(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                    .Returns(Task.CompletedTask);
+
+            await ExecAsync(svc, provider, issues, [MakePr(10), MakePr(20)], limit: 1);
+
+            // Capture which PR was selected this iteration
+            var updated = provider.Invocations
+                .Where(inv => inv.Method.Name == nameof(IRepositoryProvider.UpdatePullRequestBranchAsync))
+                .Select(inv => (int)inv.Arguments[0]);
+            selectedPrs.UnionWith(updated);
+        }
+
+        selectedPrs.Should().HaveCountGreaterThan(1,
+            "with random selection, both PR #10 and PR #20 should be selected at least once across 50 trials");
+        // TODO: HaveCountGreaterThan(1) only confirms diversity, not fairness — a heavily biased shuffle (e.g.,
+        // 49 of 50 selections always picking PR #10) would still pass. Consider asserting that each candidate
+        // appears in at least some minimum fraction of trials if stricter distribution validation is needed.
     }
 
     // ── Concurrency limit = 2: both triggered ─────────────────────────────────
