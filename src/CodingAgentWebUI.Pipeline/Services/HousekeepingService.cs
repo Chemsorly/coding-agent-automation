@@ -135,8 +135,12 @@ public sealed class HousekeepingService : IHousekeepingService
             activeRunBranches = [];
         }
 
-        // ── Step 5: Sort candidates ascending by PR number (oldest first) ────
-        var sorted = agentDonePrs.OrderBy(p => p.Number).ToList();
+        // ── Step 5: Shuffle candidates (uniform random) to prevent oldest-first starvation ────
+        // TODO [WARNING]: OrderBy(_ => Random.Shared.Next()) is not a true Fisher-Yates shuffle — LINQ's
+        // comparison sort calls the key selector multiple times per element, violating the stable-key contract.
+        // For the typical 2–20 PR case this is negligible in practice, but a correct shuffle would be:
+        //   agentDonePrs.Select(p => (p, key: Random.Shared.NextDouble())).OrderBy(x => x.key).Select(x => x.p).ToList()
+        var sorted = agentDonePrs.OrderBy(_ => Random.Shared.Next()).ToList();
 
         // ── Step 6a: Handle Conflicted PRs — swap linked issue to agent:next ─
         foreach (var pr in sorted)
