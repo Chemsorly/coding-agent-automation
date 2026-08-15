@@ -128,9 +128,6 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
 
         // Assert — both runs appear
         results.Should().HaveCount(2);
-        // TODO: The .AgentId.Value.Value double-dereference (AgentId? → AgentId → string) is fragile
-        // and inconsistent with the .AgentId?.Value pattern used elsewhere in this file (e.g., line 64).
-        // Replace with: results.Should().Contain(r => r.AgentId?.Value == "agent-dotnet-1")
         results.Should().Contain(r => r.AgentId.HasValue && r.AgentId.Value.Value == "agent-dotnet-1");
         results.Should().Contain(r => r.AgentId.HasValue && r.AgentId.Value.Value == "agent-dotnet-2");
     }
