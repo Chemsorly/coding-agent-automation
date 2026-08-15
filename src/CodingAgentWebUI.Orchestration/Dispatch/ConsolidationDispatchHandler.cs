@@ -60,19 +60,13 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         // See DotNetSpecialist WARNING (Issue #1912).
         _options = DispatchServiceOptionsFactory.Create(deps.Configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
-        // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
-        // deps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
-        // singleton is always passed, so this path is never taken at runtime. However, a test that
-        // accidentally omits StateBuilder will get a second live builder instance instead of a fast-fail,
-        // making missing DI wiring invisible. Consider removing the fallback and requiring StateBuilder
-        // explicitly, or asserting that deps.StateBuilder is non-null in production paths.
-        // See DotNetSpecialist WARNING (Issue #1910).
-        _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
-            _dbFactory,
-            _lifecycle,
-            deps.TemplateProvider,
-            new DispatchTemplateResolver(deps.AgentProfileStore, deps.TemplateProvider),
-            _options);
+        // Null guard: require StateBuilder to be provided via deps. The null-coalescing fallback
+        // was removed to enforce fast-fail at construction rather than producing a silent second
+        // live DispatchStateBuilder instance when wiring is missing.
+        // Acceptance criterion 4 of Issue #1993.
+        _stateBuilder = deps.StateBuilder
+            ?? throw new ArgumentNullException("StateBuilder",
+                "ConsolidationDispatchHandler requires a non-null StateBuilder. Provide it via deps.StateBuilder.");
     }
 
     /// <summary>
@@ -97,14 +91,11 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         _projectStore = deps.ProjectStore;
         _options = options;
         _eligibilityChecker = new DispatchEligibilityChecker(deps.TemplateProvider, deps.AgentProfileStore);
-        // TODO: Same null-coalescing fallback as in the primary constructor — silently constructs a live
-        // DispatchStateBuilder when deps.StateBuilder is not provided. See DotNetSpecialist WARNING (Issue #1910).
-        _stateBuilder = deps.StateBuilder ?? new DispatchStateBuilder(
-            _dbFactory,
-            _lifecycle,
-            deps.TemplateProvider,
-            new DispatchTemplateResolver(deps.AgentProfileStore, deps.TemplateProvider),
-            _options);
+        // Null guard: require StateBuilder to be provided via deps, matching the public constructor.
+        // See DotNetSpecialist WARNING (Issue #1910).
+        _stateBuilder = deps.StateBuilder
+            ?? throw new ArgumentNullException("StateBuilder",
+                "ConsolidationDispatchHandler requires a non-null StateBuilder. Provide it via deps.StateBuilder.");
     }
 
     /// <inheritdoc/>
@@ -172,6 +163,13 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
             case EligibilityOutcome.NoPvcAvailable:
                 return true;
             case EligibilityOutcome.NoTemplate:
+                // TODO: result.ErrorMessage! uses a null-forgiving operator. Currently safe because
+                // EligibilityResult.NoTemplate(string errorMessage) always sets ErrorMessage to a non-null value.
+                // If EligibilityResult is ever constructed directly without the factory (e.g. new EligibilityResult
+                // { Outcome = EligibilityOutcome.NoTemplate }), ErrorMessage will be null and
+                // FailConsolidationWorkItemAsync receives a null argument without a compile-time warning.
+                // Consider guarding: result.ErrorMessage ?? "No matching template found"
+                // See Correctness/DotNetSpecialist WARNING (Issue #1994).
                 await FailConsolidationWorkItemAsync(item.Id, result.ErrorMessage!, item.IssueIdentifier, ct);
                 return true;
         }

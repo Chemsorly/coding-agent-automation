@@ -14,6 +14,25 @@ namespace CodingAgentWebUI.Orchestration.UnitTests.Dispatch;
 /// This test documents a defensive contract for future subclasses — the null path is not
 /// reachable through existing production constructors (all of which supply a non-null
 /// <c>rateLimitPerSecond</c>), but the guard must be correct if it ever fires.
+///
+/// TODO: These tests use inner test doubles (NullRateLimiterService, NullGuardTestService) that
+/// re-implement the guard expression locally rather than invoking the production code path in
+/// DispatchService.ProcessDispatchCandidateAsync or ConsolidationDispatchHandler.ProcessConsolidationItemAsync.
+/// As a result, removing or changing the guard in the production methods would not cause these tests to fail —
+/// they only verify that the ?? throw pattern works in C#, not that it is actually present at the correct site.
+/// For stronger regression coverage, add integration-style tests that instantiate the real production classes
+/// in a state where RateLimiter is null and trigger the processing loop.
+/// See TestQualityReviewer WARNING (Issue #1994).
+///
+/// TODO: WhenRateLimiterIsNull_NullGuardExpression_ExceptionMessageNamesTheService asserts on
+/// "*NullRateLimiterService*" — a name specific to this test double. This does not validate that
+/// production exception messages (DispatchService / ConsolidationDispatchHandler) are meaningful.
+/// See TestQualityReviewer WARNING (Issue #1994).
+///
+/// TODO: These tests duplicate equivalent scenarios in PostgresLeaderElectionServiceTests.cs
+/// (same test doubles, same invariants). If the guard contract changes, both files need updating.
+/// Consider consolidating into one location to reduce maintenance surface.
+/// See TestQualityReviewer SUGGESTION (Issue #1994).
 /// </summary>
 public class RateLimiterNullGuardTests
 {

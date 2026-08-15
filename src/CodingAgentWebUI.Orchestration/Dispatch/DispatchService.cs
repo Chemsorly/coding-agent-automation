@@ -53,6 +53,13 @@ public sealed class DispatchService : LeaderElectedPollingService
         DispatchServiceCoreDependencies coreDeps,
         IConfiguration configuration,
         JobTemplateStore templateProvider)
+        // TODO: coreDeps and configuration are not null-guarded before the base-constructor initializer
+        // dereferences them (coreDeps.LeaderElection, DispatchServiceOptionsFactory.Create(configuration)).
+        // A null coreDeps produces NullReferenceException instead of ArgumentNullException; a null configuration
+        // produces NullReferenceException inside the factory rather than at the call boundary.
+        // The sibling (coreDeps, templateProvider, options) constructor correctly guards with
+        // (coreDeps ?? throw new ArgumentNullException(nameof(coreDeps))). Apply the same pattern here.
+        // See DotNetSpecialist WARNING (Issue #1994).
         : base(coreDeps.LeaderElection, DispatchServiceOptionsFactory.Create(configuration).RateLimitPerSecond)
     {
         _dbFactory = coreDeps.DbFactory;
@@ -82,6 +89,36 @@ public sealed class DispatchService : LeaderElectedPollingService
             _templateProvider,
             new DispatchTemplateResolver(_agentProfileStore, _templateProvider),
             _options);
+    }
+
+    /// <summary>
+    /// Test-only constructor accepting a pre-built <see cref="DispatchServiceOptions"/> instead of
+    /// <see cref="IConfiguration"/>. Avoids the double-call to
+    /// <see cref="DispatchServiceOptionsFactory.Create"/> and allows precise option injection in tests.
+    /// Throws <see cref="ArgumentNullException"/> if <paramref name="coreDeps"/> or
+    /// <paramref name="options"/> is null, including when <c>coreDeps.StateBuilder</c> is null
+    /// (enforcing the AC4 requirement from Issue #1989).
+    /// </summary>
+    internal DispatchService(
+        DispatchServiceCoreDependencies coreDeps,
+        JobTemplateStore templateProvider,
+        DispatchServiceOptions options)
+        : base((coreDeps ?? throw new ArgumentNullException(nameof(coreDeps))).LeaderElection,
+               (options ?? throw new ArgumentNullException(nameof(options))).RateLimitPerSecond)
+    {
+        if (coreDeps.StateBuilder is null)
+            throw new ArgumentNullException("StateBuilder",
+                "DispatchService requires a non-null StateBuilder. Provide it via coreDeps.StateBuilder.");
+
+        _dbFactory = coreDeps.DbFactory;
+        _lifecycle = coreDeps.Lifecycle;
+        _labelSwapper = coreDeps.LabelSwapper;
+        _agentProfileStore = coreDeps.AgentProfileStore;
+        _runService = coreDeps.RunService;
+        _templateProvider = templateProvider ?? throw new ArgumentNullException(nameof(templateProvider));
+        _options = options;
+        _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
+        _stateBuilder = coreDeps.StateBuilder;
     }
 
     internal static JobTemplateStore LoadTemplateProvider(IConfiguration configuration)
@@ -194,6 +231,13 @@ public sealed class DispatchService : LeaderElectedPollingService
             case EligibilityOutcome.NoPvcAvailable:
                 return true;
             case EligibilityOutcome.NoTemplate:
+                // TODO: result.ErrorMessage! uses a null-forgiving operator. Currently safe because
+                // EligibilityResult.NoTemplate(string errorMessage) always sets ErrorMessage to a non-null value.
+                // If EligibilityResult is ever constructed directly without the factory (e.g. new EligibilityResult
+                // { Outcome = EligibilityOutcome.NoTemplate }), ErrorMessage will be null and FailWorkItemAsync
+                // receives a null argument without a compile-time warning. Consider guarding:
+                // result.ErrorMessage ?? "No matching template found"
+                // See Correctness/DotNetSpecialist WARNING (Issue #1994).
                 await _lifecycle.FailWorkItemAsync(item.Id, result.ErrorMessage!, ct);
                 return true;
         }
