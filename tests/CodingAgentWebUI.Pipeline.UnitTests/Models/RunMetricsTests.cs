@@ -20,6 +20,8 @@ public class RunMetricsTests
         metrics.LinesRemoved.Should().Be(0);
         metrics.TotalTokens.Should().Be(0L);
         metrics.TotalCost.Should().BeNull();
+        metrics.CacheReadTokens.Should().Be(0L);
+        metrics.CacheWriteTokens.Should().Be(0L);
     }
 
     [Fact]
@@ -33,6 +35,8 @@ public class RunMetricsTests
         run.Metrics.LinesRemoved = 20;
         run.Metrics.TotalTokens = 50000L;
         run.Metrics.TotalCost = 1.23m;
+        run.Metrics.CacheReadTokens = 500L;
+        run.Metrics.CacheWriteTokens = 200L;
 
         run.RetryCount.Should().Be(3);
         run.InfrastructureRetryCount.Should().Be(1);
@@ -41,6 +45,8 @@ public class RunMetricsTests
         run.LinesRemoved.Should().Be(20);
         run.TotalTokens.Should().Be(50000L);
         run.TotalCost.Should().Be(1.23m);
+        run.CacheReadTokens.Should().Be(500L);
+        run.CacheWriteTokens.Should().Be(200L);
     }
 
     [Fact]
@@ -54,6 +60,8 @@ public class RunMetricsTests
         run.LinesRemoved = 50;
         run.TotalTokens = 99000L;
         run.TotalCost = 4.56m;
+        run.CacheReadTokens = 750L;
+        run.CacheWriteTokens = 300L;
 
         run.Metrics.RetryCount.Should().Be(2);
         run.Metrics.InfrastructureRetryCount.Should().Be(4);
@@ -62,6 +70,8 @@ public class RunMetricsTests
         run.Metrics.LinesRemoved.Should().Be(50);
         run.Metrics.TotalTokens.Should().Be(99000L);
         run.Metrics.TotalCost.Should().Be(4.56m);
+        run.Metrics.CacheReadTokens.Should().Be(750L);
+        run.Metrics.CacheWriteTokens.Should().Be(300L);
     }
 
     [Fact]
@@ -71,12 +81,16 @@ public class RunMetricsTests
         run.RetryCount = 2;
         run.TotalTokens = 75000L;
         run.TotalCost = 3.21m;
+        run.CacheReadTokens = 1000L;
+        run.CacheWriteTokens = 400L;
 
         var summary = run.ToSummary();
 
         summary.RetryCount.Should().Be(2);
         summary.TotalTokens.Should().Be(75000L);
         summary.TotalCost.Should().Be(3.21m);
+        summary.CacheReadTokens.Should().Be(1000L);
+        summary.CacheWriteTokens.Should().Be(400L);
     }
 
     private static PipelineRun CreateRun() => new()

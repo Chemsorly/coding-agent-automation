@@ -335,6 +335,12 @@ public sealed partial class PipelineRun
     /// <summary>Accumulated total cost (USD, decimal) across all agent invocations, or null if no cost data available.</summary>
     public decimal? TotalCost { get => Metrics.TotalCost; set => Metrics.TotalCost = value; }
 
+    /// <summary>Accumulated tokens served from prompt cache across all agent invocations in this run.</summary>
+    public long CacheReadTokens { get => Metrics.CacheReadTokens; set => Metrics.CacheReadTokens = value; }
+
+    /// <summary>Accumulated tokens written to prompt cache across all agent invocations in this run.</summary>
+    public long CacheWriteTokens { get => Metrics.CacheWriteTokens; set => Metrics.CacheWriteTokens = value; }
+
     /// <summary>Number of sub-issues successfully created during the Decomposition phase.</summary>
     public int DecompositionSubIssuesCreated { get; set; }
 
@@ -380,6 +386,8 @@ public sealed partial class PipelineRun
         Feedback = Feedback,
         TotalTokens = TotalTokens,
         TotalCost = TotalCost,
+        CacheReadTokens = CacheReadTokens,
+        CacheWriteTokens = CacheWriteTokens,
         PhaseBreakdown = Metrics.PhaseBreakdown.Count > 0
             ? Metrics.PhaseBreakdown.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
             : null,

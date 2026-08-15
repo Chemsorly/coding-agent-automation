@@ -85,6 +85,10 @@
                 {
                     <div><strong>Tokens:</strong> @CostFormatter.FormatTokens(Run.TotalTokens)</div>
                 }
+                @if (Run.CacheReadTokens > 0 || Run.CacheWriteTokens > 0)
+                {
+                    <div><strong>Cache Tokens:</strong> @CostFormatter.FormatTokens(Run.CacheReadTokens) read / @CostFormatter.FormatTokens(Run.CacheWriteTokens) write</div>
+                }
                 @if (Run.PhaseBreakdown is { Count: > 0 } historyPhases)
                 {
                     <Collapsible CssClass="phase-breakdown" HeaderClass="phase-breakdown-header" BodyClass="phase-breakdown-body">
