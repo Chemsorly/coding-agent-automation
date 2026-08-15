@@ -135,8 +135,8 @@ public sealed class HousekeepingService : IHousekeepingService
             activeRunBranches = [];
         }
 
-        // ── Step 5: Sort candidates ascending by PR number (oldest first) ────
-        var sorted = agentDonePrs.OrderBy(p => p.Number).ToList();
+        // ── Step 5: Shuffle candidates (uniform random) to prevent oldest-first starvation ────
+        var sorted = agentDonePrs.OrderBy(_ => Random.Shared.Next()).ToList();
 
         // ── Step 6a: Handle Conflicted PRs — swap linked issue to agent:next ─
         foreach (var pr in sorted)
