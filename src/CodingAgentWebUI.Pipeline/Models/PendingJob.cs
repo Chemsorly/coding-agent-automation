@@ -60,8 +60,8 @@ public sealed record PendingJob
 
     /// <summary>
     /// Number of times the drain service has attempted to dispatch this consolidation job to an agent.
-    /// Incremented on each dispatch failure. When this reaches <c>JobQueueDrainService.MaxConsolidationDispatchRetries</c>
-    /// (5), the job is discarded and the <c>ConsolidationRun</c> transitions to <c>Failed</c>.
+    /// Incremented on each dispatch failure. When this reaches <c>PipelineConfiguration.MaxConsolidationDispatchRetries</c>
+    /// (default 5), the job is discarded and the <c>ConsolidationRun</c> transitions to <c>Failed</c>.
     /// Irrelevant for non-consolidation jobs (always 0).
     /// </summary>
     public int ConsolidationDispatchAttempt { get; init; }

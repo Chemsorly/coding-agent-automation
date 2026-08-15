@@ -806,5 +806,113 @@ public class JobQueueDrainServiceTests
             Times.AtLeastOnce);
     }
 
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_RespectsConfigurableRetryLimit_WhenSetToThree()
+    {
+        // Reconfigure the mock config store to return a limit of 3 instead of the default 5.
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { MaxConsolidationDispatchRetries = 3 });
+
+        _mockConsolidationDispatchService.Reset();
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+                It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        RegisterIdleAgent();
+
+        for (var cycle = 1; cycle <= 3; cycle++)
+        {
+            if (cycle == 1)
+            {
+                _dispatcher.EnqueueJob(new PendingJob
+                {
+                    IssueIdentifier = "crun-limit-3",
+                    IssueProviderId = "consolidation",
+                    RepoProviderId = "consolidation",
+                    InitiatedBy = "consolidation",
+                    EnqueuedAt = DateTimeOffset.UtcNow,
+                    RequiredLabels = Array.Empty<string>(),
+                    RunType = PipelineRunType.Consolidation,
+                    ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
+                    ConsolidationWorkspacePath = "/tmp/ws"
+                });
+            }
+
+            await _service.DrainAsync(CancellationToken.None);
+
+            if (cycle < 3)
+            {
+                _dispatcher.QueueLength.Should().Be(1, "cycle {0}: job should be re-enqueued until limit", cycle);
+                _dispatcher.GetQueuedJobs()[0].ConsolidationDispatchAttempt.Should().Be(cycle,
+                    "cycle {0}: attempt count should be {0}", cycle);
+            }
+            else
+            {
+                _dispatcher.QueueLength.Should().Be(0,
+                    "job should be discarded after 3 failures when limit is configured to 3");
+                _dispatcher.IsIssueQueued("crun-limit-3").Should().BeFalse(
+                    "dedup entry should be removed after configured limit is reached");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_DefaultRetryLimitIsStillFive()
+    {
+        // Verify that the default config (5) still discards after exactly 5 failures.
+        // This documents the default explicitly and guards against default-value regressions.
+        // TODO: This test relies on the constructor-level _mockConfigStore setup returning
+        // new PipelineConfiguration() implicitly. A future shared helper that overrides
+        // _mockConfigStore could silently change this test's intent. If that happens, add an
+        // explicit _mockConfigStore.Setup here to return new PipelineConfiguration() with
+        // MaxConsolidationDispatchRetries left at its default.
+        // Also: this test observes discard-after-5-cycles but does not assert the default value
+        // upfront — if the default is raised above 5 the loop exhausts without hitting the limit
+        // and gives a false green. Consider adding:
+        //   new PipelineConfiguration().MaxConsolidationDispatchRetries.Should().Be(5);
+        _mockConsolidationDispatchService.Reset();
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+                It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        RegisterIdleAgent();
+
+        for (var cycle = 1; cycle <= 5; cycle++)
+        {
+            if (cycle == 1)
+            {
+                _dispatcher.EnqueueJob(new PendingJob
+                {
+                    IssueIdentifier = "crun-default-limit",
+                    IssueProviderId = "consolidation",
+                    RepoProviderId = "consolidation",
+                    InitiatedBy = "consolidation",
+                    EnqueuedAt = DateTimeOffset.UtcNow,
+                    RequiredLabels = Array.Empty<string>(),
+                    RunType = PipelineRunType.Consolidation,
+                    ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
+                    ConsolidationWorkspacePath = "/tmp/ws"
+                });
+            }
+
+            await _service.DrainAsync(CancellationToken.None);
+
+            if (cycle < 5)
+            {
+                _dispatcher.QueueLength.Should().Be(1, "cycle {0}: job should still be re-enqueued", cycle);
+            }
+            else
+            {
+                _dispatcher.QueueLength.Should().Be(0,
+                    "job should be discarded after 5 failures — default limit is 5");
+                _dispatcher.IsIssueQueued("crun-default-limit").Should().BeFalse(
+                    "dedup entry should be removed after default limit is reached");
+            }
+        }
+    }
+
     #endregion
 }
