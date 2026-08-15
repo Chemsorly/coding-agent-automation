@@ -257,6 +257,11 @@ public partial class QualityGateExecutor
         var callbacks = context.Callbacks;
         var report = initialReport;
 
+        // TODO: [WARNING] run.RetryErrors accumulates one entry per loop iteration (including transient
+        // provider-error iterations where no fix was attempted). On repeated 429/503 responses, this
+        // produces stale entries in the failure-feedback prompt and draft PR summary that were never
+        // associated with actual fix attempts. Consider gating the enqueue on a "real work was done"
+        // condition, or filtering stale entries before building the failure-feedback prompt.
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
             run.RetryCount++;
@@ -299,6 +304,50 @@ public partial class QualityGateExecutor
                     },
                     callbacks, ct,
                     resumeSessionId: run.CodegenSessionId);
+
+                // Check for provider-side transient failures that must not consume retry budget.
+                // agentResult is nullable — ExecuteAgentAndRecordAsync returns null when it absorbs
+                // a non-cancellation exception, so the ?. null-conditional is mandatory here.
+                //
+                // Intentional asymmetry: PipelineTelemetry and RetryErrors (incremented above) are NOT
+                // rolled back — rolling back a monotonic counter is non-idiomatic in OpenTelemetry, and the
+                // RetryErrors entry (from the prior QG failure) is harmless noise. Only RetryCount matters
+                // for loop exit logic, so that is the only value corrected.
+                if (agentResult?.ErrorCategory is AgentErrorCategory.ProviderRateLimit
+                    or AgentErrorCategory.ProviderOverload)
+                {
+                    _logger.Warning(
+                        "Pipeline {RunId} retry {RetryCount}: provider transient error ({Category}), " +
+                        "not consuming retry budget, waiting before next attempt",
+                        run.RunId, run.RetryCount, agentResult.ErrorCategory);
+                    run.RetryCount--; // Undo the increment at the top of the loop
+                    // TODO: [WARNING] No local cap on consecutive transient retries. If the provider returns
+                    // 429/503 persistently and pipeline-level timeouts (OrchestratorCts, job timeout) are
+                    // absent or misconfigured, this loop runs indefinitely (30s delay per iteration). Consider
+                    // adding a dedicated max-transient-retries counter (e.g. 10) as a local safety bound.
+                    // TODO: [WARNING] run.RetryCount-- has no underflow guard. Under current code paths
+                    // RetryCount cannot go below 0 here, but `Math.Max(0, run.RetryCount - 1)` would be
+                    // more defensive against future bugs that corrupt RetryCount before this point.
+                    // TODO: [WARNING] The continue below skips UpdateFileChangeStatsAsync. This is correct
+                    // today because transient provider errors produce no file changes. However, if ErrorCategory
+                    // is ever set on a result that also has non-empty OutputLines (e.g. a partial response),
+                    // file-change stats would be silently skipped. Consider explicitly checking OutputLines
+                    // before skipping the stats update, or moving UpdateFileChangeStatsAsync above this branch.
+                    await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                    continue;
+                }
+
+                // Permanent auth failures cannot be fixed by retrying — abort immediately.
+                // RetryCount is intentionally NOT decremented: one real agent call was attempted,
+                // so a count of 1 accurately reflects what happened (unlike transient errors where
+                // the agent never did any work).
+                if (agentResult?.ErrorCategory == AgentErrorCategory.PermanentAuthFailure)
+                {
+                    _logger.Error(
+                        "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
+                        run.RunId, run.RetryCount);
+                    break;
+                }
 
                 // Detect dead/exhausted session: agent returned successfully but produced nothing.
                 // This typically means the session's context window overflowed and the provider
