@@ -1,9 +1,12 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using AwesomeAssertions;
 using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
@@ -11,6 +14,11 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// Isolated unit tests for <see cref="AgentPhaseExecutor.ExecuteAnalysisPhaseAsync"/>.
 /// Tests warm-up, prompt dispatch, retry logic, confidence gate assessment, and the existing-analysis skip path.
 /// </summary>
+/// <remarks>
+/// This class is in <see cref="Collection"/>("Metrics") to prevent concurrent <see cref="MeterListener"/>
+/// contention with other metric tests that listen on the same static <see cref="PipelineTelemetry.Meter"/>.
+/// </remarks>
+[Collection("Metrics")]
 public class AgentPhaseExecutorAnalysisTests : IDisposable
 {
     private readonly Mock<IAgentProvider> _mockAgent;
@@ -21,6 +29,10 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     private readonly PipelineConfiguration _config;
     private readonly AgentPhaseExecutor _executor;
     private readonly string _workspacePath;
+
+    // MeterListener for metric-assertion tests
+    private readonly MeterListener _meterListener = new();
+    private readonly ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> _counters = [];
 
     public AgentPhaseExecutorAnalysisTests()
     {
@@ -61,10 +73,23 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             .Returns(Task.CompletedTask);
         _mockIssueOps.Setup(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
+
+        // Wire up the MeterListener to capture all long-valued counters from the pipeline meter
+        _meterListener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                listener.EnableMeasurementEvents(instrument);
+        };
+        _meterListener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            _counters.Add((instrument.Name, measurement, tags.ToArray()));
+        });
+        _meterListener.Start();
     }
 
     public void Dispose()
     {
+        _meterListener.Dispose();
         try { Directory.Delete(_workspacePath, recursive: true); } catch { }
     }
 
@@ -425,6 +450,51 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
 
         capturedPrompt.Should().NotContain("## Rework Context");
         capturedPrompt.Should().NotContain("rework run");
+    }
+
+    // --- Analysis gate outcome metric tests ---
+
+    [Fact]
+    public async Task EvaluateAnalysisGate_NotReadyAssessment_EmitsNotReadyMetric()
+    {
+        // not_ready recommendation with no blocking issues — unambiguously exercises the not_ready path
+        SetupAgentWithValidAnalysis("not_ready");
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        result.Should().BeFalse();
+        _run.AnalysisRecommendation.Should().Be(AnalysisGateResult.NotReady);
+        _counters.Should().Contain(c =>
+            c.Name == "pipeline.analysis.gate_outcome"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("outcome", "not_ready")));
+    }
+
+    [Fact]
+    public async Task EvaluateAnalysisGate_WontDoAssessment_EmitsWontDoMetric()
+    {
+        SetupAgentWithValidAnalysis("wont_do");
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        result.Should().BeFalse();
+        _run.AnalysisRecommendation.Should().Be(AnalysisGateResult.WontDo);
+        _counters.Should().Contain(c =>
+            c.Name == "pipeline.analysis.gate_outcome"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("outcome", "wont_do")));
+    }
+
+    [Fact]
+    public async Task EvaluateAnalysisGate_ReadyAssessment_EmitsReadyMetricAndReturnsTrue()
+    {
+        SetupAgentWithValidAnalysis("ready");
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        result.Should().BeTrue();
+        _run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
+        _counters.Should().Contain(c =>
+            c.Name == "pipeline.analysis.gate_outcome"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("outcome", "ready")));
     }
 
     private AgentPhaseContext BuildContext()
