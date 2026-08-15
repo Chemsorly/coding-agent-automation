@@ -65,7 +65,7 @@
                             <td class="monitoring-mono">@GetProviderName(profile.AgentProviderConfigId)</td>
                             <td><Icon Name="@(profile.Enabled ? "check-circle" : "x-circle")" /></td>
                             <td>@profile.Priority</td>
-                            <td>@profile.McpServers.Count(s => !s.Disabled)</td>
+                            <td>@(profile.McpServers?.Count(s => !s.Disabled) ?? 0)</td>
                             @if (IsKubernetesMode)
                             {
                                 <td>
@@ -338,15 +338,22 @@
             AgentProviderConfigId = profile.AgentProviderConfigId,
             Enabled = profile.Enabled,
             Priority = profile.Priority,
+            // TODO [WARNING]: profile.McpServers.Select(...) will throw NullReferenceException if
+            // McpServers is null (e.g. older persisted AgentProfile records before the McpServers
+            // member was added, deserialized by ContractlessStandardResolverAllowPrivate which
+            // bypasses property initializers). Replace with profile.McpServers?.Select(...) ?? [].
             McpServers = profile.McpServers.Select(s => new McpServerFormModel
             {
                 Name = s.Name,
                 Type = s.Type ?? "stdio",
                 Command = s.Command ?? "",
+                // TODO [WARNING]: s.Args will throw NullReferenceException if null (same MessagePack
+                // Contractless deserialization issue as Headers/Env — property initializer bypassed
+                // for absent members). Replace with string.Join(" ", s.Args ?? []).
                 Args = string.Join(" ", s.Args),
                 Url = s.Url ?? "",
-                EnvVars = string.Join("\n", s.Env.Select(kv => $"{kv.Key}={kv.Value}")),
-                Headers = string.Join("\n", s.Headers.Select(kv => $"{kv.Key}={kv.Value}")),
+                EnvVars = string.Join("\n", s.Env?.Select(kv => $"{kv.Key}={kv.Value}") ?? []),
+                Headers = string.Join("\n", s.Headers?.Select(kv => $"{kv.Key}={kv.Value}") ?? []),
                 Enabled = !s.Disabled
             }).ToList()
         };

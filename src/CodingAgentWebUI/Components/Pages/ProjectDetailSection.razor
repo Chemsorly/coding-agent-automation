@@ -195,18 +195,18 @@
         _steeringContent = _project.SteeringContent;
 
         // Populate MCP Servers
-        // TODO [WARNING]: s.Env.Select(...) and s.Headers.Select(...) will throw NullReferenceException
-        // if McpServerConfig.Env or .Headers is null (e.g. older persisted records before the Headers
-        // field was added). Replace with s.Env?.Select(...) ?? [] and s.Headers?.Select(...) ?? [].
         _mcpServers = _project.McpServers?.Select(s => new McpServerFormModel
         {
             Name = s.Name,
             Type = s.Type ?? "stdio",
             Command = s.Command ?? "",
+            // TODO [WARNING]: s.Args will throw NullReferenceException if null (same MessagePack
+            // Contractless deserialization issue as Headers/Env — property initializer bypassed
+            // for absent members). Replace with string.Join(" ", s.Args ?? []).
             Args = string.Join(" ", s.Args),
             Url = s.Url ?? "",
-            EnvVars = string.Join("\n", s.Env.Select(kv => $"{kv.Key}={kv.Value}")),
-            Headers = string.Join("\n", s.Headers.Select(kv => $"{kv.Key}={kv.Value}")),
+            EnvVars = string.Join("\n", s.Env?.Select(kv => $"{kv.Key}={kv.Value}") ?? []),
+            Headers = string.Join("\n", s.Headers?.Select(kv => $"{kv.Key}={kv.Value}") ?? []),
             Enabled = !s.Disabled
         }).ToList() ?? new();
         _showMcpForm = false;
