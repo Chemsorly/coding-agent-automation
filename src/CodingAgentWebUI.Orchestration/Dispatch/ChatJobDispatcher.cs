@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 // ─── Exception types ──────────────────────────────────────────────────────────
@@ -25,7 +27,7 @@ public sealed class ChatPodTimeoutException(int timeoutSeconds)
 public interface IChatJobDispatcher
 {
     Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken cancellationToken);
-    Task TerminateChatSessionAsync(string agentId, CancellationToken cancellationToken);
+    Task TerminateChatSessionAsync(AgentId agentId, CancellationToken cancellationToken);
 }
 
 // ─── Null-object implementation (SignalR mode) ────────────────────────────────
@@ -41,6 +43,6 @@ public sealed class NullChatJobDispatcher : IChatJobDispatcher
     public Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken cancellationToken)
         => throw new NotSupportedException("Chat pod dispatch is not available in SignalR mode.");
 
-    public Task TerminateChatSessionAsync(string agentId, CancellationToken cancellationToken)
+    public Task TerminateChatSessionAsync(AgentId agentId, CancellationToken cancellationToken)
         => Task.CompletedTask; // safe no-op in SignalR mode
 }

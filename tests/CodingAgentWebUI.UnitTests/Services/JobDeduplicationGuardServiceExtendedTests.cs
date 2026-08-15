@@ -45,7 +45,7 @@ public class JobDeduplicationGuardServiceExtendedTests
         var result = _dispatcher.SelectAgent(new[] { "dotnet" });
 
         result.Should().NotBeNull();
-        result!.AgentId.Should().Be("agent-1");
+        result!.AgentId.Value.Should().Be("agent-1");
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public class JobDeduplicationGuardServiceExtendedTests
 
         var result = _dispatcher.SelectAgent(new[] { "dotnet" });
 
-        result!.AgentId.Should().Be("agent-1"); // Idle longer
+        result!.AgentId.Value.Should().Be("agent-1"); // Idle longer
     }
 
     [Fact]

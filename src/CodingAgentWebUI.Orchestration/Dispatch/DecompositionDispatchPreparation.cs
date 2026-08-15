@@ -57,7 +57,7 @@ internal sealed class DecompositionDispatchPreparation : IDispatchPreparationHan
                 RepoProviderId = _repoProviderId,
                 IssueIdentifier = _epicIdentifier,
                 AgentProviderId = agentProviderId,
-                AgentId = _agent.AgentId,
+                AgentId = _agent.AgentId.Value,
                 BrainProviderId = _brainProviderId,
                 PipelineProviderId = null,
                 InitiatedBy = _initiatedBy

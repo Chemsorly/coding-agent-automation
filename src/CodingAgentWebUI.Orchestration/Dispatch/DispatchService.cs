@@ -16,7 +16,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// resolves container image via JobTemplateStore, creates K8s Jobs via JobSpecBuilder,
 /// updates to Dispatched. Runs under leader election (same Lease as PipelineLoopService).
 /// Rate-limited: default 10 Jobs/s. Skips items whose selector group is at concurrency limit.
-/// Consolidation items are handled by <see cref="ConsolidationDispatchHandler"/>.
+/// Consolidation items are handled by <see cref="ConsolidationWorkItemDispatchService"/>.
 /// </summary>
 public sealed class DispatchService : LeaderElectedPollingService
 {

@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Models;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
@@ -49,7 +50,6 @@ public class HubConnectionManagerTests : IAsyncDisposable
 
     [Theory]
     [InlineData(0, "orchestratorUrl")]
-    [InlineData(1, "agentId")]
     [InlineData(2, "apiKey")]
     [InlineData(3, "logger")]
     public void Constructor_NullParameter_ThrowsArgumentNullException(int nullIndex, string expectedParamName)
@@ -58,9 +58,22 @@ public class HubConnectionManagerTests : IAsyncDisposable
         args[nullIndex] = null;
 
         var act = () => new HubConnectionManager(
-            (string)args[0]!, (string)args[1]!, (string)args[2]!, (Serilog.ILogger)args[3]!);
+            (string)args[0]!, (AgentId)(string)args[1]!, (string)args[2]!, (Serilog.ILogger)args[3]!);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
+    }
+
+    [Fact]
+    public void Constructor_EmptyAgentId_ThrowsArgumentException()
+    {
+        // AgentId is a value type. An empty-string AgentId has Value="" which violates
+        // the invariant enforced by ArgumentException.ThrowIfNullOrEmpty in the constructor.
+        var emptyAgentId = new AgentId(string.Empty);
+        var act = () => new HubConnectionManager("http://localhost", emptyAgentId, "api-key", _mockLogger.Object);
+        act.Should().Throw<ArgumentException>().WithParameterName("agentId");
+        // TODO: Also test new AgentId(null!) (bypasses the implicit operator, as documented in
+        // AgentId source TODO) to pin the defense-in-depth behavior of the constructor guard
+        // against a null Value inside an AgentId struct.
     }
 
     [Fact]

@@ -18,9 +18,9 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Extracted from DispatchService to separate consolidation-specific concerns (run status transitions,
 /// provider config resolution, cascade failure) from regular issue dispatch.
 /// </summary>
-internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
+internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollingService
 {
-    private static readonly ILogger Log = Serilog.Log.ForContext<ConsolidationDispatchHandler>();
+    private static readonly ILogger Log = Serilog.Log.ForContext<ConsolidationWorkItemDispatchService>();
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly DispatchLifecycleService _lifecycle;
@@ -33,10 +33,10 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
     private readonly IProjectStore? _projectStore;
     private readonly DispatchStateBuilder _stateBuilder;
 
-    protected override string ServiceName => "ConsolidationDispatchHandler";
+    protected override string ServiceName => "ConsolidationWorkItemDispatchService";
     protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
-    public ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps)
+    public ConsolidationWorkItemDispatchService(ConsolidationWorkItemDispatchServiceDependencies deps)
         // Guard deps before the factory call dereferences deps.Configuration,
         // so a null argument throws ArgumentNullException instead of NullReferenceException.
         // Resolves DispatchServiceOptions exactly once and delegates to the internal constructor.
@@ -49,7 +49,7 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
     /// <see cref="IConfiguration"/>. All field assignments live here; the public constructor
     /// computes options once and delegates. Also used directly by tests.
     /// </summary>
-    internal ConsolidationDispatchHandler(ConsolidationDispatchHandlerDependencies deps, DispatchServiceOptions options)
+    internal ConsolidationWorkItemDispatchService(ConsolidationWorkItemDispatchServiceDependencies deps, DispatchServiceOptions options)
         // Guard deps and options before the base-constructor dereferences them,
         // so null arguments throw ArgumentNullException instead of NullReferenceException.
         : base((deps ?? throw new ArgumentNullException(nameof(deps))).LeaderElection,
@@ -176,7 +176,7 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
             return false;
 
         Log.Information(
-            "ConsolidationDispatchHandler: consolidation run {RunId} is {Status}, skipping dispatch for WorkItem {WorkItemId}",
+            "ConsolidationWorkItemDispatchService: consolidation run {RunId} is {Status}, skipping dispatch for WorkItem {WorkItemId}",
             runId, consolidationRun.Status, item.Id);
         await _transitionService.TransitionAsync(
             item.Id, WorkItemStatus.Cancelled,
@@ -211,7 +211,7 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "ConsolidationDispatchHandler: failed to resolve provider configs for consolidation WorkItem {WorkItemId}", item.Id);
+            Log.Error(ex, "ConsolidationWorkItemDispatchService: failed to resolve provider configs for consolidation WorkItem {WorkItemId}", item.Id);
             await FailConsolidationWorkItemAsync(item.Id, $"Provider config resolution failed: {ex.Message}", item.IssueIdentifier, ct);
             return new ConsolidationPrepareResult(false, null, null);
         }
@@ -249,7 +249,7 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         }
         catch (JsonException ex)
         {
-            Log.Warning(ex, "ConsolidationDispatchHandler: failed to deserialize consolidation WorkItem {WorkItemId} payload", workItemId);
+            Log.Warning(ex, "ConsolidationWorkItemDispatchService: failed to deserialize consolidation WorkItem {WorkItemId} payload", workItemId);
             return null;
         }
     }
@@ -270,7 +270,7 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         // Delegate config resolution and token vending to shared preparer
         if (_consolidationJobPreparer is null)
         {
-            Log.Error("ConsolidationDispatchHandler: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
+            Log.Error("ConsolidationWorkItemDispatchService: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
             // Throw without calling FailConsolidationWorkItemAsync here: the caller's catch (Exception ex) block
             // will call FailConsolidationWorkItemAsync exactly once. Calling it here AND throwing would cause a
             // double-fail — the same work item would be transitioned to Failed twice with two different messages.
@@ -345,21 +345,21 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
                     ConsolidationRunStatus.Failed,
                     $"WorkItem dispatch failed: {errorMessage}",
                     ct);
-                Log.Information("ConsolidationDispatchHandler: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
+                Log.Information("ConsolidationWorkItemDispatchService: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
             }
             catch (OperationCanceledException)
             {
-                Log.Debug("ConsolidationDispatchHandler: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
+                Log.Debug("ConsolidationWorkItemDispatchService: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "ConsolidationDispatchHandler: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
+                Log.Warning(ex, "ConsolidationWorkItemDispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
             }
             return;
         }
 
         // Fallback: direct store write when IConsolidationService not available
-        Log.Warning("ConsolidationDispatchHandler: IConsolidationService unavailable, using direct store fallback for ConsolidationRun {RunId}. " +
+        Log.Warning("ConsolidationWorkItemDispatchService: IConsolidationService unavailable, using direct store fallback for ConsolidationRun {RunId}. " +
             "This skips cache invalidation and OnChange events.", runId);
 
         if (_consolidationRunStore is null)
@@ -374,16 +374,16 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
                 run.Summary = $"WorkItem dispatch failed: {errorMessage}";
                 run.CompletedAtUtc = DateTimeOffset.UtcNow;
                 await _consolidationRunStore.SaveRunAsync(run, ct);
-                Log.Information("ConsolidationDispatchHandler: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
+                Log.Information("ConsolidationWorkItemDispatchService: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
             }
         }
         catch (OperationCanceledException)
         {
-            Log.Debug("ConsolidationDispatchHandler: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
+            Log.Debug("ConsolidationWorkItemDispatchService: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "ConsolidationDispatchHandler: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
+            Log.Warning(ex, "ConsolidationWorkItemDispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
         }
     }
 
@@ -403,7 +403,7 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "ConsolidationDispatchHandler: failed to transition consolidation run {RunId} to Running (non-fatal)", runId);
+                Log.Warning(ex, "ConsolidationWorkItemDispatchService: failed to transition consolidation run {RunId} to Running (non-fatal)", runId);
             }
             return;
         }
@@ -424,7 +424,7 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "ConsolidationDispatchHandler: failed to transition consolidation run {RunId} to Running (non-fatal)", runId);
+            Log.Warning(ex, "ConsolidationWorkItemDispatchService: failed to transition consolidation run {RunId} to Running (non-fatal)", runId);
         }
     }
 }

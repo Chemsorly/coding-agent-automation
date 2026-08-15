@@ -19,12 +19,12 @@ using Xunit;
 namespace CodingAgentWebUI.Orchestration.UnitTests.Dispatch;
 
 /// <summary>
-/// Dispatch-loop characterization tests for <see cref="ConsolidationDispatchHandler"/>.
+/// Dispatch-loop characterization tests for <see cref="ConsolidationWorkItemDispatchService"/>.
 /// Covers the rate-limit → eligibility → dispatch loop behavior after migration to
 /// <see cref="DispatchStateBuilder.GetEligibleCandidatesAsync"/> (Issue #1989 prerequisite).
 /// </summary>
 [Trait("Feature", "1989-extract-dispatch-loop")]
-public class ConsolidationDispatchHandlerDispatchLoopTests : IDisposable
+public class ConsolidationWorkItemDispatchServiceDispatchLoopTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly TestDbContextFactory _dbFactory;
@@ -35,7 +35,7 @@ public class ConsolidationDispatchHandlerDispatchLoopTests : IDisposable
     private readonly Mock<IConsolidationService> _mockConsolidationService;
     private readonly Mock<IConsolidationJobPreparationService> _mockJobPreparer;
 
-    public ConsolidationDispatchHandlerDispatchLoopTests()
+    public ConsolidationWorkItemDispatchServiceDispatchLoopTests()
     {
         var dbName = $"ConsolidationDispatchLoop-{Guid.NewGuid()}";
         _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
@@ -240,7 +240,7 @@ public class ConsolidationDispatchHandlerDispatchLoopTests : IDisposable
             });
     }
 
-    private ConsolidationDispatchHandler CreateHandler(
+    private ConsolidationWorkItemDispatchService CreateHandler(
         Dictionary<string, string>? imageMapping = null,
         Dictionary<string, int>? maxConcurrentPods = null,
         string[]? pvcPool = null,
@@ -279,8 +279,8 @@ public class ConsolidationDispatchHandlerDispatchLoopTests : IDisposable
             new DispatchTemplateResolver(null, templateProvider),
             options);
 
-        return new ConsolidationDispatchHandler(
-            new ConsolidationDispatchHandlerDependencies(
+        return new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
                 _dbFactory, _leaderElection, lifecycle, templateProvider,
                 Mock.Of<Microsoft.Extensions.Configuration.IConfiguration>(),
                 _transitionService,
