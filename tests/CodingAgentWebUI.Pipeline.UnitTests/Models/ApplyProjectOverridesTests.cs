@@ -96,6 +96,7 @@ public class ApplyProjectOverridesTests
         result.HarnessSuggestionsReviewEnabled.Should().Be(config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeSameAs(config.BlacklistedPaths);
         result.BrainReadOnly.Should().Be(config.BrainReadOnly);
+        result.MaxConsolidationDispatchRetries.Should().Be(config.MaxConsolidationDispatchRetries);
     }
 
     // ── Non-null fields → override global values ───────────────────────────────
@@ -634,6 +635,35 @@ public class ApplyProjectOverridesTests
         result.ClosedLoopMaxPagesToFetch.Should().Be(config.ClosedLoopMaxPagesToFetch);
         result.IssuePageSize.Should().Be(config.IssuePageSize);
         result.FailedWorkspaceRetentionDays.Should().Be(config.FailedWorkspaceRetentionDays);
+    }
+
+    // ── MaxConsolidationDispatchRetries override ───────────────────────────────
+
+    [Fact]
+    public void MaxConsolidationDispatchRetries_ProjectOverride_AppliesCorrectly()
+    {
+        var config = TestPipelineConfig.Default();
+        // TODO: TestPipelineConfig.Default() sets MaxConsolidationDispatchRetries = 5. The override
+        // below uses 7, which differs. If Default() were ever changed to also use 7 this test would
+        // pass vacuously (override equals base). Consider adding:
+        //   config.MaxConsolidationDispatchRetries.Should().NotBe(7);
+        // before the ApplyProjectOverrides call to make the test non-vacuous.
+        var project = TestPipelineConfig.WithProject() with { MaxConsolidationDispatchRetries = 7 };
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.MaxConsolidationDispatchRetries.Should().Be(7);
+    }
+
+    [Fact]
+    public void MaxConsolidationDispatchRetries_NullOverride_InheritsFromGlobal()
+    {
+        var config = TestPipelineConfig.Default();
+        var project = TestPipelineConfig.WithProject(); // MaxConsolidationDispatchRetries is null
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.MaxConsolidationDispatchRetries.Should().Be(config.MaxConsolidationDispatchRetries);
     }
 
     // ── Drift-detection tests ──────────────────────────────────────────────────
