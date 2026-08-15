@@ -101,7 +101,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             WorkDistributor = workDistributor,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            HousekeepingService = null
+            HousekeepingService = null,
+            LeaderElection = null
         });
         return _loopService;
     }
@@ -1543,7 +1544,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             WorkDistributor = null,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            HousekeepingService = housekeepingMock.Object
+            HousekeepingService = housekeepingMock.Object,
+            LeaderElection = null
         });
 
         using var cts = new CancellationTokenSource();
@@ -1605,7 +1607,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             WorkDistributor = null,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            HousekeepingService = housekeepingService
+            HousekeepingService = housekeepingService,
+            LeaderElection = null
         });
         return _loopService;
     }
@@ -2009,7 +2012,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             WorkDistributor = null,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            HousekeepingService = housekeepingMock.Object
+            HousekeepingService = housekeepingMock.Object,
+            LeaderElection = null
         });
 
         using var cts = new CancellationTokenSource();

@@ -235,9 +235,9 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
                 _mockPendingWorkQuery.Object,
                 _mockLabelSwapper.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance,
-                new DispatchRevertHandler(
+                new DispatchRevertService(
                     _dbFactory, _mockAgentResolver.Object, _mockRunService.Object, _transitionService,
-                    NullLogger<DispatchRevertHandler>.Instance)));
+                    NullLogger<DispatchRevertService>.Instance)));
     }
 
     private static async Task InvokeDrainPendingItems(PendingWorkItemDrainService service)

@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// <summary>
 /// Shared template resolution fallback: when a work item's AgentSelector is a subset of the template's
 /// label set, resolves the matching profile to get the full MatchLabels, then retries template lookup.
-/// Used by both <see cref="DispatchService"/> and <see cref="ConsolidationDispatchHandler"/>.
+/// Used by both <see cref="DispatchService"/> and <see cref="ConsolidationWorkItemDispatchService"/>.
 /// </summary>
 internal sealed class DispatchTemplateResolver
 {

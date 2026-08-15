@@ -89,7 +89,7 @@ public class StaleHeartbeatSweepPhaseTests
         _mockLogger.Verify(
             l => l.Warning(
                 It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{Age")),
-                It.IsAny<string>(),
+                It.IsAny<AgentId>(),
                 It.IsAny<double>()),
             Times.Once);
     }

@@ -120,7 +120,7 @@ public class ChatAgentSweepPhaseTests
         _mockLogger.Verify(
             l => l.Warning(
                 It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{AgeHours")),
-                It.IsAny<string>(),
+                It.IsAny<AgentId>(),
                 It.IsAny<double>()),
             Times.Once,
             "warning must be logged when chat agent has been registered for >4h");

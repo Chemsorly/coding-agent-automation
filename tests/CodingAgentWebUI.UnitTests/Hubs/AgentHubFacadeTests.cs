@@ -107,7 +107,7 @@ public sealed class AgentHubFacadeTests
         var msg = new AgentRegistrationMessage { AgentId = "a1", Hostname = "h1", Labels = new[] { "dotnet" } };
         var result = _facade.Register(msg, "conn-1");
         result.Should().NotBeNull();
-        result.AgentId.Should().Be("a1");
+        result.AgentId.Value.Should().Be("a1");
     }
 
     [Fact]

@@ -17,10 +17,10 @@ using System.Text.Json;
 namespace CodingAgentWebUI.UnitTests.Dispatch;
 
 /// <summary>
-/// Characterization tests for <see cref="DispatchRevertHandler"/>.
+/// Characterization tests for <see cref="DispatchRevertService"/>.
 /// Tests written before extraction to lock in behavior (#1871 prerequisite).
 /// </summary>
-public sealed class DispatchRevertHandlerTests : IDisposable
+public sealed class DispatchRevertServiceTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly InMemoryDbContextFactory _dbFactory;
@@ -28,10 +28,10 @@ public sealed class DispatchRevertHandlerTests : IDisposable
     private readonly OrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
 
-    public DispatchRevertHandlerTests()
+    public DispatchRevertServiceTests()
     {
         _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase($"DispatchRevertHandlerTest_{Guid.NewGuid()}")
+            .UseInMemoryDatabase($"DispatchRevertServiceTest_{Guid.NewGuid()}")
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
@@ -83,7 +83,7 @@ public sealed class DispatchRevertHandlerTests : IDisposable
         var workItemId = await InsertDispatchedItem(retryCount: 0);
         var throwingFactory = new AlwaysThrowingDbContextFactory();
         var failingTransition = new WorkItemTransitionService(throwingFactory, NullLogger<WorkItemTransitionService>.Instance);
-        var handler = new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, failingTransition, NullLogger<DispatchRevertHandler>.Instance);
+        var handler = new DispatchRevertService(_dbFactory, _mockResolver.Object, _runService, failingTransition, NullLogger<DispatchRevertService>.Instance);
 
         // Exception must be swallowed — stuck-item detector handles recovery
         var act = async () => await handler.TryRevertToPendingAsync(workItemId, incrementRetryCount: true);
@@ -99,7 +99,7 @@ public sealed class DispatchRevertHandlerTests : IDisposable
 
         var cancellationAwareFactory = new CancellationAwareDbContextFactory(_dbOptions);
         var transitionService = new WorkItemTransitionService(cancellationAwareFactory, NullLogger<WorkItemTransitionService>.Instance);
-        var handler = new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, transitionService, NullLogger<DispatchRevertHandler>.Instance);
+        var handler = new DispatchRevertService(_dbFactory, _mockResolver.Object, _runService, transitionService, NullLogger<DispatchRevertService>.Instance);
 
         // OCE from cancelled token must be swallowed
         var act = async () => await handler.TryRevertToPendingAsync(workItemId, incrementRetryCount: false, cts.Token);
@@ -303,8 +303,8 @@ public sealed class DispatchRevertHandlerTests : IDisposable
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    private DispatchRevertHandler CreateHandler() =>
-        new(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance);
+    private DispatchRevertService CreateHandler() =>
+        new(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertService>.Instance);
 
     private static JobDistributionRequest BuildRequest(string? runId) =>
         new()

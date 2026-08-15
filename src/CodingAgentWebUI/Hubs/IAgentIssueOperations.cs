@@ -11,9 +11,9 @@ public interface IHubIssueOperations
 {
     /// <summary>
     /// Swaps the agent label on the entity (issue or PR) using the appropriate provider.
-    /// Routes based on <paramref name="targetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
+    /// Routes based on <see cref="PipelineRun.LabelTargetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
     /// </summary>
-    Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind);
+    Task SwapLabelAsync(PipelineRun run, string newLabel);
 
     /// <summary>
     /// Posts a comment on the issue using the issue provider from the run's config.
