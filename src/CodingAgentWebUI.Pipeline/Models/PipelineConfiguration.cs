@@ -565,4 +565,16 @@ public sealed record PipelineConfiguration
     [Key(73)]
     public int HousekeepingBranchCleanupIntervalMinutes { get; init; } = 60;
 
+    // ── Consolidation dispatch settings ──────────────────────────────────────
+
+    /// <summary>
+    /// Maximum number of times the drain service will attempt to dispatch a consolidation job
+    /// to an agent before giving up and transitioning the run to <c>Failed</c>.
+    /// Non-consolidation jobs are not subject to this limit.
+    /// Default: 5.
+    /// </summary>
+    [Key(74)]
+    [ProjectOverridable(Order = 30)]
+    public int MaxConsolidationDispatchRetries { get; init; } = 5;
+
 }

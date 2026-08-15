@@ -47,19 +47,6 @@ public sealed class JobQueueDrainService : BackgroundService
     /// </summary>
     internal static readonly TimeSpan DefaultDrainInterval = TimeSpan.FromSeconds(10);
 
-    /// <summary>
-    /// Maximum number of times the drain service will attempt to dispatch a consolidation job
-    /// before giving up and transitioning the run to Failed. Matches the limit from the old
-    /// <c>DrainConsolidationJobsAsync</c> path that was refactored into this unified drain.
-    /// Non-consolidation jobs are not subject to this limit.
-    /// </summary>
-    /// <remarks>
-    /// TODO: This is currently a <c>const</c>. If runtime configurability is needed in the future
-    /// (e.g., via appsettings or <see cref="PipelineConfiguration"/>), promote to an
-    /// <c>IAppSettings</c>-backed property or a constructor-injected configuration object.
-    /// </remarks>
-    internal const int MaxConsolidationDispatchRetries = 5;
-
     internal JobQueueDrainService(
         JobQueueDrainDependencies deps)
     {
@@ -338,11 +325,21 @@ public sealed class JobQueueDrainService : BackgroundService
     {
         var nextAttempt = pendingJob.ConsolidationDispatchAttempt + 1;
 
-        if (nextAttempt >= MaxConsolidationDispatchRetries)
+        // TODO: LoadPipelineConfigAsync returns the global PipelineConfiguration without project overrides applied.
+        // PendingJob carries a Project property set at poll time; if a project sets MaxConsolidationDispatchRetries
+        // the override is silently ignored here (global value is always used). Fix by calling
+        // PipelineConfigurationResolver.ApplyProjectOverrides(config, pendingJob.Project) after loading.
+        // Also: this call is issued once per failing consolidation job per drain tick rather than once per tick.
+        // If the config store performs I/O and the queue accumulates many failing jobs, this can cause unexpected
+        // load. Consider hoisting the config load to the top of DrainAsync and passing it in.
+        var config = await _configStore.LoadPipelineConfigAsync(ct);
+        var maxRetries = config.MaxConsolidationDispatchRetries;
+
+        if (nextAttempt >= maxRetries)
         {
             _logger.Warning(
                 "Drain: consolidation job {RunId} failed dispatch {Attempt}/{Max} times, discarding and marking as Failed",
-                pendingJob.IssueIdentifier, nextAttempt, MaxConsolidationDispatchRetries);
+                pendingJob.IssueIdentifier, nextAttempt, maxRetries);
 
             _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
             await TryUpdateRunStatusAsync(pendingJob.IssueIdentifier, Pipeline.Models.ConsolidationRunStatus.Failed, ct);
@@ -351,7 +348,7 @@ public sealed class JobQueueDrainService : BackgroundService
 
         _logger.Warning(
             "Drain: failed to dispatch consolidation job {RunId} (attempt {Attempt}/{Max}), re-enqueuing",
-            pendingJob.IssueIdentifier, nextAttempt, MaxConsolidationDispatchRetries);
+            pendingJob.IssueIdentifier, nextAttempt, maxRetries);
 
         pendingJob = pendingJob with { ConsolidationDispatchAttempt = nextAttempt };
         _dispatcher.ReEnqueue(pendingJob);

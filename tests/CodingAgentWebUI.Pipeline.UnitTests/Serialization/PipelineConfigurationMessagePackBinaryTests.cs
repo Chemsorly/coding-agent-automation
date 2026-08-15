@@ -55,7 +55,7 @@ public class PipelineConfigurationMessagePackBinaryTests
     }
 
     /// <summary>
-    /// Verify that all 64 [Key]-annotated properties survive MessagePack round-trip with correct values.
+    /// Verify that all 75 [Key]-annotated properties (Keys 0–74) survive MessagePack round-trip with correct values.
     /// </summary>
     [Fact]
     public void MessagePackRoundTrip_FullyPopulatedConfig_PreservesAllPropertyValues()
@@ -128,6 +128,7 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.EnableIssueImageExtraction.Should().BeFalse();
         deserialized.EnableNativeImageParts.Should().BeFalse();
         deserialized.ImageDownloadTimeoutSeconds.Should().Be(60);
+        deserialized.MaxConsolidationDispatchRetries.Should().Be(7);
     }
 
     private static PipelineConfiguration CreateFullyPopulatedConfig() => new()
@@ -213,5 +214,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         EnableIssueImageExtraction = false,
         EnableNativeImageParts = false,
         ImageDownloadTimeoutSeconds = 60,
+        MaxConsolidationDispatchRetries = 7,
     };
 }
