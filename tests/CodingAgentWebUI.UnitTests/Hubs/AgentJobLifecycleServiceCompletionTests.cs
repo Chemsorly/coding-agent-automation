@@ -399,6 +399,10 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
-        _issueOps.Verify(i => i.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>()), Times.Never);
+        // TODO: Add a test that exercises HandleJobCompletedAsync and HandleJobRejectedAsync with a Review-type run
+        // (RunType == PipelineRunType.Review, LabelTargetKind == PullRequest). The refactor removed the explicit
+        // LabelTargetKind argument; routing is now derived from run.LabelTargetKind. Without a Review-run test,
+        // a regression in LabelTargetKind derivation for PR-type runs would go undetected here. (#2015)
+        _issueOps.Verify(i => i.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
     }
 }

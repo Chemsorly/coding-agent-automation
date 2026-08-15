@@ -217,49 +217,6 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         ReconciliationService.IsTimedOut(created, 100, DateTimeOffset.UtcNow).Should().BeFalse();
     }
 
-    // ── Stale Cleanup ───────────────────────────────────────────────────
-
-    [Fact(Skip = "ExecuteDeleteAsync not supported by EF Core InMemory provider")]
-    public async Task CleanupStaleWorkItems_OldTerminalItems_AreDeleted()
-    {
-        // Arrange: Succeeded item completed 10 days ago (retention = 7 days)
-        var staleId = Guid.NewGuid();
-        await InsertWorkItem(staleId, "owner/repo#stale", WorkItemStatus.Succeeded,
-            createdAt: DateTimeOffset.UtcNow.AddDays(-10),
-            completedAt: DateTimeOffset.UtcNow.AddDays(-10));
-
-        // Fresh Succeeded item completed 1 day ago (within retention)
-        var freshId = Guid.NewGuid();
-        await InsertWorkItem(freshId, "owner/repo#fresh", WorkItemStatus.Succeeded,
-            createdAt: DateTimeOffset.UtcNow.AddDays(-1),
-            completedAt: DateTimeOffset.UtcNow.AddDays(-1));
-
-        var service = CreateService(retentionDays: 7);
-        await service.CleanupStaleWorkItemsAsync(CancellationToken.None);
-
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var staleItem = await db.WorkItems.FindAsync(staleId);
-        var freshItem = await db.WorkItems.FindAsync(freshId);
-
-        staleItem.Should().BeNull("stale item should be deleted");
-        freshItem.Should().NotBeNull("fresh item should be retained");
-    }
-
-    [Fact(Skip = "ExecuteDeleteAsync not supported by EF Core InMemory provider")]
-    public async Task CleanupStaleWorkItems_ActiveItems_NeverDeleted()
-    {
-        var activeId = Guid.NewGuid();
-        await InsertWorkItem(activeId, "owner/repo#active", WorkItemStatus.Running,
-            createdAt: DateTimeOffset.UtcNow.AddDays(-30));
-
-        var service = CreateService(retentionDays: 7);
-        await service.CleanupStaleWorkItemsAsync(CancellationToken.None);
-
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.FindAsync(activeId);
-        item.Should().NotBeNull("active items must never be deleted regardless of age");
-    }
-
     // ── IsStale static helper ───────────────────────────────────────────
 
     [Fact]

@@ -27,13 +27,10 @@ public sealed class AgentIssueOperations : IHubIssueOperations
         _logger = logger;
     }
 
-    // TODO: The targetKind parameter is now redundant for provider config selection (run.ProviderConfigIdForLabel
-    // derives from run.LabelTargetKind). Consider removing targetKind from the interface or documenting that it
-    // must equal run.LabelTargetKind to avoid inconsistent routing if a future caller passes a different value.
     /// <inheritdoc />
-    public Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind)
+    public Task SwapLabelAsync(PipelineRun run, string newLabel)
     {
-        return _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, newLabel, targetKind, CancellationToken.None);
+        return _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, newLabel, run.LabelTargetKind, CancellationToken.None);
     }
 
     /// <inheritdoc />
