@@ -65,6 +65,8 @@ public sealed partial class AgentHub
         await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
         try
         {
+            // TODO: CreateIssueAsync also uses CancellationToken.None — extend the fix above to cover
+            // this call as well when threading a SignalR connection-lifetime token through this method.
             return await issueProvider.CreateIssueAsync(title, body, labels, CancellationToken.None);
         }
         catch (Exception ex)

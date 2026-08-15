@@ -79,13 +79,13 @@ public sealed partial class AgentHub
 
         // Derive targetKind from the run's RunType rather than trusting the caller-supplied value.
         // This prevents a buggy or compromised agent from routing label operations to the wrong entity.
-        var kind = GetLabelTargetKind(run);
+        // Note: the target kind is derived inside AgentIssueOperations.SwapLabelAsync from run.LabelTargetKind.
 
         _logger.Information(
             "RequestLabelChange: job {JobId} requesting label {Label} for issue {IssueIdentifier} (agent={AgentId}, currentStep={CurrentStep})",
             jobId.Value, newLabel, run.IssueIdentifier, run.AgentId, run.CurrentStep);
 
-        await SwapLabelAsync(run, newLabel, kind);
+        await SwapLabelAsync(run, newLabel);
     }
 
     // ── Token refresh ───────────────────────────────────────────────────

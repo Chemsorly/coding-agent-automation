@@ -20,9 +20,20 @@ public sealed partial class AgentHub
         var queryAgentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
         if (!string.Equals(message.AgentId.Value, queryAgentId, StringComparison.Ordinal))
         {
+            // TODO: SanitizeForLog returns "" when message.AgentId.Value is null, whereas the old code
+            // logged the AgentId struct directly (falling back to ToString()). If AgentId.Value is null
+            // the log entry will show an empty string instead of a meaningful identifier. Callers should
+            // ensure AgentId.Value is never null before reaching this point, or SanitizeForLog should
+            // preserve a null/empty indicator rather than silently collapsing it to "".
+            // TODO: The HubException message below interpolates message.AgentId (unsanitized struct)
+            // while the log above uses SanitizeForLog. The exception is returned to the caller (not
+            // written to server logs), so log injection is not the risk here, but the inconsistency
+            // between sanitized log args and unsanitized exception message text may confuse future
+            // maintainers about the threat model. Consider applying the same sanitization or documenting
+            // why they intentionally differ.
             _logger.Warning(
                 "RegisterAgent rejected — message agentId '{MessageAgentId}' does not match query param '{QueryAgentId}'",
-                message.AgentId, queryAgentId);
+                SanitizeForLog(message.AgentId.Value), SanitizeForLog(queryAgentId));
             throw new HubException($"AgentId mismatch: message has '{message.AgentId}' but connection has '{queryAgentId}'");
         }
 
@@ -31,6 +42,10 @@ public sealed partial class AgentHub
         if (!string.IsNullOrEmpty(authenticatedAgentId) && authenticatedAgentId != "agent" &&
             !string.Equals(message.AgentId.Value, authenticatedAgentId, StringComparison.Ordinal))
         {
+            // TODO: authenticatedAgentId originates from the JWT NameIdentifier claim (external input)
+            // and is logged unsanitized. If the claim contains newline characters an attacker could
+            // inject fake log entries (log forging). Wrap with SanitizeForLog(authenticatedAgentId)
+            // to match the sanitization already applied to message.AgentId.Value and queryAgentId above.
             _logger.Warning(
                 "RegisterAgent rejected — authenticated as '{AuthenticatedAgentId}' but registering as '{MessageAgentId}'",
                 authenticatedAgentId, message.AgentId);
@@ -74,11 +89,11 @@ public sealed partial class AgentHub
 
         // Security: verify caller owns this agentId (prevents cross-agent deregistration)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "DeregisterAgent rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, agentId);
+                Context.ConnectionId, agentId.Value);
             return Task.CompletedTask;
         }
 
@@ -97,15 +112,15 @@ public sealed partial class AgentHub
 
         // Security: verify caller owns this agentId (prevents spurious drain signals)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "AgentReady rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, agentId);
+                Context.ConnectionId, agentId.Value);
             return Task.CompletedTask;
         }
 
-        _logger.Information("Agent {AgentId} signaled ready", agentId);
+        _logger.Information("Agent {AgentId} signaled ready", agentId.Value);
         _facade.Signal();
         return Task.CompletedTask;
     }

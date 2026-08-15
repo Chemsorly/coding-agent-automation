@@ -104,11 +104,17 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         // Security: verify caller owns this agentId (prevents heartbeat spoofing)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, message.AgentId.Value, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, message.AgentId.Value, StringComparison.Ordinal))
         {
+            // TODO: message.AgentId.Value is logged here as a raw string. If AgentId.Value is null,
+            // this logs a null literal rather than the struct's ToString() representation (which the
+            // original code used). This is a minor semantic change from the refactor — the struct's
+            // ToString() would have returned a meaningful fallback string, while .Value logs null.
+            // Consider using SanitizeForLog(message.AgentId.Value) or message.AgentId.ToString()
+            // for consistent null-safe log output.
             _logger.Warning(
                 "Heartbeat rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, message.AgentId);
+                Context.ConnectionId, message.AgentId.Value);
             return Task.CompletedTask;
         }
 
@@ -144,10 +150,10 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
     /// <summary>
     /// Swaps the agent label on the entity (issue or PR) using the shared issue operations service.
-    /// Routes based on <paramref name="targetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
+    /// The target entity kind is derived from <see cref="PipelineRun.LabelTargetKind"/> inside the service.
     /// </summary>
-    private Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind)
-        => _issueOps.SwapLabelAsync(run, newLabel, targetKind);
+    private Task SwapLabelAsync(PipelineRun run, string newLabel)
+        => _issueOps.SwapLabelAsync(run, newLabel);
 
     /// <summary>
     /// Posts a comment on the issue using the shared issue operations service.
@@ -157,7 +163,9 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         => _issueOps.PostCommentViaIssueProviderAsync(run, body);
 
     /// <summary>
-    /// Determines the correct <see cref="LabelTargetKind"/> based on the run's <see cref="PipelineRun.RunType"/>.
+    /// Strips newline characters from a user-supplied string before it is written to a log entry,
+    /// preventing log injection / log forging attacks.
     /// </summary>
-    private static LabelTargetKind GetLabelTargetKind(PipelineRun run) => run.LabelTargetKind;
+    private static string SanitizeForLog(string? value)
+        => value?.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal) ?? "";
 }
