@@ -359,7 +359,7 @@ public partial class AgentCoding : IDisposable
         try
         {
             await PageService.CheckDrawerDependenciesAsync(
-                template, () => InvokeAsync(StateHasChanged), PageService.DrawerCancellationToken);
+                template, () => InvokeAsync(StateHasChanged), PageService.IssueDrawer.CancellationToken);
             await InvokeAsync(StateHasChanged);
         }
         catch (OperationCanceledException) { /* expected on drawer close */ }
