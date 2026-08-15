@@ -413,6 +413,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     #region RequestLabelChange
 
+    // TODO: Add a paired test that constructs a Review-type run (RunType == PipelineRunType.Review, LabelTargetKind == PullRequest)
+    // and verifies that SwapLabelAsync is still called correctly through RequestLabelChange. The key behavioral change
+    // introduced by removing the targetKind parameter is that routing is now driven exclusively by run.LabelTargetKind;
+    // without a Review-run variant the PullRequest routing path is not covered. (#2015)
     [Fact]
     public async Task RequestLabelChange_ValidRun_DelegatesToLabelService()
     {
@@ -422,7 +426,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHub();
         await hub.RequestLabelChange("job-1", "agent:error");
 
-        _mockIssueOps.Verify(s => s.SwapLabelAsync(run, "agent:error", LabelTargetKind.Issue), Times.Once);
+        _mockIssueOps.Verify(s => s.SwapLabelAsync(run, "agent:error"), Times.Once);
     }
 
     [Fact]
@@ -433,7 +437,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHub();
         await hub.RequestLabelChange("job-1", "agent:error");
 
-        _mockIssueOps.Verify(s => s.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>()), Times.Never);
+        _mockIssueOps.Verify(s => s.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
     }
 
     #endregion
