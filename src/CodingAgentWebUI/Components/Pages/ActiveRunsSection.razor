@@ -73,7 +73,7 @@
                                     <text>#@run.IssueIdentifier @run.IssueTitle</text>
                                 }
                             </td>
-                            <td title="@(run.AgentId ?? "—")">@(run.AgentId ?? "—")</td>
+                            <td title="@(run.AgentId?.Value ?? "—")">@(run.AgentId?.Value ?? "—")</td>
                             <td>
                                 <span class="monitoring-step monitoring-step-@run.CurrentStep.ToString().ToLowerInvariant()">
                                     @run.CurrentStep.ToDisplayName()
@@ -102,7 +102,7 @@
                             </td>
                             <td>@(string.IsNullOrEmpty(cRun.ProjectName) ? "—" : cRun.ProjectName)</td>
                             <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
-                            <td title="@(cAgent?.AgentId ?? "—")">@(cAgent?.AgentId ?? "—")</td>
+                            <td title="@(cAgent?.AgentId.Value ?? "—")">@(cAgent?.AgentId.Value ?? "—")</td>
                             <td>
                                 <span class="monitoring-step monitoring-step-running">Running</span>
                             </td>

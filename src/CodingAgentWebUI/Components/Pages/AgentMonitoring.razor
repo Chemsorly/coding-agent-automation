@@ -260,7 +260,7 @@
                         @foreach (var agent in _agents)
                         {
                             <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant() @(agent.Disabled ? "monitoring-row-disabled" : "") monitoring-row-clickable"
-                                @onclick="() => SelectAgent(agent.AgentId)">
+                                @onclick="() => SelectAgent(agent.AgentId.Value)">
                                 <td class="monitoring-mono" title="@agent.AgentId">@agent.AgentId</td>
                                 <td>
                                     @foreach (var label in agent.Labels)

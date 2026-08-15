@@ -204,7 +204,7 @@ public partial class AgentMonitoring : IDisposable
     private void SelectAgent(string agentId)
     {
         // Find the active run for this agent and open the run detail modal
-        var run = _activeRuns.FirstOrDefault(r => r.AgentId == agentId);
+        var run = _activeRuns.FirstOrDefault(r => r.AgentId?.Value == agentId);
         if (run != null)
         {
             OpenRunDetail(run.RunId);

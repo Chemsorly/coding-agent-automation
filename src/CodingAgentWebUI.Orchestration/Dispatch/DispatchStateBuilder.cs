@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Lightweight projection of pending work items (no Payload loaded).
-/// Shared between <see cref="DispatchService"/>, <see cref="ConsolidationDispatchHandler"/>,
+/// Shared between <see cref="DispatchService"/>, <see cref="ConsolidationWorkItemDispatchService"/>,
 /// and <see cref="DispatchLifecycleService"/>.
 /// </summary>
 internal sealed record PendingWorkItemProjection
@@ -57,7 +57,7 @@ internal sealed record DispatchCandidate(
 /// <summary>
 /// Encapsulates the shared dispatch state-building prologue and per-item gating logic
 /// that was previously duplicated between <see cref="DispatchService"/> and
-/// <see cref="ConsolidationDispatchHandler"/>. Builds the dispatch state (pending items,
+/// <see cref="ConsolidationWorkItemDispatchService"/>. Builds the dispatch state (pending items,
 /// concurrency map, PVC availability) and yields eligible candidates lazily via
 /// <see cref="GetEligibleCandidatesAsync"/>.
 /// </summary>
@@ -97,7 +97,7 @@ internal sealed class DispatchStateBuilder
     /// <param name="taskTypeFilter">
     /// Filter expression for the TaskType column.
     /// DispatchService: w.TaskType != WorkItemTaskType.Consolidation
-    /// ConsolidationDispatchHandler: w.TaskType == WorkItemTaskType.Consolidation
+    /// ConsolidationWorkItemDispatchService: w.TaskType == WorkItemTaskType.Consolidation
     /// </param>
     /// <param name="recordTelemetry">Whether to record poll telemetry (only DispatchService does this).</param>
     /// <param name="ct">Cancellation token.</param>
@@ -148,7 +148,7 @@ internal sealed class DispatchStateBuilder
             // Build concurrency state: count running/dispatched per selector group
             // TODO: This uses an inline status filter instead of the .WhereActive() extension method from
             // WorkItemQueryExtensions.cs. Both the old DispatchService.BuildDispatchStateAsync and
-            // ConsolidationDispatchHandler.BuildDispatchStateAsync used .WhereActive(). If WhereActive()
+            // ConsolidationWorkItemDispatchService.BuildDispatchStateAsync used .WhereActive(). If WhereActive()
             // is ever updated to include additional statuses (e.g. a new Paused or Retrying state),
             // this inline filter will silently diverge and undercount active items. Replace with
             // .WhereActive() to restore the single-definition-of-active contract. See Correctness WARNING (Issue #1910).

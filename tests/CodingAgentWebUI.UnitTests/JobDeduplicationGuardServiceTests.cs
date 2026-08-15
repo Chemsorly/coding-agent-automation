@@ -227,7 +227,7 @@ public class JobDeduplicationGuardServiceTests
         var service = CreateService(registry);
         var agent = service.SelectAgent(Array.Empty<string>());
         agent.Should().NotBeNull();
-        agent!.AgentId.Should().Be("agent-1");
+        agent!.AgentId.Value.Should().Be("agent-1");
     }
 
     [Fact]

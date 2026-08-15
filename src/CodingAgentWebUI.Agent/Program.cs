@@ -100,7 +100,7 @@ try
     }
 
     // ── Agent identity (single source of truth for AGENT_ID) ──
-    builder.Services.Add(ServiceDescriptor.Singleton(typeof(AgentId), new AgentId(startupConfig.AgentId)));
+    builder.Services.Add(ServiceDescriptor.Singleton(typeof(AgentId), startupConfig.AgentId));
 
     // ── Hub connection manager ──
     builder.Services.AddSingleton(sp =>

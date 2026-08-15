@@ -26,7 +26,7 @@ public sealed record ActiveRunSummary
     public required string IssueIdentifier { get; init; }
     public required string IssueTitle { get; init; }
     public required PipelineRunType RunType { get; init; }
-    public required string? AgentId { get; init; }
+    public required AgentId? AgentId { get; init; }
     public required DateTimeOffset StartedAt { get; init; }
     public required string? ProjectName { get; init; }
 
