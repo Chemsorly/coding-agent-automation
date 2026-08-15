@@ -221,7 +221,7 @@ public class AgentAuthTests
 
         var agent = _registry.GetByConnectionId("conn-1");
         agent.Should().NotBeNull();
-        agent!.AgentId.Should().Be("agent-1");
+        agent!.AgentId.Value.Should().Be("agent-1");
     }
 
     [Fact]

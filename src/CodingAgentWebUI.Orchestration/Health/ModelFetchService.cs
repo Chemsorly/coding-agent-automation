@@ -85,7 +85,7 @@ public sealed class ModelFetchService : IModelFetchReceiver
         {
             agent = _registry.GetAllAgents()
                 .FirstOrDefault(a =>
-                    a.AgentId.StartsWith(agentIdPrefix, StringComparison.Ordinal) &&
+                    a.AgentId.Value.StartsWith(agentIdPrefix, StringComparison.Ordinal) &&
                     (a.Status == AgentStatus.Idle || a.Status == AgentStatus.Busy));
 
             if (agent is not null)

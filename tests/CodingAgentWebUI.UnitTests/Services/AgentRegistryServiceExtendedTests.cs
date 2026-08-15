@@ -41,7 +41,7 @@ public class AgentRegistryServiceExtendedTests
         var entry = RegisterAgent("agent-1", "conn-1");
 
         entry.Status.Should().Be(AgentStatus.Idle);
-        entry.AgentId.Should().Be("agent-1");
+        entry.AgentId.Value.Should().Be("agent-1");
         entry.ConnectionId.Should().Be("conn-1");
     }
 
@@ -268,7 +268,7 @@ public class AgentRegistryServiceExtendedTests
         var idle = _registry.GetIdleAgents();
 
         idle.Should().HaveCount(1);
-        idle[0].AgentId.Should().Be("agent-1");
+        idle[0].AgentId.Value.Should().Be("agent-1");
     }
 
     [Fact]

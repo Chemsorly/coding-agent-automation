@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 /// <summary>
 /// Unit tests for <see cref="DispatchAttemptService"/>.
 /// Verifies that <c>TransitionToDispatchedAsync</c> applies the correct entity mutations
-/// and that <c>RevertOnFailureAsync</c> delegates faithfully to <see cref="DispatchRevertHandler"/>
+/// and that <c>RevertOnFailureAsync</c> delegates faithfully to <see cref="DispatchRevertService"/>
 /// with the correct token semantics.
 /// Extracted from <see cref="PendingWorkItemDrainService"/> per issue #1914.
 /// </summary>
@@ -74,8 +74,8 @@ public sealed class DispatchAttemptServiceTests : IDisposable
         // Arrange: use a factory that always throws so the transition fails
         var throwingFactory = new AlwaysThrowingDbContextFactory();
         var failingTransition = new WorkItemTransitionService(throwingFactory, NullLogger<WorkItemTransitionService>.Instance);
-        var revertHandler = new DispatchRevertHandler(
-            _dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance);
+        var revertHandler = new DispatchRevertService(
+            _dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertService>.Instance);
         var service = new DispatchAttemptService(failingTransition, revertHandler);
 
         // Act & Assert: exception propagates to caller (caller sets dispatchedSuccessfully = false)
@@ -132,8 +132,8 @@ public sealed class DispatchAttemptServiceTests : IDisposable
         var workItemId = await InsertDispatchedWorkItem(initialRetryCount: 0);
         var cancellationAwareFactory = new CancellationAwareDbContextFactory(_dbOptions);
         var cancellingTransition = new WorkItemTransitionService(cancellationAwareFactory, NullLogger<WorkItemTransitionService>.Instance);
-        var revertHandler = new DispatchRevertHandler(
-            _dbFactory, _mockResolver.Object, _runService, cancellingTransition, NullLogger<DispatchRevertHandler>.Instance);
+        var revertHandler = new DispatchRevertService(
+            _dbFactory, _mockResolver.Object, _runService, cancellingTransition, NullLogger<DispatchRevertService>.Instance);
         var service = new DispatchAttemptService(cancellingTransition, revertHandler);
 
         using var cts = new CancellationTokenSource();
@@ -143,7 +143,7 @@ public sealed class DispatchAttemptServiceTests : IDisposable
         // TODO: This assertion is weak — it verifies no exception propagates, but cannot distinguish
         // "token forwarded and OperationCanceledException swallowed by TryRevertToPendingAsync" from
         // "token not forwarded at all and the revert succeeded silently." A stronger test would use
-        // a spy/mock on DispatchRevertHandler to verify the cancelled token was passed through,
+        // a spy/mock on DispatchRevertService to verify the cancelled token was passed through,
         // or assert the item remains in Dispatched state (proving the revert was skipped).
         var act = () => service.RevertOnFailureAsync(workItemId, incrementRetryCount: false, cts.Token);
         await act.Should().NotThrowAsync("RevertOnFailureAsync must swallow cancellation exceptions");
@@ -156,8 +156,8 @@ public sealed class DispatchAttemptServiceTests : IDisposable
         var workItemId = await InsertDispatchedWorkItem(initialRetryCount: 0);
         var throwingFactory = new AlwaysThrowingDbContextFactory();
         var failingTransition = new WorkItemTransitionService(throwingFactory, NullLogger<WorkItemTransitionService>.Instance);
-        var revertHandler = new DispatchRevertHandler(
-            _dbFactory, _mockResolver.Object, _runService, failingTransition, NullLogger<DispatchRevertHandler>.Instance);
+        var revertHandler = new DispatchRevertService(
+            _dbFactory, _mockResolver.Object, _runService, failingTransition, NullLogger<DispatchRevertService>.Instance);
         var service = new DispatchAttemptService(failingTransition, revertHandler);
 
         // Act & Assert: exception is swallowed (stuck-item detector handles unreverted items)
@@ -168,8 +168,8 @@ public sealed class DispatchAttemptServiceTests : IDisposable
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private DispatchAttemptService CreateService() =>
-        new(_transitionService, new DispatchRevertHandler(
-            _dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance));
+        new(_transitionService, new DispatchRevertService(
+            _dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertService>.Instance));
 
     private async Task<Guid> InsertPendingWorkItem()
     {
@@ -238,7 +238,7 @@ public sealed class DispatchAttemptServiceTests : IDisposable
     /// A <see cref="IDbContextFactory{PipelineDbContext}"/> that throws
     /// <see cref="OperationCanceledException"/> when called with a cancelled token.
     /// Used to verify that <see cref="DispatchAttemptService.RevertOnFailureAsync"/> forwards
-    /// the cancellation token to <see cref="DispatchRevertHandler.TryRevertToPendingAsync"/>.
+    /// the cancellation token to <see cref="DispatchRevertService.TryRevertToPendingAsync"/>.
     /// </summary>
     private sealed class CancellationAwareDbContextFactory : IDbContextFactory<PipelineDbContext>
     {

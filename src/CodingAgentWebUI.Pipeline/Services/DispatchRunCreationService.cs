@@ -181,6 +181,8 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
         var initiatedBy = request.InitiatedBy;
         var runType = request.RunType;
 
+        AgentId? agentIdTyped = agentId is { } nonNullAgentId ? (AgentId)nonNullAgentId : (AgentId?)null;
+
         var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
         await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
         var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
@@ -197,7 +199,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
                 RepoProviderConfigId = repoProviderId.Value,
                 RunType = PipelineRunType.Review,
                 InitiatedBy = initiatedBy,
-                AgentId = agentId,
+                AgentId = agentIdTyped,
                 AgentProviderConfigId = agentProviderId.Value,
                 BrainProviderConfigId = brainProviderId
             }),
@@ -210,7 +212,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
                 RepoProviderConfigId = repoProviderId.Value,
                 RunType = runType,
                 InitiatedBy = initiatedBy,
-                AgentId = agentId,
+                AgentId = agentIdTyped,
                 AgentProviderConfigId = agentProviderId.Value,
                 BrainProviderConfigId = brainProviderId
             }),
@@ -222,7 +224,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
                 IssueProviderConfigId = issueProviderId.Value,
                 RepoProviderConfigId = repoProviderId.Value,
                 InitiatedBy = initiatedBy,
-                AgentId = agentId,
+                AgentId = agentIdTyped,
                 AgentProviderConfigId = agentProviderId.Value,
                 BrainProviderConfigId = brainProviderId
             })

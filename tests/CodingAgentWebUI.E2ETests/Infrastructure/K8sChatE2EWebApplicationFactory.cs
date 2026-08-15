@@ -271,6 +271,11 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<Prog
         public Task ProbeAsync(CancellationToken ct) => Task.CompletedTask;
     }
 
+    // TODO: This private AlwaysLeaderElectionService is a duplicate of the production
+    // CodingAgentWebUI.Orchestration.LeaderElection.AlwaysLeaderElectionService introduced
+    // in the fix for issue #2009. Replace this private copy with a reference to the production
+    // type to avoid divergence: if ILeaderElectionService gains a new member, this copy will
+    // cause a compilation failure that requires a manual sync.
     private sealed class AlwaysLeaderElectionService : ILeaderElectionService
     {
         public bool IsLeader => true;

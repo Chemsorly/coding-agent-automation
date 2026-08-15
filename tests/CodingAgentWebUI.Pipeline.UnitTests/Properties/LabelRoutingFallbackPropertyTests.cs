@@ -120,7 +120,7 @@ public class LabelRoutingFallbackPropertyTests
 
         var selected = dispatcher.SelectAgent(requiredLabels);
         selected.Should().NotBeNull();
-        selected!.AgentId.Should().Be("agent-1");
+        selected!.AgentId.Value.Should().Be("agent-1");
     }
 
     /// <summary>

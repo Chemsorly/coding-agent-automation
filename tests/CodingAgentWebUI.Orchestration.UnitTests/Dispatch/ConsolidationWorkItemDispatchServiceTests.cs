@@ -15,11 +15,11 @@ using System.Reflection;
 namespace CodingAgentWebUI.Orchestration.UnitTests.Dispatch;
 
 /// <summary>
-/// Unit tests for <see cref="ConsolidationDispatchHandler"/>.
+/// Unit tests for <see cref="ConsolidationWorkItemDispatchService"/>.
 /// Covers: lifecycle (leader-wait, poll-loop, leadership loss), CascadeFailureAsync paths,
 /// non-fatal exception handling, constructor paths.
 /// </summary>
-public class ConsolidationDispatchHandlerTests
+public class ConsolidationWorkItemDispatchServiceTests
 {
     // ── Lifecycle tests ──────────────────────────────────────────────────
 
@@ -531,7 +531,7 @@ public class ConsolidationDispatchHandlerTests
 
         var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build();
 
-        var deps = new ConsolidationDispatchHandlerDependencies(
+        var deps = new ConsolidationWorkItemDispatchServiceDependencies(
             dbFactoryMock.Object,
             leaderElectionMock.Object,
             lifecycle,
@@ -540,7 +540,7 @@ public class ConsolidationDispatchHandlerTests
             TransitionService: transitionService);
         // StateBuilder intentionally omitted (null by default)
 
-        var act = () => new ConsolidationDispatchHandler(deps);
+        var act = () => new ConsolidationWorkItemDispatchService(deps);
         act.Should().Throw<ArgumentNullException>()
             .WithParameterName("StateBuilder");
     }
@@ -572,7 +572,7 @@ public class ConsolidationDispatchHandlerTests
             new DispatchTemplateResolver(null, JobTemplateStore.CreateEmpty()),
             new DispatchServiceOptions());
 
-        var deps = new ConsolidationDispatchHandlerDependencies(
+        var deps = new ConsolidationWorkItemDispatchServiceDependencies(
             dbFactoryMock.Object,
             leaderElectionMock.Object,
             lifecycle,
@@ -581,7 +581,7 @@ public class ConsolidationDispatchHandlerTests
             TransitionService: transitionService,
             StateBuilder: stateBuilder);
 
-        var handler = new ConsolidationDispatchHandler(deps);
+        var handler = new ConsolidationWorkItemDispatchService(deps);
 
         handler.Should().NotBeNull();
     }
@@ -593,7 +593,7 @@ public class ConsolidationDispatchHandlerTests
     /// DispatchServiceLifecycleTests. Must NOT use IHostedService.StartAsync, which
     /// wraps exceptions differently and can mask failures.
     /// </summary>
-    private static Task InvokeExecuteAsync(ConsolidationDispatchHandler handler, CancellationToken stoppingToken)
+    private static Task InvokeExecuteAsync(ConsolidationWorkItemDispatchService handler, CancellationToken stoppingToken)
     {
         var method = typeof(BackgroundService).GetMethod("ExecuteAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);
@@ -607,11 +607,11 @@ public class ConsolidationDispatchHandlerTests
     }
 
     /// <summary>
-    /// Creates a ConsolidationDispatchHandler with a controllable leader election and a
+    /// Creates a ConsolidationWorkItemDispatchService with a controllable leader election and a
     /// provided IDbContextFactory mock. The factory is used by BuildStateAsync, so calls
     /// to CreateDbContextAsync reflect poll cycle invocations.
     /// </summary>
-    private static ConsolidationDispatchHandler CreateHandlerWithLeaderElection(
+    private static ConsolidationWorkItemDispatchService CreateHandlerWithLeaderElection(
         ILeaderElectionService leaderElection,
         IDbContextFactory<PipelineDbContext> dbFactory)
     {
@@ -635,8 +635,8 @@ public class ConsolidationDispatchHandlerTests
             new DispatchTemplateResolver(null, JobTemplateStore.CreateEmpty()),
             options);
 
-        return new ConsolidationDispatchHandler(
-            new ConsolidationDispatchHandlerDependencies(
+        return new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
                 dbFactory,
                 leaderElection,
                 lifecycle,
@@ -647,7 +647,7 @@ public class ConsolidationDispatchHandlerTests
             options);
     }
 
-    private static ConsolidationDispatchHandler CreateHandler(
+    private static ConsolidationWorkItemDispatchService CreateHandler(
         IConsolidationService? consolidationService = null,
         IConsolidationRunStore? consolidationRunStore = null)
     {
@@ -673,8 +673,8 @@ public class ConsolidationDispatchHandlerTests
             new DispatchTemplateResolver(null, JobTemplateStore.CreateEmpty()),
             options);
 
-        return new ConsolidationDispatchHandler(
-            new ConsolidationDispatchHandlerDependencies(
+        return new ConsolidationWorkItemDispatchService(
+            new ConsolidationWorkItemDispatchServiceDependencies(
                 dbFactoryMock.Object,
                 leaderElectionMock.Object,
                 lifecycle,

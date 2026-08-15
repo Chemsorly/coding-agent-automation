@@ -143,7 +143,7 @@ public partial class TemplateTableSection
             QualityGates = matchedQgs.Select(q => q.DisplayName).ToList(),
             Reviewers = matchedRvs.Select(r => $"{r.DisplayName} ({r.Agents.Count} agent{(r.Agents.Count != 1 ? "s" : "")})").ToList(),
             Profiles = matchedProfiles.Select(p => p.DisplayName).ToList(),
-            Agents = allAgents.Select(a => a.AgentId).ToList(),
+            Agents = allAgents.Select(a => a.AgentId.Value).ToList(),
             OnlineAgentCount = onlineCount
         };
     }

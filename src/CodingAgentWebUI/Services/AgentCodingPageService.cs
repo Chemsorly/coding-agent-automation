@@ -449,23 +449,8 @@ public class AgentCodingPageService : IDisposable
 
     // ── PR Drawer Data ──
 
-    private async Task<string?> LoadPrDrawerPageAsync(PipelineJobTemplate template)
-    {
-        _prDrawer.Loading = true;
-        _prDrawer.Page = 1;
-        try
-        {
-            var repoConfig = RepoProviders.FirstOrDefault(p => p.Id == template.RepoProviderId);
-            if (repoConfig == null) { _prDrawer.Items = new(); _prDrawer.Loading = false; return null; }
-            await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
-            var labels = _prDrawer.SelectedLabels.Count > 0 ? _prDrawer.SelectedLabels : null;
-            var result = await repoProvider.ListOpenPullRequestsAsync(_prDrawer.Page, 15, labels, CancellationToken.None);
-            _prDrawer.Items = result.Items.ToList(); _prDrawer.HasMore = result.HasMore;
-            return null;
-        }
-        catch (Exception ex) { _prDrawer.Items = new(); return $"Failed to load pull requests: {ex.Message}"; }
-        finally { _prDrawer.Loading = false; }
-    }
+    private Task<string?> LoadPrDrawerPageAsync(PipelineJobTemplate template)
+        => LoadPrDrawerPageAsync(template, 1);
 
     private async Task<string?> LoadPrDrawerLabelsAsync(PipelineJobTemplate template)
     {
