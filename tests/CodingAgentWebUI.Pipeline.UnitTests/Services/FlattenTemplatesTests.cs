@@ -52,7 +52,8 @@ public class FlattenTemplatesTests : IAsyncDisposable
             WorkDistributor = null,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            HousekeepingService = null
+            HousekeepingService = null,
+            LeaderElection = null
         });
         return _loopService;
     }
