@@ -119,7 +119,7 @@ public sealed class AgentHubIssueProxyTests
         var hub = CreateHub();
         await hub.RequestLabelChange("job-1", AgentLabels.Done);
 
-        _mockIssueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<LabelTargetKind>()), Times.Once);
+        _mockIssueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done), Times.Once);
     }
 
     // ── RequestCreateIssue ────────────────────────────────────────────────

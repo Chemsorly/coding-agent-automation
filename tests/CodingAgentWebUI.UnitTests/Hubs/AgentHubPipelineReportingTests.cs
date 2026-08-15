@@ -469,7 +469,7 @@ public sealed class AgentHubPipelineReportingTests
 
         await hub.RequestLabelChange("job-1", "invalid:not-a-real-label");
 
-        mockIssueOps.Verify(s => s.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>()),
+        mockIssueOps.Verify(s => s.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()),
             Times.Never);
     }
 
@@ -501,7 +501,7 @@ public sealed class AgentHubPipelineReportingTests
 
         await hub.RequestLabelChange("job-1", string.Empty);
 
-        mockIssueOps.Verify(s => s.SwapLabelAsync(run, string.Empty, It.IsAny<LabelTargetKind>()), Times.Once);
+        mockIssueOps.Verify(s => s.SwapLabelAsync(run, string.Empty), Times.Once);
     }
 
     // TODO: Add a test that passes a valid, non-gated pipeline label (e.g. AgentLabels.Done) and
@@ -540,7 +540,7 @@ public sealed class AgentHubPipelineReportingTests
         await hub.RequestLabelChange("job-1", AgentLabels.EpicApproved);
 
         mockIssueOps.Verify(
-            s => s.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>()),
+            s => s.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()),
             Times.Never,
             "SwapLabelAsync must not be called for a human-gated label");
 
