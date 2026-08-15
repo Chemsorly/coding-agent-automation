@@ -83,8 +83,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
-        // TODO: Add upper bound for 'page' parameter to prevent integer overflow in (page - 1) * pageSize.
-        // With page=2_147_485 and pageSize=1000, unchecked multiplication wraps negative.
+        if ((long)(page - 1) * pageSize > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(page), page,
+                $"Value would cause overflow when computing the page offset. Maximum page for pageSize={pageSize} is {int.MaxValue / pageSize + 1}.");
 
         return await GetRunHistoryPagedInternalAsync(page, pageSize, ct).ConfigureAwait(false);
     }

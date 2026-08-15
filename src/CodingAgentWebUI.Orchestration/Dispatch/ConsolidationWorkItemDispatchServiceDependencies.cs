@@ -10,10 +10,10 @@ using Microsoft.Extensions.Configuration;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Groups the core dependencies of <see cref="ConsolidationDispatchHandler"/> to reduce
+/// Groups the core dependencies of <see cref="ConsolidationWorkItemDispatchService"/> to reduce
 /// constructor parameter count (S107). Optional members default to null.
 /// </summary>
-internal sealed record ConsolidationDispatchHandlerDependencies(
+internal sealed record ConsolidationWorkItemDispatchServiceDependencies(
     IDbContextFactory<PipelineDbContext> DbFactory,
     ILeaderElectionService LeaderElection,
     DispatchLifecycleService Lifecycle,

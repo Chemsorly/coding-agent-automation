@@ -164,7 +164,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         {
             _logger.Warning("JobRejected: swapping label to agent:error for issue {IssueIdentifier} (jobId={JobId}, retries exhausted)",
                 run.IssueIdentifier, jobId.Value);
-            await _issueOps.SwapLabelAsync(run, AgentLabels.Error, GetLabelTargetKind(run));
+            await _issueOps.SwapLabelAsync(run, AgentLabels.Error);
         }
         catch (Exception ex)
         {
@@ -303,7 +303,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 "Job {JobId} ReportJobCompleted swapping label to {Label} for issue {IssueIdentifier} (finalStep={FinalStep}, finalLabel={FinalLabel})",
                 jobId.Value, label, run.IssueIdentifier, payload.FinalStep, payload.FinalLabel ?? "null");
             var swLabel = Stopwatch.StartNew();
-            await _issueOps.SwapLabelAsync(run, label, GetLabelTargetKind(run));
+            await _issueOps.SwapLabelAsync(run, label);
             _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId.Value, swLabel.ElapsedMilliseconds);
         }
 
@@ -343,11 +343,6 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             _changeNotifier.NotifyChange();
         }
     }
-
-    /// <summary>
-    /// Determines the correct <see cref="LabelTargetKind"/> based on the run's LabelTargetKind property.
-    /// </summary>
-    private static LabelTargetKind GetLabelTargetKind(PipelineRun run) => run.LabelTargetKind;
 
     /// <summary>
     /// Applies key-value metadata from step transitions to the PipelineRun.

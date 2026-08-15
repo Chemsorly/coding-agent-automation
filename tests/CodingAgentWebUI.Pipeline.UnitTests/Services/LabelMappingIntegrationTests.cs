@@ -36,7 +36,7 @@ public class LabelMappingIntegrationTests
 
         // Assert: Agent with superset labels is selected
         selected.Should().NotBeNull();
-        selected!.AgentId.Should().Be("agent-dotnet");
+        selected!.AgentId.Value.Should().Be("agent-dotnet");
     }
 
     [Fact]
@@ -126,7 +126,7 @@ public class LabelMappingIntegrationTests
 
         // Assert
         selected.Should().NotBeNull();
-        selected!.AgentId.Should().Be("agent-polyglot");
+        selected!.AgentId.Value.Should().Be("agent-polyglot");
     }
 
     [Fact]
@@ -260,7 +260,7 @@ public class LabelMappingIntegrationTests
 
         // Assert: Disabled agent skipped, enabled agent selected
         selected.Should().NotBeNull();
-        selected!.AgentId.Should().Be("agent-enabled");
+        selected!.AgentId.Value.Should().Be("agent-enabled");
     }
 
     [Fact]
@@ -464,7 +464,7 @@ public class LabelMappingIntegrationTests
 
         // Assert: Case-insensitive match succeeds
         selected.Should().NotBeNull();
-        selected!.AgentId.Should().Be("agent-dotnet");
+        selected!.AgentId.Value.Should().Be("agent-dotnet");
     }
 
     [Fact]

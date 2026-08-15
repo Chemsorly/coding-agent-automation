@@ -45,7 +45,7 @@ public class AgentRegistryPropertyTests
         // Exactly one entry exists
         registry.GetAllAgents().Should().HaveCount(1);
         entry.Status.Should().Be(AgentStatus.Idle);
-        entry.AgentId.Should().Be(agentId.Get);
+        entry.AgentId.Value.Should().Be(agentId.Get);
         entry.ConnectionId.Should().Be(connectionId.Get);
     }
 

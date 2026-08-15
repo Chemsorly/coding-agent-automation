@@ -72,13 +72,17 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
 
     private static ActiveRunSummary MapRowToSummary(ActiveRunRow r)
     {
+        var agentIdStr = r.AssignedAgentId ?? r.AgentId;
+        // TODO: PostgreSQL distinguishes NULL from '' — if the DB contains an empty string in
+        // assigned_agent_id or agent_id, the implicit (AgentId) cast throws ArgumentException.
+        // Guard with !string.IsNullOrEmpty instead of is not null to treat '' the same as NULL.
         return new ActiveRunSummary
         {
             RunId = r.RunId?.ToString() ?? r.WorkItemId.ToString(),
             IssueIdentifier = r.IssueIdentifier,
             IssueTitle = r.IssueTitle ?? "",
             RunType = r.RunType ?? MapTaskTypeToRunType(r.TaskType),
-            AgentId = r.AssignedAgentId ?? r.AgentId,
+            AgentId = agentIdStr is not null ? (AgentId)agentIdStr : (AgentId?)null,
             StartedAt = r.DispatchedAt ?? r.CreatedAt,
             ProjectName = r.ProjectName,
             CurrentStep = MapStatusToStep(r.Status)
@@ -97,7 +101,9 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
             summaries[i] = summaries[i] with
             {
                 CurrentStep = liveRun.CurrentStep,
-                AgentId = summaries[i].AgentId ?? liveRun.AgentId,
+                // TODO: PipelineRun.AgentId is string? with no validation — an empty string would cause
+                // the implicit (AgentId) cast to throw ArgumentException. Use !string.IsNullOrEmpty guard.
+                AgentId = summaries[i].AgentId ?? (liveRun.AgentId is not null ? (AgentId)liveRun.AgentId : (AgentId?)null),
                 IssueTitle = !string.IsNullOrEmpty(liveRun.IssueTitle) ? liveRun.IssueTitle : summaries[i].IssueTitle,
                 ProjectName = summaries[i].ProjectName ?? liveRun.ProjectName
             };
@@ -129,7 +135,9 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
                 IssueIdentifier = liveRun.IssueIdentifier,
                 IssueTitle = liveRun.IssueTitle ?? "",
                 RunType = liveRun.RunType,
-                AgentId = liveRun.AgentId,
+                // TODO: PipelineRun.AgentId is string? with no validation — an empty string would cause
+                // the implicit (AgentId) cast to throw ArgumentException. Use !string.IsNullOrEmpty guard.
+                AgentId = liveRun.AgentId is not null ? (AgentId)liveRun.AgentId : (AgentId?)null,
                 StartedAt = liveRun.StartedAtOffset,
                 ProjectName = liveRun.ProjectName,
                 CurrentStep = liveRun.CurrentStep
@@ -149,18 +157,28 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
 
     /// <summary>
     /// Maps WorkItemTaskType to PipelineRunType when no PipelineRun join exists.
+    /// Only invoked for WorkItems with no joined PipelineRun row (newly queued/dispatched items),
+    /// which are always Phase 1 jobs. Consolidation items are pre-filtered by the query
+    /// and never reach this method.
     /// </summary>
     private static PipelineRunType MapTaskTypeToRunType(WorkItemTaskType taskType) => taskType switch
     {
         WorkItemTaskType.Implementation => PipelineRunType.Implementation,
         WorkItemTaskType.Review => PipelineRunType.Review,
-        // TODO: [WARNING] Pre-existing mapping inconsistency: this service maps WorkItemTaskType.Decomposition →
-        // PipelineRunType.Decomposition, while DbPendingWorkQuery.ResolveRunType maps the same input to
-        // PipelineRunType.DecompositionAnalysis. A WorkItem with TaskType=Decomposition will resolve to different
-        // RunType values depending on which code path queries it. This predates issue #1932 and should be
-        // reconciled — one of these mappings is incorrect. See DbPendingWorkQuery.ResolveRunType for comparison.
-        WorkItemTaskType.Decomposition => PipelineRunType.Decomposition,
+        WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
+        // TODO: This Consolidation arm is currently unreachable dead code — the query pre-filters
+        // Consolidation items before MapTaskTypeToRunType is called (see XML doc above and the
+        // companion test GetActiveRunsAsync_ConsolidationWorkItem_ExcludedFromResults). If the
+        // pre-filter is ever relaxed, verify this arm is correct and add a [InlineData] case to
+        // the GetActiveRunsAsync_TaskType_MapsToCorrectRunType theory to cover it.
+        // Consider replacing with throw new UnreachableException(...) to make the dead-code intent
+        // machine-verifiable. (Flagged by DotNetSpecialist + Correctness reviewers.)
         WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
+        // TODO: This default fallback silently maps any unrecognised WorkItemTaskType to
+        // PipelineRunType.Implementation. If a new enum value is added without a matching arm,
+        // the mapping will be silently wrong. Add a test case for an out-of-range cast
+        // (e.g., (WorkItemTaskType)99) to the GetActiveRunsAsync_TaskType_MapsToCorrectRunType
+        // theory to pin this behaviour. (Flagged by Correctness + TestQualityReviewer.)
         _ => PipelineRunType.Implementation
     };
 

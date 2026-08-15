@@ -377,7 +377,8 @@ public class PipelineLoopPropertyTests
             WorkDistributor = distributor,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            HousekeepingService = null
+            HousekeepingService = null,
+            LeaderElection = null
         });
     }
 }

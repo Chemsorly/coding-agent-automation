@@ -65,7 +65,7 @@
                             <td class="monitoring-mono">@GetProviderName(profile.AgentProviderConfigId)</td>
                             <td><Icon Name="@(profile.Enabled ? "check-circle" : "x-circle")" /></td>
                             <td>@profile.Priority</td>
-                            <td>@profile.McpServers.Count(s => !s.Disabled)</td>
+                            <td>@(profile.McpServers?.Count(s => !s.Disabled) ?? 0)</td>
                             @if (IsKubernetesMode)
                             {
                                 <td>
@@ -345,8 +345,8 @@
                 Command = s.Command ?? "",
                 Args = string.Join(" ", s.Args),
                 Url = s.Url ?? "",
-                EnvVars = string.Join("\n", s.Env.Select(kv => $"{kv.Key}={kv.Value}")),
-                Headers = string.Join("\n", s.Headers.Select(kv => $"{kv.Key}={kv.Value}")),
+                EnvVars = string.Join("\n", s.Env?.Select(kv => $"{kv.Key}={kv.Value}") ?? []),
+                Headers = string.Join("\n", s.Headers?.Select(kv => $"{kv.Key}={kv.Value}") ?? []),
                 Enabled = !s.Disabled
             }).ToList()
         };

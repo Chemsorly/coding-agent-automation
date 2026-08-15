@@ -199,7 +199,7 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public void ActiveRunsTable_ExcludesRuns_WithEmptyAgentId()
     {
-        var emptyAgent = CreateRunSummary("Empty Agent Issue") with { AgentId = "" };
+        var emptyAgent = CreateRunSummary("Empty Agent Issue") with { AgentId = null };
 
         _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { emptyAgent });

@@ -156,7 +156,7 @@ public class DisconnectedAgentSweepPhaseTests : IDisposable
         _mockLogger.Verify(
             l => l.Warning(
                 It.Is<string>(s => s.Contains("{AgentId}") && s.Contains("{JobId}")),
-                It.IsAny<string>(),
+                It.IsAny<AgentId>(),
                 It.IsAny<string>(),
                 It.IsAny<TimeSpan>()),
             Times.Once);

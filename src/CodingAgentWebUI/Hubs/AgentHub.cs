@@ -157,7 +157,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         // Security: verify caller owns this agentId (prevents cross-agent deregistration)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "DeregisterAgent rejected — caller connection {ConnectionId} does not own agent {AgentId}",
@@ -184,7 +184,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         // Security: verify caller owns this agentId (prevents heartbeat spoofing)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, message.AgentId.Value, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, message.AgentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "Heartbeat rejected — caller connection {ConnectionId} does not own agent {AgentId}",
@@ -231,7 +231,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         // Security: verify caller owns this agentId (prevents spurious drain signals)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "AgentReady rejected — caller connection {ConnectionId} does not own agent {AgentId}",
@@ -248,10 +248,10 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
     /// <summary>
     /// Swaps the agent label on the entity (issue or PR) using the shared issue operations service.
-    /// Routes based on <paramref name="targetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
+    /// Routes based on <see cref="PipelineRun.LabelTargetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
     /// </summary>
-    private Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind)
-        => _issueOps.SwapLabelAsync(run, newLabel, targetKind);
+    private Task SwapLabelAsync(PipelineRun run, string newLabel)
+        => _issueOps.SwapLabelAsync(run, newLabel);
 
     /// <summary>
     /// Posts a comment on the issue using the shared issue operations service.
@@ -259,9 +259,4 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// </summary>
     private Task<string?> PostCommentViaIssueProviderAsync(PipelineRun run, string body)
         => _issueOps.PostCommentViaIssueProviderAsync(run, body);
-
-    /// <summary>
-    /// Determines the correct <see cref="LabelTargetKind"/> based on the run's <see cref="PipelineRun.RunType"/>.
-    /// </summary>
-    private static LabelTargetKind GetLabelTargetKind(PipelineRun run) => run.LabelTargetKind;
 }
