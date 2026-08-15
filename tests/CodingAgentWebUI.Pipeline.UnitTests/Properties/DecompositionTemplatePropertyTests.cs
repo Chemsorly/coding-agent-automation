@@ -286,7 +286,8 @@ public class DecompositionTemplatePropertyTests
             WorkDistributor = distributor,
             DispatchOrchestration = null,
             DependencyChecker = null,
-            HousekeepingService = null
+            HousekeepingService = null,
+            LeaderElection = null
         });
     }
 }

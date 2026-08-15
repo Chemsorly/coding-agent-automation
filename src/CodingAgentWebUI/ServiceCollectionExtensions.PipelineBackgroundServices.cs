@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -39,7 +40,11 @@ public static partial class ServiceCollectionExtensions
             WorkDistributor = sp.GetService<IWorkDistributor>(),
             DispatchOrchestration = sp.GetService<IDispatchOrchestrationService>(),
             DependencyChecker = sp.GetRequiredService<IDependencyChecker>(),
-            HousekeepingService = sp.GetRequiredService<IHousekeepingService>()
+            HousekeepingService = sp.GetRequiredService<IHousekeepingService>(),
+            // GetService returns null when ILeaderElectionService is not registered (Legacy mode),
+            // which causes the loop to run unconditionally as before. In K8s and SignalR+DB modes
+            // ILeaderElectionService implements ILeaderGate and the loop is leader-gated.
+            LeaderElection = sp.GetService<ILeaderElectionService>()
         });
         services.AddSingleton<PipelineLoopService>();
         services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());
