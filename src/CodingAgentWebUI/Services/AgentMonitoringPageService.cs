@@ -119,7 +119,7 @@ public class AgentMonitoringPageService
     public async Task RefreshDataAsync(bool includeConsolidation = false)
     {
         ActiveRuns = (await _activeRunQuery.GetActiveRunsAsync())
-            .Where(r => !string.IsNullOrEmpty(r.AgentId))
+            .Where(r => r.AgentId.HasValue)
             .ToList();
         Agents = _registry.GetAllAgents();
         RunHistory = await _historyService.GetRunHistoryAsync();

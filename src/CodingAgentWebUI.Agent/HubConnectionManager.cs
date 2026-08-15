@@ -97,17 +97,17 @@ public sealed class HubConnectionManager : IAsyncDisposable
     /// </summary>
     public HubConnection Connection => _connection;
 
-    public HubConnectionManager(string orchestratorUrl, string agentId, string apiKey, Serilog.ILogger logger)
+    public HubConnectionManager(string orchestratorUrl, AgentId agentId, string apiKey, Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(orchestratorUrl);
-        ArgumentNullException.ThrowIfNull(agentId);
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId));
         ArgumentNullException.ThrowIfNull(apiKey);
         ArgumentNullException.ThrowIfNull(logger);
 
         _logger = logger;
 
-        var derivedKey = DeriveKey(apiKey, agentId);
-        var hubUrl = $"{orchestratorUrl.TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString(agentId)}";
+        var derivedKey = DeriveKey(apiKey, agentId.Value);
+        var hubUrl = $"{orchestratorUrl.TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString(agentId.Value)}";
 
         _connection = new HubConnectionBuilder()
             .WithUrl(hubUrl, options =>

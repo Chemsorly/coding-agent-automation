@@ -36,7 +36,7 @@ public sealed class PipelineRunCreationParams
     public string InitiatedBy { get; init; } = "manual";
 
     /// <summary>Agent ID assigned to this run, or null.</summary>
-    public string? AgentId { get; init; }
+    public AgentId? AgentId { get; init; }
 
     /// <summary>Agent provider config ID, or null.</summary>
     public string? AgentProviderConfigId { get; init; }

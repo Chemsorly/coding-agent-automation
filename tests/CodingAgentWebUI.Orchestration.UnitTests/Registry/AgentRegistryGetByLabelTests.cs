@@ -46,7 +46,7 @@ public class AgentRegistryGetByLabelTests
         var result = registry.GetAgentsByLabel("env", "prod");
 
         result.Should().HaveCount(1);
-        result[0].AgentId.Should().Be("agent-1");
+        result[0].AgentId.Value.Should().Be("agent-1");
     }
 
     // ── Agent without label not returned ─────────────────────────────────
@@ -74,7 +74,7 @@ public class AgentRegistryGetByLabelTests
         var result = registry.GetAgentsByLabel("env", "prod");
 
         result.Should().HaveCount(1);
-        result[0].AgentId.Should().Be("agent-match");
+        result[0].AgentId.Value.Should().Be("agent-match");
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public class AgentRegistryGetByLabelTests
         var result = registry.GetAgentsByLabel("env", "prod");
 
         result.Should().HaveCount(2);
-        result.Select(a => a.AgentId).Should().Contain(["agent-1", "agent-2"]);
+        result.Select(a => a.AgentId.Value).Should().Contain(["agent-1", "agent-2"]);
     }
 
     // ── Exact match: "env=prod" does NOT match "env=production" ──────────
@@ -114,7 +114,7 @@ public class AgentRegistryGetByLabelTests
         var result = registry.GetAgentsByLabel("env", "prod");
 
         result.Should().HaveCount(1);
-        result[0].AgentId.Should().Be("agent-exact");
+        result[0].AgentId.Value.Should().Be("agent-exact");
     }
 
     // ── Empty labels list → not returned ─────────────────────────────────
@@ -142,7 +142,7 @@ public class AgentRegistryGetByLabelTests
         var result = registry.GetAgentsByLabel("chat-session-id", dispatchId.ToString());
 
         result.Should().HaveCount(1);
-        result[0].AgentId.Should().Be("agent-chat");
+        result[0].AgentId.Value.Should().Be("agent-chat");
     }
 
     [Fact]
@@ -169,7 +169,7 @@ public class AgentRegistryGetByLabelTests
         var result = registry.GetAgentsByLabel("chat", "true");
 
         result.Should().HaveCount(1);
-        result[0].AgentId.Should().Be("agent-chat");
+        result[0].AgentId.Value.Should().Be("agent-chat");
     }
 
     [Fact]
@@ -183,7 +183,7 @@ public class AgentRegistryGetByLabelTests
         var result = registry.GetAgentsByLabel("chat", "true");
 
         result.Should().HaveCount(1);
-        result[0].AgentId.Should().Be("agent-chat");
+        result[0].AgentId.Value.Should().Be("agent-chat");
     }
 
     [Fact]
@@ -196,7 +196,7 @@ public class AgentRegistryGetByLabelTests
         var result = registry.GetAgentsByLabel("chat", "true");
 
         result.Should().HaveCount(1);
-        result[0].AgentId.Should().Be("agent-mixed-case");
+        result[0].AgentId.Value.Should().Be("agent-mixed-case");
     }
 
     // ── No agents registered → empty result ──────────────────────────────

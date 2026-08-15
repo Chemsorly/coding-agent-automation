@@ -19,7 +19,7 @@ public static class PipelineRunFactory
     /// Used during rehydration to preserve the original dispatch timestamp.</param>
     public static PipelineRun FromDistributionRequest(
         JobDistributionRequest request,
-        string? agentId = null,
+        AgentId? agentId = null,
         PipelineStep? initialStep = null,
         DateTimeOffset? startedAt = null)
     {

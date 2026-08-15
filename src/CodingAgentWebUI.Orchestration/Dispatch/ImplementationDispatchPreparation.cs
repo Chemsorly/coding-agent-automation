@@ -64,7 +64,7 @@ internal sealed class ImplementationDispatchPreparation : IDispatchPreparationHa
                 RepoProviderId = _repoProviderId,
                 IssueIdentifier = _issueIdentifier,
                 AgentProviderId = agentProviderId,
-                AgentId = _agent.AgentId,
+                AgentId = _agent.AgentId.Value,
                 BrainProviderId = _brainProviderId,
                 PipelineProviderId = _pipelineProviderId,
                 InitiatedBy = _initiatedBy

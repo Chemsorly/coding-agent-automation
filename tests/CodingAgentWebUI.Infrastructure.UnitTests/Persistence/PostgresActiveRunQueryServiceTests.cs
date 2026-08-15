@@ -62,7 +62,7 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
         // Assert — the in-memory-only run must appear
         results.Should().ContainSingle(r => r.RunId == "ae3d6ae3-b243-4e45-ba90-788a88737134");
         var run = results.First(r => r.RunId == "ae3d6ae3-b243-4e45-ba90-788a88737134");
-        run.AgentId.Should().Be("agent-dotnet-2");
+        run.AgentId?.Value.Should().Be("agent-dotnet-2");
         run.IssueTitle.Should().Be("Extract duplicated JobDistributionRequest");
         run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
     }
@@ -128,8 +128,8 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
 
         // Assert — both runs appear
         results.Should().HaveCount(2);
-        results.Should().Contain(r => r.AgentId == "agent-dotnet-1");
-        results.Should().Contain(r => r.AgentId == "agent-dotnet-2");
+        results.Should().Contain(r => r.AgentId.HasValue && r.AgentId.Value.Value == "agent-dotnet-1");
+        results.Should().Contain(r => r.AgentId.HasValue && r.AgentId.Value.Value == "agent-dotnet-2");
     }
 
     [Fact]

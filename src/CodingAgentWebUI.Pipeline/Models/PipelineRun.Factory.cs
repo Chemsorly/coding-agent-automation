@@ -54,7 +54,7 @@ public sealed partial class PipelineRun
             CurrentStep = PipelineStep.Created,
             InitiatedBy = p.InitiatedBy,
             RunType = p.RunType,
-            AgentId = p.AgentId,
+            AgentId = p.AgentId?.Value,
             AgentProviderConfigId = p.AgentProviderConfigId,
             BrainProviderConfigId = p.BrainProviderConfigId,
             ReviewPrBranchName = p.ReviewPrBranchName,

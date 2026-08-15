@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure.Telemetry;
+using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 using Serilog.Enrichers.Span;
 
@@ -10,7 +11,7 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 internal static class AgentSerilogConfiguration
 {
-    internal static Serilog.ILogger CreateAgentLogger(string agentId)
+    internal static Serilog.ILogger CreateAgentLogger(AgentId agentId)
     {
         var logLevel = LogLevelParser.Parse(
             Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel),

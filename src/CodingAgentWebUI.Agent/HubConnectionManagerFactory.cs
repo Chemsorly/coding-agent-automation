@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
@@ -8,14 +10,14 @@ namespace CodingAgentWebUI.Agent;
 public sealed class HubConnectionManagerFactory
 {
     private readonly string _orchestratorUrl;
-    private readonly string _agentId;
+    private readonly AgentId _agentId;
     private readonly string _apiKey;
     private readonly Serilog.ILogger _logger;
 
-    public HubConnectionManagerFactory(string orchestratorUrl, string agentId, string apiKey, Serilog.ILogger logger)
+    public HubConnectionManagerFactory(string orchestratorUrl, AgentId agentId, string apiKey, Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(orchestratorUrl);
-        ArgumentNullException.ThrowIfNull(agentId);
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId));
         ArgumentNullException.ThrowIfNull(apiKey);
         ArgumentNullException.ThrowIfNull(logger);
 

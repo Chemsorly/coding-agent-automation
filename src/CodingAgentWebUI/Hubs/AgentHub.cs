@@ -157,7 +157,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         // Security: verify caller owns this agentId (prevents cross-agent deregistration)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "DeregisterAgent rejected — caller connection {ConnectionId} does not own agent {AgentId}",
@@ -184,7 +184,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         // Security: verify caller owns this agentId (prevents heartbeat spoofing)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, message.AgentId.Value, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, message.AgentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "Heartbeat rejected — caller connection {ConnectionId} does not own agent {AgentId}",
@@ -231,7 +231,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         // Security: verify caller owns this agentId (prevents spurious drain signals)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId.Value, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "AgentReady rejected — caller connection {ConnectionId} does not own agent {AgentId}",

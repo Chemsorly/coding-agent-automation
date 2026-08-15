@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
@@ -8,7 +10,7 @@ internal sealed record AgentStartupConfig
 {
     public required string AgentApiKey { get; init; }
     public required string OrchestratorUrl { get; init; }
-    public required string AgentId { get; init; }
+    public required AgentId AgentId { get; init; }
     public required string? WorkItemId { get; init; }
     public required bool IsK8sMode { get; init; }
 
