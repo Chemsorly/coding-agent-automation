@@ -80,7 +80,7 @@ public sealed class DbModeAgentLifecycleTests : DbModeE2ETestBase, IClassFixture
 
         Assert.NotNull(entry);
         Assert.Equal(AgentStatus.Idle, entry.Status);
-        Assert.Equal("lifecycle-reg-1", entry.AgentId);
+        Assert.Equal("lifecycle-reg-1", entry.AgentId.Value);
         Assert.Contains("dotnet", entry.Labels);
         Assert.Contains("linux", entry.Labels);
         Assert.True(agent.IsConnected);
@@ -101,9 +101,9 @@ public sealed class DbModeAgentLifecycleTests : DbModeE2ETestBase, IClassFixture
         var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
         var all = registry.GetAllAgents();
 
-        Assert.Contains(all, a => a.AgentId == "lifecycle-multi-1");
-        Assert.Contains(all, a => a.AgentId == "lifecycle-multi-2");
-        Assert.Contains(all, a => a.AgentId == "lifecycle-multi-3");
+        Assert.Contains(all, a => a.AgentId.Value == "lifecycle-multi-1");
+        Assert.Contains(all, a => a.AgentId.Value == "lifecycle-multi-2");
+        Assert.Contains(all, a => a.AgentId.Value == "lifecycle-multi-3");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -477,18 +477,18 @@ public sealed class DbModeAgentLifecycleTests : DbModeE2ETestBase, IClassFixture
         await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
 
         var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
-        Assert.Contains(registry.GetIdleAgents(), a => a.AgentId == "lifecycle-disconnect-pool");
+        Assert.Contains(registry.GetIdleAgents(), a => a.AgentId.Value == "lifecycle-disconnect-pool");
 
         // Act: disconnect
         await agent.DisposeAsync();
 
         // Wait for heartbeat sweep to detect disconnect
         await WaitUntilAsync(
-            () => !registry.GetIdleAgents().Any(a => a.AgentId == "lifecycle-disconnect-pool"),
+            () => !registry.GetIdleAgents().Any(a => a.AgentId.Value == "lifecycle-disconnect-pool"),
             TimeSpan.FromSeconds(15));
 
         // Assert: agent no longer in idle pool
-        Assert.DoesNotContain(registry.GetIdleAgents(), a => a.AgentId == "lifecycle-disconnect-pool");
+        Assert.DoesNotContain(registry.GetIdleAgents(), a => a.AgentId.Value == "lifecycle-disconnect-pool");
 
         // Assert: agent is Disconnected (not removed entirely — grace period)
         var entry = registry.GetByAgentId("lifecycle-disconnect-pool");

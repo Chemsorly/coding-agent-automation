@@ -62,7 +62,7 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
         // Assert — the in-memory-only run must appear
         results.Should().ContainSingle(r => r.RunId == "ae3d6ae3-b243-4e45-ba90-788a88737134");
         var run = results.First(r => r.RunId == "ae3d6ae3-b243-4e45-ba90-788a88737134");
-        run.AgentId.Should().Be("agent-dotnet-2");
+        run.AgentId?.Value.Should().Be("agent-dotnet-2");
         run.IssueTitle.Should().Be("Extract duplicated JobDistributionRequest");
         run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
     }
@@ -128,8 +128,8 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
 
         // Assert — both runs appear
         results.Should().HaveCount(2);
-        results.Should().Contain(r => r.AgentId == "agent-dotnet-1");
-        results.Should().Contain(r => r.AgentId == "agent-dotnet-2");
+        results.Should().Contain(r => r.AgentId.HasValue && r.AgentId.Value.Value == "agent-dotnet-1");
+        results.Should().Contain(r => r.AgentId.HasValue && r.AgentId.Value.Value == "agent-dotnet-2");
     }
 
     [Fact]
@@ -240,6 +240,107 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
         var result = results[0];
         result.ProjectName.Should().Be("Default");
         result.CurrentStep.Should().Be(PipelineStep.VerifyingBaseline);
+    }
+
+    /// <summary>
+    /// Regression test for issue #2007: WorkItemTaskType.Decomposition must map to
+    /// PipelineRunType.DecompositionAnalysis (Phase 1), not PipelineRunType.Decomposition (Phase 2).
+    /// The fallback mapper is only invoked for WorkItems with no joined PipelineRun row, which
+    /// are always newly-queued Phase 1 jobs.
+    /// </summary>
+    // TODO: The theory below omits WorkItemTaskType.Consolidation because Consolidation items are
+    // pre-filtered out by the query and never reach MapTaskTypeToRunType (see companion test
+    // GetActiveRunsAsync_ConsolidationWorkItem_ExcludedFromResults). The Consolidation arm of
+    // MapTaskTypeToRunType is therefore unreachable dead code. If the pre-filter is ever relaxed,
+    // add [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Consolidation)] here and
+    // verify the arm remains correct. (Flagged by DotNetSpecialist + TestQualityReviewer.)
+    //
+    // TODO: The _ (default/fallback) arm of MapTaskTypeToRunType — which maps any unrecognised
+    // WorkItemTaskType to PipelineRunType.Implementation — is not exercised by this theory. If a
+    // new enum value is added without a corresponding switch arm, the silent fallback will produce
+    // an incorrect RunType with no test failure signalling the gap. Consider adding:
+    //   [InlineData((WorkItemTaskType)99, PipelineRunType.Implementation)]
+    // to pin this behaviour. (Flagged by Correctness + TestQualityReviewer.)
+    [Theory]
+    [InlineData(WorkItemTaskType.Implementation, PipelineRunType.Implementation)]
+    [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
+    [InlineData(WorkItemTaskType.Decomposition, PipelineRunType.DecompositionAnalysis)]
+    public async Task GetActiveRunsAsync_TaskType_MapsToCorrectRunType(
+        WorkItemTaskType taskType, PipelineRunType expectedRunType)
+    {
+        // Arrange — WorkItem in DB with no matching PipelineRuns row (exercises MapTaskTypeToRunType fallback)
+        var workItemId = Guid.NewGuid();
+        await using (var db = new InMemoryPipelineDbContext(_options))
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = $"owner/repo#{(int)taskType}",
+                IssueProviderConfigId = "issue-cfg-1",
+                Status = WorkItemStatus.Dispatched,
+                TaskType = taskType,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+                DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+                Payload = "{}",
+                AssignedAgentId = "agent-dotnet-1"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Return empty in-memory runs so only the DB path is exercised
+        _mockRunService.Setup(r => r.GetActiveRuns()).Returns([]);
+        _mockRunService.Setup(r => r.GetRun(It.IsAny<RunId>())).Returns((PipelineRun?)null);
+
+        var factory = new InMemoryDbContextFactory(_options);
+        var service = new PostgresActiveRunQueryService(factory, _mockRunService.Object);
+
+        // Act
+        var results = await service.GetActiveRunsAsync();
+
+        // Assert
+        results.Should().ContainSingle(because: $"one WorkItem with TaskType={taskType} was inserted");
+        results[0].RunType.Should().Be(expectedRunType,
+            because: $"TaskType.{taskType} should map to PipelineRunType.{expectedRunType}");
+    }
+
+    /// <summary>
+    /// Documents that Consolidation work items are excluded from active-run results by the
+    /// pre-filter in the query (.Where(wi => wi.TaskType != WorkItemTaskType.Consolidation)).
+    /// The Consolidation arm of MapTaskTypeToRunType is therefore unreachable dead code.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveRunsAsync_ConsolidationWorkItem_ExcludedFromResults()
+    {
+        // Arrange — consolidation WorkItem in DB
+        var workItemId = Guid.NewGuid();
+        await using (var db = new InMemoryPipelineDbContext(_options))
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#consolidation-1",
+                IssueProviderConfigId = "issue-cfg-1",
+                Status = WorkItemStatus.Dispatched,
+                TaskType = WorkItemTaskType.Consolidation,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                Payload = "{}",
+                AssignedAgentId = "agent-dotnet-1"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        _mockRunService.Setup(r => r.GetActiveRuns()).Returns([]);
+        _mockRunService.Setup(r => r.GetRun(It.IsAny<RunId>())).Returns((PipelineRun?)null);
+
+        var factory = new InMemoryDbContextFactory(_options);
+        var service = new PostgresActiveRunQueryService(factory, _mockRunService.Object);
+
+        // Act
+        var results = await service.GetActiveRunsAsync();
+
+        // Assert — consolidation items must be excluded entirely
+        results.Should().BeEmpty(because: "the query filters out Consolidation task types before mapping");
     }
 
     public void Dispose()

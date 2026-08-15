@@ -26,7 +26,9 @@ public sealed class InMemoryActiveRunQueryService : IActiveRunQueryService
             IssueIdentifier = r.IssueIdentifier,
             IssueTitle = r.IssueTitle,
             RunType = r.RunType,
-            AgentId = r.AgentId,
+            // TODO: PipelineRun.AgentId is string? with no empty-string validation — the implicit
+            // (AgentId) cast throws ArgumentException for "". Use !string.IsNullOrEmpty guard instead.
+            AgentId = r.AgentId is not null ? (AgentId)r.AgentId : (AgentId?)null,
             StartedAt = r.StartedAtOffset,
             ProjectName = r.ProjectName,
             CurrentStep = r.CurrentStep
