@@ -284,7 +284,7 @@ public class PipelineRunInstrumentationTests : IDisposable
 
         instrumentation.StopTiming();
         using var mres5 = new ManualResetEventSlim(false);
-        mres5.Wait(50); // 50ms after freeze point — frozen duration is ~10ms; accumulated (no-op path) would be ~60ms
+        mres5.Wait(500); // 500ms after freeze point — frozen duration is ~10ms; unfrozen (no-op broken) would be ~510ms
 
         instrumentation.StopTiming(); // should be no-ops
         instrumentation.StopTiming();
@@ -293,10 +293,10 @@ public class PipelineRunInstrumentationTests : IDisposable
         var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
         duration.Should().HaveCount(1);
         // Lower bound: catches regressions that zero out the duration.
-        // Upper bound (0.04s = 40ms): frozen path records ~10ms; no-op path would record ~60ms.
-        // A threshold of 40ms reliably distinguishes the two, with margin for CI jitter on the 10ms pre-freeze wait.
+        // Upper bound (0.3s): frozen path records ~10ms + CI jitter; unfrozen (broken) path would record ~510ms.
+        // The 500ms post-freeze gap ensures a clear 17:1 ratio between the two cases, tolerating heavy CI load.
         duration[0].Value.Should().BeGreaterThan(0)
-            .And.BeLessThan(0.04,
+            .And.BeLessThan(0.3,
                 "StopTiming should freeze elapsed time at first call; subsequent calls must not extend it");
     }
 
