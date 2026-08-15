@@ -142,6 +142,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
             if (result.FinalStep == PipelineStep.Completed)
                 instrumentation.MarkCompleted();
+            else if (result.FinalStep != PipelineStep.Cancelled)
+                instrumentation.MarkFailed(result.FailureCategory);
 
             instrumentation.Activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
             // TODO: Add test that verifies cancelled runs set pipeline.cancelled tag with Unset status (no Error)

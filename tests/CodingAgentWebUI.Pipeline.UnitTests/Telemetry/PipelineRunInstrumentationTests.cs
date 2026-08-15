@@ -126,6 +126,7 @@ public class PipelineRunInstrumentationTests : IDisposable
 
         var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
         failed.Should().HaveCount(1);
+        failed[0].Tags.Should().Contain(t => t.Key == "failure_reason" && (string?)t.Value == "unknown");
 
         var completed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.completed" && m.Value == 1).ToList();
         completed.Should().BeEmpty();
@@ -323,5 +324,90 @@ public class PipelineRunInstrumentationTests : IDisposable
         var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
         duration.Should().HaveCount(1);
         duration[0].Value.Should().BeGreaterThan(0);
+    }
+
+    // ── failure_reason tag tests ─────────────────────────────────────────────
+
+    [Fact]
+    public void Dispose_WithoutMarkFailed_RecordsFailureReasonUnknown()
+    {
+        ClearMeasurements();
+
+        var instrumentation = PipelineRunInstrumentation.Start(
+            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        instrumentation.Dispose();
+
+        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
+        failed.Should().HaveCount(1);
+        failed[0].Tags.Should().Contain(t => t.Key == "failure_reason" && (string?)t.Value == "unknown");
+    }
+
+    [Fact]
+    public void Dispose_WithMarkFailed_KnownReason_RecordsSnakeCaseTag()
+    {
+        ClearMeasurements();
+
+        var instrumentation = PipelineRunInstrumentation.Start(
+            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        instrumentation.MarkFailed(FailureReason.QualityGateExhausted);
+        instrumentation.Dispose();
+
+        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
+        failed.Should().HaveCount(1);
+        failed[0].Tags.Should().Contain(t => t.Key == "failure_reason" && (string?)t.Value == "quality_gate_exhausted");
+    }
+
+    [Fact]
+    public void Dispose_WithMarkFailed_NullReason_RecordsUnknown()
+    {
+        ClearMeasurements();
+
+        var instrumentation = PipelineRunInstrumentation.Start(
+            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        instrumentation.MarkFailed(null);
+        instrumentation.Dispose();
+
+        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
+        failed.Should().HaveCount(1);
+        failed[0].Tags.Should().Contain(t => t.Key == "failure_reason" && (string?)t.Value == "unknown");
+    }
+
+    [Theory]
+    [InlineData(FailureReason.Timeout, "timeout")]
+    [InlineData(FailureReason.InfrastructureFailure, "infrastructure_failure")]
+    [InlineData(FailureReason.AgentError, "agent_error")]
+    [InlineData(FailureReason.TokenRefreshFailure, "token_refresh_failure")]
+    [InlineData(FailureReason.ExitCodeFailure, "exit_code_failure")]
+    [InlineData(FailureReason.QualityGateExhausted, "quality_gate_exhausted")]
+    public void Dispose_WithMarkFailed_AllReasons_ProduceSnakeCaseTag(FailureReason reason, string expectedTag)
+    {
+        ClearMeasurements();
+
+        var instrumentation = PipelineRunInstrumentation.Start(
+            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        instrumentation.MarkFailed(reason);
+        instrumentation.Dispose();
+
+        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
+        failed.Should().HaveCount(1);
+        failed[0].Tags.Should().Contain(t => t.Key == "failure_reason" && (string?)t.Value == expectedTag);
+    }
+
+    [Fact]
+    public void Dispose_WithMarkCompleted_DoesNotIncludeFailureReasonTag()
+    {
+        ClearMeasurements();
+
+        var instrumentation = PipelineRunInstrumentation.Start(
+            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        instrumentation.MarkCompleted();
+        instrumentation.Dispose();
+
+        var completed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.completed" && m.Value == 1).ToList();
+        completed.Should().HaveCount(1);
+        completed[0].Tags.Should().NotContain(t => t.Key == "failure_reason");
+
+        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
+        failed.Should().BeEmpty();
     }
 }

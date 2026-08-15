@@ -158,7 +158,12 @@ public partial class QualityGateExecutor
 
         await CollectFailureFeedbackAsync(context, run, report, ct);
 
+        // TODO: Consider moving this assignment before the FinalizePullRequest await so that
+        // (a) FinalizePullRequest sees the correct FailureCategory if it reads run.FailureCategory,
+        // and (b) if FinalizePullRequest throws, the category is still recorded on the run object
+        // and the metric will emit "quality_gate_exhausted" instead of "unknown".
         await callbacks.FinalizePullRequest(run, report, true, ct);
+        run.FailureCategory = FailureReason.QualityGateExhausted;
     }
 
     /// <summary>

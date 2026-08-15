@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Telemetry;
@@ -30,6 +31,7 @@ public sealed class PipelineRunInstrumentation : IDisposable
     private readonly string? _projectName;
     private bool _completed;
     private bool _disposed;
+    private FailureReason? _failureReason;
 
     private PipelineRunInstrumentation(
         Activity? activity, TagList tags,
@@ -77,6 +79,15 @@ public sealed class PipelineRunInstrumentation : IDisposable
     public void MarkCompleted() => _completed = true;
 
     /// <summary>
+    /// Records the failure reason for this run. Does not affect the completed/failed decision —
+    /// if <see cref="MarkCompleted"/> is not called, the run is always recorded as failed.
+    /// The <paramref name="reason"/> is emitted as the <c>failure_reason</c> tag on
+    /// <see cref="PipelineTelemetry.JobsFailed"/>. Pass <see langword="null"/> to emit
+    /// <c>"unknown"</c> (same as not calling this method at all).
+    /// </summary>
+    public void MarkFailed(FailureReason? reason = null) => _failureReason = reason;
+
+    /// <summary>
     /// Stops the internal stopwatch without recording metrics or disposing the activity.
     /// Call before expensive cleanup to avoid inflating the duration metric.
     /// Idempotent — safe to call multiple times or before Dispose().
@@ -111,9 +122,30 @@ public sealed class PipelineRunInstrumentation : IDisposable
         if (_completed)
             PipelineTelemetry.JobsCompleted.Add(1, _tags);
         else
-            PipelineTelemetry.JobsFailed.Add(1, _tags);
+        {
+            var tagValue = _failureReason.HasValue
+                ? ToFailureReasonTag(_failureReason.Value)
+                : "unknown";
+            var failureTags = _tags;
+            failureTags.Add(new KeyValuePair<string, object?>("failure_reason", tagValue));
+            PipelineTelemetry.JobsFailed.Add(1, failureTags);
+        }
 
         Activity?.Dispose();
         GC.SuppressFinalize(this);
     }
+
+    /// <summary>
+    /// Converts a <see cref="FailureReason"/> enum member name from PascalCase to snake_case lowercase.
+    /// For example: <c>QualityGateExhausted</c> → <c>"quality_gate_exhausted"</c>,
+    /// <c>AgentError</c> → <c>"agent_error"</c>, <c>Timeout</c> → <c>"timeout"</c>.
+    /// </summary>
+    // TODO: This per-character LINQ projection correctly handles strict PascalCase names but will produce
+    // incorrect output for names with consecutive uppercase letters (e.g. "IOError" → "_i_o_error" instead
+    // of "io_error") or all-lowercase names. If future FailureReason members deviate from strict
+    // PascalCase-word-boundary conventions, replace this with a regex-based implementation such as
+    // Regex.Replace(name, "(?<=[a-z0-9])([A-Z])", "_$1").ToLowerInvariant().
+    private static string ToFailureReasonTag(FailureReason reason) =>
+        string.Concat(reason.ToString().Select((c, i) => i > 0 && char.IsUpper(c) ? $"_{c}" : $"{c}"))
+              .ToLowerInvariant();
 }
