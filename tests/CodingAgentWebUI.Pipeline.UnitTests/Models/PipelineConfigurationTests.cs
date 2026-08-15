@@ -113,6 +113,9 @@ public class PipelineConfigurationTests
             ModelFetchTimeoutSeconds = 180,
             HousekeepingConcurrencyLimit = 2,
             HousekeepingBranchCleanupIntervalMinutes = 90,
+            PipelineRunRetentionCount = 500,
+            WorkItemRetentionCount = 1000,
+            DbRetentionSweepInterval = TimeSpan.FromHours(12),
         };
 
         // Act
@@ -132,7 +135,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(67,
+        keyPropertyCount.Should().Be(70,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -226,6 +229,11 @@ public class PipelineConfigurationTests
         config.CodeReview.FixPrompt.Should().BeNull();
         config.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         config.CodeReview.InlineComments.Enabled.Should().BeTrue();
+
+        // DB retention defaults
+        config.PipelineRunRetentionCount.Should().Be(-1);
+        config.WorkItemRetentionCount.Should().Be(-1);
+        config.DbRetentionSweepInterval.Should().Be(TimeSpan.FromHours(24));
     }
 
     // ── ApplyProjectOverrides — Scalars ────────────────────────────────────────

@@ -85,6 +85,105 @@ public class PipelineConfigurationValidationTests
         var config = new PipelineConfiguration { AnalysisCommitThreshold = value };
         config.AnalysisCommitThreshold.Should().Be(value);
     }
+
+    // ── PipelineRunRetentionCount ──────────────────────────────────────────────
+
+    [Fact]
+    public void PipelineRunRetentionCount_WhenSetToZero_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => new PipelineConfiguration { PipelineRunRetentionCount = 0 };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("PipelineRunRetentionCount");
+    }
+
+    [Theory]
+    [InlineData(-2)]
+    [InlineData(-10)]
+    [InlineData(-100)]
+    public void PipelineRunRetentionCount_WhenSetToInvalidNegativeValue_ThrowsArgumentOutOfRangeException(int value)
+    {
+        var act = () => new PipelineConfiguration { PipelineRunRetentionCount = value };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("PipelineRunRetentionCount");
+    }
+
+    [Fact]
+    public void PipelineRunRetentionCount_WhenSetToMinusOne_IsAccepted()
+    {
+        var config = new PipelineConfiguration { PipelineRunRetentionCount = -1 };
+        config.PipelineRunRetentionCount.Should().Be(-1);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(100)]
+    [InlineData(10000)]
+    public void PipelineRunRetentionCount_WhenSetToPositiveValue_IsAccepted(int value)
+    {
+        var config = new PipelineConfiguration { PipelineRunRetentionCount = value };
+        config.PipelineRunRetentionCount.Should().Be(value);
+    }
+
+    [Fact]
+    public void PipelineRunRetentionCount_DefaultIsMinusOne()
+    {
+        var config = new PipelineConfiguration();
+        config.PipelineRunRetentionCount.Should().Be(-1);
+    }
+
+    // ── WorkItemRetentionCount ─────────────────────────────────────────────────
+
+    [Fact]
+    public void WorkItemRetentionCount_WhenSetToZero_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => new PipelineConfiguration { WorkItemRetentionCount = 0 };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("WorkItemRetentionCount");
+    }
+
+    [Theory]
+    [InlineData(-2)]
+    [InlineData(-10)]
+    [InlineData(-100)]
+    public void WorkItemRetentionCount_WhenSetToInvalidNegativeValue_ThrowsArgumentOutOfRangeException(int value)
+    {
+        var act = () => new PipelineConfiguration { WorkItemRetentionCount = value };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("WorkItemRetentionCount");
+    }
+
+    [Fact]
+    public void WorkItemRetentionCount_WhenSetToMinusOne_IsAccepted()
+    {
+        var config = new PipelineConfiguration { WorkItemRetentionCount = -1 };
+        config.WorkItemRetentionCount.Should().Be(-1);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(50)]
+    [InlineData(5000)]
+    public void WorkItemRetentionCount_WhenSetToPositiveValue_IsAccepted(int value)
+    {
+        var config = new PipelineConfiguration { WorkItemRetentionCount = value };
+        config.WorkItemRetentionCount.Should().Be(value);
+    }
+
+    [Fact]
+    public void WorkItemRetentionCount_DefaultIsMinusOne()
+    {
+        var config = new PipelineConfiguration();
+        config.WorkItemRetentionCount.Should().Be(-1);
+    }
+
+    // ── DbRetentionSweepInterval ───────────────────────────────────────────────
+
+    [Fact]
+    public void DbRetentionSweepInterval_DefaultIsOneDay()
+    {
+        var config = new PipelineConfiguration();
+        config.DbRetentionSweepInterval.Should().Be(TimeSpan.FromHours(24));
+    }
 }
 
 public class RateLimitExceededExceptionTests

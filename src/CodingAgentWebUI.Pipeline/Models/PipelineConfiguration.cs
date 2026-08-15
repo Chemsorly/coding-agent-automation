@@ -565,4 +565,48 @@ public sealed record PipelineConfiguration
     [Key(73)]
     public int HousekeepingBranchCleanupIntervalMinutes { get; init; } = 60;
 
+    // ── DB retention settings ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Maximum number of <c>PipelineRuns</c> rows to retain per project (most recent by StartedAt).
+    /// Set to -1 (default) to disable count-based pruning.
+    /// A value of 0 is rejected — it would delete every row per project.
+    /// Valid values: -1 (disabled) or any strictly positive integer.
+    /// </summary>
+    [Key(74)]
+    public int PipelineRunRetentionCount
+    {
+        get => _pipelineRunRetentionCount;
+        init => _pipelineRunRetentionCount = value is -1 or > 0
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(PipelineRunRetentionCount), value,
+                "Value must be -1 (disabled) or a strictly positive integer.");
+    }
+    private readonly int _pipelineRunRetentionCount = -1;
+
+    /// <summary>
+    /// Maximum number of terminal <c>WorkItems</c> rows to retain per project
+    /// (most recent by CompletedAt; Status IN (3,4,5) AND CompletedAt IS NOT NULL only).
+    /// Set to -1 (default) to disable count-based pruning.
+    /// A value of 0 is rejected — it would delete every terminal row per project.
+    /// Valid values: -1 (disabled) or any strictly positive integer.
+    /// </summary>
+    [Key(75)]
+    public int WorkItemRetentionCount
+    {
+        get => _workItemRetentionCount;
+        init => _workItemRetentionCount = value is -1 or > 0
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(WorkItemRetentionCount), value,
+                "Value must be -1 (disabled) or a strictly positive integer.");
+    }
+    private readonly int _workItemRetentionCount = -1;
+
+    /// <summary>
+    /// How often the DB retention sweep runs. Takes effect on restart (PeriodicTimer period
+    /// is fixed at construction). Default: 24 hours.
+    /// </summary>
+    [Key(76)]
+    public TimeSpan DbRetentionSweepInterval { get; init; } = TimeSpan.FromHours(24);
+
 }

@@ -108,6 +108,20 @@ public static class WorkDistributionTelemetry
         Meter.CreateCounter<long>("workdistribution.dispatcher_polls", "{poll}",
             "Number of dispatch poll cycles executed");
 
+    /// <summary>
+    /// Counter: PipelineRuns rows deleted by the DB retention sweep.
+    /// </summary>
+    public static readonly Counter<long> PipelineRunsDeleted =
+        Meter.CreateCounter<long>("pipeline.db_retention.pipeline_runs_deleted", "{row}",
+            "PipelineRuns rows deleted by retention sweep");
+
+    /// <summary>
+    /// Counter: WorkItems rows deleted by the DB retention sweep.
+    /// </summary>
+    public static readonly Counter<long> WorkItemsDeleted =
+        Meter.CreateCounter<long>("pipeline.db_retention.work_items_deleted", "{row}",
+            "WorkItems rows deleted by retention sweep");
+
     // ── Observable gauge backing state ──────────────────────────────────────
 
     private static double _lastPollEpochSeconds;
