@@ -44,6 +44,9 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
+        if ((long)(page - 1) * pageSize > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(page), page,
+                $"Value would cause overflow when computing the page offset. Maximum page for pageSize={pageSize} is {int.MaxValue / pageSize + 1}.");
 
         lock (_lock)
         {
