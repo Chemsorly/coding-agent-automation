@@ -12,6 +12,17 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.UnitTests.Hubs;
 
 /// <summary>Unit tests for <see cref="AgentHub"/> behavior (method logic, not models).</summary>
+// TODO: Add tests for the seven decomposition hub methods moved to AgentHub.Decomposition.cs —
+// RequestCreateIssue, RequestCreateIssueForProvider (including the scope-check allowlist logic),
+// RequestListOpenIssues, RequestListClosedIssues, RequestGetIssue, RequestListComments, and
+// RequestUpdateComment. These methods have zero coverage; a regression in the provider resolution
+// or scope-check path would go undetected.
+// TODO: Add tests for the four real-time status methods moved to AgentHub.Lifecycle.cs —
+// ReportBrainSyncResult (verifies BrainContextLoaded/BrainKnowledgeFileCount are set),
+// ReportOutputLines (verifies lines enqueued to OutputRingBuffer and OutputLines),
+// ReportChatEntry (verifies ChatHistory enqueue), and
+// ReportQualityGateResult (verifies LatestQualityReport and QualityGateHistory are updated).
+// Each mutates observable PipelineRun state that is straightforward to assert on.
 public sealed class AgentHubBehaviorTests : IDisposable
 {
     private static readonly string[] s_SecurityStyleAgents = new[] { "security-agent", "style-agent" };
