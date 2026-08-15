@@ -58,6 +58,7 @@ public static class TestPipelineConfig
         RetryErrorsCapacity = 100,
         OrphanedLabelSweepIntervalMinutes = 30,
         AnalysisCommitThreshold = 30,
+        MaxConsolidationDispatchRetries = 5,
     };
 
     /// <summary>
@@ -106,6 +107,7 @@ public static class TestPipelineConfig
         RetryErrorsCapacity = 100,
         OrphanedLabelSweepIntervalMinutes = 30,
         AnalysisCommitThreshold = 30,
+        MaxConsolidationDispatchRetries = 5,
     };
 
     /// <summary>
