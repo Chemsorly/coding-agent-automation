@@ -32,13 +32,6 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
 
     // MeterListener for metric-assertion tests
     private readonly MeterListener _meterListener = new();
-    // TODO: [WARNING] _counters uses Should().Contain() which won't catch spurious duplicate or wrong-outcome
-    // emissions alongside the correct one. If a future code path emits pipeline.analysis.gate_outcome with
-    // the wrong outcome tag in addition to the correct one, these assertions would still pass.
-    // TODO: [WARNING] _counters is safe today because xUnit creates a fresh instance per test. However, if an
-    // IClassFixture<> or shared fixture is ever added to this class, cross-test contamination will become real
-    // (earlier tests emitting outcome="ready" would pre-populate the bag for later tests). The [Collection("Metrics")]
-    // attribute only serializes execution — it does NOT imply shared instance.
     private readonly ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> _counters = [];
 
     public AgentPhaseExecutorAnalysisTests()
@@ -465,11 +458,6 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     public async Task EvaluateAnalysisGate_NotReadyAssessment_EmitsNotReadyMetric()
     {
         // not_ready recommendation with no blocking issues — unambiguously exercises the not_ready path
-        // TODO: [WARNING] This test covers only the direct-recommendation path (recommendation="not_ready").
-        // The forced-override path — where recommendation="ready" but blockingIssues.Count > 0 forces
-        // not_ready — is not exercised by any metric test. A regression that accidentally emits "ready"
-        // for that forced path would go undetected. Consider adding a separate test:
-        // SetupAgentWithValidAnalysis("ready", blockingIssues: new[]{"blocker"}) and asserting outcome="not_ready".
         SetupAgentWithValidAnalysis("not_ready");
 
         var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
