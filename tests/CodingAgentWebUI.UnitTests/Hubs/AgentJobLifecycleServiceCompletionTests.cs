@@ -327,12 +327,19 @@ public sealed class AgentJobLifecycleServiceCompletionTests
             FailureCategory = null
         };
 
+        // Metadata not available (non-DB mode or WorkItem not found) — MarkIssueComplete must not be called
+        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string, string)?)null);
+
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
         _facade.Verify(f => f.TransitionWorkItemAsync(
             "job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
             "Agent reported failure (run not in memory)", FailureReason.AgentError), Times.Once);
+
+        // Null metadata — MarkIssueComplete must not be called (no identifiers to pass)
+        _facade.Verify(f => f.MarkIssueComplete(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()), Times.Never);
     }
 
     [Fact]
@@ -342,15 +349,94 @@ public sealed class AgentJobLifecycleServiceCompletionTests
 
         var payload = new JobCompletionPayload { FinalStep = PipelineStep.Cancelled, CompletedAt = DateTimeOffset.UtcNow };
 
+        // Metadata not available — MarkIssueComplete must not be called
+        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string, string)?)null);
+
         var svc = CreateService();
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
         _facade.Verify(f => f.TransitionWorkItemAsync(
             "job-1", WorkItemStatus.Cancelled, It.IsAny<CancellationToken>(), null, null), Times.Once);
 
-        // Label swap is only attempted on Succeeded in the orphaned path
-        _facade.Verify(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()), Times.Never);
+        // GetWorkItemIssueMetadataAsync IS called for Cancelled (all terminal statuses fetch metadata).
+        // Label swap is only attempted on Succeeded, so _labelService is never called.
+        _facade.Verify(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()), Times.Once);
+        _facade.Verify(f => f.MarkIssueComplete(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()), Times.Never);
     }
+
+    [Fact]
+    public async Task Orphaned_completed_step_calls_MarkIssueComplete_when_metadata_available()
+    {
+        // No run in memory (orphaned)
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("org/repo#1", "prov-1"));
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        // MarkIssueComplete must be called with the identifiers from DB metadata
+        _facade.Verify(f => f.MarkIssueComplete("org/repo#1", "prov-1"), Times.Once);
+
+        // TODO: Also verify TransitionWorkItemAsync was called (WorkItemStatus.Succeeded) to guard the full
+        // completion sequence — MarkIssueComplete must only be called *after* a successful WorkItem transition.
+        // Without this assertion, a refactor that skips TransitionWorkItemAsync before MarkIssueComplete would
+        // still produce a green test. (Correctness review warning, L372)
+    }
+
+    [Fact]
+    public async Task Orphaned_completed_step_MarkIssueComplete_called_even_when_label_swap_throws()
+    {
+        // No run in memory (orphaned)
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("org/repo#1", "prov-1"));
+
+        // Label swap throws (e.g., rate limit or network error)
+        _labelService
+            .Setup(l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("rate limit"));
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        // MarkIssueComplete must be called before the label swap attempt — swap failure must not prevent it
+        _facade.Verify(f => f.MarkIssueComplete("org/repo#1", "prov-1"), Times.Once);
+    }
+
+    [Fact]
+    public async Task Orphaned_completed_step_MarkIssueComplete_not_called_when_metadata_unavailable()
+    {
+        // No run in memory (orphaned)
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        // DB not configured or WorkItem not found — metadata is null
+        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string, string)?)null);
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        // Without identifiers we cannot call MarkIssueComplete — must remain unset
+        _facade.Verify(f => f.MarkIssueComplete(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()), Times.Never);
+    }
+
+    // TODO: Add a test for FinalStep=Failed with metadata available that asserts MarkIssueComplete IS called.
+    // The production code calls MarkIssueComplete for all terminal statuses (Succeeded, Failed, Cancelled)
+    // when metadata is present, but only the Succeeded path has a positive-case test. A regression that gates
+    // MarkIssueComplete behind workItemStatus == WorkItemStatus.Succeeded would not be detected by the current
+    // test suite. (TestQualityReviewer warning, L430)
 
     // ── Post-completion bookkeeping contract ──────────────────────────────────
 

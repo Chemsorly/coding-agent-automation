@@ -240,21 +240,31 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         await _facade.TransitionWorkItemAsync(jobId, workItemStatus, ct, recoveryErrorMsg, recoveryFailureEnum);
 
-        // TODO: Call _facade.MarkIssueComplete() after successful recovery to update the in-memory dedup tracker.
-        // Without it, the closed-loop poll could re-dispatch this issue if the label swap below fails.
+        // Fetch issue metadata once — used for both MarkIssueComplete and the label swap below.
+        // This is intentionally fetched for ALL terminal statuses (Succeeded, Failed, Cancelled)
+        // to prevent duplicate dispatch on any orphan recovery outcome. The label is currently
+        // agent:next (reverted by RevertFailedDistributionAsync), so without MarkIssueComplete
+        // the closed-loop poll would re-dispatch if the label swap below fails or is not attempted.
+        var issueMetadata = await _facade.GetWorkItemIssueMetadataAsync(jobId, ct);
+        if (issueMetadata.HasValue)
+        {
+            _facade.MarkIssueComplete(issueMetadata.Value.IssueIdentifier, issueMetadata.Value.IssueProviderConfigId);
+        }
 
         // Best-effort label correction after recovery (label is currently agent:next from RevertFailedDistributionAsync)
         if (workItemStatus == WorkItemStatus.Succeeded)
         {
-            await TrySwapLabelAfterOrphanedRecoveryAsync(jobId, ct);
+            await TrySwapLabelAfterOrphanedRecoveryAsync(jobId, issueMetadata, ct);
         }
     }
 
-    private async Task TrySwapLabelAfterOrphanedRecoveryAsync(JobId jobId, CancellationToken ct)
+    private async Task TrySwapLabelAfterOrphanedRecoveryAsync(
+        JobId jobId,
+        (string IssueIdentifier, string IssueProviderConfigId)? metadata,
+        CancellationToken ct)
     {
         try
         {
-            var metadata = await _facade.GetWorkItemIssueMetadataAsync(jobId, ct);
             if (metadata.HasValue)
             {
                 await _labelService.SwapLabelAsync(
