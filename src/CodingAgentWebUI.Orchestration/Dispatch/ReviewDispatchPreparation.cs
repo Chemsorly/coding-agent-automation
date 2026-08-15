@@ -52,7 +52,7 @@ internal sealed class ReviewDispatchPreparation : IDispatchPreparationHandler
                 RepoProviderId = _request.RepoProviderId,
                 IssueIdentifier = _request.PrIdentifier,
                 AgentProviderId = agentProviderId,
-                AgentId = _agent.AgentId,
+                AgentId = _agent.AgentId.Value,
                 BrainProviderId = _request.BrainProviderId,
                 PipelineProviderId = null,
                 InitiatedBy = _request.InitiatedBy

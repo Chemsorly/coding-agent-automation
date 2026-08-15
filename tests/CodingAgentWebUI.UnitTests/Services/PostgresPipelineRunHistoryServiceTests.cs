@@ -855,7 +855,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
             IssueProviderConfigId = "ip-1",
             RepoProviderConfigId = "rp-1",
             StartedAt = startedAt ?? DateTimeOffset.UtcNow,
-            AgentId = agentId
+            AgentId = agentId is { } aid ? (CodingAgentWebUI.Pipeline.Models.AgentId)aid : (CodingAgentWebUI.Pipeline.Models.AgentId?)null
         });
         run.CurrentStep = PipelineStep.Completed;
         run.ModelName = modelName;

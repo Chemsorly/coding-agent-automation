@@ -258,12 +258,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                         "ChatJobDispatcher: chat agent {AgentId} connected for job {JobName} in {ElapsedSeconds:F1}s",
                         connected.AgentId, jobName, elapsed);
 
-                    RegisterSession(dispatchId, jobName, connected.AgentId, claimedPvc, normalized);
+                    RegisterSession(dispatchId, jobName, connected.AgentId.Value, claimedPvc, normalized);
 
                     var tag = new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue);
                     ChatTelemetry.DispatchLatency.Record(elapsed, tag);
 
-                    return connected.AgentId;
+                    return connected.AgentId.Value;
                 }
 
                 await Task.Delay(2000, timeoutCts.Token);
@@ -551,10 +551,10 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     // ─── TerminateChatSessionAsync ────────────────────────────────────────────
 
-    public async Task TerminateChatSessionAsync(string agentId, CancellationToken cancellationToken)
+    public async Task TerminateChatSessionAsync(AgentId agentId, CancellationToken cancellationToken)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Chat.Terminate");
-        activity?.SetTag("agent_id", agentId);
+        activity?.SetTag("agent_id", agentId.Value);
 
         if (!_leaderElection.IsLeader)
         {
@@ -564,7 +564,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             return;
         }
 
-        if (!_agentIdToJobName.TryGetValue(agentId, out var jobName))
+        if (!_agentIdToJobName.TryGetValue(agentId.Value, out var jobName))
         {
             activity?.SetTag(TagOutcome, "not_found");
             return;
@@ -579,7 +579,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         activity?.SetTag("job_name", jobName);
 
         // 1. Send CancelChat — best-effort
-        await TrySendCancelChatAsync(agentId, session, jobName);
+        await TrySendCancelChatAsync(agentId.Value, session, jobName);
 
         // 2. Wait up to 10s for the watcher to confirm terminal
         using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -593,7 +593,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         catch (OperationCanceledException)
         {
             activity?.SetTag(TagOutcome, "force_delete");
-            await ForceDeleteAndCleanupAsync(agentId, jobName, session);
+            await ForceDeleteAndCleanupAsync(agentId.Value, jobName, session);
         }
     }
 

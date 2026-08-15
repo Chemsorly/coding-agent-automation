@@ -56,7 +56,7 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
 
         var entry2 = _fixture.Registry.GetByAgentId(agentId);
         entry2.Should().NotBeNull();
-        entry2!.AgentId.Should().Be(agentId);
+        entry2!.AgentId.Value.Should().Be(agentId);
         entry2.ConnectionId.Should().NotBe(originalConnectionId);
         entry2.Status.Should().Be(AgentStatus.Idle);
     }

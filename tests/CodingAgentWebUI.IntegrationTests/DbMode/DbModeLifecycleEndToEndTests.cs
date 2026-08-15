@@ -479,7 +479,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         // Assert: The restored run appears in results despite no DB WorkItem
         activeRuns.Should().ContainSingle(r => r.RunId == restoredRun.RunId);
         var found = activeRuns.First(r => r.RunId == restoredRun.RunId);
-        found.AgentId.Should().Be("agent-restored-7");
+        found.AgentId?.Value.Should().Be("agent-restored-7");
         found.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
         found.IssueIdentifier.Should().Be("owner/repo#7");
     }
@@ -978,7 +978,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         activeRuns.Should().ContainSingle(r => r.RunId == runId.ToString());
         var found = activeRuns.First(r => r.RunId == runId.ToString());
         found.CurrentStep.Should().Be(PipelineStep.GeneratingCode); // From live, not MapStatusToStep's Created
-        found.AgentId.Should().Be("agent-18");
+        found.AgentId?.Value.Should().Be("agent-18");
         found.IssueTitle.Should().Be("Live Step Enrichment");
     }
 
@@ -1008,7 +1008,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         var found = activeRuns.First(r => r.RunId == orphanRun.RunId);
         found.IssueTitle.Should().Be("In-Memory Only Run");
         found.CurrentStep.Should().Be(PipelineStep.CloningRepository);
-        found.AgentId.Should().Be("agent-19");
+        found.AgentId?.Value.Should().Be("agent-19");
     }
 
     #endregion
