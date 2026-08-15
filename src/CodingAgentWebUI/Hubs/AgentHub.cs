@@ -248,10 +248,10 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
     /// <summary>
     /// Swaps the agent label on the entity (issue or PR) using the shared issue operations service.
-    /// Routes based on <paramref name="targetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
+    /// Routes based on <see cref="PipelineRun.LabelTargetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
     /// </summary>
-    private Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind)
-        => _issueOps.SwapLabelAsync(run, newLabel, targetKind);
+    private Task SwapLabelAsync(PipelineRun run, string newLabel)
+        => _issueOps.SwapLabelAsync(run, newLabel);
 
     /// <summary>
     /// Posts a comment on the issue using the shared issue operations service.
@@ -259,9 +259,4 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// </summary>
     private Task<string?> PostCommentViaIssueProviderAsync(PipelineRun run, string body)
         => _issueOps.PostCommentViaIssueProviderAsync(run, body);
-
-    /// <summary>
-    /// Determines the correct <see cref="LabelTargetKind"/> based on the run's <see cref="PipelineRun.RunType"/>.
-    /// </summary>
-    private static LabelTargetKind GetLabelTargetKind(PipelineRun run) => run.LabelTargetKind;
 }

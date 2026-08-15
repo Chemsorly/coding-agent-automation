@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// <summary>
 /// Static factory for creating <see cref="TokenBucketRateLimiter"/> instances.
 /// Centralizes rate limiter construction previously duplicated between
-/// <see cref="DispatchService"/> and <see cref="ConsolidationDispatchHandler"/>.
+/// <see cref="DispatchService"/> and <see cref="ConsolidationWorkItemDispatchService"/>.
 /// </summary>
 internal static class RateLimiterFactory
 {
