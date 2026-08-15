@@ -218,26 +218,37 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     // ── Pagination edge cases ─────────────────────────────────────────────
 
     [Fact]
-    public async Task GetRunHistoryPaged_ExtremelyLargePage_ThrowsOverflowException()
+    public async Task GetRunHistoryPaged_ExtremelyLargePage_ThrowsArgumentOutOfRangeException()
     {
         var service = CreateService();
 
         // page=2_147_485 with pageSize=1000 causes (page-1)*pageSize to overflow int.MaxValue:
         // (2_147_485 - 1) * 1000 = 2_147_484_000 > int.MaxValue (2_147_483_647)
-        // With unchecked arithmetic this wraps to a negative number and Skip() silently returns page 1.
-        // Both implementations should throw OverflowException instead.
-        // Note: the checked() expression throws before any EF or LINQ operation is invoked,
-        // so the InMemory EF limitation in PostgresPipelineRunHistoryServiceContractTests does not apply.
+        // The pre-check guard uses (long)(page - 1) * pageSize > int.MaxValue, which fires before
+        // the checked() expression is reached, converting the unhandled OverflowException into a
+        // descriptive ArgumentOutOfRangeException. Both implementations share this guard via the
+        // same validation block.
         Func<Task> act = () => service.GetRunHistoryAsync(page: 2_147_485, pageSize: 1000);
 
-        await act.Should().ThrowAsync<OverflowException>();
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
 
-    // TODO: Add a complementary "boundary does not throw" test for the near-overflow case:
-    // page=2_147_484 with pageSize=1000 gives (2_147_484-1)*1000 = 2_147_483_000, which is just
-    // under int.MaxValue and should succeed without throwing. Without this test the overflow threshold
-    // is not pinned, and an over-eager implementation that throws on any large page value would pass
-    // the test above while being incorrect.
+    [Fact]
+    public async Task GetRunHistoryPaged_MaxValidPage_DoesNotThrow()
+    {
+        var service = CreateService();
+
+        // page=2_147_484 with pageSize=1000 gives (2_147_484-1)*1000 = 2_147_483_000, which is just
+        // under int.MaxValue (2_147_483_647) and must not throw. This pins the exact overflow threshold:
+        // an over-conservative guard using integer division (int.MaxValue / pageSize = 2_147_483) would
+        // incorrectly reject this valid page value and fail here.
+        Func<Task> act = () => service.GetRunHistoryAsync(page: 2_147_484, pageSize: 1000);
+
+        // TODO: Add a complementary assertion on the return value (e.g. non-null PagedResult, HasMore==false)
+        // to confirm the method completed a successful query path. Currently, NotThrowAsync() would pass even
+        // if the implementation silently swallowed an unexpected exception and returned a default/null value.
+        await act.Should().NotThrowAsync();
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
