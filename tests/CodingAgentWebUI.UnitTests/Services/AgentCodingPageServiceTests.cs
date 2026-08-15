@@ -1242,17 +1242,20 @@ public class AgentCodingPageServiceTests
         TimeoutSeconds = 3600
     };
 
-    // ── DrawerCancellationToken Tests ──
+    // ── IssueDrawer CancellationToken Tests ──
 
     [Fact]
-    public void DrawerCancellationToken_ReturnsNone_WhenNoDrawerOpen()
+    public void IssueDrawer_CancellationToken_ReturnsNone_WhenNoDrawerOpen()
     {
-        Assert.Equal(CancellationToken.None, _service.DrawerCancellationToken);
+        Assert.Equal(CancellationToken.None, _service.IssueDrawer.CancellationToken);
     }
 
     [Fact]
-    public async Task DrawerCancellationToken_IsValid_WhenDrawerOpen()
+    public async Task IssueDrawer_CancellationToken_IsValid_WhenDrawerOpen()
     {
+        // TODO: These assertions are weak — they pass for any non-cancelled token unrelated to the
+        // drawer. Strengthen by also closing the drawer after capturing and asserting cancellation
+        // propagates, to confirm the token is the one owned by the drawer's CTS.
         var template = MakeTemplate();
         _service.Templates.Add(template);
         _service.IssueProviders.Add(MakeProvider("ip-1"));
@@ -1260,13 +1263,13 @@ public class AgentCodingPageServiceTests
 
         await _service.OpenIssueDrawerAsync("t-1");
 
-        var token = _service.DrawerCancellationToken;
+        var token = _service.IssueDrawer.CancellationToken;
         Assert.NotEqual(CancellationToken.None, token);
         Assert.False(token.IsCancellationRequested);
     }
 
     [Fact]
-    public async Task DrawerCancellationToken_IsCancelled_AfterDrawerClose()
+    public async Task IssueDrawer_CancellationToken_IsCancelled_AfterDrawerClose()
     {
         var template = MakeTemplate();
         _service.Templates.Add(template);
@@ -1274,19 +1277,21 @@ public class AgentCodingPageServiceTests
         SetupMockIssueProvider();
 
         await _service.OpenIssueDrawerAsync("t-1");
-        var token = _service.DrawerCancellationToken;
+        var token = _service.IssueDrawer.CancellationToken;
 
         _service.CloseIssueDrawer();
 
         Assert.True(token.IsCancellationRequested);
     }
 
-    // TODO: This test uses its own pre-cancelled CTS rather than the service's DrawerCancellationToken.
-    // Add a test that opens the drawer, captures DrawerCancellationToken, closes the drawer (cancelling the CTS),
-    // and verifies the token is cancelled — to validate the actual integration path (issue #1057 criterion #4).
     [Fact]
     public async Task CheckDrawerDependenciesAsync_ThrowsOperationCanceled_WhenTokenCancelled()
     {
+        // TODO: This test uses a pre-cancelled CancellationTokenSource constructed independently of
+        // the service's drawer lifecycle. Add a complementary test that opens the drawer, captures
+        // _service.IssueDrawer.CancellationToken, closes the drawer (triggering the drawer's own CTS),
+        // and verifies the captured token is cancelled — to validate the actual end-to-end cancellation
+        // path used by the caller in AgentCoding.razor.cs.
         var template = MakeTemplate();
         _service.Templates.Add(template);
         _service.IssueProviders.Add(MakeProvider("ip-1"));

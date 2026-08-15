@@ -146,11 +146,6 @@ public class AgentCodingPageService : IDisposable
         _ => null
     };
 
-    // TODO: DrawerCancellationToken now returns only the issue drawer's CTS. Consumers using this for
-    // non-issue drawer operations will get the wrong token. Consider removing and directing callers
-    // to the specific DrawerStateService instance's CancellationToken.
-    public CancellationToken DrawerCancellationToken => _issueDrawer.CancellationToken;
-
     // ── Initialization ──
 
     public async Task<string?> InitializeAsync()
