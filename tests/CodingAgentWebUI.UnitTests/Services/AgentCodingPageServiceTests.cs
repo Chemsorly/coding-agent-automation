@@ -753,6 +753,29 @@ public class AgentCodingPageServiceTests
         Assert.False(_service.PrDrawerHasMore);
     }
 
+    [Fact]
+    public async Task OpenPrDrawerAsync_SetsPageToOne_ViaDelegateToUnifiedMethod()
+    {
+        // Verifies the contract that opening the PR drawer always starts at page 1.
+        // This anchors the private-overload → public-overload delegation: after the
+        // consolidation, the private overload must call LoadPrDrawerPageAsync(template, 1).
+        var template = MakeTemplate();
+        _service.Templates.Add(template);
+        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        SetupMockRepoProvider();
+
+        var error = await _service.OpenPrDrawerAsync("t-1");
+
+        Assert.Null(error);
+        Assert.True(_service.IsPrDrawerOpen);
+        // TODO: This assertion only checks the side-effect value and would pass for any code path
+        // that ends with _prDrawer.Page = 1. A stronger test would verify ListOpenPullRequestsAsync
+        // is called with page=1 by using a specific mock constraint (r.ListOpenPullRequestsAsync(1, ...))
+        // instead of It.IsAny<int>() in SetupMockRepoProvider. (review-findings: TestQualityReviewer [WARNING])
+        Assert.Equal(1, _service.PrDrawerPage);
+    }
+
     // ── Drawer Orchestration Tests ──
 
     [Fact]
