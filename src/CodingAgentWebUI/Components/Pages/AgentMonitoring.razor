@@ -87,6 +87,10 @@
                                 {
                                     <div><strong>Tokens:</strong> @CostFormatter.FormatTokens(modalRun.TotalTokens)</div>
                                 }
+                                @* TODO: CacheReadTokens/CacheWriteTokens are not rendered here (live run view).
+                                   HistoryRunDetailModal.razor was updated but this monitoring modal was not.
+                                   A run in progress will not show cache tokens until it surfaces in history.
+                                   Add a conditional block here matching the one in HistoryRunDetailModal.razor. *@
                                 @if (modalRun.BranchName != null)
                                 {
                                     <div><strong>Branch:</strong> @modalRun.BranchName</div>

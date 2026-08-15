@@ -32,6 +32,8 @@ public static class PipelineRunExtensions
     {
         if (result?.Usage is null) return;
         run.TotalTokens += result.Usage.TotalTokens;
+        run.CacheReadTokens += result.Usage.CacheReadTokens;
+        run.CacheWriteTokens += result.Usage.CacheWriteTokens;
 
         var tags = phase is null
             ? PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName)
