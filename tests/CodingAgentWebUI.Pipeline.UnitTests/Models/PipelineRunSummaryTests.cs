@@ -250,4 +250,48 @@ public class PipelineRunSummaryTests
 
         summary.AgentProviderConfigId.Should().BeNull();
     }
+
+    [Fact]
+    public void ToSummary_MapsCacheTokensFromMetrics()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Cache Token Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+        run.CacheReadTokens = 100;
+        run.CacheWriteTokens = 50;
+
+        var summary = run.ToSummary();
+
+        summary.CacheReadTokens.Should().Be(100);
+        summary.CacheWriteTokens.Should().Be(50);
+    }
+
+    // TODO: This zero-default test does not detect a regression if the `CacheReadTokens = CacheReadTokens`
+    // mapping line is accidentally omitted from ToSummary() — the long default value of 0 would mask the
+    // missing mapping. The non-zero mapping test (ToSummary_MapsCacheTokensFromMetrics) above already
+    // catches that omission. Consider removing this test or converting it to assert a meaningful invariant.
+    [Fact]
+    public void ToSummary_WhenNoCacheTokens_CacheFieldsAreZero()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "No Cache Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+
+        var summary = run.ToSummary();
+
+        summary.CacheReadTokens.Should().Be(0);
+        summary.CacheWriteTokens.Should().Be(0);
+    }
 }

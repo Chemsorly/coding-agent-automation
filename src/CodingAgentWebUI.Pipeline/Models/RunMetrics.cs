@@ -29,6 +29,12 @@ public sealed class RunMetrics
     /// <summary>Accumulated total cost (USD, decimal) across all agent invocations, or null if no cost data available.</summary>
     public decimal? TotalCost { get; set; }
 
+    /// <summary>Accumulated tokens served from prompt cache across all agent invocations in this run.</summary>
+    public long CacheReadTokens { get; set; }
+
+    /// <summary>Accumulated tokens written to prompt cache across all agent invocations in this run.</summary>
+    public long CacheWriteTokens { get; set; }
+
     /// <summary>Per-phase token/cost breakdown accumulated during the run. Thread-safe for concurrent review agents.</summary>
     public ConcurrentDictionary<string, PhaseUsage> PhaseBreakdown { get; } = new();
 }
