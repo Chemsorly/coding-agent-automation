@@ -5,8 +5,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Usage:** Agents MUST read this file before proposing changes to understand constraints and deliberate choices. If a decision here contradicts what seems "obvious," the decision wins — the human made it for a reason.
 
 <!-- Intent Extraction Sessions -->
-<!-- Session: 10 | Last run: 2026-08-14 | Decisions captured: 57 -->
-<!-- Queued for next session: automated calibration design (when clear mechanism emerges), Agent Coding page layout redesign, housekeeping feature calibration (after 50+ runs accumulate data) -->
+<!-- Session: 12 | Last run: 2026-08-14 | Decisions captured: 64 -->
+<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService decomposition execution -->
 
 ---
 
@@ -16,6 +16,53 @@ Human-authored intent behind non-obvious design choices. This file is the author
 ## Architecture
 
 <!-- Decisions about system structure, patterns, and component boundaries -->
+
+### LoopStatePersistenceService: no leader guard needed — loop gate + 90s delay is sufficient
+
+### PipelineLoopService: full loop must be leader-gated in multi-replica deployments
+
+**Date:** 2026-08-14
+**Category:** architecture
+
+**Decision:** In K8s multi-replica deployments, `PipelineLoopService` MUST only run its poll loop when `ILeaderElectionService.IsLeader` is true. This applies to the entire loop — not just the housekeeping sub-step. The rationale: `LoopStatePersistenceService` auto-resumes the loop on pod restart, meaning all replicas would independently start polling if the loop were not leader-gated. Operations that bypass the WorkItem dedup pipeline (most immediately, the housekeeping auto-branch-updater calling `UpdatePullRequestBranchAsync` directly) have no dedup at all and WILL fire concurrently on non-gated replicas. In Legacy and SignalR modes (single-replica by design), `ILeaderElectionService` is not registered; the loop runs unconditionally as today. Issue #1987 tracks the implementation; it is blocked by #1912 (now closed — #1912 is complete, so #1987 is unblocked).
+
+**Context:** `PipelineLoopService` predates the multi-replica deployment model. `LeaderElectedPollingService` was extracted in #1912 and is used by `DispatchService`, `ConsolidationDispatchHandler`, and `ReconciliationService`. `PipelineLoopService` was not migrated in that PR. `LeaderElectionService.cs` documentation already claims PipelineLoopService is covered — this is aspirational, not yet true.
+
+**Alternatives considered:** Gate only direct API callers like housekeeping (partial gating) — rejected because WorkItem dedup is not a hard guarantee and auto-resume makes full loop gating necessary.
+
+**Reassess when:** Never for the principle. If the activation model changes (e.g., loop is never auto-resumed), revisit whether leader-gating is still needed.
+
+---
+
+### DatabaseMaintenanceService: migrate to LeaderElectedPollingService
+
+**Date:** 2026-08-14
+**Category:** architecture
+
+**Decision:** `DatabaseMaintenanceService` should be migrated to extend `LeaderElectedPollingService` (the shared base class used by `DispatchService`, `ConsolidationDispatchHandler`, and `ReconciliationService`). The current ad-hoc pattern — resolving `ILeaderElectionService` once at startup via `IServiceProvider.GetService()` then checking `IsLeader` per cycle — has a documented race: if the service resolves before `ILeaderElectionService` is registered, all subsequent maintenance cycles run without leader gating. The ad-hoc pattern also lacks `LeaderToken` integration, meaning the service does not stop mid-term on leadership loss (it only checks at the next cycle boundary). Migrating removes the race and makes the gating consistent with all other leader-gated services.
+
+**Context:** The TODO comment in `DatabaseMaintenanceService` explicitly documents the DI resolution race. `LeaderElectedPollingService` already supports the simple `PeriodicTimer`-equivalent pattern via `OnPollCycleAsync` + `PollIntervalSeconds`. Maintenance runs hourly — double-execution risk is low but the DI race is a real correctness gap.
+
+**Alternatives considered:** Fix only the DI race (resolve per-cycle) while keeping `PeriodicTimer` structure — partial fix, still no `LeaderToken` integration; inconsistent with the rest of the dispatch infrastructure.
+
+**Reassess when:** Never — once migrated, this decision is stable.
+
+---
+
+### AgentCodingPageService: extract per-drawer orchestration when next touched
+
+**Date:** 2026-08-14
+**Category:** ux
+
+**Decision:** `AgentCodingPageService` at ~747 lines is a decomposition candidate. The target: when the file is next touched for a feature or bug fix, extract the three drawer orchestrators (Issue, PR, Epic) into per-drawer services or a single generic `DrawerOrchestrationService<T>`. Each drawer currently has ~6-8 methods (load page, load labels, check dependencies, dispatch, open, close) that are logically independent. The two dispatch paths (`DispatchWithOrchestrationAsync` vs `DispatchLegacyAsync`) should also move into `AgentJobDispatcher`, making `AgentCodingPageService` dispatch-free. The Blazor component (`AgentCoding.razor.cs` at ~501 lines) retains only timer/dismiss logic and UI state — it delegates all business logic to the extracted services.
+
+**Context:** Same growth pattern as `LocalPipelineExecutor` (which was also flagged as an incidental monolith and decomposed). The `DrawerStateService<T>` generic was already extracted from the page service; this continues that extraction. The known `DrawerCancellationToken` bug (#2028) is a symptom of the tight coupling between drawer instances and the parent service.
+
+**Alternatives considered:** Keep as-is (coherent vertical slices are readable, ~750 lines is not yet blocking), dispatch-path extraction only (removes mode branching but leaves drawer methods dense).
+
+**Reassess when:** After extraction, if the sub-services are harder to navigate than the original monolith, reconsider granularity.
+
+---
 
 ### Monolithic orchestrator is intentional (for now)
 
@@ -282,6 +329,51 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Alternatives considered:** Per-label config for gating (overcomplicated), webhook-based approval gates (different mechanism — label-based is simpler for GitHub-native workflows).
 
 **Reassess when:** A new human-approval gate is added that does not fit the label model (e.g., requires a UI action or API call rather than a label change). For label-based gates, always add to `DispatchGatedLabels`.
+
+---
+
+### LeaderElectedPollingService: two correctness defects tracked by #2027
+
+**Date:** 2026-08-14
+**Category:** architecture
+
+**Decision:** `LeaderElectedPollingService` has two known defects, both self-documented with TODO comments tagged "DotNetSpecialist WARNING (Issue #1912)". (1) Missing `ArgumentNullException.ThrowIfNull(leaderElection)` in the constructor — a null injection produces a `NullReferenceException` at runtime rather than a clear construction-time failure. (2) The `OperationCanceledException` catch filter `!stoppingToken.IsCancellationRequested` evaluates false when host-stop and leadership-loss occur simultaneously, causing the OCE to propagate uncaught and BackgroundService to log a spurious `Error` on clean shutdown. Both are deferred cleanup from #1912. Currently broken — #2027 tracks the fix.
+
+**Context:** Intentionally deferred from #1912 to keep the extraction PR focused. Both fixes are small and self-contained. The spurious error log is observable on every clean K8s pod shutdown that races with Postgres lease expiry.
+
+**Alternatives considered:** Fix inline when next touched (no dedicated issue) — rejected because the spurious error log is observable in production and warrants explicit tracking.
+
+**Reassess when:** After #2027 is implemented. Both TODOs removed, decision stable.
+
+---
+
+### DrawerCancellationToken: wrong-token bug tracked by #2028
+
+**Date:** 2026-08-14
+**Category:** ux
+
+**Decision:** `AgentCodingPageService.DrawerCancellationToken` is a known bug — it always returns the issue drawer's `CancellationToken` regardless of which drawer is active. The property must be removed; callers should access the specific `DrawerStateService<T>` instance's `CancellationToken` directly (`IssueDrawer.CancellationToken`, `PrDrawer.CancellationToken`, `EpicDrawer.CancellationToken`). The three drawer instances are already public properties on `AgentCodingPageService`. Currently broken — #2028 tracks the fix.
+
+**Context:** The property predates `DrawerStateService<T>` extraction. When drawer state was unified into the generic service, the shorthand was left pointing at the issue drawer. Symptom of the broader drawer coupling that the `AgentCodingPageService` decomposition (see session 11 Q3 decision) will address.
+
+**Alternatives considered:** Fix by returning the active drawer's token dynamically (switch on `ActiveDrawerTab`) — adds coupling between drawer state and the property; removing is cleaner.
+
+**Reassess when:** After #2028 is implemented. Stable once the property is gone.
+
+---
+
+### ProviderConfigId validation: fail-fast ArgumentException at dispatch entry points is acceptable
+
+**Date:** 2026-08-14
+**Category:** architecture
+
+**Decision:** No strong preference on whether empty `ProviderConfigId` at a dispatch entry point throws `ArgumentException` or returns a soft `(false, error)`. Both are valid. The current implementation throws — this is consistent with treating an empty provider ID as a programming error (the UI validates provider selection before dispatch). Agents adding new dispatch entry points may use either pattern, but should be consistent with the method's existing error-return contract (`TryDispatch*` methods that already return `(bool, string?)` may prefer soft returns; void or fire-and-forget paths should throw). No rule to enforce here.
+
+**Context:** Added in #1995/#2005 to prevent a regression where empty `RepoProviderConfigId` caused lifecycle-tracking to be silently skipped, allowing duplicate dispatches. The fix is correct regardless of throw vs return.
+
+**Alternatives considered:** N/A — no strong opinion.
+
+**Reassess when:** Never. Implementation detail, not a load-bearing design decision.
 
 ---
 
@@ -1183,12 +1275,25 @@ Human-authored intent behind non-obvious design choices. This file is the author
 - "MaxDecompositionSubIssueFiles=12: research-based low-confidence" scoped by "Epic decomposition: two-phase with human gate" (sub-issue scope constraint operationalizes 'achievable in one agent run')
 - "MaxConsolidationDispatchRetries → #2025" constrains "Dispatch priority: static ordering" (consolidation is lowest priority; its retry mechanism must be consistent with other priority-tier retry config)
 
+- "PipelineLoopService: full loop leader-gated" scoped by "Agent lifetime: pull→push evolution" (only relevant in K8s multi-replica; Legacy/SignalR single-replica runs unconditionally)
+- "PipelineLoopService: full loop leader-gated" enables "Housekeeping auto-update concurrency: 1 is permanent default" (concurrency gate only works correctly when a single leader runs the poll loop)
+- "DatabaseMaintenanceService: migrate to LeaderElectedPollingService" scoped by "PipelineLoopService: full loop leader-gated" (same principle: all background loops with side-effects must be leader-gated in multi-replica)
+- "DatabaseMaintenanceService: migrate to LeaderElectedPollingService" correlates with "LeaderElectedPollingService: two correctness defects (#2027)" (migration should not happen before #2027 is fixed — subclass inherits the constructor null-check and OCE filter)
+- "AgentCodingPageService: extract per-drawer orchestrators" scoped by "AgentCoding component ↔ PageService boundary" (drawer orchestration is the next extraction target after the component boundary was established)
+- "DrawerCancellationToken: wrong-token bug (#2028)" scoped by "AgentCodingPageService: extract per-drawer orchestrators" (bug is a symptom of the tight coupling; extraction removes the need for the property entirely)
+- "LeaderElectedPollingService: two correctness defects (#2027)" constrains "PipelineLoopService: full loop leader-gated" (#1987 should wait for #2027 — reusing the fixed base class is the suggested approach)
+- "ProviderConfigId validation: no strong opinion" scoped by "Dual JSON options (Default/Lenient)" (both decisions follow the principle: strict at boundaries the system controls, lenient at agent-produced boundaries)
+
+- "LoopStatePersistenceService: no leader guard needed" scoped by "PipelineLoopService: full loop leader-gated" (the loop gate makes eager activation on all replicas safe — all sit in leader-wait until promoted)
+- "LoopStatePersistenceService: no leader guard needed" correlates with "Agent lifetime: pull→push evolution" (90s delay is a rolling-deploy drain guard, not a multi-replica coordination mechanism)
+
 ### Coverage Gaps (auto-detected)
 - Automated calibration design remains explicitly deferred
-- Agent Coding page layout redesign (open since session 6)
-- Housekeeping feature calibration data — no empirical data yet on concurrency behavior in production; revisit after 50+ housekeeping cycles
+- Housekeeping feature calibration data — no empirical data yet; revisit after 50+ housekeeping cycles
+- AgentCodingPageService decomposition — decision captured but implementation not yet started
+- `RateLimiter` null-forgiving operator (#1994) — no opinion captured, implementation detail
 
 ### Queued Questions (for next session)
 - Automated calibration design — when a clear mechanism emerges, revisit
-- Agent Coding page layout redesign proposals (from session 6, still open)
-- Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct? Are there repos where >1 would help?
+- Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct?
+- AgentCodingPageService decomposition: after extraction, was the per-drawer split the right granularity?
