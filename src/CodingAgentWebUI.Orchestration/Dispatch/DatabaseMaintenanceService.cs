@@ -38,11 +38,7 @@ public class DatabaseMaintenanceService : BackgroundService
         IConfiguration configuration,
         IPipelineConfigStore configStore)
     {
-        // TODO: [WARNING] Add ArgumentNullException.ThrowIfNull(configStore) here for consistency with
-        // other constructors in the Dispatch folder (ConsolidationDispatchService, DispatchResolutionService,
-        // KubernetesJobCleanup all guard non-nullable parameters). Without this, a DI misconfiguration
-        // silently stores null and surfaces as a NullReferenceException inside the sweep methods rather
-        // than a clear parameter name in the exception message.
+        ArgumentNullException.ThrowIfNull(configStore);
         _dbFactory = dbFactory;
         _consolidationService = consolidationService;
         _serviceProvider = serviceProvider;
@@ -177,7 +173,7 @@ public class DatabaseMaintenanceService : BackgroundService
     /// Terminal ConsolidationRuns older than retention period → DELETE via IConsolidationService.
     /// Uses client-side filtering because CompletedAtUtc is stored inside JSONB (no server-side filter).
     /// </summary>
-    // TODO: GetRunHistoryAsync → LoadAllRunsAsync is bounded to Take(1000) ordered by Id DESC.
+    // Note: GetRunHistoryAsync → LoadAllRunsAsync is bounded to Take(1000) ordered by Id DESC.
     // If >1000 consolidation runs exist, the oldest runs (most likely past retention) are excluded
     // from the result set and become unreachable by cleanup in a single pass. Consider adding a
     // dedicated unbounded cleanup query or paginated deletion for deployments with high run volume.
@@ -228,7 +224,7 @@ public class DatabaseMaintenanceService : BackgroundService
     /// per project. Rows with <c>ProjectId IS NULL</c> or <c>CompletedAt IS NULL</c> (active runs)
     /// are never deleted.
     /// </summary>
-    // TODO: [WARNING] SweepPipelineRunRetentionAsync and SweepWorkItemRetentionAsync each call
+    // Note: SweepPipelineRunRetentionAsync and SweepWorkItemRetentionAsync each call
     // LoadPipelineConfigAsync independently, resulting in two config-store round-trips per maintenance
     // cycle. If the store issues a DB query on each call (no in-memory cache), this doubles the load
     // for no correctness benefit. Consider loading config once in RunMaintenanceCycleAsync and passing
@@ -314,10 +310,10 @@ public class DatabaseMaintenanceService : BackgroundService
 
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-            // DELETE terminal WorkItems rows ranked beyond N per project, ordered by CompletedAt DESC, Id DESC.
+            // Removes terminal WorkItems rows ranked beyond N per project, ordered by CompletedAt DESC, Id DESC.
             // Status IN (3,4,5): Succeeded=3, Failed=4, Cancelled=5 (WorkItemStatus enum — DO NOT reorder;
             // see ⚠️ DB CONTRACT comment in WorkItemStatus.cs).
-            // ProjectId IS NULL rows (consolidation runs, legacy rows) are always exempt.
+            // Rows with ProjectId IS NULL (consolidation runs, legacy rows) are always exempt.
             const string sql = """
                 DELETE FROM "WorkItems"
                 USING (
