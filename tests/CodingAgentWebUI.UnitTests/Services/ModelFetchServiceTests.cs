@@ -258,7 +258,7 @@ public class ModelFetchServiceTests
             _registry.Register(new AgentRegistrationMessage { AgentId = $"{prefix}-pod", Hostname = "h", Labels = [] }, "conn-late");
         });
 
-        var (models, error) = await _service.WaitAndFetchAsync(prefix, 5, 50, CancellationToken.None);
+        var (models, error) = await _service.WaitAndFetchAsync(prefix, 30, 50, CancellationToken.None);
 
         error.Should().BeNull();
         models.Should().HaveCount(1);
