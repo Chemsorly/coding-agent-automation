@@ -41,7 +41,11 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
         _sut = new WorkItemFallbackTransitionService(_transitionService, NullLogger<WorkItemFallbackTransitionService>.Instance);
     }
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+        using var db = new InMemoryPipelineDbContext(_dbOptions);
+        db.Database.EnsureDeleted();
+    }
 
     // ── Direct transition ────────────────────────────────────────────────
 

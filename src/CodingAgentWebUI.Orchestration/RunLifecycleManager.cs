@@ -22,11 +22,6 @@ namespace CodingAgentWebUI.Orchestration;
 public sealed class RunLifecycleManager : IRunLifecycleManager
 {
     private readonly IOrchestratorRunService _runService;
-    // TODO: _workItemTransition is stored but never read — all transition logic now goes through
-    // _workItemFallbackTransition. Remove this field and WorkItemTransition from
-    // RunLifecycleManagerDependencies once WorkDistributionRegistration.cs (line ~139) is updated
-    // to stop passing GetRequiredService<WorkItemTransitionService>() to that parameter.
-    private readonly WorkItemTransitionService? _workItemTransition;
     private readonly IWorkItemFallbackTransitionService? _workItemFallbackTransition;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IAgentRegistryService _registry;
@@ -47,7 +42,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         ArgumentNullException.ThrowIfNull(deps.Logger);
 
         _runService = deps.RunService;
-        _workItemTransition = deps.WorkItemTransition;
         _workItemFallbackTransition = deps.WorkItemFallbackTransition;
         _historyService = deps.HistoryService;
         _registry = deps.Registry;
