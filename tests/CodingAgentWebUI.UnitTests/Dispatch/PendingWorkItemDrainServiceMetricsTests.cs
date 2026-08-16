@@ -210,7 +210,6 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
             dispatchAttemptService,
             _transitionService,
             _mockResolver.Object,
-            revertHandler,
             NullLogger<ConsolidationDrainDispatcher>.Instance);
 
         return new PendingWorkItemDrainService(

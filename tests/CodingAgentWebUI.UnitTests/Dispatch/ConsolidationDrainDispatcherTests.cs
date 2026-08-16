@@ -245,7 +245,6 @@ public sealed class ConsolidationDrainDispatcherTests : IDisposable
             dispatchAttemptService,
             throwingTransition,
             _mockResolver.Object,
-            revertHandler,
             NullLogger<ConsolidationDrainDispatcher>.Instance);
 
         var result = await dispatcher.TryDispatchAsync(item, request, (AgentId)"agent-1", CancellationToken.None);
@@ -316,7 +315,6 @@ public sealed class ConsolidationDrainDispatcherTests : IDisposable
             dispatchAttemptService,
             cancellingTransitionService,
             _mockResolver.Object,
-            revertHandler,
             NullLogger<ConsolidationDrainDispatcher>.Instance);
 
         // Act: pass cts.Token — still live when the method starts, cancelled inside the mock callback
@@ -350,7 +348,6 @@ public sealed class ConsolidationDrainDispatcherTests : IDisposable
             dispatchAttemptService,
             _transitionService,
             _mockResolver.Object,
-            revertHandler,
             NullLogger<ConsolidationDrainDispatcher>.Instance);
     }
 

@@ -32,7 +32,6 @@ public sealed class ConsolidationDrainDispatcher : IConsolidationDrainDispatcher
     private readonly DispatchAttemptService _dispatchAttemptService;
     private readonly WorkItemTransitionService _transitionService;
     private readonly ISignalRWorkDistributorAgentResolver _agentResolver;
-    private readonly DispatchRevertService _revertHandler;
     private readonly ILogger<ConsolidationDrainDispatcher> _logger;
 
     public ConsolidationDrainDispatcher(
@@ -41,7 +40,6 @@ public sealed class ConsolidationDrainDispatcher : IConsolidationDrainDispatcher
         DispatchAttemptService dispatchAttemptService,
         WorkItemTransitionService transitionService,
         ISignalRWorkDistributorAgentResolver agentResolver,
-        DispatchRevertService revertHandler,
         ILogger<ConsolidationDrainDispatcher> logger)
     {
         ArgumentNullException.ThrowIfNull(consolidationDispatcher);
@@ -49,14 +47,12 @@ public sealed class ConsolidationDrainDispatcher : IConsolidationDrainDispatcher
         ArgumentNullException.ThrowIfNull(dispatchAttemptService);
         ArgumentNullException.ThrowIfNull(transitionService);
         ArgumentNullException.ThrowIfNull(agentResolver);
-        ArgumentNullException.ThrowIfNull(revertHandler);
         ArgumentNullException.ThrowIfNull(logger);
         _consolidationDispatcher = consolidationDispatcher;
         _consolidationRunStore = consolidationRunStore;
         _dispatchAttemptService = dispatchAttemptService;
         _transitionService = transitionService;
         _agentResolver = agentResolver;
-        _revertHandler = revertHandler;
         _logger = logger;
     }
 

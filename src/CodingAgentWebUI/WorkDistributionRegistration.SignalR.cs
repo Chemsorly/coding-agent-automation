@@ -96,7 +96,6 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<DispatchRevertService>()),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
-            sp.GetRequiredService<DispatchRevertService>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<ConsolidationDrainDispatcher>>()));
         services.AddSingleton<PendingWorkItemDrainService>(sp => new PendingWorkItemDrainService(
             new DrainServiceDependencies(

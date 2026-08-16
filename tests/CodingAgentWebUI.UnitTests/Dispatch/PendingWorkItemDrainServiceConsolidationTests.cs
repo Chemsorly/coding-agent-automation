@@ -458,7 +458,6 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
             dispatchAttemptService,
             transitionService,
             _mockResolver.Object,
-            revertHandler,
             NullLogger<ConsolidationDrainDispatcher>.Instance);
 
         return new PendingWorkItemDrainService(
