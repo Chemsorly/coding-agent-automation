@@ -3,7 +3,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 public sealed class PipelineRunSummary
 {
     public required string RunId { get; init; }
-    public required string IssueIdentifier { get; init; }
+    public required IssueIdentifier IssueIdentifier { get; init; }
     public required string IssueTitle { get; init; }
     public required PipelineStep FinalStep { get; init; }
 

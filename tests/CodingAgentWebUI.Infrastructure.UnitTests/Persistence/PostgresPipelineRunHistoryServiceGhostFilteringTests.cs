@@ -158,7 +158,7 @@ public sealed class PostgresPipelineRunHistoryServiceGhostFilteringTests : IDisp
         history.Should().HaveCount(1);
         var r = history[0];
         r.RunId.Should().Be(runId.ToString());
-        r.IssueIdentifier.Should().Be("owner/repo#42");
+        r.IssueIdentifier.Should().Be((IssueIdentifier)"owner/repo#42");
         r.IssueTitle.Should().Be("Fallback title");
         r.FinalStep.Should().Be(PipelineStep.Failed);
         r.StartedAtOffset.Should().Be(startedAt);
@@ -258,7 +258,7 @@ public sealed class PostgresPipelineRunHistoryServiceGhostFilteringTests : IDisp
         var history = await _sut.GetRunHistoryAsync();
 
         history.Should().HaveCount(1);
-        history[0].IssueIdentifier.Should().Be("normal-fallback");
+        history[0].IssueIdentifier.Should().Be((IssueIdentifier)"normal-fallback");
         history[0].InitiatedBy.Should().Be("manual");
     }
 
@@ -294,7 +294,7 @@ public sealed class PostgresPipelineRunHistoryServiceGhostFilteringTests : IDisp
         var result = await _sut.GetRunHistoryAsync(page: 1, pageSize: 10);
 
         result.Items.Should().HaveCount(1);
-        result.Items[0].IssueIdentifier.Should().Be("normal-paged");
+        result.Items[0].IssueIdentifier.Should().Be((IssueIdentifier)"normal-paged");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

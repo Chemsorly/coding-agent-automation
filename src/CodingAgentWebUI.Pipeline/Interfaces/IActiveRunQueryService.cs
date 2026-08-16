@@ -23,7 +23,7 @@ public interface IActiveRunQueryService
 public sealed record ActiveRunSummary
 {
     public required string RunId { get; init; }
-    public required string IssueIdentifier { get; init; }
+    public required IssueIdentifier IssueIdentifier { get; init; }
     public required string IssueTitle { get; init; }
     public required PipelineRunType RunType { get; init; }
     public required AgentId? AgentId { get; init; }

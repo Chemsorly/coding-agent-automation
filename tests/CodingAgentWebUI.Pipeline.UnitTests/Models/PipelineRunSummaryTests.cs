@@ -294,4 +294,35 @@ public class PipelineRunSummaryTests
         summary.CacheReadTokens.Should().Be(0);
         summary.CacheWriteTokens.Should().Be(0);
     }
+
+    /// <summary>
+    /// Type-locking test: asserts that IssueIdentifier is typed as IssueIdentifier (not string).
+    /// Accessing .Value only compiles if the property is an IssueIdentifier struct — this test
+    /// will fail to compile if the property type reverts to string.
+    /// </summary>
+    // TODO: The type-lock is only partially enforced — `string issueIdStr = summary.IssueIdentifier`
+    // compiles whether the property is IssueIdentifier or string (implicit conversion goes both ways).
+    // The real compile-time guard is `_ = summary.IssueIdentifier.Value`. Consider also adding an edge
+    // case assertion for default(IssueIdentifier) / null Value to improve coverage.
+    [Fact]
+    public void ToSummary_IssueIdentifier_IsTypedAsIssueIdentifier()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Type lock test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+
+        var summary = run.ToSummary();
+
+        // .Value is a member of IssueIdentifier struct — fails to compile if the property reverts to string
+        string issueIdStr = summary.IssueIdentifier; // implicit conversion fires at assignment
+        issueIdStr.Should().Be("org/repo#42");
+        // Also access .Value to confirm compile-time type (would not compile if property were string)
+        _ = summary.IssueIdentifier.Value;
+    }
 }

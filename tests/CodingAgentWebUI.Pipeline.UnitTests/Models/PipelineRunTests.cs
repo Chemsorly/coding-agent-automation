@@ -168,7 +168,8 @@ public class PipelineRunTests
 
         // Assert all 32 fields
         summary.RunId.Should().Be("run-completeness");
-        summary.IssueIdentifier.Should().Be("org/repo#42");
+        string issueIdValue = summary.IssueIdentifier; // implicit operator fires at assignment
+        issueIdValue.Should().Be("org/repo#42");
         summary.IssueTitle.Should().Be("Fix critical bug");
         summary.FinalStep.Should().Be(PipelineStep.Completed);
         #pragma warning disable CS0618

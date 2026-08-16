@@ -127,7 +127,7 @@ public sealed class ActiveRunRehydrationIntegrationTests : IDisposable
         results.Should().HaveCount(1);
         var result = results[0];
         result.RunId.Should().Be(runId);
-        result.IssueIdentifier.Should().Be("owner/repo#300");
+        result.IssueIdentifier.Value.Should().Be("owner/repo#300");
         result.CurrentStep.Should().Be(PipelineStep.GeneratingCode); // From rehydrated in-memory state
     }
 
