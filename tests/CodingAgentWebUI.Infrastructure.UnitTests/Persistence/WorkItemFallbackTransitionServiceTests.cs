@@ -14,11 +14,19 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 /// - Direct transition success
 /// - Two-step via Running (for Succeeded, Cancelled, and Failed statuses)
 /// - Two-step terminal step sets CompletedAt, ErrorMessage, and FailureReason
-/// - Two-step terminal step failure returns false (silent discard bug is fixed)
 /// - Infrastructure-failure recovery when two-step fails
 /// - All paths fail returns false
 /// - Already-terminal item
 /// </summary>
+/// <remarks>
+/// TODO: The "two-step terminal step failure returns false" path (Running → terminal rejected after
+/// Dispatched → Running succeeded) is not covered. The class doc previously claimed this was tested
+/// ("silent discard bug is fixed") but no such test exists. A concrete failing scenario: any future
+/// state-machine change that blocks Running → Succeeded would leave the item stuck in Running with
+/// TryFallbackChainAsync returning false and no recovery in TryInfrastructureRecoveryAsync (which
+/// only handles Failed/InfrastructureFailure). To cover this, a custom WorkItemTransitionService
+/// test double is needed that rejects the terminal-step transition while allowing the intermediate one.
+/// </remarks>
 public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
