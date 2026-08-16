@@ -41,12 +41,10 @@ public sealed partial class ReconciliationService
                     item.Id, item.K8sJobName);
 
                 await _transitionService.TransitionAsync(item.Id, WorkItemStatus.Failed,
-                    w =>
-                    {
-                        w.CompletedAt = DateTimeOffset.UtcNow;
-                        w.FailureReason = FailureReason.InfrastructureFailure;
-                        w.ErrorMessage = $"K8s Job '{item.K8sJobName}' no longer exists (orphan)";
-                    }, ct: ct);
+                    WorkItemMutationFactory.Failed(
+                        errorMessage: $"K8s Job '{item.K8sJobName}' no longer exists (orphan)",
+                        failureReason: FailureReason.InfrastructureFailure),
+                    ct: ct);
 
                 LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
             }
@@ -138,12 +136,10 @@ public sealed partial class ReconciliationService
     {
         // TODO: Check return value of TransitionAsync — if false (item already transitioned), skip cleanup for efficiency and log as no-op.
         await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
-            entity =>
-            {
-                entity.CompletedAt = DateTimeOffset.UtcNow;
-                entity.FailureReason = FailureReason.InfrastructureFailure;
-                entity.ErrorMessage = "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure";
-            }, ct: ct);
+            WorkItemMutationFactory.Failed(
+                errorMessage: "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure",
+                failureReason: FailureReason.InfrastructureFailure),
+            ct: ct);
 
         LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
 

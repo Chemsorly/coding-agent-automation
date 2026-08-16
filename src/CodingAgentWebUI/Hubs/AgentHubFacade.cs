@@ -141,16 +141,15 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private async Task<bool> TryDirectTransitionAsync(
         Guid workItemId, WorkItemStatus status, string? errorMessage, FailureReason? failureReason, CancellationToken ct)
     {
-        var result = await _workItemTransition!.TransitionAsync(workItemId, status, item =>
+        Action<WorkItemEntity> mutate = status switch
         {
-            if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                item.CompletedAt = DateTimeOffset.UtcNow;
-            if (status == WorkItemStatus.Failed)
-            {
-                item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
-                item.FailureReason ??= failureReason ?? FailureReason.AgentError;
-            }
-        }, ct: ct);
+            WorkItemStatus.Failed    => WorkItemMutationFactory.Failed(errorMessage, failureReason),
+            WorkItemStatus.Succeeded => WorkItemMutationFactory.Succeeded(),
+            WorkItemStatus.Cancelled => WorkItemMutationFactory.Cancelled(),
+            _                        => _ => { }
+        };
+
+        var result = await _workItemTransition!.TransitionAsync(workItemId, status, mutate, ct: ct);
 
         if (result)
         {
@@ -180,11 +179,14 @@ public sealed class AgentHubFacade : IAgentHubFacade
         if (!intermediateResult)
             return false;
 
-        var finalResult = await _workItemTransition.TransitionAsync(workItemId, status, item =>
-        {
-            if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                item.CompletedAt = DateTimeOffset.UtcNow;
-        }, ct: ct);
+        // TODO: This ternary only handles Succeeded/Cancelled — the guard above (`status is not (Succeeded or Cancelled)`) means
+        // Failed cannot reach here at runtime, but the asymmetry with the three-arm switch expressions elsewhere is a code smell.
+        // If the guard is ever relaxed, this must be updated to a full switch to avoid applying Cancelled() semantics to a Failed transition.
+        var finalResult = await _workItemTransition.TransitionAsync(workItemId, status,
+            status == WorkItemStatus.Succeeded
+                ? WorkItemMutationFactory.Succeeded()
+                : WorkItemMutationFactory.Cancelled(),
+            ct: ct);
 
         if (finalResult)
         {
@@ -201,17 +203,16 @@ public sealed class AgentHubFacade : IAgentHubFacade
     {
         // If we get here, transition was rejected for a non-recoverable reason
         // (e.g., already terminal). Attempt infrastructure-failure recovery as last resort.
+        Action<WorkItemEntity> mutate = status switch
+        {
+            WorkItemStatus.Failed    => WorkItemMutationFactory.Failed(errorMessage, failureReason),
+            WorkItemStatus.Succeeded => WorkItemMutationFactory.Succeeded(),
+            WorkItemStatus.Cancelled => WorkItemMutationFactory.Cancelled(),
+            _                        => _ => { }
+        };
+
         var recovered = await _workItemTransition!.TryRecoverFromInfrastructureFailureAsync(
-            workItemId, status, item =>
-            {
-                if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                    item.CompletedAt = DateTimeOffset.UtcNow;
-                if (status == WorkItemStatus.Failed)
-                {
-                    item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
-                    item.FailureReason ??= failureReason ?? FailureReason.AgentError;
-                }
-            }, ct);
+            workItemId, status, mutate, ct);
 
         if (recovered)
         {
