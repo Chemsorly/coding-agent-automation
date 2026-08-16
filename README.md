@@ -170,7 +170,7 @@ Open `http://localhost:8080` in your browser.
 
 1. **Authenticate Kiro CLI agents** — Exec into each Kiro agent container and run the login flow:
    ```bash
-   docker exec -it coding-agent-automation-agent-dotnet-1-1 kiro-cli login
+   docker exec -it coding-agent-automation-agent-kiro-dotnet-1-1 kiro-cli login
    ```
    Follow the device code flow in your browser. Auth tokens persist via the volume mount (one-time step per Kiro agent). OpenCode agents authenticate via environment variables and don't require this step.
 
