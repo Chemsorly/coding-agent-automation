@@ -43,11 +43,11 @@ public partial class QualityGateExecutor
             else
                 await FinalizeDraftPrAsync(context, run, report, "exhausted", linkedCt);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
             {
-                _logger.Information("Pipeline {RunId} was cancelled during quality gates", run.RunId);
+                _logger.Information(ex, "Pipeline {RunId} was cancelled during quality gates", run.RunId);
                 run.MarkCompleted();
                 await callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
                 callbacks.EmitOutputLine("🚫 Pipeline cancelled");
@@ -158,6 +158,11 @@ public partial class QualityGateExecutor
 
         await CollectFailureFeedbackAsync(context, run, report, ct);
 
+        // Set FailureCategory before FinalizePullRequest so that:
+        // (a) FinalizePullRequest sees the correct FailureCategory if it reads run.FailureCategory,
+        // (b) if FinalizePullRequest throws, the category is still recorded on the run object
+        // and the metric will emit "quality_gate_exhausted" instead of "unknown".
+        run.FailureCategory = FailureReason.QualityGateExhausted;
         await callbacks.FinalizePullRequest(run, report, true, ct);
     }
 
@@ -216,10 +221,10 @@ public partial class QualityGateExecutor
             _logger.Information("Pipeline {RunId} failure feedback collected successfully. Category: {Category}",
                 run.RunId, feedback.Harness.Category ?? "(none)");
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {
             // Timeout on the feedback call itself (not pipeline cancellation)
-            _logger.Warning("Pipeline {RunId} failure feedback collection timed out after {Timeout}s",
+            _logger.Warning(ex, "Pipeline {RunId} failure feedback collection timed out after {Timeout}s",
                 run.RunId, FeedbackConstraints.FailureFeedbackTimeoutSeconds);
             run.Feedback = _feedbackService.CreateFallbackFeedback(
                 FeedbackOutcome.Failure, "Feedback collection timed out", DateTime.UtcNow);

@@ -429,4 +429,86 @@ public class AgentCodingPageTests
 
         changeCount.Should().BeGreaterThan(0, "OnChange should fire during pipeline step transitions");
     }
+
+    // --- Phase breakdown data source (E2E — verifies PipelineSidebar.razor data is populated) ---
+
+    /// <summary>
+    /// E2E integration test: verifies that after the analysis phase completes, run.Metrics.PhaseBreakdown
+    /// contains an "analysis" entry with tokens > 0 — the exact data source read by PipelineSidebar.razor
+    /// for the Cost Breakdown collapsible (acceptance criterion: breakdown appears after analysis phase).
+    /// </summary>
+    [Fact]
+    public async Task AfterAnalysisPhase_PhaseBreakdownContainsAnalysisEntry_WithTokensGreaterThanZero()
+    {
+        // Arrange: agent returns token usage for every invocation, including the analysis prompt.
+        // This mirrors a real Kiro CLI / OpenCode agent that always reports usage.
+        _mockAgentProvider.Setup(p => p.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                // All invocations return 5 000 tokens; the analysis invocation also writes the
+                // required output files so the pipeline can progress past AnalyzingCode.
+                if (req.Prompt.Contains("Analyze the codebase"))
+                {
+                    var dir = Path.Combine(req.WorkspacePath, ".agent");
+                    Directory.CreateDirectory(dir);
+                    File.WriteAllText(Path.Combine(dir, "analysis.md"), new string('x', 200));
+                    var assessment = new
+                    {
+                        recommendation = "ready",
+                        reason = "Test",
+                        concerns = Array.Empty<string>(),
+                        blockingIssues = Array.Empty<string>()
+                    };
+                    File.WriteAllText(
+                        Path.Combine(dir, "analysis-assessment.json"),
+                        System.Text.Json.JsonSerializer.Serialize(
+                            assessment,
+                            new System.Text.Json.JsonSerializerOptions
+                            {
+                                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                            }));
+                }
+
+                return Task.FromResult(new AgentResult
+                {
+                    ExitCode = 0,
+                    OutputLines = Array.Empty<string>(),
+                    Usage = new TokenUsage { InputTokens = 4000, OutputTokens = 1000 },
+                    Cost = 0.025m
+                });
+            });
+
+        // Quality gates pass so the full pipeline can reach Completed without blocking.
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = true }
+            });
+
+        // Act: run the full pipeline to completion.
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+
+        // Assert: the analysis phase was tracked in PhaseBreakdown — this is the data source
+        // that PipelineSidebar.razor reads to render the Cost Breakdown collapsible.
+        // TODO [WARNING]: This test verifies that the data source (run.Metrics.PhaseBreakdown["analysis"]) is
+        // populated with tokens > 0 after the analysis phase completes, but it does not exercise the UI rendering
+        // path — no component is rendered and no DOM assertion is made. The acceptance criterion ("An E2E test
+        // or screenshot confirms the breakdown *appears* after the analysis phase completes") is not fully met:
+        // the test confirms data is present but not that PipelineSidebar.razor actually renders it. A full UI
+        // verification requires either a bUnit test that passes this PipelineRun to PipelineSidebar and asserts
+        // on the rendered DOM, or a Playwright/Selenium E2E test against the running application.
+        run.Metrics.PhaseBreakdown.Should().ContainKey("analysis",
+            "the analysis phase should be recorded in PhaseBreakdown after AnalyzingCode completes");
+
+        var analysisUsage = run.Metrics.PhaseBreakdown["analysis"];
+        analysisUsage.Tokens.Should().BeGreaterThan(0,
+            "PipelineSidebar.razor renders the Cost Breakdown only when at least one phase has tokens > 0");
+        analysisUsage.Cost.Should().NotBeNull("cost was provided by the agent mock");
+        analysisUsage.Cost.Should().BeGreaterThan(0m);
+    }
 }
