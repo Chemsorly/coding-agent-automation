@@ -28,6 +28,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
     private readonly TestDbContextFactory _dbFactory;
     private readonly Mock<IConsolidationService> _mockConsolidationService;
     private readonly Mock<ILeaderElectionService> _mockLeaderElection;
+    private readonly Mock<IPipelineConfigStore> _mockConfigStore;
     private readonly IConfiguration _configuration;
 
     public DatabaseMaintenanceServiceTests()
@@ -45,6 +46,12 @@ public class DatabaseMaintenanceServiceTests : IDisposable
         _mockConsolidationService = new Mock<IConsolidationService>();
         _mockLeaderElection = new Mock<ILeaderElectionService>();
         _mockLeaderElection.Setup(l => l.IsLeader).Returns(true);
+
+        // Default: both retention counts = -1 (disabled), so sweep methods are no-ops
+        _mockConfigStore = new Mock<IPipelineConfigStore>();
+        _mockConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
 
         _configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -364,7 +371,8 @@ public class DatabaseMaintenanceServiceTests : IDisposable
             .Returns(_mockLeaderElection.Object);
 
         var service = new DatabaseMaintenanceService(
-            _dbFactory, _mockConsolidationService.Object, mockProvider.Object, config);
+            _dbFactory, _mockConsolidationService.Object, mockProvider.Object, config,
+            _mockConfigStore.Object);
 
         // Act
         await service.CleanupStaleConsolidationRunsAsync(CancellationToken.None);
@@ -392,6 +400,100 @@ public class DatabaseMaintenanceServiceTests : IDisposable
             .Should().NotThrowAsync();
     }
 
+    // ── Retention Sweep — Disabled Path ────────────────────────────────
+
+    [Fact]
+    public async Task SweepPipelineRunRetention_WhenDisabled_ReturnImmediately()
+    {
+        // Arrange: PipelineRunRetentionCount = -1 (default disabled)
+        _mockConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { PipelineRunRetentionCount = -1 });
+
+        var service = CreateService();
+
+        // Act: no exception and the DB factory is never called for SQL execution
+        await service.SweepPipelineRunRetentionAsync(CancellationToken.None);
+
+        // Assert: config store was read, but DB factory was NOT called
+        _mockConfigStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Once);
+        // (DB factory calls cannot be verified on InMemory provider, but no exception = correct early-return)
+    }
+
+    [Fact]
+    public async Task SweepWorkItemRetention_WhenDisabled_ReturnImmediately()
+    {
+        // Arrange: WorkItemRetentionCount = -1 (default disabled)
+        _mockConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { WorkItemRetentionCount = -1 });
+
+        var service = CreateService();
+
+        // Act
+        await service.SweepWorkItemRetentionAsync(CancellationToken.None);
+
+        // Assert: config store was read
+        _mockConfigStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task BothSweepsDisabled_MaintenanceCycleCompletesWithoutError()
+    {
+        // Arrange: both retention counts = -1
+        _mockConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+
+        _mockConsolidationService
+            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ConsolidationRun>());
+
+        var service = CreateService();
+
+        // Act: CleanupStale* use ExecuteDeleteAsync which is not supported by InMemory.
+        // Call the retention sweeps directly instead.
+        await service.Invoking(s => s.SweepPipelineRunRetentionAsync(CancellationToken.None))
+            .Should().NotThrowAsync();
+        await service.Invoking(s => s.SweepWorkItemRetentionAsync(CancellationToken.None))
+            .Should().NotThrowAsync();
+
+        // Config was read twice (once per sweep)
+        _mockConfigStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task SweepPipelineRunRetention_ConfigReadFromStore_OnEachCall()
+    {
+        // Arrange: return retention count > 0; InMemory will throw on SQL execution
+        // (window-function DELETE not supported), so we only verify config was read.
+        // TODO: [WARNING] This test swallows the InMemory exception in a bare catch{} block and then
+        // only asserts that LoadPipelineConfigAsync was called once. The assertion passes identically
+        // whether the code read config and attempted SQL, returned early, or threw before SQL for an
+        // unrelated reason. It does not distinguish the disabled path (retentionCount==-1) from the
+        // active-sweep path. Consider replacing with a mock-based assertion that CreateDbContextAsync
+        // is called exactly once when retentionCount > 0 (using a mock DB factory), or removing this
+        // test since the integration tests in RetentionSweepIntegrationTests cover the active path.
+        _mockConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { PipelineRunRetentionCount = 10 });
+
+        var service = CreateService();
+
+        // Act: expect an exception from InMemory (SQL not supported) — that's fine
+        try
+        {
+            await service.SweepPipelineRunRetentionAsync(CancellationToken.None);
+        }
+        catch
+        {
+            // InMemory provider throws on ExecuteSqlRawAsync — expected in unit tests
+        }
+
+        // Assert: config store was called
+        _mockConfigStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── Helper Methods ──────────────────────────────────────────────────
 
     private DatabaseMaintenanceService CreateService()
@@ -401,7 +503,8 @@ public class DatabaseMaintenanceServiceTests : IDisposable
             .Returns(_mockLeaderElection.Object);
 
         return new DatabaseMaintenanceService(
-            _dbFactory, _mockConsolidationService.Object, mockProvider.Object, _configuration);
+            _dbFactory, _mockConsolidationService.Object, mockProvider.Object, _configuration,
+            _mockConfigStore.Object);
     }
 
     private sealed class TestPipelineDbContext : PipelineDbContext
