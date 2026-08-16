@@ -408,10 +408,6 @@ public class DispatchServiceLifecycleTests : IDisposable
 
     // ── BUG-14: ResetStartedAt on Dispatch ──────────────────────────────
 
-    // TODO: Add negative test case: dispatch succeeds when GetRun returns null (run not in-memory).
-    // The production code uses null-conditional (?.) to handle this, but no test validates
-    // that dispatch completes without throwing when the run is not registered in OrchestratorRunService.
-
     // TODO: Add concurrency test: if two dispatch cycles overlap and both attempt ResetStartedAt on the
     // same PipelineRun, validate thread safety. The GetRun(...) lookup followed by mutation is not atomic.
     // While unlikely given the single-threaded dispatch loop, this edge case is untested.
@@ -419,6 +415,42 @@ public class DispatchServiceLifecycleTests : IDisposable
     // TODO: Add defensive test verifying the assignment-before-use contract for workItem.DispatchedAt.
     // Production code uses workItem.DispatchedAt!.Value (null-forgiving) after assigning UtcNow above.
     // A test should catch regressions if someone reorders the assignment and ResetStartedAt call.
+
+    [Fact]
+    public async Task PollAndDispatch_RunNotInMemory_DispatchSucceedsWithoutThrowing()
+    {
+        // Arrange: no PipelineRun registered in OrchestratorRunService for this work item.
+        // PostDispatchTimingCorrection must handle a null GetRun result gracefully.
+        var workItemId = Guid.NewGuid();
+        await InsertWorkItem(workItemId, "owner/repo#bug14-null-run", "kiro,dotnet", WorkItemStatus.Pending);
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var runService = new OrchestratorRunService(new Mock<Serilog.ILogger>().Object);
+        // Intentionally: no run registered for workItemId
+
+        var service = CreateService(
+            imageMapping: new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:latest" },
+            runService: runService);
+
+        // Act: dispatch must complete without throwing even with no in-memory run
+        var act = async () => await InvokePollAndDispatch(service);
+        await act.Should().NotThrowAsync(
+            "PostDispatchTimingCorrection must tolerate GetRun returning null");
+
+        // Confirm item was dispatched (the K8s job was created)
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // TODO: Also assert that the work item was transitioned to WorkItemStatus.Dispatched in the DB.
+        // Currently this test only verifies "no exception thrown" and "K8s job created", but a regression
+        // that short-circuits the DB status update (without throwing) would still pass here. The existing
+        // PollAndDispatch_PendingPipelineItem_ResetsStartedAtOnInMemoryRun test covers DB status for the
+        // run-in-memory path; this null-run variant is the gap. (#2065)
+    }
 
     [Fact]
     public async Task PollAndDispatch_PendingPipelineItem_ResetsStartedAtOnInMemoryRun()

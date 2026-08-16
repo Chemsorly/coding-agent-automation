@@ -75,7 +75,7 @@ public sealed class DispatchRevertService
         // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14).
         // Without this, StartedAt reflects preparation/enqueue time which can be
         // hours earlier for queued work, inflating the Duration shown in the UI.
-        _runService.GetRun(request.RunId)?.ResetStartedAt(dispatchTime);
+        _runService.PostDispatchTimingCorrection(request.RunId, dispatchTime);
     }
 
     /// <summary>
