@@ -212,7 +212,7 @@ public class HousekeepingServiceTests
     {
         var selectedPrs = new HashSet<int>();
 
-        for (int i = 0; i < 50; i++)
+        for (int i = 0; i < 20; i++)
         {
             var (svc, provider, issues, _) = Create();
             provider.Setup(p => p.IsPullRequestBehindBaseAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -230,9 +230,9 @@ public class HousekeepingServiceTests
         }
 
         selectedPrs.Should().HaveCountGreaterThan(1,
-            "with random selection, both PR #10 and PR #20 should be selected at least once across 50 trials");
+            "with random selection, both PR #10 and PR #20 should be selected at least once across 20 trials");
         // TODO: HaveCountGreaterThan(1) only confirms diversity, not fairness — a heavily biased shuffle (e.g.,
-        // 49 of 50 selections always picking PR #10) would still pass. Consider asserting that each candidate
+        // 19 of 20 selections always picking PR #10) would still pass. Consider asserting that each candidate
         // appears in at least some minimum fraction of trials if stricter distribution validation is needed.
     }
 

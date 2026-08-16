@@ -18,5 +18,8 @@ public enum FailureReason
     TokenRefreshFailure,
 
     /// <summary>Agent process exited with a non-zero exit code (SIGINT, OOM kill, crash).</summary>
-    ExitCodeFailure
+    ExitCodeFailure,
+
+    /// <summary>All quality gate retries were exhausted; run finalized as draft PR.</summary>
+    QualityGateExhausted
 }
