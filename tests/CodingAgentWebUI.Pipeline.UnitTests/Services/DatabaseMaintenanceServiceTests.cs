@@ -19,10 +19,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Unit tests for DatabaseMaintenanceService.
 /// Validates: retention cleanup for WorkItems, PipelineRuns, and ConsolidationRuns.
 /// </summary>
-// Note: CleanupStaleWorkItemsAsync and CleanupStalePipelineRunsAsync have no unit test coverage.
-// ExecuteDeleteAsync is unsupported by the EF Core InMemory provider, so these methods cannot be
-// tested with the current in-memory setup. Consider adding integration tests with a real DB provider
-// (e.g., SQLite or Testcontainers/PostgreSQL) to verify the WorkItem/PipelineRun retention logic.
 public class DatabaseMaintenanceServiceTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
@@ -653,7 +649,6 @@ public class DatabaseMaintenanceServiceTests : IDisposable
         await service.Invoking(s => s.SweepWorkItemRetentionAsync(cts.Token))
             .Should().NotThrowAsync();
     }
-
 
     // ── Helper Methods ──────────────────────────────────────────────────
 
