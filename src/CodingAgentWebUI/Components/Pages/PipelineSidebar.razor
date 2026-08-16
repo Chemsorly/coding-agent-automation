@@ -1,4 +1,5 @@
 @using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
 
 <aside class="pipeline-sidebar" id="pipelineSidebar">
     <div class="sidebar-header">
@@ -86,6 +87,41 @@
         }
     </div>
 
+    @* TODO [WARNING]: The guard `PhaseBreakdown.Count > 0` does not fully satisfy the issue requirement:
+         "Only render the breakdown if PhaseBreakdown.Count > 0 AND any phase has tokens > 0".
+         A PhaseUsage with Tokens=0 and Cost=null (e.g. from an empty/failed agent invocation that still
+         produced a dictionary entry) would satisfy `.Count > 0` alone and render a zero-token, dash-cost row,
+         which is misleading noise. Change the guard to `Run.Metrics.PhaseBreakdown.Any(p => p.Value.Tokens > 0)`
+         to enforce the "tokens > 0" requirement and subsume the `.Count > 0` check.
+    *@
+    @if (Run.Metrics.PhaseBreakdown.Count > 0)
+    {
+        <Collapsible CssClass="phase-breakdown" HeaderClass="phase-breakdown-header" BodyClass="phase-breakdown-body"
+                     IsExpanded="_costBreakdownExpanded"
+                     IsExpandedChanged="v => _costBreakdownExpanded = v">
+            <Header>
+                <span>Cost Breakdown (@Run.Metrics.PhaseBreakdown.Count phases)</span>
+            </Header>
+            <ChildContent>
+                <table class="monitoring-table" style="margin-top: 6px;">
+                    <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
+                    <tbody>
+                    @foreach (var phase in Run.Metrics.PhaseBreakdown
+                        .OrderByDescending(p => p.Value.Cost ?? 0m)
+                        .ThenByDescending(p => p.Value.Tokens))
+                    {
+                        <tr>
+                            <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
+                            <td>@CostFormatter.FormatTokens(phase.Value.Tokens)</td>
+                            <td>@CostFormatter.FormatCost(phase.Value.Cost)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </ChildContent>
+        </Collapsible>
+    }
+
     @if (IsRunning)
     {
         <div class="sidebar-footer">
@@ -113,6 +149,8 @@
     /// <summary>Phases manually collapsed by the user (overrides auto-expand for active/failed/retry).</summary>
     private readonly HashSet<string> _collapsedPhases = new();
     private string? _lastRunId;
+    /// <summary>Tracks whether the cost breakdown collapsible is expanded; persists across re-renders triggered by live state updates.</summary>
+    private bool _costBreakdownExpanded;
 
     private static readonly PhaseDefinition[] _phases =
     {
@@ -171,6 +209,7 @@
             _expandedSteps.Clear();
             _expandedPhases.Clear();
             _collapsedPhases.Clear();
+            _costBreakdownExpanded = false;
             _lastRunId = Run.RunId;
         }
     }

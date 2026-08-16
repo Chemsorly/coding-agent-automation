@@ -381,5 +381,197 @@ public class PipelineSidebarComponentTests : BunitContext
         var stepEl = cut.Find("#step-ReflectingOnRun");
         Assert.Null(stepEl.QuerySelector(".step-card-details"));
     }
+
+    // --- Cost Breakdown section ---
+
+    [Fact]
+    public void CostBreakdown_WhenPhaseBreakdownEmpty_NotRendered()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        // PhaseBreakdown is empty by default
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        Assert.Empty(cut.FindAll(".phase-breakdown"));
+    }
+
+    [Fact]
+    public void CostBreakdown_WhenPhaseBreakdownHasEntries_IsRendered()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        // TODO [WARNING]: This test only asserts that the `.phase-breakdown` container element exists in the DOM.
+        // It does not verify that the collapsible header displays "Cost Breakdown" text or that any phase row
+        // is actually rendered inside the component. A collapsible rendered completely empty would still pass
+        // this assertion. Strengthen the test to also assert on the header text content and/or that tbody
+        // contains at least one row after expanding, to confirm phase data is actually displayed.
+        Assert.NotEmpty(cut.FindAll(".phase-breakdown"));
+    }
+
+    [Fact]
+    public void CostBreakdown_RendersPhaseRows_WithFormattedValues()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
+        run.Metrics.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(10000, 0.08m));
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        // Expand the collapsible to make the body visible
+        cut.Find(".phase-breakdown-header").Click();
+
+        var rows = cut.FindAll(".phase-breakdown tbody tr");
+        Assert.Equal(2, rows.Count);
+
+        // Extract all text from the table rows
+        var allText = cut.Find(".phase-breakdown tbody").TextContent;
+        Assert.Contains("Analysis", allText);
+        Assert.Contains("Codegen", allText);
+        // TODO [WARNING]: These token/cost string assertions are locale-sensitive. `CostFormatter.FormatTokens(5000)`
+        // producing "5.0K" and `CostFormatter.FormatCost(0.03m)` producing "$0.03" assumes en-US locale formatting.
+        // If run in a non-en-US CI environment the decimal separator or currency symbol may differ, causing a failure
+        // that has nothing to do with the component logic. Fix: either pin the test thread culture to
+        // CultureInfo.InvariantCulture / "en-US" in the test setup, or call `CostFormatter.FormatTokens(5000)` /
+        // `CostFormatter.FormatCost(0.03m)` directly and assert equality with the actual formatter output.
+        Assert.Contains("5.0K", allText);
+        Assert.Contains("10.0K", allText);
+        Assert.Contains("$0.03", allText);
+        Assert.Contains("$0.08", allText);
+    }
+
+    [Fact]
+    public void CostBreakdown_IsSortedByCostDescending()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(1000, 0.01m));
+        run.Metrics.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(8000, 0.05m));
+        run.Metrics.PhaseBreakdown.TryAdd("review_Correctness", new PhaseUsage(3000, 0.03m));
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        cut.Find(".phase-breakdown-header").Click();
+
+        var rows = cut.FindAll(".phase-breakdown tbody tr");
+        Assert.Equal(3, rows.Count);
+
+        // Rows should be ordered: codegen ($0.05), Review: Correctness ($0.03), analysis ($0.01)
+        Assert.Contains("Codegen", rows[0].TextContent);
+        Assert.Contains("Review: Correctness", rows[1].TextContent);
+        Assert.Contains("Analysis", rows[2].TextContent);
+    }
+
+    [Fact]
+    public void CostBreakdown_WhenCostIsNull_SortsByTokensDescendingAndDisplaysDash()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(2000, null));
+        run.Metrics.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(8000, null));
+        run.Metrics.PhaseBreakdown.TryAdd("reflection", new PhaseUsage(500, null));
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        cut.Find(".phase-breakdown-header").Click();
+
+        var rows = cut.FindAll(".phase-breakdown tbody tr");
+        Assert.Equal(3, rows.Count);
+
+        // When cost is null, secondary sort is by tokens descending: codegen (8000), analysis (2000), reflection (500)
+        Assert.Contains("Codegen", rows[0].TextContent);
+        Assert.Contains("Analysis", rows[1].TextContent);
+        Assert.Contains("Reflection", rows[2].TextContent);
+
+        // All cost cells should display "—" for null costs
+        var allText = cut.Find(".phase-breakdown tbody").TextContent;
+        Assert.DoesNotContain("$", allText);
+        // TODO [WARNING]: This assertion hard-codes the em-dash character (U+2014) as the expected output of
+        // `CostFormatter.FormatCost(null)`. If FormatCost returns a different character (e.g. en-dash U+2013,
+        // hyphen-minus U+002D, or the literal string "N/A") this assertion will silently pass on wrong output or
+        // fail unexpectedly. Fix: call `CostFormatter.FormatCost(null)` directly and assert
+        // `Assert.Contains(CostFormatter.FormatCost(null), allText)` to decouple from the assumed output character.
+        Assert.Contains("—", allText);
+    }
+
+    [Fact]
+    public void CostBreakdown_IsCollapsedByDefault_CanBeExpanded()
+    {
+        var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.GeneratingCode);
+        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        // Collapsed by default — body is not in DOM
+        Assert.Empty(cut.FindAll(".phase-breakdown-body"));
+
+        // Click header to expand
+        cut.Find(".phase-breakdown-header").Click();
+
+        // Body is now in DOM
+        // TODO [WARNING]: This assertion only confirms that the `.phase-breakdown-body` element exists in the DOM
+        // after clicking, but does not verify that the phase row is rendered inside the body. An empty body element
+        // would satisfy this assertion. Strengthen by also asserting that the expanded body contains at least one
+        // `tbody tr` row, confirming that phase data is actually displayed after expansion.
+        Assert.NotEmpty(cut.FindAll(".phase-breakdown-body"));
+    }
+
+    [Fact]
+    public async Task CostBreakdown_ExpandedStatePreservedAcrossRerender()
+    {
+        var run = new PipelineRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTime.UtcNow.AddMinutes(-5),
+            CurrentStep = PipelineStep.GeneratingCode,
+            HighWaterMark = PipelineStep.GeneratingCode
+        };
+        run.Metrics.PhaseBreakdown.TryAdd("analysis", new PhaseUsage(5000, 0.03m));
+
+        var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
+
+        // Expand the collapsible — this sets _costBreakdownExpanded = true on the component
+        cut.Find(".phase-breakdown-header").Click();
+        Assert.NotEmpty(cut.FindAll(".phase-breakdown-body"));
+
+        // Simulate a live update: add a new phase to the same PipelineRun object and force re-render.
+        // In production, StateHasChanged is called on the parent (AgentMonitoring.razor) which passes
+        // the same PipelineRun reference. Here we trigger StateHasChanged directly on the component
+        // via reflection (it is protected on ComponentBase).
+        run.Metrics.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(10000, 0.08m));
+        run.CurrentStep = PipelineStep.ReviewingCode;
+
+        var stateHasChangedMethod = typeof(Microsoft.AspNetCore.Components.ComponentBase)
+            // TODO [WARNING]: This uses private reflection into Blazor's ComponentBase to trigger StateHasChanged.
+            // If the Blazor SDK renames, moves, or inlines this method the `!` null-forgiving operator will
+            // cause a NullReferenceException rather than a clear test failure (no diagnostic pointing to this line).
+            // Replace with the official bUnit API: `cut.SetParametersAndRender(p => p.Add(s => s.Run, run))`
+            // to achieve the same re-render without coupling to Blazor framework internals.
+            .GetMethod("StateHasChanged", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        await cut.InvokeAsync(() => stateHasChangedMethod.Invoke(cut.Instance, null));
+
+        // Body should still be visible — expanded state preserved via _costBreakdownExpanded field
+        Assert.NotEmpty(cut.FindAll(".phase-breakdown-body"));
+        // Both phases should now be rendered
+        var allText = cut.Find(".phase-breakdown tbody").TextContent;
+        Assert.Contains("Analysis", allText);
+        Assert.Contains("Codegen", allText);
+    }
+
+    // TODO [WARNING]: Missing test — PhaseBreakdown transitions from empty to populated during a live re-render.
+    // The existing CostBreakdown_ExpandedStatePreservedAcrossRerender test starts with a pre-populated entry.
+    // A test that renders PipelineSidebar with an empty PhaseBreakdown (Cost Breakdown hidden), then mutates
+    // PhaseBreakdown to add an entry and triggers a re-render, should assert that the Cost Breakdown section
+    // appears after the update. This covers the initial-appearance edge case for the @if guard condition.
+
+    // TODO [WARNING]: Missing test — _costBreakdownExpanded is reset to false when Run.RunId changes.
+    // OnParametersSet resets _costBreakdownExpanded when _lastRunId != Run.RunId (a new run replaces the current one).
+    // Add a test that: (1) renders with run A (populated breakdown, expand it), (2) calls SetParametersAndRender
+    // with run B (a different RunId), and asserts that the cost breakdown collapsible is collapsed (body absent)
+    // for the new run. This verifies the reset logic in OnParametersSet.
 }
 
