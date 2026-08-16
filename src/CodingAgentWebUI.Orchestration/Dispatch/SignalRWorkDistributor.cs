@@ -282,12 +282,10 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
 
             await TransitionService.TransitionAsync(
                 item.Id, WorkItemStatus.Failed,
-                entity =>
-                {
-                    entity.CompletedAt = DateTimeOffset.UtcNow;
-                    entity.FailureReason = FailureReason.InfrastructureFailure;
-                    entity.ErrorMessage = "Stuck in Dispatched status — likely silent SignalR delivery failure";
-                }, ct: ct);
+                WorkItemMutationFactory.Failed(
+                    errorMessage: "Stuck in Dispatched status — likely silent SignalR delivery failure",
+                    failureReason: FailureReason.InfrastructureFailure),
+                ct: ct);
         }
 
         return stuckItems.Count;
@@ -300,12 +298,9 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         await TransitionService.TransitionAsync(
             workItemId,
             WorkItemStatus.Failed,
-            item =>
-            {
-                item.ErrorMessage = errorMessage;
-                item.FailureReason = FailureReason.InfrastructureFailure;
-                item.CompletedAt = DateTimeOffset.UtcNow;
-            },
+            WorkItemMutationFactory.Failed(
+                errorMessage: errorMessage,
+                failureReason: FailureReason.InfrastructureFailure),
             ct: ct);
     }
 }

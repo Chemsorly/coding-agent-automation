@@ -240,7 +240,7 @@ public sealed class DispatchService : LeaderElectedPollingService
                 // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14 fix).
                 // Without this, StartedAt reflects preparation/enqueue time which can be
                 // hours earlier for queued work, inflating the Duration shown in the UI.
-                _runService?.GetRun(item.Id.ToString())?.ResetStartedAt(workItem.DispatchedAt!.Value);
+                _runService.PostDispatchTimingCorrection(item.Id.ToString(), workItem.DispatchedAt!.Value);
 
                 // Swap issue label to agent:in-progress — delegates to shared LabelSwapService
                 // which handles retry and reconciliation flagging on failure. (#1868)

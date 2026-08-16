@@ -116,12 +116,10 @@ public sealed partial class ReconciliationService
                 .FirstOrDefault(c => c.Type == "Failed")?.Reason ?? "Unknown";
 
             await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
-                item =>
-                {
-                    item.CompletedAt = DateTimeOffset.UtcNow;
-                    item.FailureReason = FailureReason.InfrastructureFailure;
-                    item.ErrorMessage = $"K8s Job failed: {reason}";
-                }, ct: ct);
+                WorkItemMutationFactory.Failed(
+                    errorMessage: $"K8s Job failed: {reason}",
+                    failureReason: FailureReason.InfrastructureFailure),
+                ct: ct);
 
             LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
 
@@ -216,12 +214,10 @@ public sealed partial class ReconciliationService
 
         // TODO: Check return value of TransitionAsync — if false (e.g., item already transitioned by Watch handler), skip cleanup below for efficiency.
         await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
-            entity =>
-            {
-                entity.CompletedAt = DateTimeOffset.UtcNow;
-                entity.FailureReason = FailureReason.InfrastructureFailure;
-                entity.ErrorMessage = "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure";
-            }, ct: ct);
+            WorkItemMutationFactory.Failed(
+                errorMessage: "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure",
+                failureReason: FailureReason.InfrastructureFailure),
+            ct: ct);
 
         LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
 

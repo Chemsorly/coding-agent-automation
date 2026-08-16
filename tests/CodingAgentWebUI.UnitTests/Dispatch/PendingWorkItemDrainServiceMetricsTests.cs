@@ -200,6 +200,18 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
 
     private PendingWorkItemDrainService CreateServiceWithConsolidation()
     {
+        var revertHandler = new DispatchRevertService(
+            _dbFactory, _mockResolver.Object, _runService, _transitionService,
+            NullLogger<DispatchRevertService>.Instance);
+        var dispatchAttemptService = new DispatchAttemptService(_transitionService, revertHandler);
+        var consolidationDrainDispatcher = new ConsolidationDrainDispatcher(
+            _mockConsolidationDispatchService.Object,
+            _mockConsolidationRunStore.Object,
+            dispatchAttemptService,
+            _transitionService,
+            _mockResolver.Object,
+            NullLogger<ConsolidationDrainDispatcher>.Instance);
+
         return new PendingWorkItemDrainService(
             new DrainServiceDependencies(
                 _dbFactory,
@@ -210,12 +222,9 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
                 _mockPendingWork.Object,
                 _mockLabelSwapper.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance,
-                new DispatchRevertService(
-                    _dbFactory, _mockResolver.Object, _runService, _transitionService,
-                    NullLogger<DispatchRevertService>.Instance)),
+                revertHandler),
             _mockProjectStore.Object,
-            _mockConsolidationDispatchService.Object,
-            _mockConsolidationRunStore.Object);
+            consolidationDrainDispatcher);
     }
 
     private async Task InsertWorkItem(
