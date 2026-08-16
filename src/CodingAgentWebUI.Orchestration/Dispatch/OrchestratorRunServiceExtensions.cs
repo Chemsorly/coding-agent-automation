@@ -24,11 +24,6 @@ internal static class OrchestratorRunServiceExtensions
     /// <see cref="ArgumentException"/> is thrown in that case.
     /// </param>
     /// <param name="dispatchedAt">The actual dispatch time to set as <c>StartedAt</c>.</param>
-    // TODO: The doc comment for runId previously claimed an ArgumentException is thrown for null/empty
-    // runId via the RunId implicit string conversion, but that guarantee only holds when runService is
-    // non-null. When runService is null the method short-circuits before GetRun is called, so an invalid
-    // runId silently no-ops instead of throwing. Consider adding ArgumentException.ThrowIfNullOrEmpty(runId)
-    // as an explicit guard to make the contract unconditional and catch caller mistakes early. (#2065)
     public static void PostDispatchTimingCorrection(
         this IOrchestratorRunService? runService,
         string runId,
