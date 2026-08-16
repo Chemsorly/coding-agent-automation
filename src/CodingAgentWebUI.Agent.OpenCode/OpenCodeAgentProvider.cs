@@ -189,7 +189,11 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 ExitCode = result.ExitCode,
                 OutputLines = result.OutputLines,
                 Usage = usage,
-                Cost = cost
+                Cost = cost,
+                // Forward the error category set by HandleHttpErrorResponseAsync.
+                // Other result construction paths (timeout, exception) produce None by default,
+                // which is correct — they are not provider HTTP classification failures.
+                ErrorCategory = result.ErrorCategory
             };
         }
         finally
@@ -336,10 +340,24 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         }
 
         var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+        // Classify provider-side transient and permanent failures so callers (e.g. the QG retry
+        // loop) can distinguish them from code-level failures without re-parsing OutputLines text.
+        // 404/410 are handled above and fall through with ErrorCategory.None (the default).
+        var category = response.StatusCode switch
+        {
+            HttpStatusCode.TooManyRequests    => AgentErrorCategory.ProviderRateLimit,   // 429
+            HttpStatusCode.ServiceUnavailable => AgentErrorCategory.ProviderOverload,    // 503
+            HttpStatusCode.Unauthorized       => AgentErrorCategory.PermanentAuthFailure, // 401
+            HttpStatusCode.Forbidden          => AgentErrorCategory.PermanentAuthFailure, // 403
+            _                                 => AgentErrorCategory.None
+        };
+
         return new AgentResult
         {
             ExitCode = ExitCodes.GeneralFailure,
-            OutputLines = [$"HTTP {(int)response.StatusCode}: {body[..Math.Min(body.Length, 1000)]}"]
+            OutputLines = [$"HTTP {(int)response.StatusCode}: {body[..Math.Min(body.Length, 1000)]}"],
+            ErrorCategory = category
         };
     }
 
