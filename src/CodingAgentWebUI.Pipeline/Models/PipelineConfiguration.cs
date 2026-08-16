@@ -385,8 +385,12 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
+            // S3236 suppressed: nameof(AnalysisCommitThreshold) is intentional — 'value' in init
+            // accessors is the implicit parameter name; callers need the property name in the exception.
+#pragma warning disable S3236
             ArgumentOutOfRangeException.ThrowIfLessThan(value, 0, nameof(AnalysisCommitThreshold));
             ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 1000, nameof(AnalysisCommitThreshold));
+#pragma warning restore S3236
             field = value;
         }
     } = PipelineConstants.DefaultAnalysisCommitThreshold;
@@ -431,8 +435,8 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1, nameof(MaxDecompositionSubIssues));
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20, nameof(MaxDecompositionSubIssues));
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20);
             field = value;
         }
     } = 10;
@@ -522,8 +526,8 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1, nameof(MaxDecompositionSubIssueFiles));
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 30, nameof(MaxDecompositionSubIssueFiles));
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 30);
             field = value;
         }
     } = 12;
@@ -541,8 +545,8 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 30, nameof(ModelFetchTimeoutSeconds));
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 600, nameof(ModelFetchTimeoutSeconds));
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 30);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 600);
             field = value;
         }
     } = 120;
@@ -576,5 +580,72 @@ public sealed record PipelineConfiguration
     [Key(74)]
     [ProjectOverridable(Order = 30)]
     public int MaxConsolidationDispatchRetries { get; init; } = 5;
+
+    // ── DB retention settings ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Per-project row count cap for <c>PipelineRuns</c>. Only completed runs
+    /// (<c>CompletedAt IS NOT NULL</c>, <c>ProjectId IS NOT NULL</c>) are eligible for deletion.
+    /// The oldest rows beyond N per project are pruned on each sweep.
+    /// <para>
+    /// Set to <c>-1</c> (default) to disable. Must be <c>-1</c> or a strictly positive integer.
+    /// A value of <c>0</c> or any other negative value is rejected at config load time.
+    /// </para>
+    /// </summary>
+    [Key(75)]
+    public int PipelineRunRetentionCount
+    {
+        get => field;
+        init
+        {
+            if (value != -1 && value <= 0)
+                throw new ArgumentOutOfRangeException(nameof(PipelineRunRetentionCount),
+                    value, "PipelineRunRetentionCount must be -1 (disabled) or a positive integer.");
+            field = value;
+        }
+    } = -1;
+
+    /// <summary>
+    /// Per-project row count cap for terminal <c>WorkItems</c>
+    /// (<c>Status IN (3=Succeeded, 4=Failed, 5=Cancelled)</c>, <c>CompletedAt IS NOT NULL</c>,
+    /// <c>ProjectId IS NOT NULL</c>). Non-terminal rows and rows with <c>CompletedAt IS NULL</c>
+    /// are never deleted.
+    /// <para>
+    /// Set to <c>-1</c> (default) to disable. Must be <c>-1</c> or a strictly positive integer.
+    /// A value of <c>0</c> or any other negative value is rejected at config load time.
+    /// </para>
+    /// </summary>
+    [Key(76)]
+    public int WorkItemRetentionCount
+    {
+        get => field;
+        init
+        {
+            if (value != -1 && value <= 0)
+                throw new ArgumentOutOfRangeException(nameof(WorkItemRetentionCount),
+                    value, "WorkItemRetentionCount must be -1 (disabled) or a positive integer.");
+            field = value;
+        }
+    } = -1;
+
+    /// <summary>
+    /// Interval between DB retention sweep cycles.
+    /// Takes effect on restart (<c>PeriodicTimer</c> period is fixed at construction).
+    /// Replaces the <c>WorkDistribution:Reconciliation:MaintenanceIntervalHours</c> config key
+    /// as the timer period for <c>DatabaseMaintenanceService</c>.
+    /// Default: 24 hours. Minimum: 1 minute.
+    /// </summary>
+    [Key(77)]
+    public TimeSpan DbRetentionSweepInterval
+    {
+        get => field;
+        init
+        {
+            if (value < TimeSpan.FromMinutes(1))
+                throw new ArgumentOutOfRangeException(nameof(DbRetentionSweepInterval),
+                    value, "DbRetentionSweepInterval must be at least 1 minute.");
+            field = value;
+        }
+    } = TimeSpan.FromHours(24);
 
 }

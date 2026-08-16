@@ -55,6 +55,9 @@ public static class TestPipelineConfig
         OrphanedLabelSweepIntervalMinutes = 30,
         AnalysisCommitThreshold = 30,
         MaxConsolidationDispatchRetries = 5,
+        PipelineRunRetentionCount = -1,
+        WorkItemRetentionCount = -1,
+        DbRetentionSweepInterval = TimeSpan.FromHours(24),
     };
 
     /// <summary>
@@ -104,5 +107,8 @@ public static class TestPipelineConfig
         OrphanedLabelSweepIntervalMinutes = 30,
         AnalysisCommitThreshold = 30,
         MaxConsolidationDispatchRetries = 5,
+        PipelineRunRetentionCount = -1,
+        WorkItemRetentionCount = -1,
+        DbRetentionSweepInterval = TimeSpan.FromHours(24),
     };
 }
