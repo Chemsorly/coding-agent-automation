@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Telemetry;
@@ -15,12 +16,13 @@ namespace CodingAgentWebUI.Pipeline.Telemetry;
 /// If not called, the run is recorded as failed. Use via a <c>using</c> statement to ensure
 /// metrics are always recorded regardless of exception flow.
 /// </remarks>
-public sealed class PipelineRunInstrumentation : IDisposable
+public sealed partial class PipelineRunInstrumentation : IDisposable
 {
-    // TODO: Activity is publicly accessible with no guard against post-disposal access. Callers set tags
-    // on it before disposal, but if accessed after Dispose() the activity will already be stopped/disposed.
-    // Consider documenting this contract or making Activity inaccessible after disposal.
     /// <summary>The tracing <see cref="Activity"/> for this run, or <see langword="null"/> if no listener is registered.</summary>
+    /// <remarks>
+    /// Activity is set once during construction and disposed in <see cref="Dispose"/>. Callers should
+    /// not access this property after disposal; the underlying <see cref="Activity"/> will already be stopped.
+    /// </remarks>
     public Activity? Activity { get; }
 
     private readonly Stopwatch _stopwatch;
@@ -125,16 +127,11 @@ public sealed class PipelineRunInstrumentation : IDisposable
             var tagValue = _failureReason.HasValue
                 ? ToFailureReasonTag(_failureReason.Value)
                 : "unknown";
-            // TODO: TagList is a value-type struct with an inline capacity of 8 key-value pairs. The
-            // struct copy below (`var failureTags = _tags`) is intentional — it keeps `_tags` clean for
-            // the JobDuration/JobsCompleted paths. However, when the stored tag count reaches 8, TagList
-            // overflows to a heap-allocated list that is NOT deep-copied by value assignment; both
-            // instances share the same underlying array, so the `Add("failure_reason", ...)` call would
-            // mutate `_tags` and corrupt subsequent metrics. Current tag count is 3 (run_type,
-            // project_id, project_name), so this is safe today, but adding 6 or more standard tags
-            // would silently trigger the hazard. Fix before adding more tags: allocate a fresh TagList
-            // from `_tags` with explicit capacity (TagList does not expose a copy-constructor as of
-            // .NET 8, so enumerate and re-add, or switch to a TagList helper that always owns its storage).
+            // Note: TagList is a value-type struct with an inline capacity of 8 key-value pairs.
+            // The copy below is intentional — it keeps _tags clean for the JobDuration/JobsCompleted paths.
+            // TagList overflows to a heap-allocated list beyond 8 entries, and that overflow list is NOT
+            // deep-copied by value assignment. Current tag count is 3 (run_type, project_id, project_name),
+            // so this is safe. Do not add 6 or more standard tags without revisiting this copy strategy.
             var failureTags = _tags;
             failureTags.Add(new KeyValuePair<string, object?>("failure_reason", tagValue));
             PipelineTelemetry.JobsFailed.Add(1, failureTags);
@@ -150,6 +147,8 @@ public sealed class PipelineRunInstrumentation : IDisposable
     /// <c>AgentError</c> → <c>"agent_error"</c>, <c>Timeout</c> → <c>"timeout"</c>.
     /// </summary>
     private static string ToFailureReasonTag(FailureReason reason) =>
-        System.Text.RegularExpressions.Regex.Replace(reason.ToString(), "(?<=[a-z0-9])([A-Z])", "_$1")
-              .ToLowerInvariant();
+        PascalCaseBoundaryRegex().Replace(reason.ToString(), "_$1").ToLowerInvariant();
+
+    [GeneratedRegex("(?<=[a-z0-9])([A-Z])", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex PascalCaseBoundaryRegex();
 }
