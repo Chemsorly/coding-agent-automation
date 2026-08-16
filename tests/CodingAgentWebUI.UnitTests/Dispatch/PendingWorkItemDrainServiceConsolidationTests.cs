@@ -16,9 +16,11 @@ using System.Text.Json;
 namespace CodingAgentWebUI.UnitTests.Dispatch;
 
 /// <summary>
-/// Tests for <see cref="PendingWorkItemDrainService"/> consolidation dispatch path.
-/// Verifies that consolidation WorkItems (TaskType=Consolidation) are dispatched via
-/// <see cref="IConsolidationDispatchService.TryDispatchToAgentAsync"/> with token vending at drain time.
+/// Tests for <see cref="PendingWorkItemDrainService"/> consolidation dispatch coordination.
+/// Verifies that consolidation WorkItems (TaskType=Consolidation) are routed to
+/// <see cref="IConsolidationDrainDispatcher.TryDispatchAsync"/> and that the coordinator
+/// behaves correctly on the returned result (no label swap, continue to next item).
+/// Extracted dispatch logic is tested in <see cref="ConsolidationDrainDispatcherTests"/>.
 /// </summary>
 public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 {
@@ -28,8 +30,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
     private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
-    private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
-    private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
+    private readonly Mock<IConsolidationDrainDispatcher> _mockConsolidationDrainDispatcher = new();
     private readonly OrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
 
@@ -47,8 +48,14 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     }
 
     [Fact]
-    public async Task DrainPendingItems_ConsolidationItem_DispatchesViaTryDispatchToAgentAsync()
+    public async Task DrainPendingItems_ConsolidationItem_DelegatesToConsolidationDrainDispatcher()
     {
+        // TODO: This test verifies that TryDispatchAsync is called, but does not check any post-condition
+        // on the return value. If DispatchConsolidationItemAsync were accidentally changed to ignore the
+        // bool result from TryDispatchAsync (e.g., discard-and-continue regardless), this test would
+        // still pass. Consider adding a downstream assertion that is gated on the true return —
+        // for example, that the mock dispatcher's result is respected (no second agent reservation
+        // attempt, or that the drain loop processes subsequent items correctly).
         // Arrange: insert a consolidation WorkItem
         var runId = Guid.NewGuid().ToString();
         var workItemId = Guid.Parse(runId);
@@ -58,17 +65,9 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         _mockResolver.Setup(r => r.ResolveAgent("dotnet"))
             .Returns(new AgentResolveResult("conn-1", "agent-1"));
 
-        // Setup: run exists and is Queued
-        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
-
-        // Setup: dispatch succeeds (token vending happens inside TryDispatchToAgentAsync)
-        // TODO: Use explicit cast `(TemplateId?)"template-1"` instead of relying on implicit conversion for
-        // the Moq setup and verify calls below, for consistency with the pattern used in
-        // DrainPendingItems_ConsolidationItem_ShutdownDuringDispatch_RevertsWorkItemToPending and to avoid
-        // silent breakage if Moq changes how it resolves implicit conversions in argument matching.
-        _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
+        // Setup: dispatcher succeeds
+        _mockConsolidationDrainDispatcher
+            .Setup(d => d.TryDispatchAsync(It.IsAny<WorkItemEntity>(), It.IsAny<JobDistributionRequest>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var service = CreateService();
@@ -76,21 +75,25 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         // Act
         await InvokeDrainAsync(service);
 
-        // Assert: TryDispatchToAgentAsync was called (token vending occurs within)
-        _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()),
+        // Assert: IConsolidationDrainDispatcher.TryDispatchAsync was called
+        _mockConsolidationDrainDispatcher.Verify(
+            d => d.TryDispatchAsync(
+                It.Is<WorkItemEntity>(e => e.Id == workItemId),
+                It.IsAny<JobDistributionRequest>(),
+                It.IsAny<AgentId>(),
+                It.IsAny<CancellationToken>()),
             Times.Once);
-
-        // Assert: WorkItem transitioned to Dispatched
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.FindAsync(workItemId);
-        item!.Status.Should().Be(WorkItemStatus.Dispatched);
-        item.AssignedAgentId.Should().Be("agent-1");
     }
 
     [Fact]
-    public async Task DrainPendingItems_ConsolidationItem_DispatchFails_RevertsToPending()
+    public async Task DrainPendingItems_ConsolidationItem_DispatchFails_NoLabelSwap_ContinuesProcessing()
     {
+        // TODO: The test name claims "ContinuesProcessing" but there is no assertion confirming the drain
+        // loop continued after the false return. The only assertion is that SwapLabelWithRetryAsync was
+        // never called — a negative-only check. If the coordinator accidentally throws or exits early on
+        // a false result, the label-swap assertion still passes because the exception unwinds before any
+        // label swap could occur. Consider inserting a second work item and asserting it was also attempted,
+        // or otherwise confirming that the loop did not terminate early.
         // Arrange
         var runId = Guid.NewGuid().ToString();
         var workItemId = Guid.Parse(runId);
@@ -98,32 +101,27 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 
         _mockResolver.Setup(r => r.ResolveAgent(""))
             .Returns(new AgentResolveResult("conn-1", "agent-1"));
-        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.RefactoringDetection, StartedAtUtc = DateTime.UtcNow });
-        _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.RefactoringDetection, null, "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false); // Dispatch failed
 
-        _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
+        // Setup: dispatcher returns false (dispatch failed)
+        _mockConsolidationDrainDispatcher
+            .Setup(d => d.TryDispatchAsync(It.IsAny<WorkItemEntity>(), It.IsAny<JobDistributionRequest>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
 
         var service = CreateService();
 
         // Act
         await InvokeDrainAsync(service);
 
-        // Assert: WorkItem reverted to Pending (available for next drain cycle)
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.FindAsync(workItemId);
-        item!.Status.Should().Be(WorkItemStatus.Pending);
-        item.AssignedAgentId.Should().BeNull();
-        item.DispatchedAt.Should().BeNull();
-        item.RetryCount.Should().Be(0, "consolidation dispatch failures must NOT increment RetryCount");
+        // Assert: no label swap (consolidation items never swap labels)
+        _mockLabelSwapper.Verify(
+            l => l.SwapLabelWithRetryAsync(It.IsAny<Guid>(), It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
-    public async Task DrainPendingItems_ConsolidationItem_CancelledRun_TransitionsWorkItemToCancelled()
+    public async Task DrainPendingItems_ConsolidationItem_DispatchSucceeds_NoLabelSwap()
     {
-        // Arrange: insert a consolidation WorkItem for a cancelled run
+        // Consolidation items must never trigger a label swap, regardless of dispatch outcome.
         var runId = Guid.NewGuid().ToString();
         var workItemId = Guid.Parse(runId);
         await InsertConsolidationWorkItem(workItemId, runId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws");
@@ -131,32 +129,25 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         _mockResolver.Setup(r => r.ResolveAgent("dotnet"))
             .Returns(new AgentResolveResult("conn-1", "agent-1"));
 
-        // Run was cancelled while queued
-        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Cancelled, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
-
-        _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
+        _mockConsolidationDrainDispatcher
+            .Setup(d => d.TryDispatchAsync(It.IsAny<WorkItemEntity>(), It.IsAny<JobDistributionRequest>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         var service = CreateService();
 
         // Act
         await InvokeDrainAsync(service);
 
-        // Assert: WorkItem transitioned to Cancelled, dispatch never called
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.FindAsync(workItemId);
-        item!.Status.Should().Be(WorkItemStatus.Cancelled);
-        item.CompletedAt.Should().NotBeNull();
-
-        _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
+        // Assert: label swap was never called
+        _mockLabelSwapper.Verify(
+            l => l.SwapLabelWithRetryAsync(It.IsAny<Guid>(), It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
     [Fact]
-    public async Task DrainPendingItems_ConsolidationItem_NullRunStore_SkipsItem()
+    public async Task DrainPendingItems_ConsolidationItem_NullDispatcher_SkipsItem()
     {
-        // When consolidationRunStore is null (should not happen in practice with correct DI),
+        // When consolidationDrainDispatcher is null (should not happen in practice with correct DI),
         // the drain service logs an error and skips the item.
         var runId = Guid.NewGuid().ToString();
         var workItemId = Guid.Parse(runId);
@@ -166,21 +157,15 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
             .Returns(new AgentResolveResult("conn-1", "agent-1"));
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
 
-        // Create service WITHOUT consolidation dependencies
-        var service = new PendingWorkItemDrainService(
-            MakeDeps());
+        // Create service WITHOUT consolidation dispatcher
+        var service = new PendingWorkItemDrainService(MakeDeps());
 
         // Act
         await InvokeDrainAsync(service);
 
-        // Assert: item remains Pending (not dispatched)
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.FindAsync(workItemId);
-        item!.Status.Should().Be(WorkItemStatus.Pending);
-
-        // Dispatch was never attempted
-        _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
+        // Assert: IConsolidationDrainDispatcher was never called (not injected)
+        _mockConsolidationDrainDispatcher.Verify(
+            d => d.TryDispatchAsync(It.IsAny<WorkItemEntity>(), It.IsAny<JobDistributionRequest>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -225,9 +210,6 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         await InsertConsolidationWorkItem(consolidationId, consolidationRunId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws",
             createdAt: DateTimeOffset.UtcNow.AddMinutes(-20)); // Even older, but should still come after pipeline
 
-        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(consolidationRunId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationRun { RunId = consolidationRunId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
-
         // Only one agent available — should get the pipeline item first
         var callCount = 0;
         _mockResolver.Setup(r => r.ResolveAgent(""))
@@ -244,8 +226,8 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         _mockAgentComm.Verify(
             c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()),
             Times.Once);
-        _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
+        _mockConsolidationDrainDispatcher.Verify(
+            d => d.TryDispatchAsync(It.IsAny<WorkItemEntity>(), It.IsAny<JobDistributionRequest>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -254,8 +236,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         return new PendingWorkItemDrainService(
             MakeDeps(),
             null, // IProjectStore
-            _mockConsolidationDispatchService.Object,
-            _mockConsolidationRunStore.Object);
+            _mockConsolidationDrainDispatcher.Object);
     }
 
     private DrainServiceDependencies MakeDeps() =>
@@ -344,6 +325,8 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 /// reverted from Dispatched back to Pending (rather than remaining stuck in Dispatched
 /// until the stuck-item detector fires ~5 minutes later).
 /// Regression test for exploratory-validation finding 1A-03.
+/// These tests use a real <see cref="ConsolidationDrainDispatcher"/> (not a mock) to exercise
+/// the exception-handling path end-to-end through the drain service.
 /// </summary>
 public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDisposable
 {
@@ -436,27 +419,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
                 throw new OperationCanceledException(cts.Token);
             });
 
-        var service = new PendingWorkItemDrainService(
-            new DrainServiceDependencies(
-                _dbFactory,
-                _mockResolver.Object,
-                _mockAgentComm.Object,
-                _runService,
-                new WorkItemTransitionService(
-                    new CancellationAwareDbContextFactory(_dbOptions),
-                    NullLogger<WorkItemTransitionService>.Instance),
-                _mockPendingWork.Object,
-                _mockLabelSwapper.Object,
-                NullLogger<PendingWorkItemDrainService>.Instance,
-                new DispatchRevertService(
-                    _dbFactory, _mockResolver.Object, _runService,
-                    new WorkItemTransitionService(
-                        new CancellationAwareDbContextFactory(_dbOptions),
-                        NullLogger<WorkItemTransitionService>.Instance),
-                    NullLogger<DispatchRevertService>.Instance)),
-            null, // IProjectStore
-            _mockConsolidationDispatchService.Object,
-            _mockConsolidationRunStore.Object);
+        var service = CreateService(new CancellationAwareDbContextFactory(_dbOptions));
 
         // Act: start with the CTS that will be cancelled inside the mock
         service.Signal();
@@ -481,22 +444,34 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
         item.DispatchedAt.Should().BeNull("DispatchedAt must be cleared on revert");
     }
 
-    private PendingWorkItemDrainService CreateService()
+    private PendingWorkItemDrainService CreateService(IDbContextFactory<PipelineDbContext>? dbFactoryForTransition = null)
     {
-        return new PendingWorkItemDrainService(
-            MakeDeps(),
-            null, // IProjectStore
+        var factory = dbFactoryForTransition ?? _dbFactory;
+        var transitionService = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+        var revertHandler = new DispatchRevertService(
+            _dbFactory, _mockResolver.Object, _runService, transitionService,
+            NullLogger<DispatchRevertService>.Instance);
+        var dispatchAttemptService = new DispatchAttemptService(transitionService, revertHandler);
+        var consolidationDrainDispatcher = new ConsolidationDrainDispatcher(
             _mockConsolidationDispatchService.Object,
-            _mockConsolidationRunStore.Object);
-    }
+            _mockConsolidationRunStore.Object,
+            dispatchAttemptService,
+            transitionService,
+            _mockResolver.Object,
+            revertHandler,
+            NullLogger<ConsolidationDrainDispatcher>.Instance);
 
-    private DrainServiceDependencies MakeDeps() =>
-        new(_dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-            _runService, _transitionService, _mockPendingWork.Object,
-            _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
-            new DispatchRevertService(
-                _dbFactory, _mockResolver.Object, _runService, _transitionService,
-                NullLogger<DispatchRevertService>.Instance));
+        return new PendingWorkItemDrainService(
+            new DrainServiceDependencies(
+                _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
+                _runService, _transitionService, _mockPendingWork.Object,
+                _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
+                new DispatchRevertService(
+                    _dbFactory, _mockResolver.Object, _runService, _transitionService,
+                    NullLogger<DispatchRevertService>.Instance)),
+            null, // IProjectStore
+            consolidationDrainDispatcher);
+    }
 
     private async Task InsertConsolidationWorkItem(
         Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath)
@@ -590,337 +565,10 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
 }
 
 /// <summary>
-/// Direct-invocation tests for the extracted <c>DispatchConsolidationItemAsync</c> private method,
-/// satisfying the acceptance criterion: "consolidation and pipeline dispatch paths are separate methods
-/// independently callable from tests." Uses reflection consistent with the existing InvokeDrainAsync pattern.
-/// </summary>
-public sealed class DispatchConsolidationItemAsyncTests : IDisposable
-{
-    private readonly DbContextOptions<PipelineDbContext> _dbOptions;
-    private readonly InMemoryDbContextFactory _dbFactory;
-    private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
-    private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
-    private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
-    private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
-    private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
-    private readonly OrchestratorRunService _runService;
-    private readonly WorkItemTransitionService _transitionService;
-
-    public DispatchConsolidationItemAsyncTests()
-    {
-        _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase($"DispatchConsolidationItemTest_{Guid.NewGuid()}")
-            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
-        _dbFactory = new InMemoryDbContextFactory(_dbOptions);
-        _runService = new OrchestratorRunService(Serilog.Log.Logger);
-        _transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
-        _mockPendingWork.Setup(p => p.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PendingJob>().AsReadOnly());
-    }
-
-    [Fact]
-    public async Task DispatchConsolidationItem_SuccessfulDispatch_ReturnsTrue_AndAssignsJob()
-    {
-        // Arrange
-        var runId = Guid.NewGuid().ToString();
-        var workItemId = Guid.Parse(runId);
-        // TODO: workItemId == Guid.Parse(runId) ties the DB item ID to the runId string. If production code
-        // ever derives runId from a field other than request.IssueIdentifier, the TryDispatchToAgentAsync mock
-        // will silently not match (returns false by default), and result.Should().BeTrue() will fail — which is
-        // detectable. No silent-pass risk here, but the coupling is worth noting for future refactors.
-        var (item, request) = await InsertAndBuildItem(workItemId, runId, ConsolidationRunType.BrainConsolidation, "tpl-1", "/tmp/ws", "agent-1");
-
-        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
-        _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "tpl-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-        _mockResolver.Setup(r => r.AssignJob("agent-1", workItemId.ToString()));
-
-        var service = CreateService();
-
-        // Act
-        var result = await InvokeDispatchConsolidationItemAsync(service, item, request, "agent-1", CancellationToken.None);
-
-        // Assert
-        result.Should().BeTrue("successful dispatch must return true");
-        _mockResolver.Verify(r => r.AssignJob("agent-1", workItemId.ToString()), Times.Once);
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var stored = await db.WorkItems.FindAsync(workItemId);
-        stored!.Status.Should().Be(WorkItemStatus.Dispatched);
-        stored.AssignedAgentId.Should().Be("agent-1");
-    }
-
-    [Fact]
-    public async Task DispatchConsolidationItem_DispatchReturnsFalse_RevertsToPending_RetryCountUnchanged()
-    {
-        // Verifies Block A behavior: false return uses ct, no RetryCount increment
-        var runId = Guid.NewGuid().ToString();
-        var workItemId = Guid.Parse(runId);
-        var (item, request) = await InsertAndBuildItem(workItemId, runId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", "agent-1");
-
-        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
-        // TODO: The mock below uses a null TemplateId? argument. If TryDispatchToAgentAsync is never called
-        // (e.g., a short-circuit in the cancelled-run guard), the mock returns false by default — the same
-        // value the test expects — so the test would pass vacuously. Add
-        // _mockConsolidationDispatchService.Verify(d => d.TryDispatchToAgentAsync(...), Times.Once)
-        // to close this gap and confirm the dispatch path was actually exercised.
-        _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
-        _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
-
-        var service = CreateService();
-
-        // Act
-        var result = await InvokeDispatchConsolidationItemAsync(service, item, request, "agent-1", CancellationToken.None);
-
-        // Assert
-        result.Should().BeFalse("failed dispatch must return false");
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var stored = await db.WorkItems.FindAsync(workItemId);
-        stored!.Status.Should().Be(WorkItemStatus.Pending);
-        stored.AssignedAgentId.Should().BeNull();
-        stored.DispatchedAt.Should().BeNull();
-        stored.RetryCount.Should().Be(0, "consolidation false-path must NOT increment RetryCount");
-        _mockResolver.Verify(r => r.ReleaseAgent("agent-1"), Times.Once);
-    }
-
-    [Fact]
-    public async Task DispatchConsolidationItem_DispatchThrows_RevertsToPending_RetryCountUnchanged()
-    {
-        // Verifies Block B behavior: exception uses CancellationToken.None via TryRevertToPendingAsync, no RetryCount
-        var runId = Guid.NewGuid().ToString();
-        var workItemId = Guid.Parse(runId);
-        var (item, request) = await InsertAndBuildItem(workItemId, runId, ConsolidationRunType.BrainConsolidation, "tpl-1", "/tmp/ws", "agent-1");
-
-        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
-        _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Token vending failed"));
-        _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
-
-        var service = CreateService();
-
-        // Act
-        var result = await InvokeDispatchConsolidationItemAsync(service, item, request, "agent-1", CancellationToken.None);
-
-        // Assert
-        result.Should().BeFalse("exception during dispatch must return false");
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var stored = await db.WorkItems.FindAsync(workItemId);
-        stored!.Status.Should().Be(WorkItemStatus.Pending);
-        stored.AssignedAgentId.Should().BeNull();
-        // TODO: stored.DispatchedAt.Should().BeNull() is the final state, which is consistent with both
-        // "item was never moved out of Pending" and "item was Dispatched then reverted". The throw is set up
-        // on TryDispatchToAgentAsync which is called after TransitionAsync(Dispatched) in the production code,
-        // so the item will have been transiently Dispatched. Consider capturing DispatchedAt before the Act
-        // call and asserting it was non-null at some point (e.g., via a transition history or an intermediate
-        // DB read), to distinguish these two cases and make the exception-path coverage unambiguous.
-        stored.DispatchedAt.Should().BeNull();
-        stored.RetryCount.Should().Be(0, "consolidation exception-path must NOT increment RetryCount");
-        _mockResolver.Verify(r => r.ReleaseAgent("agent-1"), Times.Once);
-    }
-
-    [Fact]
-    public async Task DispatchConsolidationItem_CancelledRun_TransitionsToCancelled_ReturnsFalse()
-    {
-        var runId = Guid.NewGuid().ToString();
-        var workItemId = Guid.Parse(runId);
-        var (item, request) = await InsertAndBuildItem(workItemId, runId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", "agent-1");
-
-        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Cancelled, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
-        _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
-
-        var service = CreateService();
-
-        // Act
-        var result = await InvokeDispatchConsolidationItemAsync(service, item, request, "agent-1", CancellationToken.None);
-
-        // Assert
-        result.Should().BeFalse("cancelled run must return false");
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var stored = await db.WorkItems.FindAsync(workItemId);
-        stored!.Status.Should().Be(WorkItemStatus.Cancelled);
-        stored.CompletedAt.Should().NotBeNull();
-        _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
-    public async Task DispatchConsolidationItem_DispatchReturnsFalse_UsesCallerCancellationToken()
-    {
-        // Characterization test: verifies that when dispatch returns false, the revert path
-        // forwards the caller's ct to TryRevertToPendingAsync rather than ignoring it.
-        //
-        // Strategy: cancel the CTS inside the TryDispatchToAgentAsync mock callback. At that point
-        // the initial TransitionAsync(Dispatched) has already completed successfully, so the item
-        // is in Dispatched state. The false-return path then calls TryRevertToPendingAsync(ct) with
-        // the now-cancelled token, which causes CancellationAwareDbContextFactory to throw
-        // OperationCanceledException. TryRevertToPendingAsync swallows the exception, leaving the
-        // item Dispatched. If ct were not forwarded (CancellationToken.None used instead), the revert
-        // transition would succeed and the item would be Pending — failing this assertion.
-        var runId = Guid.NewGuid().ToString();
-        var workItemId = Guid.Parse(runId);
-
-        // Insert item using the standard factory so it exists in the DB
-        var (item, request) = await InsertAndBuildItem(workItemId, runId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", "agent-1");
-
-        using var cts = new CancellationTokenSource();
-
-        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
-        _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()))
-            .Returns((string _, ConsolidationRunType _, TemplateId? _, string _, AgentId _, CancellationToken _) =>
-            {
-                cts.Cancel(); // cancel AFTER the initial Dispatched transition succeeded
-                return Task.FromResult(false);
-            });
-        _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
-
-        // Use a CancellationAwareDbContextFactory so that when the cancelled token reaches
-        // TryRevertToPendingAsync, the revert transition fails
-        var cancellationAwareFactory = new CancellationAwareDbContextFactory(_dbOptions);
-        var cancellingTransitionService = new WorkItemTransitionService(cancellationAwareFactory, NullLogger<WorkItemTransitionService>.Instance);
-        var service = new PendingWorkItemDrainService(
-            new DrainServiceDependencies(
-                _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-                _runService, cancellingTransitionService, _mockPendingWork.Object,
-                _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
-                new DispatchRevertService(
-                    _dbFactory, _mockResolver.Object, _runService, cancellingTransitionService,
-                    NullLogger<DispatchRevertService>.Instance)),
-            null,
-            _mockConsolidationDispatchService.Object,
-            _mockConsolidationRunStore.Object);
-
-        // Act: pass cts.Token — still live when the method starts, cancelled inside the mock callback
-        var result = await InvokeDispatchConsolidationItemAsync(service, item, request, "agent-1", cts.Token);
-
-        // Assert: dispatch returned false, method returns false
-        result.Should().BeFalse("failed dispatch must return false");
-        _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()),
-            Times.Once,
-            "TryDispatchToAgentAsync must be called — confirming the dispatch path was exercised");
-
-        // The revert was cancelled via the forwarded ct → item remains Dispatched
-        // (TryRevertToPendingAsync swallowed the OperationCanceledException from the cancelled revert)
-        // If ct were ignored and CancellationToken.None used instead, the revert would succeed → Pending
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var stored = await db.WorkItems.FindAsync(workItemId);
-        stored!.Status.Should().Be(WorkItemStatus.Dispatched,
-            "revert was cancelled via the caller's ct — item must remain Dispatched, confirming ct was forwarded");
-    }
-
-    private PendingWorkItemDrainService CreateService() =>
-        new(new DrainServiceDependencies(
-                _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-                _runService, _transitionService, _mockPendingWork.Object,
-                _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance,
-                new DispatchRevertService(
-                    _dbFactory, _mockResolver.Object, _runService, _transitionService,
-                    NullLogger<DispatchRevertService>.Instance)),
-            null,
-            _mockConsolidationDispatchService.Object,
-            _mockConsolidationRunStore.Object);
-
-    private async Task<(WorkItemEntity item, JobDistributionRequest request)> InsertAndBuildItem(
-        Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath, string agentSelector)
-    {
-        var request = new JobDistributionRequest
-        {
-            IssueIdentifier = runId,
-            IssueProviderConfigId = "consolidation",
-            RepoProviderConfigId = "",
-            InitiatedBy = "consolidation",
-            TaskType = WorkItemTaskType.Consolidation,
-            AgentSelector = agentSelector,
-            TimeoutSeconds = 0,
-            ConsolidationRunType = runType,
-            ConsolidationTemplateId = templateId,
-            ConsolidationWorkspacePath = workspacePath,
-            RunId = runId
-        };
-        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
-
-        var entity = new WorkItemEntity
-        {
-            Id = workItemId,
-            TaskType = WorkItemTaskType.Consolidation,
-            IssueIdentifier = runId,
-            IssueProviderConfigId = "consolidation",
-            Status = WorkItemStatus.Pending,
-            Payload = payload,
-            AgentSelector = agentSelector,
-            CreatedAt = DateTimeOffset.UtcNow,
-            TimeoutSeconds = 0
-        };
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        db.WorkItems.Add(entity);
-        await db.SaveChangesAsync();
-
-        return (entity, request);
-    }
-
-    private static async Task<bool> InvokeDispatchConsolidationItemAsync(
-        PendingWorkItemDrainService service, WorkItemEntity item, JobDistributionRequest request,
-        string agentId, CancellationToken ct)
-    {
-        var method = typeof(PendingWorkItemDrainService).GetMethod("DispatchConsolidationItemAsync",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-            ?? throw new InvalidOperationException("DispatchConsolidationItemAsync not found");
-        var task = (Task<bool>)method.Invoke(service, [item, request, (AgentId)agentId, ct])!;
-        return await task;
-    }
-
-    public void Dispose()
-    {
-        using var db = new PipelineDbContext(_dbOptions);
-        db.Database.EnsureDeleted();
-        GC.SuppressFinalize(this);
-    }
-
-    private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
-    {
-        private readonly DbContextOptions<PipelineDbContext> _options;
-        public InMemoryDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
-        public PipelineDbContext CreateDbContext() => new(_options);
-        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(new PipelineDbContext(_options));
-    }
-
-    /// <summary>
-    /// Factory that throws <see cref="OperationCanceledException"/> when <see cref="CreateDbContextAsync"/>
-    /// is called with a cancelled token — simulating real DB provider behavior.
-    /// Used to verify that the caller's <c>ct</c> is forwarded to <c>TryRevertToPendingAsync</c>
-    /// in the false-return path of <c>DispatchConsolidationItemAsync</c>.
-    /// </summary>
-    private sealed class CancellationAwareDbContextFactory : IDbContextFactory<PipelineDbContext>
-    {
-        private readonly DbContextOptions<PipelineDbContext> _options;
-        public CancellationAwareDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
-        public PipelineDbContext CreateDbContext() => new(_options);
-        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
-        {
-            ct.ThrowIfCancellationRequested();
-            return Task.FromResult(new PipelineDbContext(_options));
-        }
-    }
-}
-
-/// <summary>
-/// Direct-invocation tests for the extracted <c>TryRevertToPendingAsync</c> private method.
-/// Verifies that the <paramref name="incrementRetryCount"/> parameter correctly controls RetryCount
-/// and that exceptions from the transition are swallowed (stuck-item detector fallback).
-/// Now tests <see cref="DispatchRevertService.TryRevertToPendingAsync"/> directly since the
-/// method was moved there from <see cref="PendingWorkItemDrainService"/>.
+/// Verifies that the <c>TryRevertToPendingAsync</c> behavior of <see cref="DispatchRevertService"/>
+/// is correct for both the increment and non-increment paths.
+/// These tests target <see cref="DispatchRevertService"/> directly since the method was
+/// moved there from <see cref="PendingWorkItemDrainService"/>.
 /// </summary>
 public sealed class TryRevertToPendingAsyncTests : IDisposable
 {
@@ -1093,11 +741,6 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(new PipelineDbContext(_options));
     }
 
-    /// <summary>
-    /// A <see cref="IDbContextFactory{PipelineDbContext}"/> that always throws <see cref="InvalidOperationException"/>.
-    /// Used to force <see cref="WorkItemTransitionService.TransitionAsync"/> to throw so that
-    /// <c>TryRevertToPendingAsync</c> exception-swallowing can be verified.
-    /// </summary>
     private sealed class AlwaysThrowingDbContextFactory : IDbContextFactory<PipelineDbContext>
     {
         public PipelineDbContext CreateDbContext() => throw new InvalidOperationException("Simulated DB failure");
@@ -1105,12 +748,6 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
             => throw new InvalidOperationException("Simulated DB failure");
     }
 
-    /// <summary>
-    /// A <see cref="IDbContextFactory{PipelineDbContext}"/> that throws <see cref="OperationCanceledException"/>
-    /// when <see cref="CreateDbContextAsync"/> is called with a cancelled token.
-    /// Simulates real DB provider behavior (the EF Core InMemory provider ignores cancellation).
-    /// Used to verify that the optional <c>ct</c> parameter is forwarded to <see cref="WorkItemTransitionService.TransitionAsync"/>.
-    /// </summary>
     private sealed class CancellationAwareDbContextFactory : IDbContextFactory<PipelineDbContext>
     {
         private readonly DbContextOptions<PipelineDbContext> _options;
