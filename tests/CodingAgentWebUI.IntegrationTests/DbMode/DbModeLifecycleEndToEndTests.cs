@@ -59,6 +59,10 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
         _mockLabelService = new Mock<ILabelService>();
 
+        var fallbackTransitionService = new WorkItemFallbackTransitionService(
+            _transitionService,
+            NullLogger<WorkItemFallbackTransitionService>.Instance);
+
         _lifecycleManager = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
             _mockHistoryService.Object,
@@ -66,7 +70,8 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
-            WorkItemTransition: _transitionService));
+            WorkItemTransition: _transitionService,
+            WorkItemFallbackTransition: fallbackTransitionService));
     }
 
     public void Dispose()

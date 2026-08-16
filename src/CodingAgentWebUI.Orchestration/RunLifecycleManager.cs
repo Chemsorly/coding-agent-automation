@@ -1,5 +1,3 @@
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -15,7 +13,7 @@ namespace CodingAgentWebUI.Orchestration;
 /// Default implementation of <see cref="IRunLifecycleManager"/>.
 /// Coordinates terminal state transitions across all stores:
 /// - In-memory (OrchestratorRunService)
-/// - Database (WorkItemTransitionService) — null in Legacy mode
+/// - Database (WorkItemFallbackTransitionService / WorkItemTransitionService) — null in Legacy mode
 /// - Agent registry (IAgentRegistryService)
 /// - Labels (ILabelService)
 /// - History (IPipelineRunHistoryService)
@@ -24,7 +22,12 @@ namespace CodingAgentWebUI.Orchestration;
 public sealed class RunLifecycleManager : IRunLifecycleManager
 {
     private readonly IOrchestratorRunService _runService;
+    // TODO: _workItemTransition is stored but never read — all transition logic now goes through
+    // _workItemFallbackTransition. Remove this field and WorkItemTransition from
+    // RunLifecycleManagerDependencies once WorkDistributionRegistration.cs (line ~139) is updated
+    // to stop passing GetRequiredService<WorkItemTransitionService>() to that parameter.
     private readonly WorkItemTransitionService? _workItemTransition;
+    private readonly IWorkItemFallbackTransitionService? _workItemFallbackTransition;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IAgentRegistryService _registry;
     private readonly ILabelService _labelService;
@@ -45,6 +48,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         _runService = deps.RunService;
         _workItemTransition = deps.WorkItemTransition;
+        _workItemFallbackTransition = deps.WorkItemFallbackTransition;
         _historyService = deps.HistoryService;
         _registry = deps.Registry;
         _labelService = deps.LabelService;
@@ -266,58 +270,22 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
     private async Task TransitionWorkItemAsync(RunId runId, WorkItemStatus status, CancellationToken ct, string? errorMessage = null, FailureReason? failureReason = null)
     {
-        if (_workItemTransition is null || !Guid.TryParse(runId.Value, out var workItemId))
+        if (_workItemFallbackTransition is null || !Guid.TryParse(runId.Value, out var workItemId))
             return;
 
         try
         {
-            Action<WorkItemEntity> mutate = status switch
+            var result = await _workItemFallbackTransition.TryFallbackChainAsync(workItemId, status, errorMessage, failureReason, ct);
+            if (!result)
             {
-                WorkItemStatus.Failed    => WorkItemMutationFactory.Failed(errorMessage, failureReason),
-                WorkItemStatus.Succeeded => WorkItemMutationFactory.Succeeded(),
-                WorkItemStatus.Cancelled => WorkItemMutationFactory.Cancelled(),
-                _                        => _ => { }
-            };
-
-            var result = await _workItemTransition.TransitionAsync(workItemId, status, mutate, ct: ct);
-
-            if (!result && status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-            {
-                await TryFallbackTransitionAsync(workItemId, status, errorMessage, failureReason, runId, ct);
+                _logger.Warning(
+                    "RunLifecycleManager: WorkItem {WorkItemId} transition to {Status} rejected (may already be terminal)",
+                    workItemId, status);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.Warning(ex, "RunLifecycleManager: WorkItem {RunId} transition to {Status} failed (non-fatal)", runId, status);
-        }
-    }
-
-    private async Task TryFallbackTransitionAsync(
-        Guid workItemId, WorkItemStatus status,
-        string? errorMessage, FailureReason? failureReason,
-        RunId runId, CancellationToken ct)
-    {
-        Action<WorkItemEntity> mutationAction = status switch
-        {
-            WorkItemStatus.Failed    => WorkItemMutationFactory.Failed(errorMessage, failureReason),
-            WorkItemStatus.Succeeded => WorkItemMutationFactory.Succeeded(),
-            WorkItemStatus.Cancelled => WorkItemMutationFactory.Cancelled(),
-            _                        => _ => { }
-        };
-
-        // Two-step fallback: Dispatched → Running → terminal
-        var intermediate = await _workItemTransition!.TransitionAsync(workItemId, WorkItemStatus.Running, ct: ct);
-        if (intermediate)
-        {
-            await _workItemTransition.TransitionAsync(workItemId, status, mutationAction, ct: ct);
-        }
-        else
-        {
-            // Third fallback: recover from infrastructure-failure-induced Failed state
-            var recovered = await _workItemTransition.TryRecoverFromInfrastructureFailureAsync(
-                workItemId, status, mutationAction, ct);
-            if (recovered)
-                _logger.Warning("Recovered WorkItem {RunId} from delivery-timeout Failed to {Status} via lifecycle manager", runId, status);
+            _logger.Warning(ex, "RunLifecycleManager: WorkItem {WorkItemId} transition to {Status} failed (non-fatal)", workItemId, status);
         }
     }
 

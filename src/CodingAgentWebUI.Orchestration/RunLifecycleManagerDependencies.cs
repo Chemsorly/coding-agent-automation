@@ -16,4 +16,5 @@ public sealed record RunLifecycleManagerDependencies(
     JobDeduplicationGuardService Dispatcher,
     Serilog.ILogger Logger,
     Infrastructure.Persistence.Services.WorkItemTransitionService? WorkItemTransition = null,
-    IJobCleanupStrategy? JobCleanup = null);
+    IJobCleanupStrategy? JobCleanup = null,
+    IWorkItemFallbackTransitionService? WorkItemFallbackTransition = null);
