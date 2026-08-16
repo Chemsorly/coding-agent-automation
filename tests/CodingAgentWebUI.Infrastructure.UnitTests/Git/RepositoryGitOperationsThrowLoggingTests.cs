@@ -104,10 +104,15 @@ public class RepositoryGitOperationsThrowLoggingTests : IDisposable
 
     private sealed class CollectingSink : ILogEventSink
     {
+        private readonly object _lock = new();
         private readonly List<LogEvent> _events = new();
-        public IReadOnlyList<LogEvent> Events => _events;
-        public void Emit(LogEvent logEvent) => _events.Add(logEvent);
-        public void Clear() => _events.Clear();
+
+        // Return a snapshot so callers enumerating Events are not affected by concurrent Emit calls.
+        public IReadOnlyList<LogEvent> Events { get { lock (_lock) { return _events.ToList(); } } }
+
+        public void Emit(LogEvent logEvent) { lock (_lock) { _events.Add(logEvent); } }
+
+        public void Clear() { lock (_lock) { _events.Clear(); } }
     }
 
     #endregion
