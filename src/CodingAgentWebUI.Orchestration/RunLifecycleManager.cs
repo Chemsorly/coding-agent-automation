@@ -202,7 +202,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // TODO: Consider making _jobCleanup non-nullable and using GetRequiredService in all DI registrations
         // to resolve mode differences entirely at DI registration time (per design goal).
         if (_jobCleanup is not null)
-            await _jobCleanup.TryDeleteJobForRunAsync(runId.Value, ct);
+            await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 
         _logger.Information(
             "RunLifecycleManager.CancelRunAsync: run {RunId} cancelled (agent={AgentId})",

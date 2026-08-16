@@ -483,7 +483,7 @@ public class JobQueueDrainServiceTests
         });
 
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         await _service.DrainAsync(CancellationToken.None);
@@ -523,7 +523,7 @@ public class JobQueueDrainServiceTests
 
         // Dispatch should never be called for cancelled runs
         _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
+            d => d.TryDispatchToAgentAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Queue should be empty (not re-enqueued)
@@ -548,7 +548,7 @@ public class JobQueueDrainServiceTests
         });
 
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Agent error"));
 
         await _service.DrainAsync(CancellationToken.None);
@@ -582,7 +582,7 @@ public class JobQueueDrainServiceTests
             .Returns(Task.CompletedTask);
         _mockConsolidationDispatchService.Reset();
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
@@ -648,7 +648,7 @@ public class JobQueueDrainServiceTests
             .Returns(Task.CompletedTask);
         _mockConsolidationDispatchService.Reset();
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Agent unavailable"));
 
@@ -699,7 +699,7 @@ public class JobQueueDrainServiceTests
     {
         _mockConsolidationDispatchService.Reset();
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
@@ -760,7 +760,7 @@ public class JobQueueDrainServiceTests
     {
         _mockConsolidationDispatchService.Reset();
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
@@ -816,7 +816,7 @@ public class JobQueueDrainServiceTests
 
         _mockConsolidationDispatchService.Reset();
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
@@ -874,7 +874,7 @@ public class JobQueueDrainServiceTests
         //   new PipelineConfiguration().MaxConsolidationDispatchRetries.Should().Be(5);
         _mockConsolidationDispatchService.Reset();
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunType>(),
                 It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 

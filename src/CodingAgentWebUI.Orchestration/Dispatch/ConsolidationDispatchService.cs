@@ -166,14 +166,14 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     /// Token vending happens here (at dispatch time, not enqueue time).
     /// </summary>
     public async Task<bool> TryDispatchToAgentAsync(
-        string runId,
+        RunId runId,
         ConsolidationRunType type,
         TemplateId? templateId,
         string workspacePath,
         AgentId agentId,
         CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
         ArgumentNullException.ThrowIfNull(workspacePath);
         // TODO: AgentId is a readonly record struct so it cannot be null, but AgentId.Value can be null
         // if constructed via `new AgentId(null!)` or `default(AgentId)`. ThrowIfNullOrEmpty covers both
@@ -242,19 +242,19 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     }
 
     /// <inheritdoc />
-    public async Task NotifyRunCancelledAsync(string runId, CancellationToken ct)
+    public async Task NotifyRunCancelledAsync(RunId runId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
         // DB mode: transition WorkItem to Cancelled
         // TODO: CancelJobAsync uses Guid.TryParse(runId) as WorkItem.Id. This works because
         // InsertConsolidationAsPendingAsync sets WorkItem.Id = RunId (when parseable as GUID).
         // If the coupling breaks (e.g., RunId not parseable), cancellation silently fails.
         // Consider querying by IssueIdentifier instead of relying on ID equality. (#1084 follow-up)
-        await _workDistributor.CancelJobAsync(runId, ct);
+        await _workDistributor.CancelJobAsync(runId.Value, ct);
 
         // Legacy mode: remove from in-memory queue
-        _jobDispatcher.RemoveJob(runId);
+        _jobDispatcher.RemoveJob(runId.Value);
     }
 
     /// <summary>
@@ -307,7 +307,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             ctx.Run.RunId, agent.AgentId, ctx.Type, ctx.Run.TemplateName);
     }
 
-    private async Task<ConsolidationRun?> LoadRunAsync(string runId, CancellationToken ct)
+    private async Task<ConsolidationRun?> LoadRunAsync(RunId runId, CancellationToken ct)
     {
         return await _runStore.GetByIdAsync(runId, ct);
     }
@@ -317,7 +317,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     /// Delegates to <see cref="IConsolidationRunTracker"/> which handles both persistent store
     /// and in-memory tracker updates, eliminating duplication with ConsolidationService.
     /// </summary>
-    internal async Task TransitionRunToRunningAsync(string runId, CancellationToken ct)
+    internal async Task TransitionRunToRunningAsync(RunId runId, CancellationToken ct)
     {
         try
         {
@@ -357,7 +357,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     /// Regenerates feedback data at dispatch time for harness suggestion runs.
     /// This ensures fresh data that includes feedback collected while the job was queued.
     /// </summary>
-    private async Task<string?> RegenerateFeedbackDataAsync(string runId, CancellationToken ct)
+    private async Task<string?> RegenerateFeedbackDataAsync(RunId runId, CancellationToken ct)
     {
         try
         {

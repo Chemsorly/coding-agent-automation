@@ -1065,11 +1065,14 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task NotifyRunCancelledAsync_NullRunId_ThrowsArgumentNullException()
+    public async Task NotifyRunCancelledAsync_DefaultRunId_ThrowsArgumentException()
     {
+        // default(RunId) has a null Value — ArgumentException.ThrowIfNullOrEmpty(runId.Value) catches it
+        // TODO: Also add a test for new RunId("") (empty-string Value path) — ThrowIfNullOrEmpty rejects both,
+        // but only the null path is currently exercised here.
         var svc = CreateService();
-        await svc.Invoking(s => s.NotifyRunCancelledAsync(null!, CancellationToken.None))
-            .Should().ThrowAsync<ArgumentNullException>();
+        await svc.Invoking(s => s.NotifyRunCancelledAsync(default(RunId), CancellationToken.None))
+            .Should().ThrowAsync<ArgumentException>();
     }
 
     #endregion
@@ -1077,11 +1080,14 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     #region TryDispatchToAgentAsync guard clauses
 
     [Fact]
-    public async Task TryDispatchToAgentAsync_NullRunId_ThrowsArgumentNullException()
+    public async Task TryDispatchToAgentAsync_DefaultRunId_ThrowsArgumentException()
     {
+        // default(RunId) has a null Value — ArgumentException.ThrowIfNullOrEmpty(runId.Value) catches it
+        // TODO: Also add a test for new RunId("") (empty-string Value path) — ThrowIfNullOrEmpty rejects both,
+        // but only the null path is currently exercised here.
         var svc = CreateService();
-        await svc.Invoking(s => s.TryDispatchToAgentAsync(null!, ConsolidationRunType.BrainConsolidation, null, "/tmp", "agent-1", CancellationToken.None))
-            .Should().ThrowAsync<ArgumentNullException>();
+        await svc.Invoking(s => s.TryDispatchToAgentAsync(default(RunId), ConsolidationRunType.BrainConsolidation, null, "/tmp", "agent-1", CancellationToken.None))
+            .Should().ThrowAsync<ArgumentException>();
     }
 
     [Fact]

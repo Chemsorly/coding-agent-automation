@@ -228,8 +228,15 @@ public sealed class JobQueueDrainService : BackgroundService
                 }
             }
 
+            // TODO: Tests for this call site use It.IsAny<RunId>() — consider adding a test that asserts
+            // the specific RunId value forwarded to TryDispatchToAgentAsync (e.g. It.Is<RunId>(r => r.Value == expectedRunId))
+            // to catch regressions if the wrong field is passed here.
+            // TODO: (RunId)pendingJob.IssueIdentifier.Value is a string-to-RunId cast at the IConsolidationDispatchService
+            // boundary. The acceptance criterion intended no casts at this boundary. The proper fix is to propagate RunId
+            // upstream so the pending-job record stores a RunId field directly rather than storing it as IssueIdentifier.
+            // Until that structural change is made, this cast is the minimum viable workaround. (#follow-up)
             var consolidationDispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
-                pendingJob.IssueIdentifier,
+                (RunId)pendingJob.IssueIdentifier.Value,
                 pendingJob.ConsolidationRunType!.Value,
                 string.IsNullOrEmpty(pendingJob.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)pendingJob.ConsolidationTemplateId,
                 pendingJob.ConsolidationWorkspacePath ?? "",

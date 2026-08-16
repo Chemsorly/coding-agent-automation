@@ -270,8 +270,12 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         }
 
         // Cancel-during-dispatch race guard: check if run was cancelled while queued
-        var runId = request.IssueIdentifier.Value; // RunId stored as IssueIdentifier for consolidation
-        var consolidationRun = await _consolidationRunStore.GetByIdAsync((RunId)runId, ct);
+        // TODO: (RunId)request.IssueIdentifier.Value is a string-to-RunId cast at the IConsolidationDispatchService
+        // boundary. The acceptance criterion intended no casts at this boundary. The proper fix is to propagate RunId
+        // upstream so the work-item request stores a RunId field directly rather than storing it as IssueIdentifier.
+        // Until that structural change is made, this cast is the minimum viable workaround. (#follow-up)
+        RunId runId = (RunId)request.IssueIdentifier.Value; // RunId stored as IssueIdentifier for consolidation
+        var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
         if (consolidationRun is null ||
             consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
             consolidationRun.Status == ConsolidationRunStatus.Failed)
@@ -297,6 +301,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     entity.AssignedAgentId = agentId.Value;
                 }, ct: ct);
 
+            // TODO: Tests for this call site use It.IsAny<RunId>() — consider adding a test that asserts
+            // the specific RunId value forwarded to TryDispatchToAgentAsync (e.g. It.Is<RunId>(r => r.Value == expectedRunId))
+            // to catch regressions if the wrong field is passed here.
             var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
                 runId,
                 request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,

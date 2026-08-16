@@ -34,13 +34,13 @@ internal sealed class AgentCancellationSender : IAgentCancellationSender
     }
 
     /// <inheritdoc />
-    public async Task SendCancelJobAsync(AgentId agentId, string runId, CancellationToken ct = default)
+    public async Task SendCancelJobAsync(AgentId agentId, RunId runId, CancellationToken ct = default)
     {
         // TODO: ThrowIfNullOrEmpty uses [CallerArgumentExpression] which reports "agentId.Value" as the
         // parameter name instead of "agentId". Consider using the overload with explicit paramName:
         // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId))
         ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
-        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
         var agent = _registry.GetByAgentId(agentId.Value);
         if (agent is null) return;
@@ -50,11 +50,11 @@ internal sealed class AgentCancellationSender : IAgentCancellationSender
 
         try
         {
-            await _agentComm.CancelJobAsync(agent.ConnectionId, runId, perAgentCts.Token);
+            await _agentComm.CancelJobAsync(agent.ConnectionId, runId.Value, perAgentCts.Token);
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to send CancelJob to agent {AgentId} for run {RunId}", agentId.Value, runId);
+            _logger.Warning(ex, "Failed to send CancelJob to agent {AgentId} for run {RunId}", agentId.Value, runId.Value);
         }
     }
 }

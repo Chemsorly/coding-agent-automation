@@ -3512,7 +3512,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         // Assert: CancelJob is never sent — agents must reconnect to the new pod
         mockCancellation.Verify(
-            c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -3545,7 +3545,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var mockCancellation = new Mock<IAgentCancellationSender>();
         mockCancellation
-            .Setup(c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Agent disconnected"));
 
         var service = new PipelineOrchestrationService(
@@ -3721,7 +3721,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         // Assert — CancelJob must NOT be sent; agents should reconnect to the new pod
         mockCancellation.Verify(
-            c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
