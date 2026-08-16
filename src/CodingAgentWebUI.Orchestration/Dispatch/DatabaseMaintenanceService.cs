@@ -87,7 +87,7 @@ public class DatabaseMaintenanceService : BackgroundService
         }
     }
 
-    private async Task RunMaintenanceCycleAsync(ILeaderElectionService? leaderElection, CancellationToken ct)
+    protected virtual async Task RunMaintenanceCycleAsync(ILeaderElectionService? leaderElection, CancellationToken ct)
     {
         // Gate behind leader election if available (multi-replica safety)
         if (leaderElection is not null && !leaderElection.IsLeader)
