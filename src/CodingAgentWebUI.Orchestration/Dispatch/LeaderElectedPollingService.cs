@@ -30,7 +30,8 @@ public abstract class LeaderElectedPollingService : BackgroundService
 
     /// <summary>
     /// The rate limiter created from <c>rateLimitPerSecond</c> passed to the constructor,
-    /// or <c>null</c> if the subclass did not request one.
+    /// or <c>null</c> if the subclass did not request one. Subclasses that require a rate
+    /// limiter enforce non-null at call sites via <c>?? throw new InvalidOperationException(...)</c>.
     /// </summary>
     protected TokenBucketRateLimiter? RateLimiter { get; }
 
