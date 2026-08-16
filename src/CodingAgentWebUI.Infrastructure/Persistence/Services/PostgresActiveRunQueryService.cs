@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -166,20 +167,9 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
         WorkItemTaskType.Implementation => PipelineRunType.Implementation,
         WorkItemTaskType.Review => PipelineRunType.Review,
         WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
-        // TODO: This Consolidation arm is currently unreachable dead code — the query pre-filters
-        // Consolidation items before MapTaskTypeToRunType is called (see XML doc above and the
-        // companion test GetActiveRunsAsync_ConsolidationWorkItem_ExcludedFromResults). If the
-        // pre-filter is ever relaxed, verify this arm is correct and add a [InlineData] case to
-        // the GetActiveRunsAsync_TaskType_MapsToCorrectRunType theory to cover it.
-        // Consider replacing with throw new UnreachableException(...) to make the dead-code intent
-        // machine-verifiable. (Flagged by DotNetSpecialist + Correctness reviewers.)
-        WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
-        // TODO: This default fallback silently maps any unrecognised WorkItemTaskType to
-        // PipelineRunType.Implementation. If a new enum value is added without a matching arm,
-        // the mapping will be silently wrong. Add a test case for an out-of-range cast
-        // (e.g., (WorkItemTaskType)99) to the GetActiveRunsAsync_TaskType_MapsToCorrectRunType
-        // theory to pin this behaviour. (Flagged by Correctness + TestQualityReviewer.)
-        _ => PipelineRunType.Implementation
+        // WorkItemTaskType.Consolidation is pre-filtered by the query and never reaches this method.
+        // See the .Where(wi => wi.TaskType != WorkItemTaskType.Consolidation) clause in GetActiveRunsAsync.
+        _ => throw new UnreachableException($"Unhandled WorkItemTaskType: {taskType}")
     };
 
     private sealed record ActiveRunRow(
