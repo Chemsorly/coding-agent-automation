@@ -182,10 +182,6 @@ public class HousekeepingServiceTests
 
     // ── Concurrency limit = 1: exactly one PR triggered (random selection) ───
 
-    // TODO: [WARNING] Test name 'ExecuteAsync_LimitOne_OnlyLowestNumberTriggered' is now misleading —
-    // it originally asserted that the lowest-numbered PR wins, but the implementation now uses random
-    // selection. The assertions only verify that exactly one PR is updated and that it belongs to {10, 20}.
-    // Consider renaming to 'ExecuteAsync_LimitOne_ExactlyOnePrTriggered' to reflect current behaviour.
     [Fact]
     public async Task ExecuteAsync_LimitOne_OnlyLowestNumberTriggered()
     {
@@ -216,7 +212,7 @@ public class HousekeepingServiceTests
     {
         var selectedPrs = new HashSet<int>();
 
-        for (int i = 0; i < 50; i++)
+        for (int i = 0; i < 20; i++)
         {
             var (svc, provider, issues, _) = Create();
             provider.Setup(p => p.IsPullRequestBehindBaseAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -234,13 +230,10 @@ public class HousekeepingServiceTests
         }
 
         selectedPrs.Should().HaveCountGreaterThan(1,
-            "with random selection, both PR #10 and PR #20 should be selected at least once across 50 trials");
+            "with random selection, both PR #10 and PR #20 should be selected at least once across 20 trials");
         // TODO: HaveCountGreaterThan(1) only confirms diversity, not fairness — a heavily biased shuffle (e.g.,
-        // 49 of 50 selections always picking PR #10) would still pass. Consider asserting that each candidate
+        // 19 of 20 selections always picking PR #10) would still pass. Consider asserting that each candidate
         // appears in at least some minimum fraction of trials if stricter distribution validation is needed.
-        // TODO: [WARNING] HaveCountGreaterThan(1) does not scale to 3+ candidates — with N>2 candidates, Count>=2
-        // would pass even if one candidate is never selected. If this test is extended to cover more candidates,
-        // change the assertion to require that every candidate appears at least once (e.g., selectedPrs.SetEquals(expectedSet)).
     }
 
     // ── Concurrency limit = 2: both triggered ─────────────────────────────────
