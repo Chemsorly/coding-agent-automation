@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Linq;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Telemetry;
@@ -126,6 +125,16 @@ public sealed class PipelineRunInstrumentation : IDisposable
             var tagValue = _failureReason.HasValue
                 ? ToFailureReasonTag(_failureReason.Value)
                 : "unknown";
+            // TODO: TagList is a value-type struct with an inline capacity of 8 key-value pairs. The
+            // struct copy below (`var failureTags = _tags`) is intentional — it keeps `_tags` clean for
+            // the JobDuration/JobsCompleted paths. However, when the stored tag count reaches 8, TagList
+            // overflows to a heap-allocated list that is NOT deep-copied by value assignment; both
+            // instances share the same underlying array, so the `Add("failure_reason", ...)` call would
+            // mutate `_tags` and corrupt subsequent metrics. Current tag count is 3 (run_type,
+            // project_id, project_name), so this is safe today, but adding 6 or more standard tags
+            // would silently trigger the hazard. Fix before adding more tags: allocate a fresh TagList
+            // from `_tags` with explicit capacity (TagList does not expose a copy-constructor as of
+            // .NET 8, so enumerate and re-add, or switch to a TagList helper that always owns its storage).
             var failureTags = _tags;
             failureTags.Add(new KeyValuePair<string, object?>("failure_reason", tagValue));
             PipelineTelemetry.JobsFailed.Add(1, failureTags);
@@ -140,12 +149,7 @@ public sealed class PipelineRunInstrumentation : IDisposable
     /// For example: <c>QualityGateExhausted</c> → <c>"quality_gate_exhausted"</c>,
     /// <c>AgentError</c> → <c>"agent_error"</c>, <c>Timeout</c> → <c>"timeout"</c>.
     /// </summary>
-    // TODO: This per-character LINQ projection correctly handles strict PascalCase names but will produce
-    // incorrect output for names with consecutive uppercase letters (e.g. "IOError" → "_i_o_error" instead
-    // of "io_error") or all-lowercase names. If future FailureReason members deviate from strict
-    // PascalCase-word-boundary conventions, replace this with a regex-based implementation such as
-    // Regex.Replace(name, "(?<=[a-z0-9])([A-Z])", "_$1").ToLowerInvariant().
     private static string ToFailureReasonTag(FailureReason reason) =>
-        string.Concat(reason.ToString().Select((c, i) => i > 0 && char.IsUpper(c) ? $"_{c}" : $"{c}"))
+        System.Text.RegularExpressions.Regex.Replace(reason.ToString(), "(?<=[a-z0-9])([A-Z])", "_$1")
               .ToLowerInvariant();
 }

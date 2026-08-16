@@ -46,6 +46,8 @@ public class QualityGateExecutorRetryTests
         Tests = new GateResult { GateName = "Tests", Passed = false, Details = "3 tests failed" }
     };
 
+    private static readonly string[] AgentFixOutputLines = ["Fixed the issue"];
+
     public QualityGateExecutorRetryTests()
     {
         _mockValidator = new Mock<IQualityGateValidator>();
@@ -105,7 +107,7 @@ public class QualityGateExecutorRetryTests
             .ReturnsAsync(new AgentResult
             {
                 ExitCode = 0,
-                OutputLines = new[] { "Fixed the issue" },
+                OutputLines = AgentFixOutputLines,
                 Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 }
             });
     }
@@ -394,6 +396,8 @@ public class QualityGateExecutorFailureCategoryTests
         Tests = new GateResult { GateName = "Tests", Passed = true, Details = "All tests passed" }
     };
 
+    private static readonly string[] AgentFixOutputLines = ["Fixed the issue"];
+
     public QualityGateExecutorFailureCategoryTests()
     {
         _mockValidator = new Mock<IQualityGateValidator>();
@@ -444,7 +448,7 @@ public class QualityGateExecutorFailureCategoryTests
             .ReturnsAsync(new AgentResult
             {
                 ExitCode = 0,
-                OutputLines = new[] { "Fixed the issue" },
+                OutputLines = AgentFixOutputLines,
                 Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 }
             });
     }
