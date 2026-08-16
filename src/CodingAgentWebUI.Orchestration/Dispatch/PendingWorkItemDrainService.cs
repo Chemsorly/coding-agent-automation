@@ -22,13 +22,12 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly ISignalRWorkDistributorAgentResolver _agentResolver;
     private readonly IAgentCommunication _agentComm;
-    private readonly WorkItemTransitionService _transitionService;
+    private readonly DispatchAttemptService _dispatchAttemptService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly ILabelSwapService _labelSwapper;
     private readonly DispatchRevertService _revertHandler;
     private readonly IProjectStore? _projectStore;
-    private readonly IConsolidationDispatchService? _consolidationDispatcher;
-    private readonly IConsolidationRunStore? _consolidationRunStore;
+    private readonly IConsolidationDrainDispatcher? _consolidationDrainDispatcher;
     private readonly ILogger<PendingWorkItemDrainService> _logger;
 
     private readonly SemaphoreSlim _wakeSignal = new(0, int.MaxValue);
@@ -38,27 +37,31 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     public PendingWorkItemDrainService(
         DrainServiceDependencies deps,
         IProjectStore? projectStore = null,
-        IConsolidationDispatchService? consolidationDispatcher = null,
-        IConsolidationRunStore? consolidationRunStore = null)
+        IConsolidationDrainDispatcher? consolidationDrainDispatcher = null)
     {
         // TODO: Add ArgumentNullException.ThrowIfNull (or null-checks) for the mandatory
-        // DrainServiceDependencies fields now stored in fields used unconditionally on the hot path:
-        //   - deps.TransitionService → _transitionService (used in DispatchConsolidationItemAsync)
+        // DrainServiceDependencies fields used unconditionally on the hot path:
         //   - deps.LabelSwapper → _labelSwapper (used in ProcessPendingItemAsync)
-        //   - deps.RevertHandler → _revertHandler (used in DispatchPipelineItemAsync and DispatchConsolidationItemAsync)
+        //   - deps.RevertHandler → _revertHandler (used in DispatchPipelineItemAsync)
         // A null _labelSwapper (e.g. DrainServiceDependencies constructed with default null) produces
         // an NRE at ~line 170 on the first drain cycle rather than at construction time.
         _dbFactory = deps.DbFactory;
         _agentResolver = deps.AgentResolver;
         _agentComm = deps.AgentComm;
-        _transitionService = deps.TransitionService;
+        // TODO: DispatchAttemptService is constructed inline here rather than injected, which creates a
+        // second distinct instance alongside the one injected into ConsolidationDrainDispatcher via DI.
+        // Both instances wrap the same singleton services (WorkItemTransitionService, DispatchRevertService),
+        // so there is no correctness issue while the class is stateless. However, if DispatchAttemptService
+        // ever acquires state (e.g., metrics counters), the two instances would diverge silently.
+        // Consider registering DispatchAttemptService as a singleton in DI and accepting it as a constructor
+        // parameter here for consistency with the consolidation path and to improve testability.
+        _dispatchAttemptService = new DispatchAttemptService(deps.TransitionService, deps.RevertHandler);
         _pendingWorkQuery = deps.PendingWorkQuery;
         _labelSwapper = deps.LabelSwapper;
         _revertHandler = deps.RevertHandler;
         _logger = deps.Logger;
         _projectStore = projectStore;
-        _consolidationDispatcher = consolidationDispatcher;
-        _consolidationRunStore = consolidationRunStore;
+        _consolidationDrainDispatcher = consolidationDrainDispatcher;
     }
 
     /// <summary>
@@ -145,7 +148,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         if (!TryDeserializePayload(item, agentId, out var request))
             return true;
 
-        // --- Consolidation items: dispatch via IConsolidationDispatchService (token vending at drain time) ---
+        // --- Consolidation items: dispatch via IConsolidationDrainDispatcher (token vending at drain time) ---
         if (item.TaskType == WorkItemTaskType.Consolidation)
         {
             await DispatchConsolidationItemAsync(item, request!, agentId, ct);
@@ -252,7 +255,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     }
 
     /// <summary>
-    /// Dispatches a consolidation work item via <see cref="IConsolidationDispatchService"/>.
+    /// Delegates consolidation dispatch to <see cref="IConsolidationDrainDispatcher"/>.
     /// Returns <c>true</c> if the item was successfully dispatched to an agent, <c>false</c> in all other cases
     /// (null dispatcher, cancelled run, dispatch failure, or exception). The caller should always <c>continue</c>
     /// to the next item after this call regardless of the return value.
@@ -262,88 +265,13 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         AgentId agentId,
         CancellationToken ct)
     {
-        if (_consolidationDispatcher is null || _consolidationRunStore is null)
+        if (_consolidationDrainDispatcher is null)
         {
             _logger.LogError("PendingWorkItemDrainService: consolidation dispatcher not available for WorkItem {WorkItemId}", item.Id);
             _agentResolver.ReleaseAgent(agentId);
             return false;
         }
-
-        // Cancel-during-dispatch race guard: check if run was cancelled while queued
-        var runId = request.IssueIdentifier.Value; // RunId stored as IssueIdentifier for consolidation
-        var consolidationRun = await _consolidationRunStore.GetByIdAsync((RunId)runId, ct);
-        if (consolidationRun is null ||
-            consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
-            consolidationRun.Status == ConsolidationRunStatus.Failed)
-        {
-            _logger.LogInformation(
-                "PendingWorkItemDrainService: consolidation run {RunId} is cancelled/failed, transitioning WorkItem {WorkItemId} to Cancelled",
-                runId, item.Id);
-            _agentResolver.ReleaseAgent(agentId);
-            await _transitionService.TransitionAsync(
-                item.Id, WorkItemStatus.Cancelled,
-                entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct: ct);
-            return false;
-        }
-
-        try
-        {
-            // Transition to Dispatched before dispatch attempt
-            await _transitionService.TransitionAsync(
-                item.Id, WorkItemStatus.Dispatched,
-                entity =>
-                {
-                    entity.DispatchedAt = DateTimeOffset.UtcNow;
-                    entity.AssignedAgentId = agentId.Value;
-                }, ct: ct);
-
-            var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
-                runId,
-                request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-                string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
-                request.ConsolidationWorkspacePath ?? "",
-                agentId.Value,
-                ct);
-
-            if (dispatched)
-            {
-                _agentResolver.AssignJob(agentId, item.Id.ToString());
-
-                WorkDistributionTelemetry.RecordDispatchLatency(DateTimeOffset.UtcNow, item.OriginalEnqueuedAt, item.CreatedAt, item.AgentSelector);
-
-                _logger.LogInformation(
-                    "PendingWorkItemDrainService: dispatched consolidation WorkItem {WorkItemId} (run {RunId}) to agent {AgentId}",
-                    item.Id, runId, agentId);
-                return true;
-            }
-            else
-            {
-                // Dispatch failed — revert to Pending for next cycle.
-                // Passes ct so the caller's cancellation state is respected during the revert.
-                // TryRevertToPendingAsync swallows any exception internally, so a revert failure
-                // (e.g., OperationCanceledException during shutdown) will not re-enter the catch
-                // block below — the stuck-item detector handles items that could not be reverted.
-                // NOTE: ReleaseAgent is called before TryRevertToPendingAsync. If the revert is
-                // cancelled (ct already cancelled during shutdown), the item is left in Dispatched
-                // state with the agent already released — the stuck-item detector handles recovery.
-                // ReleaseAgent is idempotent (safe to call more than once for the same agentId),
-                // so a double-release via the catch block below is not a correctness risk.
-                _agentResolver.ReleaseAgent(agentId);
-                await _revertHandler.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: ct);
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex,
-                "PendingWorkItemDrainService: consolidation dispatch failed for WorkItem {WorkItemId}",
-                item.Id);
-            _agentResolver.ReleaseAgent(agentId);
-            // Revert WorkItem from Dispatched to Pending so it's available for the next drain cycle.
-            // Uses CancellationToken.None explicitly: graceful shutdown must not prevent the revert.
-            await _revertHandler.TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: CancellationToken.None);
-            return false;
-        }
+        return await _consolidationDrainDispatcher.TryDispatchAsync(item, request, agentId, ct);
     }
 
     private async Task<bool> DispatchPipelineItemAsync(
@@ -355,19 +283,11 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         try
         {
             // DB transition first: in-memory state only reflects confirmed DB state.
-            // If TransitionAsync fails, no in-memory cleanup is needed.
+            // If TransitionToDispatchedAsync fails, no in-memory cleanup is needed.
             // This also ensures the agent's JobAccepted → Running transition is valid
             // (Dispatched → Running, not Pending → Running which is rejected).
             var dispatchTime = DateTimeOffset.UtcNow;
-            await _transitionService.TransitionAsync(
-                item.Id,
-                WorkItemStatus.Dispatched,
-                entity =>
-                {
-                    entity.DispatchedAt = dispatchTime;
-                    entity.AssignedAgentId = agentId.Value;
-                },
-                ct: ct);
+            await _dispatchAttemptService.TransitionToDispatchedAsync(item.Id, agentId, ct);
 
             dispatchedSuccessfully = true;
 
