@@ -510,6 +510,39 @@ public class ConsolidationWorkItemDispatchServiceTests
     }
 
     [Fact]
+    public async Task CascadeFailureAsync_WhenServiceThrowsOperationCanceled_IsNonFatal()
+    {
+        // OperationCanceledException thrown by IConsolidationService must be caught and swallowed
+        // (treated as a graceful shutdown cancellation), not propagated to the caller.
+        var mockService = new Mock<IConsolidationService>();
+        mockService
+            .Setup(s => s.UpdateRunAsync(
+                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("shutdown"));
+
+        var handler = CreateHandler(consolidationService: mockService.Object);
+
+        await handler.Invoking(h => h.CascadeFailureAsync("run-oce-1", "error", CancellationToken.None))
+            .Should().NotThrowAsync("OperationCanceledException from the service must be swallowed");
+    }
+
+    [Fact]
+    public async Task CascadeFailureAsync_WhenStoreGetThrowsOperationCanceled_IsNonFatal()
+    {
+        // OperationCanceledException thrown by the direct-store fallback (GetByIdAsync) must be
+        // caught and swallowed, not propagated to the caller.
+        var mockStore = new Mock<IConsolidationRunStore>();
+        mockStore
+            .Setup(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("shutdown during store read"));
+
+        var handler = CreateHandler(consolidationRunStore: mockStore.Object); // no consolidationService
+
+        await handler.Invoking(h => h.CascadeFailureAsync("run-oce-2", "error", CancellationToken.None))
+            .Should().NotThrowAsync("OperationCanceledException from the fallback store must be swallowed");
+    }
+
+    [Fact]
     public void Constructor_PublicDepsWithoutStateBuilder_ThrowsArgumentNullException()
     {
         // After removing the null-coalescing fallback, the public constructor requires StateBuilder.
