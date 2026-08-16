@@ -119,9 +119,9 @@ public partial class GitHubRepositoryProvider
     public async Task<IReadOnlyList<LinkedPullRequest>> GetAgentPullRequestsAsync(
         IssueIdentifier issueIdentifier, CancellationToken ct)
     {
-        // TODO: A default(IssueIdentifier) (Value = null) produces a branch prefix like "agent/-"
-        // which could match all agent branches if any exist, rather than returning empty. Consider
-        // adding a guard: if (issueIdentifier.Value is null) return Array.Empty<LinkedPullRequest>();
+        if (issueIdentifier.Value is null)
+            return Array.Empty<LinkedPullRequest>();
+
         var branchPrefix = $"{PipelineConstants.BranchPrefix}{issueIdentifier}-";
 
         // 1. Server-side search for matching PRs (head: qualifier does prefix matching)
