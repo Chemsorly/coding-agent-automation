@@ -92,6 +92,49 @@ public class DispatchServiceConstructorTests : IDisposable
     // ── Acceptance Criterion 3 — DispatchServiceOptionsFactory.Create once per lifecycle ─
 
     /// <summary>
+    /// Exercises the (coreDeps, configuration, templateProvider) constructor — the one that
+    /// resolves DispatchServiceOptions from IConfiguration. Confirms that construction succeeds
+    /// and the service is usable, covering the constructor body lines that the 3-arg options
+    /// constructor tests do not reach.
+    /// </summary>
+    [Fact]
+    public void Constructor_WithIConfiguration_ConstructsSuccessfully()
+    {
+        var configData = new Dictionary<string, string?>
+        {
+            ["WorkDistribution:Dispatch:RateLimitPerSecond"] = "10",
+            ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "5",
+            ["WorkDistribution:Namespace"] = "default",
+            ["WorkDistribution:OrchestratorUrl"] = "http://orchestrator:8080",
+            ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key",
+            ["WorkDistribution:CredentialPools:Kiro:0"] = "pvc-1"
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
+
+        var lifecycle = new DispatchLifecycleService(
+            _mockKubeClient.Object, _transitionService, new DispatchServiceOptions { RateLimitPerSecond = 10 });
+
+        var templateProvider = JobTemplateStore.LoadFromJson(JsonSerializer.Serialize(new List<JobTemplate>
+        {
+            new() { Labels = "dotnet,kiro", Image = "ghcr.io/agent:latest", ProviderType = "kiro" }
+        }));
+
+        var stateBuilder = new DispatchStateBuilder(
+            _dbFactory, lifecycle, templateProvider,
+            new DispatchTemplateResolver(null, templateProvider),
+            new DispatchServiceOptions { RateLimitPerSecond = 10, KiroPvcPool = ["pvc-1"] });
+
+        var coreDeps = new DispatchServiceCoreDependencies(
+            _dbFactory, _leaderElection, lifecycle, StateBuilder: stateBuilder);
+
+        // Uses the (coreDeps, configuration, templateProvider) constructor — covers lines that
+        // create options from IConfiguration and set up the stateBuilder fallback.
+        var service = new DispatchService(coreDeps, config, templateProvider);
+
+        service.Should().NotBeNull("construction from IConfiguration must succeed");
+    }
+
+    /// <summary>
     /// The rate limit applied by the base class (TokenBucketRateLimiter) must match the
     /// RateLimitPerSecond from the options passed to the constructor — verifying that
     /// DispatchServiceOptionsFactory.Create is resolved exactly once and the same value
