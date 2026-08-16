@@ -37,9 +37,6 @@ public sealed record AgentRegistrationMessage
 public sealed record ActiveJobState
 {
     [Key(0)] public required string RunId { get; init; }
-    // TODO: Migrate to IssueIdentifier value type (Phase 2 adoption). Requires a custom
-    // IssueIdentifierFormatter registered in SignalRRegistration.cs and HubConnectionManager.cs
-    // (analogous to AgentIdFormatter) to preserve wire compatibility with deployed agents.
     [Key(1)] public required string IssueIdentifier { get; init; }
     [Key(2)] public required string IssueTitle { get; init; }
     [Key(3)] public required string IssueProviderConfigId { get; init; }
@@ -86,9 +83,6 @@ public sealed record JobAssignmentMessage
     [Key(0)]
     public required string JobId { get; init; }
 
-    // TODO: Migrate to IssueIdentifier value type (Phase 2 adoption). Requires a custom
-    // IssueIdentifierFormatter registered in SignalRRegistration.cs and HubConnectionManager.cs
-    // (analogous to AgentIdFormatter) to preserve wire compatibility with deployed agents.
     [Key(1)]
     public required string IssueIdentifier { get; init; }
 
