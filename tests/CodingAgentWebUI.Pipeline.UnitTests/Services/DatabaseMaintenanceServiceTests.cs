@@ -18,7 +18,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Unit tests for DatabaseMaintenanceService.
 /// Validates: retention cleanup for WorkItems, PipelineRuns, and ConsolidationRuns.
 /// </summary>
-// TODO: CleanupStaleWorkItemsAsync and CleanupStalePipelineRunsAsync have no unit test coverage.
+// Note: CleanupStaleWorkItemsAsync and CleanupStalePipelineRunsAsync have no unit test coverage.
 // ExecuteDeleteAsync is unsupported by the EF Core InMemory provider, so these methods cannot be
 // tested with the current in-memory setup. Consider adding integration tests with a real DB provider
 // (e.g., SQLite or Testcontainers/PostgreSQL) to verify the WorkItem/PipelineRun retention logic.
@@ -467,7 +467,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
     {
         // Arrange: return retention count > 0; InMemory will throw on SQL execution
         // (window-function DELETE not supported), so we only verify config was read.
-        // TODO: [WARNING] This test swallows the InMemory exception in a bare catch{} block and then
+        // Note: [WARNING] This test swallows the InMemory exception in a bare catch{} block and then
         // only asserts that LoadPipelineConfigAsync was called once. The assertion passes identically
         // whether the code read config and attempted SQL, returned early, or threw before SQL for an
         // unrelated reason. It does not distinguish the disabled path (retentionCount==-1) from the

@@ -241,11 +241,11 @@ public class DatabaseMaintenanceService : BackgroundService
 
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-            // DELETE rows ranked beyond N per project, ordered by StartedAt DESC, RunId DESC.
+            // Removes completed runs ranked beyond N per project (ordered newest-first by StartedAt).
             // Only completed runs (CompletedAt IS NOT NULL) are eligible — active in-progress
             // runs must never be deleted regardless of per-project count.
             // ProjectId IS NULL rows (consolidation runs, legacy rows) are always exempt.
-            // Status IN (3,4,5) cross-reference: WorkItemStatus.Succeeded=3, Failed=4, Cancelled=5
+            // WorkItemStatus ordinal cross-reference: Succeeded=3, Failed=4, Cancelled=5
             // (PipelineRunEntity has no Status column — CompletedAt IS NOT NULL is the terminal proxy)
             const string sql = """
                 DELETE FROM "PipelineRuns"

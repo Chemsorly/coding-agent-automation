@@ -218,7 +218,7 @@ public class RetentionSweepIntegrationTests : IDisposable
     [Fact]
     public async Task SweepWorkItemRetention_NonTerminalRows_NeverDeleted()
     {
-        // TODO: [WARNING] This test is not falsifiable for the non-terminal guard. With only non-terminal
+        // Note: [WARNING] This test is not falsifiable for the non-terminal guard. With only non-terminal
         // rows (no terminal rows at all), the window function produces no rows ranked > 1, so the DELETE
         // is a no-op regardless of whether the WHERE Status IN (3,4,5) filter exists. The test would
         // pass even if that filter were removed entirely. To make it falsifiable, insert at least one
@@ -297,7 +297,7 @@ public class RetentionSweepIntegrationTests : IDisposable
     {
         // PipelineRun sweep enabled (→ DB factory faults on first call), WorkItem sweep disabled (-1)
         // Both wrapped in try/catch — neither should propagate.
-        // TODO: [WARNING] This test does not fully verify the stated invariant. WorkItemRetentionCount=-1
+        // Note: [WARNING] This test does not fully verify the stated invariant. WorkItemRetentionCount=-1
         // means the WorkItems sweep returns at the early-exit guard without hitting the database. The
         // test only confirms that two independent method calls don't propagate exceptions, not that a
         // WorkItems sweep executes meaningful work after a PipelineRuns sweep fails. A stronger test
@@ -325,7 +325,7 @@ public class RetentionSweepIntegrationTests : IDisposable
     public async Task SweepWorkItemFailure_DoesNotPreventPipelineRunSweep()
     {
         // PipelineRun sweep disabled (-1), WorkItem sweep enabled (→ DB factory faults)
-        // TODO: [WARNING] Symmetric gap as SweepPipelineRunFailure_DoesNotPreventWorkItemSweep above.
+        // Note: [WARNING] Symmetric gap as SweepPipelineRunFailure_DoesNotPreventWorkItemSweep above.
         // PipelineRunRetentionCount=-1 means the PipelineRuns sweep exits early without touching the DB,
         // so the faulting factory's first call is consumed by the WorkItems sweep. The test does not
         // verify that PipelineRuns rows were actually swept after a WorkItems failure. A stronger test
