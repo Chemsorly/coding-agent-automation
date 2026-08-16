@@ -66,14 +66,31 @@ public class HubConnectionManagerTests : IAsyncDisposable
     [Fact]
     public void Constructor_EmptyAgentId_ThrowsArgumentException()
     {
-        // AgentId is a value type. An empty-string AgentId has Value="" which violates
-        // the invariant enforced by ArgumentException.ThrowIfNullOrEmpty in the constructor.
-        var emptyAgentId = new AgentId(string.Empty);
-        var act = () => new HubConnectionManager("http://localhost", emptyAgentId, "api-key", _mockLogger.Object);
+        // After the AgentId constructor was hardened to reject empty strings, it is no longer
+        // possible to construct an AgentId with Value="" — the constructor throws before
+        // HubConnectionManager is reached. The type boundary now enforces the invariant.
+        // This test documents that new AgentId("") throws ArgumentException (i.e., empty-string
+        // AgentId instances can never be created via the public constructor).
+        // TODO: This test no longer exercises HubConnectionManager's own defense-in-depth guard
+        // (ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) at construction).
+        // It is semantically identical to AgentIdTests.Constructor_EmptyValue_Throws and only pins
+        // the AgentId constructor — not the manager's own guard. Consider replacing with a test
+        // that uses default(AgentId) with an explicitly null Value to verify HubConnectionManager's
+        // internal check, or remove this test as redundant with AgentIdTests.
+        var act = () => new AgentId(string.Empty);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Constructor_DefaultAgentId_ThrowsArgumentException()
+    {
+        // default(AgentId) has Value=null (C# struct zero-initialization bypasses the constructor).
+        // HubConnectionManager must reject it via its own guard (ArgumentException.ThrowIfNullOrEmpty).
+        var defaultAgentId = default(AgentId);
+        var act = () => new HubConnectionManager("http://localhost", defaultAgentId, "api-key", _mockLogger.Object);
+
         act.Should().Throw<ArgumentException>().WithParameterName("agentId");
-        // TODO: Also test new AgentId(null!) (bypasses the implicit operator, as documented in
-        // AgentId source TODO) to pin the defense-in-depth behavior of the constructor guard
-        // against a null Value inside an AgentId struct.
     }
 
     [Fact]

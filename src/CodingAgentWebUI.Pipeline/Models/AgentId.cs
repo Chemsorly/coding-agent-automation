@@ -9,11 +9,29 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// (e.g., IAgentCancellationSender.SendCancelJobAsync has agentId and runId as consecutive string params).
 /// Used as the canonical agent identifier type throughout the system (DI registration, constructor injection).
 /// </summary>
-// TODO: The primary constructor does not validate its input — new AgentId(null!) or default(AgentId)
-// produces an instance with Value == null, bypassing the validation in the implicit conversion operator.
-// Consider adding a constructor guard or a factory method to ensure Value is never null/empty.
-public readonly record struct AgentId(string Value)
+/// <remarks>
+/// <para><b>Construction invariant:</b> <c>new AgentId(value)</c> and the implicit <c>(AgentId)string</c>
+/// operator both reject null and empty strings via <see cref="ArgumentException.ThrowIfNullOrEmpty"/>.
+/// <c>default(AgentId)</c> is exempt — C# struct zero-initialization produces <c>Value = null</c>
+/// and cannot be prevented. Use <c>default(AgentId)</c> only as a sentinel/unset value,
+/// never as a valid agent identifier.</para>
+/// </remarks>
+public readonly record struct AgentId
 {
+    public string Value { get; init; }
+
+    public AgentId(string value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(value);
+        Value = value;
+    }
+
+    // TODO: Switching from a positional primary constructor to this explicit constructor removes the
+    // compiler-synthesised Deconstruct(out string Value) method that record structs generate for
+    // positional members. If any code uses positional deconstruction (var (val) = agentId; or a
+    // property pattern case AgentId(var v)) it will fail to compile. No such callers were found
+    // at the time of this change, but add `public void Deconstruct(out string value) => value = Value;`
+    // if positional deconstruction is ever needed.
     public static implicit operator AgentId(string value)
     {
         ArgumentException.ThrowIfNullOrEmpty(value);
@@ -43,9 +61,8 @@ public sealed class AgentIdFormatter : IMessagePackFormatter<AgentId>
         var value = reader.ReadString();
         if (value is null)
             throw new MessagePackSerializationException("AgentId cannot be deserialized from a nil token.");
-        // TODO: Also reject empty strings to match the implicit operator's ThrowIfNullOrEmpty guard.
-        // A zero-length fixstr on the wire produces AgentId { Value = "" } which bypasses null guards
-        // but violates the invariant enforced by the implicit operator. Track as a separate issue.
+        if (string.IsNullOrEmpty(value))
+            throw new MessagePackSerializationException("AgentId cannot be deserialized from an empty string.");
         return new(value);
     }
 }
