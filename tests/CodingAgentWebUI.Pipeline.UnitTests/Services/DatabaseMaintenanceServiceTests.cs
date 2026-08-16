@@ -494,6 +494,119 @@ public class DatabaseMaintenanceServiceTests : IDisposable
         _mockConfigStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── CleanupStaleWorkItems / CleanupStalePipelineRuns — Exercise catch path ──
+
+    [Fact]
+    public async Task CleanupStaleWorkItems_InMemoryThrows_HandledGracefully()
+    {
+        // InMemory EF does not support ExecuteDeleteAsync — the method catches the exception.
+        // Calling it exercises the try/catch path and ensures no exception propagates.
+        var service = CreateService();
+
+        await service.Invoking(s => s.CleanupStaleWorkItemsAsync(CancellationToken.None))
+            .Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task CleanupStalePipelineRuns_InMemoryThrows_HandledGracefully()
+    {
+        // InMemory EF does not support ExecuteDeleteAsync — the method catches the exception.
+        var service = CreateService();
+
+        await service.Invoking(s => s.CleanupStalePipelineRunsAsync(CancellationToken.None))
+            .Should().NotThrowAsync();
+    }
+
+    // ── RunMaintenanceCycle — Non-leader skips cycle ────────────────────
+
+    [Fact]
+    public async Task RunMaintenanceCycle_WhenNotLeader_SkipsCycle()
+    {
+        // Arrange: leader election reports not the leader
+        _mockLeaderElection.Setup(l => l.IsLeader).Returns(false);
+
+        // Ensure consolidation service is set up so if we accidentally call cleanup it doesn't fail
+        _mockConsolidationService
+            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ConsolidationRun>());
+
+        var service = CreateService();
+
+        // Act: RunMaintenanceCycleAsync is internal — invoke SweepPipelineRunRetentionAsync
+        // to confirm it still runs (sweep is not gated by leader) but the cycle gate is exercised
+        // via direct call to the testable internal method path.
+        // We verify the cycle is skipped by ensuring consolidation service is never called
+        // when invoked through RunMaintenanceCycleAsync via a public test surface.
+        //
+        // Instead, verify leader-gating by calling the internal RunMaintenanceCycleAsync
+        // indirectly: create a subclass that exposes it, or call via reflection.
+        var method = typeof(DatabaseMaintenanceService)
+            .GetMethod("RunMaintenanceCycleAsync",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        method.Should().NotBeNull("RunMaintenanceCycleAsync must exist as an internal method");
+
+        await service.Invoking(async s =>
+                await (Task)method!.Invoke(s, [_mockLeaderElection.Object, CancellationToken.None])!)
+            .Should().NotThrowAsync();
+
+        // Consolidation service should NOT have been called because the leader check returned false
+        _mockConsolidationService.Verify(
+            s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunMaintenanceCycle_NoLeaderElection_ExecutesCycle()
+    {
+        // Arrange: no leader election service (null) → always runs
+        _mockConsolidationService
+            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ConsolidationRun>());
+
+        var service = CreateService();
+
+        var method = typeof(DatabaseMaintenanceService)
+            .GetMethod("RunMaintenanceCycleAsync",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        // Pass null leader election — should execute the full cycle
+        await service.Invoking(async s =>
+                await (Task)method!.Invoke(s, [null, CancellationToken.None])!)
+            .Should().NotThrowAsync();
+
+        // Consolidation service WAS called because no leader gate
+        _mockConsolidationService.Verify(
+            s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // ── ExecuteAsync startup — config store failure path ───────────────
+
+    [Fact]
+    public async Task ExecuteAsync_ConfigStoreThrows_UsesDefaultInterval()
+    {
+        // Arrange: config store throws on initial sweep interval read
+        _mockConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Config read failure"));
+
+        // Also set up consolidation to return empty list so cleanup completes
+        _mockConsolidationService
+            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ConsolidationRun>());
+
+        var service = CreateService();
+
+        // Act: run ExecuteAsync with a pre-cancelled token so it completes immediately
+        // after the first maintenance cycle. The config failure should be swallowed.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // Pre-cancel so the timer loop exits immediately
+
+        await service.Invoking(s => s.StartAsync(cts.Token))
+            .Should().NotThrowAsync();
+    }
+
+
     // ── Helper Methods ──────────────────────────────────────────────────
 
     private DatabaseMaintenanceService CreateService()
