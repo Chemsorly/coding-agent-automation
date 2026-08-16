@@ -612,14 +612,8 @@ public class GitLabRepositoryProviderMergeRequestTests
     [Fact]
     public async Task GetAgentPullRequestsAsync_DefaultIdentifier_ReturnsEmpty()
     {
-        // IssueIdentifier is a non-nullable struct; null can no longer be passed.
-        // A default(IssueIdentifier) with Value = null produces no branch prefix match and returns empty.
-        // TODO: This assertion is vacuously true when no MRs exist in the test server (the current case).
-        // It does not verify that the code handles default(IssueIdentifier) without throwing, nor that
-        // a real repo with agent branches would not return unintended results. The prefix produced by
-        // default(IssueIdentifier) is "agent/-" (or similar), which could match real branches.
-        // Consider replacing this with a test that explicitly verifies no NullReferenceException is thrown,
-        // or adding a null-Value guard in the production code (see TODO in GetAgentPullRequestsAsync).
+        // IssueIdentifier is a non-nullable struct; default(IssueIdentifier) has Value = null.
+        // The null guard in GetAgentPullRequestsAsync returns early without querying the server.
         var (client, projectId) = CreateServerWithProject();
         var provider = new GitLabRepositoryProvider(client, projectId, "main");
 
