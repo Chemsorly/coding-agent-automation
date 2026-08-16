@@ -477,8 +477,8 @@ public class QualityGateExecutorFailureCategoryTests
 
         // Assert: FailureCategory set by FinalizeDraftPrAsync via ProceedToQualityGatesAsync path
         _run.FailureCategory.Should().Be(FailureReason.QualityGateExhausted);
-        // TODO: Add a _mockValidator.Verify(Times.Exactly(2)) here (one initial pass + one post-retry pass)
-        // to lock in that the retry loop actually ran before exhaustion. Without it, the test would pass
+        // Note: a _mockValidator.Verify(Times.Exactly(2)) here (one initial pass + one post-retry pass)
+        // would lock in that the retry loop actually ran before exhaustion. Without it, the test would pass
         // even if MaxRetries were 0, making it impossible to distinguish retry-loop exhaustion from
         // immediate exhaustion.
     }
@@ -489,7 +489,7 @@ public class QualityGateExecutorFailureCategoryTests
         // Arrange: first QG pass succeeds (enters RunPostRetryCleanupAndFinalizeAsync),
         // then the final cleanup QG pass fails (exhausts there, calls FinalizeDraftPrAsync from the cleanup path)
         var callCount = 0;
-        // TODO: This mock is fragile — callCount depends on total ValidateAsync invocation order across
+        // Note: This mock is fragile — callCount depends on total ValidateAsync invocation order across
         // all QG phases (initial pass, cleanup pass, retries). If the execution path adds another
         // ValidateAsync call before RunPostRetryCleanupAndFinalizeAsync, the offsets shift and call #1
         // may no longer be the one that routes into the cleanup function. Replace with SetupSequence or

@@ -251,12 +251,12 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
                 case PipelineExecutionOutcome.FailedOutcome { Exception: var ex }:
                     _logger.Error(ex, "Pipeline execution failed with unhandled error");
-                    // TODO: Pass run.FailureCategory here so that failures categorized before the exception
-                    // propagates (e.g., ReconciliationService sets FailureReason.Timeout, or
-                    // DisconnectedAgentSweepPhase sets FailureReason.InfrastructureFailure) are not lost.
-                    // Without it, result.FailureCategory will be null and MarkFailed() will emit
-                    // failure_reason="unknown" even when a specific reason is already recorded on the run.
-                    // Fix: return BuildFailurePayload(run, ex.Message, run.FailureCategory);
+                    // Note: run.FailureCategory may already be set by upstream phases (e.g., ReconciliationService
+                    // sets FailureReason.Timeout, DisconnectedAgentSweepPhase sets FailureReason.InfrastructureFailure)
+                    // before the exception propagates here. BuildFailurePayload does not forward it, so
+                    // result.FailureCategory will be null and MarkFailed() will emit failure_reason="unknown"
+                    // even when a specific reason is recorded on the run.
+                    // Tracked for a follow-up: pass run.FailureCategory to BuildFailurePayload.
                     return BuildFailurePayload(run, ex.Message);
 
                 default:
