@@ -212,6 +212,15 @@ public sealed class DispatchService : LeaderElectedPollingService
         if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
             return false;
 
+        // TODO: The rate limiter lease is acquired here and held for the entire duration of
+        // CheckEligibilityAsync + DispatchSingleItemAsync. If DispatchSingleItemAsync blocks on I/O
+        // (database write, HTTP call to the agent API), the token-bucket slot is occupied for the
+        // full dispatch duration rather than just the dispatch-decision window. This changes the
+        // effective rate from "N dispatches initiated per second" to "N concurrent dispatches per second".
+        // With a burst size of 1 and a slow DispatchSingleItemAsync, the loop will process at most one
+        // item per dispatch duration, not per second. Consider acquiring the lease only around the
+        // dispatch-decision window (eligibility check + job submission trigger) and releasing it
+        // before awaiting the full dispatch lifecycle. See Correctness WARNING (Issue #1994).
         using var lease = await (RateLimiter ?? throw new InvalidOperationException(
             "DispatchService requires a rate limiter but RateLimiter is null. " +
             "Ensure the constructor passes rateLimitPerSecond to the base class."))
@@ -242,6 +251,15 @@ public sealed class DispatchService : LeaderElectedPollingService
                 return true;
         }
 
+        // TODO: result.Template! uses a null-forgiving operator on the EligibilityResult.Template property.
+        // The implicit fall-through (eligible) path of the switch is reached for every outcome not explicitly
+        // listed, including any future EligibilityOutcome values added to the enum. If a new outcome is added
+        // where the checker returns a non-null outcome but a null Template, DispatchSingleItemAsync receives
+        // a null JobTemplate with no compile-time or runtime guard, producing a NullReferenceException deep
+        // inside the dispatch lifecycle. Adding a default: return true; arm (already noted in the TODO above
+        // the switch) would prevent silent fall-through, and replacing ! with
+        // result.Template ?? throw new InvalidOperationException(...) would complete the guard.
+        // See DotNetSpecialist WARNING (Issue #1994).
         await DispatchSingleItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
         return true;
     }

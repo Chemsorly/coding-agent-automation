@@ -91,14 +91,11 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
 
         await using (state.Db)
         {
-            // TODO: RateLimiter! uses the null-forgiving operator on the nullable base-class property
-            // (TokenBucketRateLimiter?). Both constructors always pass rateLimitPerSecond so RateLimiter
-            // is non-null in practice, but the operator suppresses compile-time null warnings. A future
-            // refactor that omits the parameter would produce a NullReferenceException at runtime with no
-            // compile-time signal. Consider replacing ! with a null-check guard:
-            // RateLimiter ?? throw new InvalidOperationException("RateLimiter is not initialized.")
+            var rateLimiter = RateLimiter ?? throw new InvalidOperationException(
+                "ConsolidationWorkItemDispatchService requires a rate limiter but RateLimiter is null. " +
+                "Ensure the constructor passes rateLimitPerSecond to the base class.");
             await foreach (var candidate in _stateBuilder.GetEligibleCandidatesAsync(
-                state, LeaderElection, RateLimiter!,
+                state, LeaderElection, rateLimiter,
                 ServiceName,
                 async (item, msg, token) =>
                     await FailConsolidationWorkItemAsync(item.Id, msg, item.IssueIdentifier, token),
