@@ -259,12 +259,9 @@ internal sealed class DispatchLifecycleService
         await _transitionService.TransitionAsync(
             workItemId,
             WorkItemStatus.Failed,
-            item =>
-            {
-                item.ErrorMessage = errorMessage;
-                item.FailureReason = FailureReason.InfrastructureFailure;
-                item.CompletedAt = DateTimeOffset.UtcNow;
-            },
+            WorkItemMutationFactory.Failed(
+                errorMessage: errorMessage,
+                failureReason: FailureReason.InfrastructureFailure),
             ct: ct);
 
         Log.Warning("DispatchLifecycleService: WorkItem {WorkItemId} failed: {Error}", workItemId, errorMessage);

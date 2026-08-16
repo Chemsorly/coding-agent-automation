@@ -114,12 +114,10 @@ public sealed partial class ReconciliationService
     {
         // Fallback: direct DB transition + best-effort label swap + dedup release
         await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
-            w =>
-            {
-                w.CompletedAt = DateTimeOffset.UtcNow;
-                w.FailureReason = FailureReason.Timeout;
-                w.ErrorMessage = timeoutReason;
-            }, ct: ct);
+            WorkItemMutationFactory.Failed(
+                errorMessage: timeoutReason,
+                failureReason: FailureReason.Timeout),
+            ct: ct);
 
         // Best-effort label swap to agent:error (prevents stale agent:in-progress on GitHub)
         if (_labelService is not null)

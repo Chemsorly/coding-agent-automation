@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -270,16 +271,15 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         try
         {
-            var result = await _workItemTransition.TransitionAsync(workItemId, status, item =>
+            Action<WorkItemEntity> mutate = status switch
             {
-                if (status is WorkItemStatus.Failed or WorkItemStatus.Succeeded or WorkItemStatus.Cancelled)
-                    item.CompletedAt = DateTimeOffset.UtcNow;
-                if (status == WorkItemStatus.Failed)
-                {
-                    item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
-                    item.FailureReason ??= failureReason ?? FailureReason.AgentError;
-                }
-            }, ct: ct);
+                WorkItemStatus.Failed    => WorkItemMutationFactory.Failed(errorMessage, failureReason),
+                WorkItemStatus.Succeeded => WorkItemMutationFactory.Succeeded(),
+                WorkItemStatus.Cancelled => WorkItemMutationFactory.Cancelled(),
+                _                        => _ => { }
+            };
+
+            var result = await _workItemTransition.TransitionAsync(workItemId, status, mutate, ct: ct);
 
             if (!result && status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
             {
@@ -292,24 +292,18 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         }
     }
 
-    private static Action<WorkItemEntity> BuildTerminalMutationAction(
-        WorkItemStatus status, string? errorMessage, FailureReason? failureReason)
-        => item =>
-        {
-            item.CompletedAt = DateTimeOffset.UtcNow;
-            if (status == WorkItemStatus.Failed)
-            {
-                item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
-                item.FailureReason ??= failureReason ?? FailureReason.AgentError;
-            }
-        };
-
     private async Task TryFallbackTransitionAsync(
         Guid workItemId, WorkItemStatus status,
         string? errorMessage, FailureReason? failureReason,
         RunId runId, CancellationToken ct)
     {
-        var mutationAction = BuildTerminalMutationAction(status, errorMessage, failureReason);
+        Action<WorkItemEntity> mutationAction = status switch
+        {
+            WorkItemStatus.Failed    => WorkItemMutationFactory.Failed(errorMessage, failureReason),
+            WorkItemStatus.Succeeded => WorkItemMutationFactory.Succeeded(),
+            WorkItemStatus.Cancelled => WorkItemMutationFactory.Cancelled(),
+            _                        => _ => { }
+        };
 
         // Two-step fallback: Dispatched → Running → terminal
         var intermediate = await _workItemTransition!.TransitionAsync(workItemId, WorkItemStatus.Running, ct: ct);
