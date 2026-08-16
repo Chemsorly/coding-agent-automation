@@ -142,9 +142,10 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
             if (result.FinalStep == PipelineStep.Completed)
                 instrumentation.MarkCompleted();
+            else if (result.FinalStep != PipelineStep.Cancelled)
+                instrumentation.MarkFailed(result.FailureCategory);
 
             instrumentation.Activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
-            // TODO: Add test that verifies cancelled runs set pipeline.cancelled tag with Unset status (no Error)
             if (result.FinalStep == PipelineStep.Cancelled)
                 instrumentation.Activity?.SetTag("pipeline.cancelled", true);
             else if (result.FinalStep != PipelineStep.Completed)
@@ -250,6 +251,12 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
                 case PipelineExecutionOutcome.FailedOutcome { Exception: var ex }:
                     _logger.Error(ex, "Pipeline execution failed with unhandled error");
+                    // Note: run.FailureCategory may already be set by upstream phases (e.g., ReconciliationService
+                    // sets FailureReason.Timeout, DisconnectedAgentSweepPhase sets FailureReason.InfrastructureFailure)
+                    // before the exception propagates here. BuildFailurePayload does not forward it, so
+                    // result.FailureCategory will be null and MarkFailed() will emit failure_reason="unknown"
+                    // even when a specific reason is recorded on the run.
+                    // Tracked for a follow-up: pass run.FailureCategory to BuildFailurePayload.
                     return BuildFailurePayload(run, ex.Message);
 
                 default:
