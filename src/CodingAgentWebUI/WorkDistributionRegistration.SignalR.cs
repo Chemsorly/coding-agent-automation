@@ -81,6 +81,22 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DispatchRevertService>>()));
+        // TODO: DispatchAttemptService is constructed with `new` here (and separately inside
+        // PendingWorkItemDrainService's constructor), producing two unregistered instances at runtime.
+        // Since the class is currently stateless this is not a correctness defect, but it departs from
+        // the DI singleton-sharing guarantee. If DispatchAttemptService ever acquires state, the two
+        // instances would diverge. Consider registering DispatchAttemptService as a singleton
+        // (services.AddSingleton<DispatchAttemptService>()) and resolving it via
+        // sp.GetRequiredService<DispatchAttemptService>() in both places.
+        services.AddSingleton<IConsolidationDrainDispatcher>(sp => new ConsolidationDrainDispatcher(
+            sp.GetRequiredService<IConsolidationDispatchService>(),
+            sp.GetRequiredService<IConsolidationRunStore>(),
+            new DispatchAttemptService(
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetRequiredService<DispatchRevertService>()),
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<ConsolidationDrainDispatcher>>()));
         services.AddSingleton<PendingWorkItemDrainService>(sp => new PendingWorkItemDrainService(
             new DrainServiceDependencies(
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
@@ -93,8 +109,7 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>(),
                 sp.GetRequiredService<DispatchRevertService>()),
             sp.GetService<IProjectStore>(),
-            sp.GetRequiredService<IConsolidationDispatchService>(),
-            sp.GetRequiredService<IConsolidationRunStore>()));
+            sp.GetRequiredService<IConsolidationDrainDispatcher>()));
         services.AddHostedService(sp => sp.GetRequiredService<PendingWorkItemDrainService>());
 
         Log.Information("WorkDistribution: SignalR mode — SignalRWorkDistributor + PendingWorkItemDrainService registered");
