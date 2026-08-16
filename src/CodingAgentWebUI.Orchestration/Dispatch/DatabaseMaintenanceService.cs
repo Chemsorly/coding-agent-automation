@@ -310,10 +310,9 @@ public class DatabaseMaintenanceService : BackgroundService
 
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-            // Removes terminal WorkItems rows ranked beyond N per project, ordered by CompletedAt DESC, Id DESC.
-            // Status IN (3,4,5): Succeeded=3, Failed=4, Cancelled=5 (WorkItemStatus enum — DO NOT reorder;
-            // see ⚠️ DB CONTRACT comment in WorkItemStatus.cs).
-            // Rows with ProjectId IS NULL (consolidation runs, legacy rows) are always exempt.
+            // Removes terminal WorkItems rows ranked beyond N per project (ordered newest-first).
+            // Only terminal rows (Succeeded/Failed/Cancelled) with a non-null CompletedAt are eligible.
+            // Rows with a null ProjectId are always exempt.
             const string sql = """
                 DELETE FROM "WorkItems"
                 USING (

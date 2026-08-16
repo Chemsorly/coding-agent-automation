@@ -385,8 +385,12 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
+            // S3236 suppressed: nameof(AnalysisCommitThreshold) is intentional — 'value' in init
+            // accessors is the implicit parameter name; callers need the property name in the exception.
+#pragma warning disable S3236
             ArgumentOutOfRangeException.ThrowIfLessThan(value, 0, nameof(AnalysisCommitThreshold));
             ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 1000, nameof(AnalysisCommitThreshold));
+#pragma warning restore S3236
             field = value;
         }
     } = PipelineConstants.DefaultAnalysisCommitThreshold;
@@ -431,8 +435,8 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1, nameof(MaxDecompositionSubIssues));
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20, nameof(MaxDecompositionSubIssues));
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20);
             field = value;
         }
     } = 10;
@@ -522,8 +526,8 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1, nameof(MaxDecompositionSubIssueFiles));
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 30, nameof(MaxDecompositionSubIssueFiles));
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 30);
             field = value;
         }
     } = 12;
@@ -541,8 +545,8 @@ public sealed record PipelineConfiguration
         get => field;
         init
         {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 30, nameof(ModelFetchTimeoutSeconds));
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 600, nameof(ModelFetchTimeoutSeconds));
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 30);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 600);
             field = value;
         }
     } = 120;
