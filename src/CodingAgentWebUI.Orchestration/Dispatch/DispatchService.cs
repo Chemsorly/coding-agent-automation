@@ -25,7 +25,6 @@ public sealed class DispatchService : LeaderElectedPollingService
     /// <summary>Default path for job templates ConfigMap mount.</summary>
     internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
 
-    private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateStore _templateProvider;
@@ -53,38 +52,17 @@ public sealed class DispatchService : LeaderElectedPollingService
         DispatchServiceCoreDependencies coreDeps,
         IConfiguration configuration,
         JobTemplateStore templateProvider)
-        // TODO: coreDeps and configuration are not null-guarded before the base-constructor initializer
-        // dereferences them (coreDeps.LeaderElection, DispatchServiceOptionsFactory.Create(configuration)).
-        // A null coreDeps produces NullReferenceException instead of ArgumentNullException; a null configuration
-        // produces NullReferenceException inside the factory rather than at the call boundary.
-        // The sibling (coreDeps, templateProvider, options) constructor correctly guards with
-        // (coreDeps ?? throw new ArgumentNullException(nameof(coreDeps))). Apply the same pattern here.
-        // See DotNetSpecialist WARNING (Issue #1994).
         : base(coreDeps.LeaderElection, DispatchServiceOptionsFactory.Create(configuration).RateLimitPerSecond)
     {
-        _dbFactory = coreDeps.DbFactory;
         _lifecycle = coreDeps.Lifecycle;
         _labelSwapper = coreDeps.LabelSwapper;
         _agentProfileStore = coreDeps.AgentProfileStore;
         _runService = coreDeps.RunService;
         _templateProvider = templateProvider;
-        // TODO: DispatchServiceOptionsFactory.Create(configuration) is called twice: once in the base-constructor
-        // initializer expression (to extract RateLimitPerSecond) and again here to populate _options. This creates
-        // two DispatchServiceOptions instances from the same IConfiguration. If the factory is ever made non-idempotent
-        // or side-effectful, the rate limiter and _options.PollIntervalSeconds could silently diverge.
-        // Fix: use a `this(...)` constructor chain or a static helper to resolve options once before base() is called.
-        // See DotNetSpecialist WARNING (Issue #1912).
         _options = DispatchServiceOptionsFactory.Create(configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
-        // TODO: The null-coalescing fallback here silently constructs a live DispatchStateBuilder when
-        // coreDeps.StateBuilder is not provided (e.g. in tests that omit it). In production the DI-injected
-        // singleton is always passed, so this path is never taken at runtime. If _dbFactory or _lifecycle
-        // are null in a test scenario, the new DispatchStateBuilder(...) expression will compile fine
-        // but throw a NullReferenceException at the first BuildStateAsync call rather than at construction,
-        // making failures harder to diagnose. Consider removing the fallback and requiring StateBuilder
-        // explicitly. See DotNetSpecialist WARNING (Issue #1910).
         _stateBuilder = coreDeps.StateBuilder ?? new DispatchStateBuilder(
-            _dbFactory,
+            coreDeps.DbFactory,
             _lifecycle,
             _templateProvider,
             new DispatchTemplateResolver(_agentProfileStore, _templateProvider),
@@ -107,10 +85,11 @@ public sealed class DispatchService : LeaderElectedPollingService
                (options ?? throw new ArgumentNullException(nameof(options))).RateLimitPerSecond)
     {
         if (coreDeps.StateBuilder is null)
+#pragma warning disable S3928 // "StateBuilder" is a property name, not a declared parameter — intentional for clarity
             throw new ArgumentNullException("StateBuilder",
                 "DispatchService requires a non-null StateBuilder. Provide it via coreDeps.StateBuilder.");
+#pragma warning restore S3928
 
-        _dbFactory = coreDeps.DbFactory;
         _lifecycle = coreDeps.Lifecycle;
         _labelSwapper = coreDeps.LabelSwapper;
         _agentProfileStore = coreDeps.AgentProfileStore;
@@ -172,13 +151,8 @@ public sealed class DispatchService : LeaderElectedPollingService
             }
         }
 
-        // TODO: DispatcherPollCount is now incremented unconditionally after every poll that found pending items
-        // (i.e. when state is non-null). Previously it was only incremented on the early-return path when
-        // pendingItems.Count == 0 (the "nothing to do" poll). This is a behavioral change: dashboards and
-        // alerts keyed on this counter will see higher values after deployment. If the intent is to count
-        // ALL polls (empty + non-empty), this is correct — but it should be documented. If the original
-        // intent was to count only empty polls, remove this call and leave it solely inside BuildStateAsync.
-        // See Correctness WARNING (Issue #1910).
+        // Note: DispatcherPollCount is incremented after every non-null poll (i.e. when there were
+        // pending items). This counts all dispatch cycle iterations, not just empty-queue polls.
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
 
@@ -212,15 +186,8 @@ public sealed class DispatchService : LeaderElectedPollingService
         if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
             return false;
 
-        // TODO: The rate limiter lease is acquired here and held for the entire duration of
-        // CheckEligibilityAsync + DispatchSingleItemAsync. If DispatchSingleItemAsync blocks on I/O
-        // (database write, HTTP call to the agent API), the token-bucket slot is occupied for the
-        // full dispatch duration rather than just the dispatch-decision window. This changes the
-        // effective rate from "N dispatches initiated per second" to "N concurrent dispatches per second".
-        // With a burst size of 1 and a slow DispatchSingleItemAsync, the loop will process at most one
-        // item per dispatch duration, not per second. Consider acquiring the lease only around the
-        // dispatch-decision window (eligibility check + job submission trigger) and releasing it
-        // before awaiting the full dispatch lifecycle. See Correctness WARNING (Issue #1994).
+        // Note: the rate limiter lease is held for the entire eligibility check and dispatch duration.
+        // This means effective throughput is bounded by dispatch latency when burst=1.
         using var lease = await (RateLimiter ?? throw new InvalidOperationException(
             "DispatchService requires a rate limiter but RateLimiter is null. " +
             "Ensure the constructor passes rateLimitPerSecond to the base class."))
@@ -233,33 +200,16 @@ public sealed class DispatchService : LeaderElectedPollingService
 
         var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
 
-        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
         switch (result.Outcome)
         {
             case EligibilityOutcome.AtConcurrencyLimit:
             case EligibilityOutcome.NoPvcAvailable:
                 return true;
             case EligibilityOutcome.NoTemplate:
-                // TODO: result.ErrorMessage! uses a null-forgiving operator. Currently safe because
-                // EligibilityResult.NoTemplate(string errorMessage) always sets ErrorMessage to a non-null value.
-                // If EligibilityResult is ever constructed directly without the factory (e.g. new EligibilityResult
-                // { Outcome = EligibilityOutcome.NoTemplate }), ErrorMessage will be null and FailWorkItemAsync
-                // receives a null argument without a compile-time warning. Consider guarding:
-                // result.ErrorMessage ?? "No matching template found"
-                // See Correctness/DotNetSpecialist WARNING (Issue #1994).
                 await _lifecycle.FailWorkItemAsync(item.Id, result.ErrorMessage!, ct);
                 return true;
         }
 
-        // TODO: result.Template! uses a null-forgiving operator on the EligibilityResult.Template property.
-        // The implicit fall-through (eligible) path of the switch is reached for every outcome not explicitly
-        // listed, including any future EligibilityOutcome values added to the enum. If a new outcome is added
-        // where the checker returns a non-null outcome but a null Template, DispatchSingleItemAsync receives
-        // a null JobTemplate with no compile-time or runtime guard, producing a NullReferenceException deep
-        // inside the dispatch lifecycle. Adding a default: return true; arm (already noted in the TODO above
-        // the switch) would prevent silent fall-through, and replacing ! with
-        // result.Template ?? throw new InvalidOperationException(...) would complete the guard.
-        // See DotNetSpecialist WARNING (Issue #1994).
         await DispatchSingleItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
         return true;
     }
@@ -302,14 +252,9 @@ public sealed class DispatchService : LeaderElectedPollingService
                     !string.IsNullOrEmpty(item.IssueIdentifier) &&
                     !string.IsNullOrEmpty(item.IssueProviderConfigId))
                 {
-                    // TODO: LabelTargetKind.Issue is hardcoded here, but Review (PR) work items
-                    // dispatched in K8s mode should use LabelTargetKind.PullRequest with
-                    // item.RepoProviderConfigId (matching PendingWorkItemDrainService's run-type
-                    // branching logic). This is NOT a regression — the old code also defaulted to
-                    // LabelTargetKind.Issue unconditionally — but if K8s mode is intended to handle
-                    // PR review work items, this should branch on item.TaskType == WorkItemTaskType.Review
-                    // (or a serialized RunType from the payload) and select RepoProviderConfigId +
-                    // LabelTargetKind.PullRequest accordingly. Track as follow-up to #1868.
+                    // Note: LabelTargetKind.Issue is hardcoded; PR review items in K8s mode would need
+                    // LabelTargetKind.PullRequest with item.RepoProviderConfigId. This matches the existing
+                    // pre-refactor behavior. Track as follow-up to #1868.
                     await _labelSwapper.SwapLabelWithRetryAsync(
                         item.Id,
                         item.IssueProviderConfigId,

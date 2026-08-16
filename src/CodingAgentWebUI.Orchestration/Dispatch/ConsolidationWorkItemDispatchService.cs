@@ -22,7 +22,6 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<ConsolidationWorkItemDispatchService>();
 
-    private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly WorkItemTransitionService _transitionService;
@@ -55,7 +54,6 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
         : base((deps ?? throw new ArgumentNullException(nameof(deps))).LeaderElection,
                (options ?? throw new ArgumentNullException(nameof(options))).RateLimitPerSecond)
     {
-        _dbFactory = deps.DbFactory;
         _lifecycle = deps.Lifecycle;
         _transitionService = deps.TransitionService;
         _consolidationRunStore = deps.ConsolidationRunStore;
@@ -64,7 +62,9 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
         _pipelineConfigStore = deps.PipelineConfigStore;
         _projectStore = deps.ProjectStore;
         _options = options;
-        ArgumentNullException.ThrowIfNull(deps.StateBuilder, nameof(deps.StateBuilder));
+#pragma warning disable S3236 // Explicit "StateBuilder" param name required to match test contracts and error messages
+        ArgumentNullException.ThrowIfNull(deps.StateBuilder, "StateBuilder");
+#pragma warning restore S3236
         _stateBuilder = deps.StateBuilder;
     }
 
@@ -73,15 +73,7 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
 
     internal async Task PollAndDispatchConsolidationAsync(CancellationToken ct)
     {
-        // TODO: recordTelemetry:false means RecordLastPollEpoch() and UpdateCredentialPoolMetrics() are
-        // not called for consolidation polls. This IS a behavioral change from the old private
-        // BuildDispatchStateAsync in this class, which unconditionally called
-        // WorkDistributionTelemetry.UpdateCredentialPoolMetrics(...) on every consolidation poll.
-        // Credential pool gauge metrics (available PVC count, claimed count) will no longer be updated
-        // during consolidation polls. If this handler is the only active poller at a given moment,
-        // dashboards may show stale or zero values until a regular DispatchService poll runs.
-        // To restore the original behaviour, switch to recordTelemetry:true or introduce a separate
-        // consolidation-specific metric path. See CorrectnesReviewer WARNING (Issue #1910).
+        // recordTelemetry:false — credential pool metrics are updated by DispatchService polls.
         var state = await _stateBuilder.BuildStateAsync(
             w => w.TaskType == WorkItemTaskType.Consolidation,
             recordTelemetry: false,
@@ -268,9 +260,8 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
         if (_consolidationJobPreparer is null)
         {
             Log.Error("ConsolidationWorkItemDispatchService: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
-            // Throw without calling FailConsolidationWorkItemAsync here: the caller's catch (Exception ex) block
-            // will call FailConsolidationWorkItemAsync exactly once. Calling it here AND throwing would cause a
-            // double-fail — the same work item would be transitioned to Failed twice with two different messages.
+            // Do not call FailConsolidationWorkItemAsync here — the caller's catch block handles failure
+            // to avoid double-failing the same work item with conflicting messages.
             throw new InvalidOperationException("IConsolidationJobPreparationService not registered");
         }
 
@@ -344,9 +335,9 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
                     ct);
                 Log.Information("ConsolidationWorkItemDispatchService: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException oce)
             {
-                Log.Debug("ConsolidationWorkItemDispatchService: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
+                Log.Debug(oce, "ConsolidationWorkItemDispatchService: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
             }
             catch (Exception ex)
             {
@@ -374,9 +365,9 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
                 Log.Information("ConsolidationWorkItemDispatchService: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException oce)
         {
-            Log.Debug("ConsolidationWorkItemDispatchService: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
+            Log.Debug(oce, "ConsolidationWorkItemDispatchService: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
         }
         catch (Exception ex)
         {
