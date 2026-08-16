@@ -91,6 +91,9 @@ if (!isKubernetesMode)
 builder.Services.AddSingleton<CodingAgentWebUI.Services.InfrastructureHealthService>();
 
 // Page-level services (scoped — one instance per Blazor circuit)
+builder.Services.AddScoped<CodingAgentWebUI.Services.IIssueDrawerService, CodingAgentWebUI.Services.IssueDrawerService>();
+builder.Services.AddScoped<CodingAgentWebUI.Services.IPrReviewDrawerService, CodingAgentWebUI.Services.PrReviewDrawerService>();
+builder.Services.AddScoped<CodingAgentWebUI.Services.IEpicDrawerService, CodingAgentWebUI.Services.EpicDrawerService>();
 builder.Services.AddScoped<CodingAgentWebUI.Services.AgentCodingPageService>();
 builder.Services.AddAgentMonitoringPageServiceDependencies();
 builder.Services.AddScoped<CodingAgentWebUI.Services.AgentMonitoringPageService>();
