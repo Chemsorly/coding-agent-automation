@@ -42,6 +42,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
 
         _dbFactory = new TestDbContextFactory(_dbOptions);
         var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        var fallbackService = new WorkItemFallbackTransitionService(transitionService, NullLogger<WorkItemFallbackTransitionService>.Instance);
 
         var mockSerilogLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockSerilogLogger.Object);
@@ -59,7 +60,8 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            WorkItemTransition: transitionService));
+            WorkItemTransition: transitionService,
+            WorkItemFallbackTransition: fallbackService));
     }
 
     public void Dispose()

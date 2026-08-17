@@ -86,6 +86,11 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemTransitionService>(),
             sp.GetService<ResiliencePipelineProvider<string>>()));
 
+        // ── WorkItemFallbackTransitionService (singleton — wraps WorkItemTransitionService) ──
+        services.AddSingleton<IWorkItemFallbackTransitionService>(sp => new WorkItemFallbackTransitionService(
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemFallbackTransitionService>()));
+
         // ── IActiveRunQueryService (DB mode — queries Postgres for active run state) ──
         services.AddSingleton<IActiveRunQueryService>(sp => new PostgresActiveRunQueryService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
@@ -134,7 +139,8 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<JobDeduplicationGuardService>(),
                 Log.Logger,
                 sp.GetRequiredService<WorkItemTransitionService>(),
-                sp.GetService<IJobCleanupStrategy>())));
+                sp.GetService<IJobCleanupStrategy>(),
+                sp.GetRequiredService<IWorkItemFallbackTransitionService>())));
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────
         // Singleton: consumed by singleton services (LabelService, DispatchResolutionService,

@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -28,6 +27,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
     private readonly WorkItemTransitionService? _workItemTransition;
+    private readonly IWorkItemFallbackTransitionService? _workItemFallbackTransition;
     private readonly PendingWorkItemDrainService? _pendingDrainService;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
     private readonly IProjectStore? _projectStore;
@@ -54,6 +54,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _providerFactory = deps.ProviderFactory;
         _logger = deps.Logger;
         _workItemTransition = deps.WorkItemTransition;
+        _workItemFallbackTransition = deps.WorkItemFallbackTransition;
         _pendingDrainService = deps.PendingDrainService;
         _dbFactory = deps.DbFactory;
         _projectStore = deps.ProjectStore;
@@ -95,7 +96,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     public async Task TransitionWorkItemAsync(JobId jobId, WorkItemStatus status, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null)
     {
-        if (_workItemTransition is null || !Guid.TryParse(jobId.Value, out var workItemId))
+        if (_workItemFallbackTransition is null || !Guid.TryParse(jobId.Value, out var workItemId))
             return;
 
         // Single retry with longer backoff — acts as a safety net above the Polly pipeline
@@ -108,13 +109,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         {
             try
             {
-                if (await TryDirectTransitionAsync(workItemId, status, errorMessage, failureReason, ct))
-                    return;
-
-                if (await TryTwoStepTransitionAsync(workItemId, status, ct))
-                    return;
-
-                if (await TryInfrastructureFailureRecoveryAsync(workItemId, status, errorMessage, failureReason, ct))
+                if (await _workItemFallbackTransition.TryFallbackChainAsync(workItemId, status, errorMessage, failureReason, ct))
                     return;
 
                 _logger.LogWarning(
@@ -136,92 +131,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _logger.LogError(
             "WorkItem {WorkItemId} transition to {Status} failed after all retry attempts",
             workItemId, status);
-    }
-
-    private async Task<bool> TryDirectTransitionAsync(
-        Guid workItemId, WorkItemStatus status, string? errorMessage, FailureReason? failureReason, CancellationToken ct)
-    {
-        Action<WorkItemEntity> mutate = status switch
-        {
-            WorkItemStatus.Failed    => WorkItemMutationFactory.Failed(errorMessage, failureReason),
-            WorkItemStatus.Succeeded => WorkItemMutationFactory.Succeeded(),
-            WorkItemStatus.Cancelled => WorkItemMutationFactory.Cancelled(),
-            _                        => _ => { }
-        };
-
-        var result = await _workItemTransition!.TransitionAsync(workItemId, status, mutate, ct: ct);
-
-        if (result)
-        {
-            _logger.LogInformation(
-                "WorkItem {WorkItemId} transitioned to {Status}",
-                workItemId, status);
-        }
-
-        return result;
-    }
-
-    private async Task<bool> TryTwoStepTransitionAsync(
-        Guid workItemId, WorkItemStatus status, CancellationToken ct)
-    {
-        // Transition rejected — likely Dispatched → Succeeded/Cancelled (skipped Running).
-        // Attempt two-step: Dispatched → Running → terminal status.
-        if (status is not (WorkItemStatus.Succeeded or WorkItemStatus.Cancelled))
-            return false;
-
-        _logger.LogWarning(
-            "WorkItem {WorkItemId} direct transition to {Status} rejected, attempting two-step via Running",
-            workItemId, status);
-
-        var intermediateResult = await _workItemTransition!.TransitionAsync(
-            workItemId, WorkItemStatus.Running, ct: ct);
-
-        if (!intermediateResult)
-            return false;
-
-        // TODO: This ternary only handles Succeeded/Cancelled — the guard above (`status is not (Succeeded or Cancelled)`) means
-        // Failed cannot reach here at runtime, but the asymmetry with the three-arm switch expressions elsewhere is a code smell.
-        // If the guard is ever relaxed, this must be updated to a full switch to avoid applying Cancelled() semantics to a Failed transition.
-        var finalResult = await _workItemTransition.TransitionAsync(workItemId, status,
-            status == WorkItemStatus.Succeeded
-                ? WorkItemMutationFactory.Succeeded()
-                : WorkItemMutationFactory.Cancelled(),
-            ct: ct);
-
-        if (finalResult)
-        {
-            _logger.LogInformation(
-                "WorkItem {WorkItemId} two-step transition to {Status} succeeded (via Running)",
-                workItemId, status);
-        }
-
-        return finalResult;
-    }
-
-    private async Task<bool> TryInfrastructureFailureRecoveryAsync(
-        Guid workItemId, WorkItemStatus status, string? errorMessage, FailureReason? failureReason, CancellationToken ct)
-    {
-        // If we get here, transition was rejected for a non-recoverable reason
-        // (e.g., already terminal). Attempt infrastructure-failure recovery as last resort.
-        Action<WorkItemEntity> mutate = status switch
-        {
-            WorkItemStatus.Failed    => WorkItemMutationFactory.Failed(errorMessage, failureReason),
-            WorkItemStatus.Succeeded => WorkItemMutationFactory.Succeeded(),
-            WorkItemStatus.Cancelled => WorkItemMutationFactory.Cancelled(),
-            _                        => _ => { }
-        };
-
-        var recovered = await _workItemTransition!.TryRecoverFromInfrastructureFailureAsync(
-            workItemId, status, mutate, ct);
-
-        if (recovered)
-        {
-            _logger.LogWarning(
-                "WorkItem {WorkItemId} recovered from infrastructure-failure Failed to {Status}",
-                workItemId, status);
-        }
-
-        return recovered;
     }
 
     /// <inheritdoc />

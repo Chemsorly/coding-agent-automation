@@ -59,7 +59,8 @@ public static partial class ServiceCollectionExtensions
             sp.GetService<WorkItemTransitionService>(),
             sp.GetService<PendingWorkItemDrainService>(),
             sp.GetService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<IProjectStore>()));
+            sp.GetRequiredService<IProjectStore>(),
+            sp.GetService<IWorkItemFallbackTransitionService>()));
 
         services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(
             sp.GetRequiredService<AgentHubFacadeDependencies>()));
