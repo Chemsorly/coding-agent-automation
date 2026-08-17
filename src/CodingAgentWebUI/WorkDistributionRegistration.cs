@@ -168,13 +168,10 @@ public static partial class WorkDistributionRegistration
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = Services.DatabaseConnectionResolver.Resolve(configuration);
-        if (string.IsNullOrEmpty(connectionString))
-            return services; // No DB — no additional instrumentation needed
-
+        // Marker method — PostgreSQL is always required (Program.cs fast-fail).
         // OTel instrumentation is added to the existing OpenTelemetry builder in Program.cs
-        // via the tracing/metrics builder callbacks. This method is a marker for the
-        // configuration to be applied in the WithTracing/WithMetrics calls.
+        // via the tracing/metrics builder callbacks. This method is a hook for any future
+        // work-distribution-specific instrumentation setup.
         return services;
     }
 

@@ -35,6 +35,10 @@ public static partial class WorkDistributionRegistration
             Log.Information("Kubernetes client configured: Source={Source} Host={Host}",
                 inCluster ? "in-cluster" : "kubeconfig", config.Host);
 
+            // "http://localhost:8080" is the exact fallback BuildDefaultConfig() returns when
+            // no configuration source is found (no KUBECONFIG, no ~/.kube/config, not in-cluster).
+            // It is NOT a general localhost filter — variant forms like http://localhost or
+            // 127.0.0.1 would slip through and fail at first API call instead of here.
             if (string.IsNullOrEmpty(config.Host) || config.Host == "http://localhost:8080")
             {
                 Log.Fatal("No usable Kubernetes configuration. In-cluster: ensure the service account " +

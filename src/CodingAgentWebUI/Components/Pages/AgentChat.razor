@@ -319,7 +319,8 @@
 
     private Task StartChat()
     {
-        if (string.IsNullOrEmpty(_selectedAgentId)) return Task.CompletedTask;
+        // _selectedAgentId is always set by LaunchChatPod before this is called —
+        // the guard that was here was a SignalR-era remnant and is unreachable.
 
         // Generate a stable chat window ID for this session
         _chatWindowId = Guid.NewGuid().ToString();
