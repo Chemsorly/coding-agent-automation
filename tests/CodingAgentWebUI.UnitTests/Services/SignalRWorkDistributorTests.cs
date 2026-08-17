@@ -900,7 +900,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         await sut.CancelJobAsync(runId, CancellationToken.None);
 
         // Assert: cancel signal sent to agent
-        mockCancellation.Verify(c => c.SendCancelJobAsync("agent-42", runId, It.IsAny<CancellationToken>()), Times.Once);
+        mockCancellation.Verify(c => c.SendCancelJobAsync("agent-42", It.Is<RunId>(r => r.Value == runId), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

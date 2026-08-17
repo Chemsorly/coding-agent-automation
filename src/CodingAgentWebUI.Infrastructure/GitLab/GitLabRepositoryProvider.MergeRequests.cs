@@ -230,9 +230,11 @@ public partial class GitLabRepositoryProvider
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<LinkedPullRequest>> GetAgentPullRequestsAsync(
-        string issueIdentifier, CancellationToken ct)
+        IssueIdentifier issueIdentifier, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        if (issueIdentifier.Value is null)
+            return Array.Empty<LinkedPullRequest>();
+
         var branchPrefix = $"{PipelineConstants.BranchPrefix}{issueIdentifier}-";
 
         // List all open MRs and filter by branch prefix (client-side)

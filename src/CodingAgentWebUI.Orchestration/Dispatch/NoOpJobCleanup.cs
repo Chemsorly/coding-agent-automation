@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
@@ -7,5 +9,5 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 public sealed class NoOpJobCleanup : IJobCleanupStrategy
 {
     /// <inheritdoc />
-    public Task TryDeleteJobForRunAsync(string runId, CancellationToken ct) => Task.CompletedTask;
+    public Task TryDeleteJobForRunAsync(RunId runId, CancellationToken ct) => Task.CompletedTask;
 }

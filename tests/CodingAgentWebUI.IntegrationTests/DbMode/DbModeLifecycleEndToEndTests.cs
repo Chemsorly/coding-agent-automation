@@ -486,7 +486,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         var found = activeRuns.First(r => r.RunId == restoredRun.RunId);
         found.AgentId?.Value.Should().Be("agent-restored-7");
         found.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
-        found.IssueIdentifier.Should().Be("owner/repo#7");
+        found.IssueIdentifier.Value.Should().Be("owner/repo#7");
     }
 
     #endregion

@@ -547,3 +547,104 @@ public sealed class RunLifecycleManagerResilienceTests
         }, $"conn-{agentId}");
     }
 }
+
+/// <summary>
+/// Verifies that <see cref="RunLifecycleManager.CancelRunAsync"/> calls
+/// <see cref="IJobCleanupStrategy.TryDeleteJobForRunAsync"/> with the <see cref="RunId"/>
+/// value type directly (not the unwrapped string).
+/// </summary>
+public sealed class RunLifecycleManagerJobCleanupTests
+{
+    private static readonly string[] DotnetLabels = ["dotnet"];
+
+    private readonly Mock<ILogger> _mockLogger = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
+    private readonly Mock<IJobCleanupStrategy> _mockJobCleanup = new();
+    private readonly AgentRegistryService _registry;
+    private readonly OrchestratorRunService _runService;
+    private readonly JobDeduplicationGuardService _dispatcher;
+    private readonly RunLifecycleManager _sut;
+
+    public RunLifecycleManagerJobCleanupTests()
+    {
+        _registry = new AgentRegistryService(_mockLogger.Object);
+        _runService = new OrchestratorRunService(_mockLogger.Object);
+        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
+
+        _mockJobCleanup
+            .Setup(c => c.TryDeleteJobForRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
+            _runService,
+            _mockHistoryService.Object,
+            _registry,
+            _mockLabelService.Object,
+            _dispatcher,
+            _mockLogger.Object,
+            WorkItemTransition: null,
+            JobCleanup: _mockJobCleanup.Object));
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_CallsJobCleanupWithRunId_NotStringValue()
+    {
+        // Arrange
+        const string runIdValue = "test-run-cleanup-1";
+        var run = new PipelineRun
+        {
+            RunId = runIdValue,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = PipelineRunType.Implementation
+        };
+        _runService.AddRun(run);
+        // TODO: Verify whether RegisterAgent is actually required for this cancellation path or is
+        // incidental setup. If CancelRunAsync does not consult the agent registry, this call is redundant
+        // and its removal should not break the test — which would indicate an unchecked precondition.
+        // If it IS required, add a complementary test verifying that cancellation behaves correctly when
+        // no agent is registered (e.g., still invokes job cleanup even without an assigned agent).
+        RegisterAgent("agent-1");
+
+        // Act
+        var result = await _sut.CancelRunAsync(runIdValue, CancellationToken.None);
+
+        // Assert: run was cancelled
+        result.Should().NotBeNull();
+        result!.CurrentStep.Should().Be(PipelineStep.Cancelled);
+
+        // Assert: TryDeleteJobForRunAsync was called with RunId value type (not raw string)
+        _mockJobCleanup.Verify(
+            c => c.TryDeleteJobForRunAsync(
+                It.Is<RunId>(r => r.Value == runIdValue),
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "CancelRunAsync must pass RunId directly to IJobCleanupStrategy, not .Value string");
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_WhenRunNotFound_DoesNotCallJobCleanup()
+    {
+        // Act: no run added — CancelRunAsync returns null early
+        var result = await _sut.CancelRunAsync("nonexistent-run", CancellationToken.None);
+
+        // Assert
+        result.Should().BeNull();
+        _mockJobCleanup.Verify(
+            c => c.TryDeleteJobForRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    private AgentEntry RegisterAgent(string agentId)
+    {
+        return _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = agentId,
+            Hostname = $"host-{agentId}",
+            Labels = DotnetLabels
+        }, $"conn-{agentId}");
+    }
+}

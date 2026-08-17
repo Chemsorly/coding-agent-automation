@@ -143,7 +143,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             });
 
         _mockRepoProvider.Setup(p => p.GetAgentPullRequestsAsync(
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<LinkedPullRequest>() as IReadOnlyList<LinkedPullRequest>);
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(_mockIssueProvider.Object);
@@ -289,7 +289,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
         (await _service.GetRunHistoryAsync()).Should().HaveCount(1);
         (await _service.GetRunHistoryAsync())[0].FinalStep.Should().Be(PipelineStep.Completed);
         (await _service.GetRunHistoryAsync())[0].PullRequestUrl.Should().NotBeNullOrEmpty();
-        (await _service.GetRunHistoryAsync())[0].IssueIdentifier.Should().Be("42");
+        string historyIssueId = (await _service.GetRunHistoryAsync())[0].IssueIdentifier; // implicit conversion
+        historyIssueId.Should().Be("42");
     }
 
     [Fact]
@@ -3106,7 +3107,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     private void SetupReworkMocks()
     {
         _mockRepoProvider.Setup(p => p.GetAgentPullRequestsAsync(
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LinkedPullRequest>
             {
                 new()
@@ -3287,7 +3288,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public async Task StartPipeline_WhenGetAgentPrThrows_FallsBackToNewIssueFlow()
     {
         _mockRepoProvider.Setup(p => p.GetAgentPullRequestsAsync(
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("API error"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -3351,7 +3352,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         // Override: draft PR with no review comments
         _mockRepoProvider.Setup(p => p.GetAgentPullRequestsAsync(
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LinkedPullRequest>
             {
                 new()
@@ -3382,7 +3383,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         // Override: non-draft PR with no review comments and no conflicts
         _mockRepoProvider.Setup(p => p.GetAgentPullRequestsAsync(
-                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LinkedPullRequest>
             {
                 new()
@@ -3512,7 +3513,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         // Assert: CancelJob is never sent — agents must reconnect to the new pod
         mockCancellation.Verify(
-            c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -3545,7 +3546,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var mockCancellation = new Mock<IAgentCancellationSender>();
         mockCancellation
-            .Setup(c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Agent disconnected"));
 
         var service = new PipelineOrchestrationService(
@@ -3721,7 +3722,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         // Assert — CancelJob must NOT be sent; agents should reconnect to the new pod
         mockCancellation.Verify(
-            c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 

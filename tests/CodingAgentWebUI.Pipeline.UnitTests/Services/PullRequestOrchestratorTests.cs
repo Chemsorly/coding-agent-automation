@@ -30,7 +30,7 @@ public class PullRequestOrchestratorTests
         _mockRepo.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("https://github.com/org/repo/pull/99");
         _mockRepo.Setup(r => r.BaseBranch).Returns("main");
-        _mockRepo.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #42");
+        _mockRepo.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #42");
     }
 
     // ── No commits ahead → early return ──
