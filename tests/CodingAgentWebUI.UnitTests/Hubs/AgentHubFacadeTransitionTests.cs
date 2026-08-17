@@ -20,7 +20,7 @@ namespace CodingAgentWebUI.UnitTests.Hubs;
 /// <summary>
 /// Tests for <see cref="AgentHubFacade.TransitionWorkItemAsync"/> covering:
 /// - Invalid GUID early return
-/// - Null WorkItemTransitionService early return
+/// - Null WorkItemFallbackTransitionService early return
 /// - Direct transition success
 /// - Two-step transition (Dispatched → Running → terminal)
 /// - Already-terminal rejection
@@ -31,6 +31,7 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly WorkItemTransitionService _transitionService;
+    private readonly WorkItemFallbackTransitionService _fallbackService;
     private readonly AgentHubFacade _facade;
 
     public AgentHubFacadeTransitionTests()
@@ -42,6 +43,8 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
         _transitionService = new WorkItemTransitionService(
             _dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        _fallbackService = new WorkItemFallbackTransitionService(
+            _transitionService, NullLogger<WorkItemFallbackTransitionService>.Instance);
 
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
@@ -59,7 +62,8 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
             WorkItemTransition: _transitionService,
-            DbFactory: _dbFactory));
+            DbFactory: _dbFactory,
+            WorkItemFallbackTransition: _fallbackService));
     }
 
     public void Dispose()
@@ -99,7 +103,7 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
     }
 
     [Fact]
-    public async Task TransitionWorkItemAsync_NullTransitionService_ReturnsWithoutAction()
+    public async Task TransitionWorkItemAsync_NullFallbackTransitionService_ReturnsWithoutAction()
     {
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);

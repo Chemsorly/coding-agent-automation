@@ -57,6 +57,10 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
         _mockLabelService = new Mock<ILabelService>();
 
+        var fallbackTransitionService = new WorkItemFallbackTransitionService(
+            _transitionService,
+            NullLogger<WorkItemFallbackTransitionService>.Instance);
+
         _lifecycleManager = new RunLifecycleManager(
             new RunLifecycleManagerDependencies(
                 _runService,
@@ -65,7 +69,8 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockLabelService.Object,
                 _dispatcher,
                 _mockLogger.Object,
-                WorkItemTransition: _transitionService));
+                WorkItemTransition: _transitionService,
+                WorkItemFallbackTransition: fallbackTransitionService));
     }
 
     public void Dispose()
@@ -345,6 +350,9 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _dispatcher,
                 _mockLogger.Object,
                 WorkItemTransition: _transitionService,
+                WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
+                    _transitionService,
+                    NullLogger<WorkItemFallbackTransitionService>.Instance),
                 JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
 
         // Act
@@ -412,6 +420,9 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _dispatcher,
                 _mockLogger.Object,
                 WorkItemTransition: _transitionService,
+                WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
+                    _transitionService,
+                    NullLogger<WorkItemFallbackTransitionService>.Instance),
                 JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
 
         // Act
@@ -483,6 +494,9 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _dispatcher,
                 _mockLogger.Object,
                 WorkItemTransition: _transitionService,
+                WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
+                    _transitionService,
+                    NullLogger<WorkItemFallbackTransitionService>.Instance),
                 JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
         // Act — should not throw despite 404
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -557,6 +571,9 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _dispatcher,
                 _mockLogger.Object,
                 WorkItemTransition: _transitionService,
+                WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
+                    _transitionService,
+                    NullLogger<WorkItemFallbackTransitionService>.Instance),
                 JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
         // Act — should not throw despite K8s API failure
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);

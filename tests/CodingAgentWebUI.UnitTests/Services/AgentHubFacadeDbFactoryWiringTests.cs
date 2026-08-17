@@ -1,9 +1,11 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 
@@ -43,6 +45,21 @@ public sealed class AgentHubFacadeDbFactoryWiringTests
         services.AddSingleton<CodingAgentWebUI.Pipeline.Interfaces.IShutdownSignal>(
             new CodingAgentWebUI.Pipeline.Services.ShutdownSignal());
         services.AddSingleton(Moq.Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IProjectStore>());
+
+        // WorkItemFallbackTransitionService is resolved via GetService (optional) in RegisterAgentHubServices.
+        // Register it so the DI wiring test doesn't resolve null for IWorkItemFallbackTransitionService.
+        // TODO: services.BuildServiceProvider() mid-registration builds a second, undisposed ServiceProvider
+        // to resolve IDbContextFactory. Replace with a factory lambda to avoid leaking disposable singletons:
+        //   services.AddSingleton<IWorkItemFallbackTransitionService>(sp =>
+        //       new WorkItemFallbackTransitionService(
+        //           sp.GetRequiredService<WorkItemTransitionService>(), ...));
+        // This requires registering WorkItemTransitionService above first.
+        var transitionService = new WorkItemTransitionService(
+            services.BuildServiceProvider().GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext>>(),
+            NullLogger<WorkItemTransitionService>.Instance);
+        services.AddSingleton<IWorkItemFallbackTransitionService>(
+            new WorkItemFallbackTransitionService(transitionService, NullLogger<WorkItemFallbackTransitionService>.Instance));
+
         services.AddHttpClient();
 
         // Act: Build the provider and resolve AgentHubFacade
