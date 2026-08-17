@@ -265,7 +265,7 @@ public class ConfigExportServiceTests : IDisposable
         var json = await File.ReadAllTextAsync(path);
         var deserialized = JsonSerializer.Deserialize<PipelineRunSummary>(json, PipelineJsonOptions.Default);
         deserialized!.RunId.Should().Be(runId.ToString());
-        deserialized.IssueIdentifier.Should().Be("TEST-123");
+        deserialized.IssueIdentifier.Should().Be((IssueIdentifier)"TEST-123");
         deserialized.FinalStep.Should().Be(PipelineStep.Completed);
         deserialized.PullRequestUrl.Should().Be("https://github.com/test/pr/1");
     }

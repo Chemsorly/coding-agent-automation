@@ -610,14 +610,16 @@ public class GitLabRepositoryProviderMergeRequestTests
     }
 
     [Fact]
-    public async Task GetAgentPullRequestsAsync_NullIdentifier_Throws()
+    public async Task GetAgentPullRequestsAsync_DefaultIdentifier_ReturnsEmpty()
     {
+        // IssueIdentifier is a non-nullable struct; default(IssueIdentifier) has Value = null.
+        // The null guard in GetAgentPullRequestsAsync returns early without querying the server.
         var (client, projectId) = CreateServerWithProject();
         var provider = new GitLabRepositoryProvider(client, projectId, "main");
 
-        var act = () => provider.GetAgentPullRequestsAsync(null!, CancellationToken.None);
+        var result = await provider.GetAgentPullRequestsAsync(default, CancellationToken.None);
 
-        await act.Should().ThrowAsync<ArgumentNullException>();
+        result.Should().BeEmpty();
     }
 
     #endregion

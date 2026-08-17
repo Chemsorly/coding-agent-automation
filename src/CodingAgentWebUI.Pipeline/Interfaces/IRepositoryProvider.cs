@@ -87,7 +87,7 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// for the given issue. Returns metadata including draft state, mergeable state, and review comments.
     /// </summary>
     Task<IReadOnlyList<LinkedPullRequest>> GetAgentPullRequestsAsync(
-        string issueIdentifier, CancellationToken ct)
+        IssueIdentifier issueIdentifier, CancellationToken ct)
         => Task.FromResult<IReadOnlyList<LinkedPullRequest>>(Array.Empty<LinkedPullRequest>());
 
     /// <summary>
@@ -280,7 +280,7 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// Default: <c>Closes #{issueIdentifier}</c> (GitHub/GitLab).
     /// Returns null when cross-platform auto-close is not supported (e.g., GitHub repo + Jira issues).
     /// </summary>
-    string? FormatCloseReference(string issueIdentifier) => $"Closes #{issueIdentifier}";
+    string? FormatCloseReference(IssueIdentifier issueIdentifier) => $"Closes #{issueIdentifier}";
 
     /// <summary>
     /// Returns the count of commits on the default branch since the given timestamp.

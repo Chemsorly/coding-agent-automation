@@ -223,7 +223,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
         var deserialized = JsonSerializer.Deserialize<PipelineRunSummary>(json, JsonOptions);
         deserialized.Should().NotBeNull();
         deserialized!.RunId.Should().Be("persist-test-run");
-        deserialized.IssueIdentifier.Should().Be("42");
+        deserialized.IssueIdentifier.Should().Be((IssueIdentifier)"42");
         deserialized.IssueTitle.Should().Be("Test Issue");
         deserialized.FinalStep.Should().Be(PipelineStep.Completed);
     }
@@ -387,7 +387,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
             var history = await historyService.GetRunHistoryAsync();
 
             history.Should().HaveCount(1);
-            history[0].IssueIdentifier.Should().Be("org/repo#1");
+            history[0].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#1");
         }
         finally
         {

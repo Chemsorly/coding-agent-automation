@@ -490,7 +490,7 @@ public class PullRequestFinalizationServiceTests
         repoProvider.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("https://github.com/org/repo/pull/99");
         repoProvider.Setup(r => r.BaseBranch).Returns("main");
-        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
 
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
@@ -546,7 +546,7 @@ public class PullRequestFinalizationServiceTests
         repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
         repoProvider.Setup(r => r.BaseBranch).Returns("main");
-        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
 
         var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
 
@@ -603,7 +603,7 @@ public class PullRequestFinalizationServiceTests
         repoProvider.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("https://github.com/org/repo/pull/99");
         repoProvider.Setup(r => r.BaseBranch).Returns("main");
-        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
 
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
@@ -669,7 +669,7 @@ public class PullRequestFinalizationServiceTests
         repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         repoProvider.Setup(r => r.BaseBranch).Returns("main");
-        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
 
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
@@ -721,7 +721,7 @@ public class PullRequestFinalizationServiceTests
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("permission denied"));
         repoProvider.Setup(r => r.BaseBranch).Returns("main");
-        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
 
         var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
 

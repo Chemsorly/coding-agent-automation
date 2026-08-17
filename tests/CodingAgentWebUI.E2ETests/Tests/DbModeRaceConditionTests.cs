@@ -416,7 +416,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
 
         // Assert: all 5 runs in history
         var history = (await Fixture.HistoryService.GetRunHistoryAsync())
-            .Where(r => r.IssueIdentifier.StartsWith("2100-"))
+            .Where(r => r.IssueIdentifier.Value.StartsWith("2100-", StringComparison.Ordinal))
             .ToList();
         Assert.Equal(5, history.Count);
         Assert.All(history, h => Assert.Equal(PipelineStep.Completed, h.FinalStep));
