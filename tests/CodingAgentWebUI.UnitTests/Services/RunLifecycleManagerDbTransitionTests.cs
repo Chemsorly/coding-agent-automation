@@ -50,6 +50,7 @@ public sealed class RunLifecycleManagerDbTransitionTests
 
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
         _transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        var fallbackService = new WorkItemFallbackTransitionService(_transitionService, NullLogger<WorkItemFallbackTransitionService>.Instance);
 
         _mockLogger = new Mock<ILogger>();
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
@@ -66,7 +67,8 @@ public sealed class RunLifecycleManagerDbTransitionTests
             _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
-            WorkItemTransition: _transitionService));
+            WorkItemTransition: _transitionService,
+            WorkItemFallbackTransition: fallbackService));
     }
 
     // ── CancelRunAsync DB transition ─────────────────────────────────────
