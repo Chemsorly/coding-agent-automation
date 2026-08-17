@@ -1099,13 +1099,14 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TryDispatchToAgentAsync_EmptyAgentId_ThrowsArgumentException()
+    public async Task TryDispatchToAgentAsync_DefaultAgentId_ThrowsArgumentException()
     {
+        // default(AgentId) has Value=null (C# struct zero-initialization bypasses the constructor).
+        // TryDispatchToAgentAsync must reject it via ArgumentException.ThrowIfNullOrEmpty(agentId.Value).
+        // Note: new AgentId("") now throws in the AgentId constructor itself, so we use default(AgentId)
+        // to test the service's own defense-in-depth guard against a null-Value AgentId struct.
         var svc = CreateService();
-        // TODO: Also add a test for new AgentId(null!) (null Value path) once AgentId's primary constructor
-        // is hardened to reject nulls (see TODO in AgentId.cs). Currently ThrowIfNullOrEmpty(agentId.Value)
-        // may throw NullReferenceException rather than ArgumentException for a null-valued AgentId struct.
-        await svc.Invoking(s => s.TryDispatchToAgentAsync("run-1", ConsolidationRunType.BrainConsolidation, null, "/tmp", new AgentId(""), CancellationToken.None))
+        await svc.Invoking(s => s.TryDispatchToAgentAsync("run-1", ConsolidationRunType.BrainConsolidation, null, "/tmp", default(AgentId), CancellationToken.None))
             .Should().ThrowAsync<ArgumentException>();
     }
 
