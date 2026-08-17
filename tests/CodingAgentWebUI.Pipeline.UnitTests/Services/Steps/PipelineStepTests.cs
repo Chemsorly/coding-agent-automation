@@ -360,7 +360,7 @@ public class PipelineStepTests
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         Assert.Equal(StepResult.Continue, result);
-        _repoProvider.Verify(p => p.GetAgentPullRequestsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _repoProvider.Verify(p => p.GetAgentPullRequestsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

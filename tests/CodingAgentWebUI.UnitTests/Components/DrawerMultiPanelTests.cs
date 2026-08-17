@@ -154,7 +154,7 @@ public class DrawerMultiPanelTests : BunitContext
                 HasMore = false
             });
 
-        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<LinkedPullRequest>());
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))

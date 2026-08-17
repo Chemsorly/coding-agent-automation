@@ -94,7 +94,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
 
     public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
 
-    public Task<IReadOnlyList<LinkedPullRequest>> GetAgentPullRequestsAsync(string issueIdentifier, CancellationToken ct) =>
+    public Task<IReadOnlyList<LinkedPullRequest>> GetAgentPullRequestsAsync(IssueIdentifier issueIdentifier, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<LinkedPullRequest>>(Array.Empty<LinkedPullRequest>());
 
     public Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct) => Task.CompletedTask;

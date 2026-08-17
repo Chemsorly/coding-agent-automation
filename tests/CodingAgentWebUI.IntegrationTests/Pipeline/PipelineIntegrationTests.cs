@@ -210,7 +210,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
 
         var history = await service2.GetRunHistoryAsync();
         var restored = history.Should().ContainSingle(s => s.RunId == run.RunId).Subject;
-        restored.IssueIdentifier.Should().Be("42");
+        restored.IssueIdentifier.Value.Should().Be("42");
         restored.IssueTitle.Should().Be("Test Issue");
         restored.FinalStep.Should().Be(PipelineStep.Completed);
         restored.StartedAt.Should().BeCloseTo(run.StartedAt, TimeSpan.FromSeconds(1));

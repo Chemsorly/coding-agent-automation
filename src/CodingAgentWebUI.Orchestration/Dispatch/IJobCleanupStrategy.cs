@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
@@ -11,5 +13,5 @@ public interface IJobCleanupStrategy
     /// Attempts to delete the infrastructure job associated with a cancelled run.
     /// Implementations must be non-throwing (graceful handling of 404, timeouts, etc.).
     /// </summary>
-    Task TryDeleteJobForRunAsync(string runId, CancellationToken ct);
+    Task TryDeleteJobForRunAsync(RunId runId, CancellationToken ct);
 }
