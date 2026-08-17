@@ -13,5 +13,5 @@ public interface IAgentCancellationSender
     /// Sends a CancelJob message to the agent identified by <paramref name="agentId"/>.
     /// If the agent is not connected or the send fails, the method returns without throwing.
     /// </summary>
-    Task SendCancelJobAsync(AgentId agentId, string runId, CancellationToken ct = default);
+    Task SendCancelJobAsync(AgentId agentId, RunId runId, CancellationToken ct = default);
 }

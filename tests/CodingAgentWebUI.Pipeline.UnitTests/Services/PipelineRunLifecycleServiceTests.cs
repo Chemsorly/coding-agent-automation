@@ -419,7 +419,7 @@ public class PipelineRunLifecycleServiceTests
         mockSender.Verify(
             s => s.SendCancelJobAsync(
                 It.Is<AgentId>(a => a.Value == "agent-42"),
-                "run-1",
+                It.Is<RunId>(r => r.Value == "run-1"),
                 CancellationToken.None),
             Times.Once);
 
@@ -449,7 +449,7 @@ public class PipelineRunLifecycleServiceTests
         // State transition occurs but no fallback cancel sent
         run.CurrentStep.Should().Be(PipelineStep.Cancelled);
         mockSender.Verify(
-            s => s.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            s => s.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         externalCts.Dispose();
@@ -483,7 +483,7 @@ public class PipelineRunLifecycleServiceTests
     {
         var mockSender = new Mock<IAgentCancellationSender>();
         mockSender
-            .Setup(s => s.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Agent disconnected"));
 
         var service = CreateService(agentCancellationSender: mockSender.Object);
