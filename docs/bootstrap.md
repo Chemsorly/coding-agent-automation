@@ -1,0 +1,110 @@
+# Bootstrap Guide
+
+How to set up a fresh Kubernetes deployment or migrate configuration from an existing instance.
+
+<!-- TODO(Spec 045): update endpoint host/port once Spec 042 moves the config endpoints to the API service. -->
+
+## Scenario A — Fresh Install
+
+1. Deploy the Helm chart:
+   ```bash
+   helm install coding-agent ./helm/coding-agent-automation \
+     --set secrets.agentApiKey="$(openssl rand -hex 32)" \
+     --set database.host=postgres.coding-agent.svc.cluster.local \
+     --set database.auth.existingSecret=postgres-secret
+   ```
+
+2. Open the web UI. A first-run banner will appear prompting you to configure job templates.
+
+3. Go to **Settings** and configure:
+   - Providers (Issue, Repository, Agent, optionally Pipeline/CI)
+   - Agent Profiles, Quality Gate Configs, Reviewer Configs
+   - Pipeline Job Templates
+
+4. Create a pipeline job template and start a run, or enable closed-loop mode to process `agent:next` issues automatically.
+
+> After upgrading from Spec 041 to a later release, start the pipeline loop manually from the web UI on first boot. Closed-loop auto-start is restored in Spec 045.
+
+---
+
+## Scenario B — Migrate from an Existing Instance (HTTP export/import)
+
+Use the HTTP API to export configuration from the old instance and import it into the new one.
+
+> ⚠️ **`POST /api/config/import` is destructive.** It clears ALL existing configuration (providers, profiles, quality gate configs, reviewer configs, projects, and job templates) before inserting the uploaded bundle. Run history, work items, and consolidation data are preserved. The operation is transactional — it fully commits or fully rolls back.
+
+### Step 1 — Export from the old instance
+
+```bash
+curl -H "Authorization: Bearer $AGENT_API_KEY" \
+  -o pipeline-config-export.json \
+  https://old-instance:8080/api/config/export
+```
+
+The response is a JSON file download (`pipeline-config-export.json`) containing all configuration as a single bundle.
+
+### Step 2 — Import into the new instance
+
+The import endpoint accepts a `multipart/form-data` POST with a single form field named `file`:
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $AGENT_API_KEY" \
+  -F "file=@pipeline-config-export.json" \
+  https://new-instance:8080/api/config/import
+```
+
+On success, the response body is:
+
+```json
+{
+  "success": true,
+  "message": "Imported: 2 providers, 1 profiles, 1 quality gates, 1 reviewers, 1 projects, 1 templates"
+}
+```
+
+On validation failure (invalid JSON, empty bundle, no file), HTTP 400 is returned with an error message.
+
+### Authentication
+
+Both endpoints require the `Authorization: Bearer <AGENT_API_KEY>` header. The `AGENT_API_KEY` is the master key set via the `secrets.agentApiKey` Helm value (or the `AGENT_API_KEY` environment variable for local runs).
+
+See [HTTP API Reference](api-reference.md) for full endpoint details.
+
+---
+
+## Scenario C — File-Based Auto-Import (First-Boot Migration)
+
+On first startup against an empty Postgres database, `DatabaseStartupService.ImportJsonConfigIfNeededAsync` checks for JSON config files under `ConfigBaseDirectory` (default: `/app/config/pipeline`). If files are present, they are imported automatically without any manual action.
+
+This is a zero-effort migration path for operators upgrading from a docker-compose deployment that stored configuration in JSON files.
+
+**How to use it:**
+
+1. Mount your existing JSON config directory at `/app/config/pipeline` in the orchestrator pod (e.g., via a PVC or ConfigMap volume).
+2. Start the orchestrator. On first boot it detects the files and imports them.
+3. After import succeeds, the volume mount is no longer needed — configuration lives in Postgres.
+
+On a fresh install with no JSON files present, this is a no-op.
+
+---
+
+## Bundle Format
+
+The export bundle is a flat JSON object with arrays for each entity type:
+
+```json
+{
+  "pipelineConfig": "{...}",
+  "providerConfigs": [ ... ],
+  "agentProfiles": [ ... ],
+  "qualityGateConfigs": [ ... ],
+  "reviewerConfigs": [ ... ],
+  "projects": [ ... ],
+  "jobTemplates": [ ... ]
+}
+```
+
+The `pipelineConfig`, per-entity `configuration`, and project `settings` fields contain serialized JSON strings (double-encoded). This is the format the system uses internally and is preserved in the export.
+
+For a full example response see [HTTP API Reference — GET /api/config/export](api-reference.md#get-apiconfigexport).

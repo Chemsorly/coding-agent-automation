@@ -1,3 +1,4 @@
+{{- include "coding-agent-automation.deprecations" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,9 +30,7 @@ spec:
         app.kubernetes.io/component: orchestrator
     spec:
       serviceAccountName: {{ include "coding-agent-automation.serviceAccountName" . }}
-      {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
       automountServiceAccountToken: true
-      {{- end }}
       terminationGracePeriodSeconds: {{ .Values.orchestrator.terminationGracePeriodSeconds }}
       {{- with .Values.orchestrator.podSecurityContext }}
       securityContext:
@@ -94,15 +93,14 @@ spec:
                   name: {{ include "coding-agent-automation.secretName" . }}
                   key: otel-headers
                   optional: true
-            {{- if .Values.database.enabled }}
             - name: Database__Host
-              value: {{ required "database.host is required when database.enabled=true" .Values.database.host | quote }}
+              value: {{ required "database.host is required" .Values.database.host | quote }}
             - name: Database__Port
               value: {{ .Values.database.port | default 5432 | quote }}
             - name: Database__Name
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "database.auth.existingSecret is required when database.enabled=true" .Values.database.auth.existingSecret }}
+                  name: {{ required "database.auth.existingSecret is required" .Values.database.auth.existingSecret }}
                   key: {{ .Values.database.auth.keys.database | default "POSTGRES_DB" }}
             - name: Database__Username
               valueFrom:
@@ -120,47 +118,16 @@ spec:
             {{- end }}
             - name: Database__MigrateOnStartup
               value: {{ .Values.database.migrateOnStartup | quote }}
-            - name: WorkDistribution__Mode
-              value: {{ .Values.workDistribution.mode | quote }}
-            {{- end }}
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}
             {{- end }}
           volumeMounts:
-            {{- if ne .Values.orchestrator.persistence.mountMode "disabled" }}
-            - name: pipeline-config
-              mountPath: /app/config/pipeline
-              {{- if eq .Values.orchestrator.persistence.mountMode "readOnly" }}
-              readOnly: true
-              {{- end }}
-            {{- end }}
-            {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
             - name: job-templates
               mountPath: /app/config/job-templates.yaml
               subPath: job-templates.yaml
               readOnly: true
-            {{- end }}
       volumes:
-        {{- if ne .Values.orchestrator.persistence.mountMode "disabled" }}
-        - name: pipeline-config
-          {{- if eq .Values.orchestrator.persistence.type "pvc" }}
-          persistentVolumeClaim:
-            claimName: {{ include "coding-agent-automation.fullname" . }}-orchestrator-config
-            {{- if eq .Values.orchestrator.persistence.mountMode "readOnly" }}
-            readOnly: true
-            {{- end }}
-          {{- else if eq .Values.orchestrator.persistence.type "hostPath" }}
-          hostPath:
-            path: {{ .Values.orchestrator.persistence.hostPath }}
-            type: DirectoryOrCreate
-          {{- else }}
-          emptyDir:
-            sizeLimit: 1Gi
-          {{- end }}
-        {{- end }}
-        {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
         - name: job-templates
           configMap:
             name: {{ include "coding-agent-automation.fullname" . }}-job-templates
-        {{- end }}

@@ -14,11 +14,12 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This class is <c>internal</c> — consumed only by <see cref="LegacyWorkDistributor"/>
+/// This class is <c>internal</c> — consumed only by <c>LegacyWorkDistributor</c>
 /// (same assembly) and <see cref="JobQueueDrainService"/> (same assembly).
 /// It is NOT directly injectable from DI; external code uses <see cref="IWorkDistributor"/>.
 /// </para>
 /// </remarks>
+// TODO(Spec 043/044, same branch): dead after 041 — no Legacy/SignalR dispatch remains. Removed when the hub moves out of the monolith.
 public sealed partial class AgentJobDispatcher : IJobDispatcher
 {
     private readonly JobDeduplicationGuardService _dispatcher;

@@ -9,23 +9,19 @@ The pipeline is a state machine that progresses through a fixed sequence of step
 
 The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are dispatched by a separate `ConsolidationWorkItemDispatchService` and do not go through the label loop.
 
-## Dispatch Modes
+## Dispatch Mode
 
-The pipeline supports three dispatch modes, selected automatically based on configuration:
+The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService` prepares each request (creates PipelineRun, resolves providers, vends tokens), then `KubernetesWorkDistributor` creates a `WorkItem` row and a K8s Job (`caa-{workItemId[:8]}`). The Job runs an ephemeral agent pod that picks up the assignment via `GET /api/work-items/{id}/assignment` and reports terminal status via `POST /api/work-items/{id}/status`.
 
-| Mode | Trigger | Description |
-|------|---------|-------------|
-| **Legacy** | No `Database__Host` set | In-memory state + direct SignalR push. `AgentJobDispatcher` creates the PipelineRun and sends `JobAssignmentMessage` in one atomic operation. |
-| **DB+SignalR** | `Database__Host` set, no K8s | `DispatchOrchestrationService` prepares the request (creates PipelineRun, resolves providers, vends tokens), then `SignalRWorkDistributor` persists a WorkItem row and pushes via SignalR. |
-| **DB+Kubernetes** | `workDistribution.mode=Kubernetes` | Same orchestration, but `KubernetesWorkDistributor` creates a WorkItem row and a K8s Job picks it up. |
-
-In DB+SignalR mode, the dispatch chain ensures a single ID flows end-to-end:
+A single ID flows end-to-end:
 
 ```
-PipelineRun.RunId (orchestration) = WorkItem.Id (DB) = JobAssignmentMessage.JobId (agent) = hub GetRun(jobId)
+PipelineRun.RunId = WorkItem.Id = K8s Job name suffix = hub GetRun(jobId)
 ```
 
 This ID alignment is critical — hub methods (`RequestTokenRefresh`, `ReportStepTransition`, `ReportJobCompleted`) look up the PipelineRun by the agent's `jobId`. If these don't match, the hub returns "No active run found".
+
+<!-- TODO(Spec 045): rewrite for the API / JobController / agent-pod topology. -->
 
 See also: [Configuration](configuration.md) for all pipeline settings, and [Issue Workflows](github-issue-workflows.md) for how users interact with the pipeline via labels.
 

@@ -1,9 +1,11 @@
 name: E2E Tests
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Triggers reduced to workflow_dispatch only — Re-enabled by Spec 045 (same branch).
+  # push:
+  #   branches: [main]
+  # pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

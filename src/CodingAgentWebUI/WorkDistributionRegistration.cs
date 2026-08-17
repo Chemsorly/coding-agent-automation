@@ -19,57 +19,31 @@ using StackExchange.Redis;
 namespace CodingAgentWebUI;
 
 /// <summary>
-/// Registers work distribution services based on deployment mode:
-/// - No Database:Host → Legacy mode (JSON + in-memory)
-/// - DB + SignalR mode → PostgresConfigurationStore + SignalRWorkDistributor
-/// - DB + Kubernetes mode → full K8s services with DispatchService + ReconciliationService
+/// Registers work distribution services for Kubernetes deployment.
+/// Kubernetes is the only supported work distribution mode — PostgreSQL is required.
 /// </summary>
 public static partial class WorkDistributionRegistration
 {
     /// <summary>
-    /// Configures work distribution mode and registers all mode-dependent services.
-    /// Must be called AFTER AddInfrastructureServices (legacy) or INSTEAD of it (DB modes).
+    /// Registers all work distribution services using Kubernetes mode.
+    /// Must be called after the Database__Host fast-fail in Program.cs guarantees
+    /// a non-empty connection string.
     /// </summary>
     public static IServiceCollection AddWorkDistribution(
         this IServiceCollection services,
         IConfiguration configuration)
     {
         var connectionString = Services.DatabaseConnectionResolver.Resolve(configuration);
-        var mode = configuration.GetValue<string>("WorkDistribution:Mode") ?? "SignalR";
-
-        if (string.IsNullOrEmpty(connectionString))
-        {
-            RegisterLegacyMode(services);
-            return services;
-        }
-
-        // ── DB mode: validate mode value ────────────────────────────────────
-        if (!string.Equals(mode, "SignalR", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(mode, "Kubernetes", StringComparison.OrdinalIgnoreCase))
-        {
-            Log.Error("Unrecognized WorkDistribution:Mode '{Mode}'. Valid values: 'SignalR', 'Kubernetes'", mode);
-            throw new InvalidOperationException(
-                $"Unrecognized WorkDistribution:Mode '{mode}'. Valid values: 'SignalR', 'Kubernetes'.");
-        }
-
-        var isKubernetesMode = string.Equals(mode, "Kubernetes", StringComparison.OrdinalIgnoreCase);
-
-        // ── K8s mode: fail if not in cluster ────────────────────────────────
-        if (isKubernetesMode && !IsRunningInKubernetesCluster())
-        {
-            Log.Error("WorkDistribution:Mode is 'Kubernetes' but the application is not running inside a Kubernetes cluster");
-            throw new InvalidOperationException(
-                "WorkDistribution:Mode is 'Kubernetes' but the application is not running inside a Kubernetes cluster. " +
-                "The service account token path '/var/run/secrets/kubernetes.io/serviceaccount/token' was not found.");
-        }
 
         // ── Normalize connection string (Timeout=15, SslMode=Require for production) ──
         var isProduction = !string.Equals(
             Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
             "Development",
             StringComparison.OrdinalIgnoreCase);
+        // connectionString is guaranteed non-null/non-empty by the Program.cs fast-fail
+        // (Log.Fatal + return when Database__Host is not configured).
         var normalizedConnectionString = Services.DatabaseReadinessMonitor.NormalizeConnectionString(
-            connectionString, isProduction);
+            connectionString!, isProduction);
 
         // ── EF Core DbContext Factory + scoped accessor ─────────────────────
         services.AddPooledDbContextFactory<PipelineDbContext>(opts =>
@@ -159,6 +133,9 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<ILoopStateStore>(sp =>
             new PostgresLoopStateStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
+        // ── Generic key/value persistence (DB-backed) ────────────────────────
+        services.AddScoped<IKeyValueStore, EfKeyValueStore>();
+
         // ── Harness suggestions persistence (DB-backed) ─────────────────────
         services.AddSingleton<IHarnessSuggestionStore>(sp =>
             new PostgresHarnessSuggestionStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
@@ -172,21 +149,13 @@ public static partial class WorkDistributionRegistration
         // ── Database maintenance (retention cleanup — both DB modes) ────────
         services.AddHostedService<DatabaseMaintenanceService>();
 
-        // ── Mode-specific registrations ─────────────────────────────────────
-        if (isKubernetesMode)
-        {
-            RegisterKubernetesMode(services, configuration);
-        }
-        else
-        {
-            RegisterSignalRMode(services, configuration);
-        }
+        // ── Kubernetes-mode registrations ────────────────────────────────────
+        RegisterKubernetesMode(services, configuration);
 
-        // ── SignalR Redis backplane (optional, both DB modes) ────────────────
+        // ── SignalR Redis backplane (optional) ────────────────────────────────
         ConfigureSignalRRedisBackplane(services, configuration);
 
-        Log.Information("WorkDistribution: {Mode} mode with PostgreSQL. ConnectionString configured",
-            isKubernetesMode ? "Kubernetes" : "SignalR");
+        Log.Information("WorkDistribution: Kubernetes mode with PostgreSQL. ConnectionString configured");
 
         return services;
     }
@@ -285,22 +254,6 @@ public static partial class WorkDistributionRegistration
         });
 
         Log.Information("WorkDistribution: SignalR Redis backplane configured with AbortOnConnectFail=false");
-    }
-
-    /// <summary>
-    /// Detects whether the process is running inside a Kubernetes cluster
-    /// by checking for the service account token file.
-    /// </summary>
-    private static bool IsRunningInKubernetesCluster()
-    {
-        // Standard K8s service account token mount path
-        const string tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token";
-        if (File.Exists(tokenPath))
-            return true;
-
-        // Fallback: KUBERNETES_SERVICE_HOST env var is always set in-cluster
-        var k8sServiceHost = Environment.GetEnvironmentVariable("KUBERNETES_SERVICE_HOST");
-        return !string.IsNullOrEmpty(k8sServiceHost);
     }
 
     /// <summary>

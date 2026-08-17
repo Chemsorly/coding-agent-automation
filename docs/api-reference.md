@@ -2,16 +2,14 @@
 
 The orchestrator exposes HTTP API endpoints for programmatic access to work item management, configuration, run history, and health probes.
 
-## Availability by Deployment Mode
+## Availability
 
-| Endpoint Group | DB Mode | File-Based Mode |
-|---------------|---------|-----------------|
-| Work Items (`/api/work-items/`) | ✅ Available | ❌ Not registered |
-| Config Import/Export (`/api/config/`) | ✅ Available | ❌ Not registered |
-| Run Export (`/api/export/`) | ✅ Available | ✅ Available |
-| Health Probes (`/healthz`, `/readyz`) | ✅ Available | ✅ Available |
-
-Work item and config endpoints are **only registered when a database connection string is configured** (DB+SignalR or DB+Kubernetes modes). The run export and health probe endpoints are always available regardless of deployment mode.
+| Endpoint Group | Available |
+|---------------|-----------|
+| Work Items (`/api/work-items/`) | ✅ |
+| Config Import/Export (`/api/config/`) | ✅ |
+| Run Export (`/api/export/`) | ✅ |
+| Health Probes (`/healthz`, `/readyz`) | ✅ |
 
 > **Note:** The SignalR hub (`/hubs/agent`) is a WebSocket transport endpoint used for real-time agent communication. It is not a REST API and is not covered in this reference.
 
@@ -48,8 +46,6 @@ The `AGENT_API_KEY` environment variable on the orchestrator sets the master key
 ---
 
 ## Work Item Endpoints
-
-> **DB-mode only** — These endpoints are not available in file-based mode.
 
 ### GET /api/work-items/{id}/assignment
 
@@ -173,8 +169,6 @@ curl -X POST \
 
 ## Config Import/Export Endpoints
 
-> **DB-mode only** — These endpoints are not available in file-based mode.
->
 > ⚠️ **Warning:** The import endpoint is destructive — it clears ALL existing configuration before inserting the uploaded bundle. This operation is transactional (atomic commit or full rollback).
 
 ### GET /api/config/export
@@ -307,8 +301,6 @@ curl -X POST \
 
 ## Run Export Endpoint
 
-> **Always available** — This endpoint is registered in all deployment modes (DB and file-based). No authentication required.
-
 ### GET /api/export/runs.json
 
 Download pipeline run history as a JSON file.
@@ -369,7 +361,7 @@ The response is a JSON array of run summary objects. Each object includes run me
 
 ## Health Probe Endpoints
 
-> **Always available** — Registered in all deployment modes. No authentication required.
+> No authentication required.
 
 ### GET /healthz
 
@@ -420,12 +412,12 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 
 ## Endpoint Summary Table
 
-| Method | Path | Auth | DB-Mode Only | Description |
-|--------|------|------|:------------:|-------------|
-| GET | `/api/work-items/{id}/assignment` | AgentApiKey | ✅ | Fetch job assignment |
-| POST | `/api/work-items/{id}/status` | AgentApiKey | ✅ | Report status transition |
-| GET | `/api/config/export` | AgentApiKey | ✅ | Download config bundle |
-| POST | `/api/config/import` | AgentApiKey | ✅ | Upload config bundle (destructive) |
-| GET | `/api/export/runs.json` | Anonymous | ❌ | Download run history |
-| GET | `/healthz` | Anonymous | ❌ | Liveness probe |
-| GET | `/readyz` | Anonymous | ❌ | Readiness probe |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/work-items/{id}/assignment` | AgentApiKey | Fetch job assignment |
+| POST | `/api/work-items/{id}/status` | AgentApiKey | Report status transition |
+| GET | `/api/config/export` | AgentApiKey | Download config bundle |
+| POST | `/api/config/import` | AgentApiKey | Upload config bundle (destructive) |
+| GET | `/api/export/runs.json` | Anonymous | Download run history |
+| GET | `/healthz` | Anonymous | Liveness probe |
+| GET | `/readyz` | Anonymous | Readiness probe |

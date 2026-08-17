@@ -4,7 +4,7 @@ using CodingAgentWebUI.Pipeline.Models;
 namespace CodingAgentWebUI.Services;
 
 /// <summary>
-/// Static helpers shared by all three drawer services for the orchestration and legacy dispatch flows.
+/// Static helpers shared by all three drawer services for the orchestration dispatch flow.
 /// Extracted to avoid duplication across IssueDrawerService, PrReviewDrawerService, and EpicDrawerService.
 /// </summary>
 internal static class DrawerDispatchHelper
@@ -33,21 +33,6 @@ internal static class DrawerDispatchHelper
             return (false, distributionFailedError, null);
 
         return (true, null, outcome.Queued ? queuedMessage : dispatchedMessage);
-    }
-
-    /// <summary>
-    /// Shared legacy dispatch flow: distribute a pre-built request and return success/failure messages.
-    /// </summary>
-    public static async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchLegacyAsync(
-        IWorkDistributor workDistributor,
-        JobDistributionRequest request,
-        string successMessage,
-        string failureError)
-    {
-        var result = await workDistributor.DistributeAsync(request, CancellationToken.None);
-        return result.Success
-            ? (true, null, successMessage)
-            : (false, failureError, null);
     }
 
     /// <summary>Returns "manual" — the initiator string used for all manual dispatches.</summary>

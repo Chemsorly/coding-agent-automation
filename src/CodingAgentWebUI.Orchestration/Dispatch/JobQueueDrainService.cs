@@ -29,6 +29,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// <b>Priority:</b> Pipeline jobs are drained before consolidation jobs (intentional).
 /// </para>
 /// </summary>
+// TODO(Spec 043/044, same branch): dead after 041 — no Legacy/SignalR dispatch remains. Removed when the hub moves out of the monolith.
 public sealed class JobQueueDrainService : BackgroundService
 {
     private readonly JobDeduplicationGuardService _dispatcher;

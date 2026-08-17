@@ -1,215 +1,297 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
+using CodingAgentWebUI.Infrastructure.Persistence.Stores;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
-using Xunit;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Text.Json;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 
-public class ConfigurationStoreCacheTests : IDisposable
+/// <summary>
+/// Cache-invalidation tests for <see cref="PostgresConfigurationStore"/>.
+/// Uses InMemory EF Core with TTL=1ms so cache entries expire immediately,
+/// letting tests verify that writes invalidate the cache rather than serve stale data.
+/// </summary>
+public sealed class ConfigurationStoreCacheTests : IDisposable
 {
-    private readonly string _tempDir;
-    private readonly JsonConfigurationStore _store;
+    private readonly DbContextOptions<PipelineDbContext> _dbOptions;
 
     public ConfigurationStoreCacheTests()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), $"cache-tests-{Guid.NewGuid()}");
-        Directory.CreateDirectory(_tempDir);
-        _store = new JsonConfigurationStore(_tempDir);
+        var dbName = $"CacheTests-{Guid.NewGuid()}";
+        _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(dbName)
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        using var ctx = new CacheTestPipelineDbContext(_dbOptions);
+        ctx.Database.EnsureCreated();
     }
 
     public void Dispose()
     {
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        using var db = new CacheTestPipelineDbContext(_dbOptions);
+        db.Database.EnsureDeleted();
     }
 
-    // ── PipelineConfiguration cache ───────────────────────────────────────
+    private PostgresConfigurationStore CreateStore(TimeSpan? ttl = null) =>
+        new PostgresConfigurationStore(
+            new CacheTestDbContextFactory(_dbOptions),
+            cacheTtl: ttl ?? TimeSpan.FromMilliseconds(1));
+
+    // ── _pipelineConfigCache (permanent until write) ──────────────────────
 
     [Fact]
-    public async Task LoadPipelineConfig_SecondCall_ReturnsCachedInstance()
+    public async Task PipelineConfig_FirstLoad_PopulatesCache_SecondCallReturnsSameObject()
     {
-        var first = await _store.LoadPipelineConfigAsync(CancellationToken.None);
-        var second = await _store.LoadPipelineConfigAsync(CancellationToken.None);
+        // Arrange
+        var store = CreateStore();
+        var saved = new PipelineConfiguration { MaxRetries = 3, WorkspaceBaseDirectory = "/cached" };
+        await store.SavePipelineConfigAsync(saved, CancellationToken.None);
 
-        ReferenceEquals(first, second).Should().BeTrue();
+        // Act
+        var first = await store.LoadPipelineConfigAsync(CancellationToken.None);
+        var second = await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        // Assert: same object reference proves the second call returned the cached instance
+        second.Should().BeSameAs(first);
     }
 
     [Fact]
-    public async Task SavePipelineConfig_InvalidatesCache_NextLoadReadsFreshData()
+    public async Task SavePipelineConfig_ReplacesCache_SubsequentLoadReturnsSavedValue()
     {
-        // Load to populate cache
-        var original = await _store.LoadPipelineConfigAsync(CancellationToken.None);
-        original.MaxRetries.Should().Be(3); // default
+        // Arrange: load to prime the cache with the initial value
+        var store = CreateStore();
+        await store.SavePipelineConfigAsync(
+            new PipelineConfiguration { MaxRetries = 1, WorkspaceBaseDirectory = "/original" },
+            CancellationToken.None);
+        var _ = await store.LoadPipelineConfigAsync(CancellationToken.None);
 
-        // Save different config — invalidates cache
-        var updated = new PipelineConfiguration
+        // Act: save a new value through the store
+        await store.SavePipelineConfigAsync(
+            new PipelineConfiguration { MaxRetries = 42, WorkspaceBaseDirectory = "/after-save" },
+            CancellationToken.None);
+
+        // The next load must return the newly saved value, not the previously cached "/original"
+        var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        // Assert: cache was replaced with the saved value (not stale)
+        loaded.WorkspaceBaseDirectory.Should().Be("/after-save");
+        loaded.MaxRetries.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task UpdatePipelineConfig_ReplacesCache_SubsequentLoadReturnsUpdatedValue()
+    {
+        // Arrange: prime the cache with an initial value
+        var store = CreateStore();
+        await store.SavePipelineConfigAsync(
+            new PipelineConfiguration { MaxRetries = 2, WorkspaceBaseDirectory = "/before-update" },
+            CancellationToken.None);
+        var _ = await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        // Act: update through the store
+        await store.UpdatePipelineConfigAsync(
+            c => c with { MaxRetries = 5, WorkspaceBaseDirectory = "/after-update" },
+            CancellationToken.None);
+
+        // The next load must return the updated value, not the previously cached "/before-update"
+        var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        // Assert: cache was replaced with the updated value (not stale)
+        loaded.WorkspaceBaseDirectory.Should().Be("/after-update");
+        loaded.MaxRetries.Should().Be(5);
+    }
+
+    // ── TTL-based MemoryCache (providers, profiles, etc.) ─────────────────
+
+    [Fact]
+    public async Task ProviderConfig_Save_InvalidatesCache_CountReflectsSecondSave()
+    {
+        // Arrange: TTL=1ms so after Task.Delay(5) any cached entry has expired
+        var store = CreateStore(ttl: TimeSpan.FromMilliseconds(1));
+
+        var first = new ProviderConfig
         {
-            MaxRetries = 99,
-            AgentTimeout = TimeSpan.FromMinutes(5),
-            WorkspaceBaseDirectory = "/fresh"
-        };
-        await _store.SavePipelineConfigAsync(updated, CancellationToken.None);
-
-        // Next load should read fresh data from disk
-        var reloaded = await _store.LoadPipelineConfigAsync(CancellationToken.None);
-        reloaded.MaxRetries.Should().Be(99);
-        reloaded.WorkspaceBaseDirectory.Should().Be("/fresh");
-    }
-
-    // ── ProviderConfig cache ──────────────────────────────────────────────
-
-    [Fact]
-    public async Task LoadProviderConfigs_SecondCall_ReturnsCachedInstance()
-    {
-        // Seed a provider so the list is non-empty
-        var config = new ProviderConfig
-        {
-            Id = "cached-provider",
+            Id = Guid.NewGuid().ToString(),
             Kind = ProviderKind.Issue,
             ProviderType = "GitHub",
-            DisplayName = "Cached"
+            DisplayName = "First Provider"
         };
-        await _store.SaveProviderConfigAsync(config, CancellationToken.None);
+        await store.SaveProviderConfigAsync(first, CancellationToken.None);
 
-        var first = await _store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-        var second = await _store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+        // Load to populate cache, then let TTL expire
+        var afterFirst = await store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+        afterFirst.Should().HaveCount(1);
+        await Task.Delay(5);
 
-        ReferenceEquals(first, second).Should().BeTrue();
+        // Save a second provider — must also invalidate immediately
+        var second = new ProviderConfig
+        {
+            Id = Guid.NewGuid().ToString(),
+            Kind = ProviderKind.Issue,
+            ProviderType = "GitHub",
+            DisplayName = "Second Provider"
+        };
+        await store.SaveProviderConfigAsync(second, CancellationToken.None);
+
+        // Act
+        var afterSecond = await store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+
+        // Assert: count increased — not stuck at the stale cached value of 1
+        afterSecond.Should().HaveCount(2);
     }
 
     [Fact]
-    public async Task SaveProviderConfig_InvalidatesCache_NextLoadReflectsChange()
+    public async Task ProviderConfig_Delete_InvalidatesCache_DeletedItemNotReturnedFromCache()
     {
-        // Initial load
-        var initial = await _store.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
-        initial.Should().BeEmpty();
-
-        // Save a new provider config
+        // Arrange
+        var store = CreateStore(ttl: TimeSpan.FromMilliseconds(1));
+        var providerId = Guid.NewGuid().ToString();
         var config = new ProviderConfig
         {
-            Id = "new-agent-provider",
-            Kind = ProviderKind.Agent,
-            ProviderType = "Kiro",
-            DisplayName = "New Agent"
-        };
-        await _store.SaveProviderConfigAsync(config, CancellationToken.None);
-
-        // Next load should contain the new config
-        var reloaded = await _store.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
-        reloaded.Should().ContainSingle(c => c.Id == "new-agent-provider");
-    }
-
-    [Fact]
-    public async Task DeleteProviderConfig_InvalidatesCache()
-    {
-        // Save then load to populate cache
-        var config = new ProviderConfig
-        {
-            Id = "delete-me",
+            Id = providerId,
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "To Delete"
         };
-        await _store.SaveProviderConfigAsync(config, CancellationToken.None);
-        var before = await _store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
-        before.Should().ContainSingle(c => c.Id == "delete-me");
+        await store.SaveProviderConfigAsync(config, CancellationToken.None);
 
-        // Delete — invalidates cache
-        await _store.DeleteProviderConfigAsync("delete-me", ProviderKind.Repository, CancellationToken.None);
+        // Load to populate cache — item is in the TTL cache now
+        var before = await store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
+        before.Should().ContainSingle(c => c.Id == providerId);
 
-        // Next load should not contain the deleted config
-        var after = await _store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
-        after.Should().NotContain(c => c.Id == "delete-me");
+        // Delete — must invalidate cache even before TTL expires
+        await store.DeleteProviderConfigAsync(providerId, ProviderKind.Repository, CancellationToken.None);
+
+        // Act: load immediately (TTL may still be alive; invalidation must have fired)
+        var after = await store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
+
+        // Assert
+        after.Should().NotContain(c => c.Id == providerId);
     }
 
-    // ── Projects cache ────────────────────────────────────────────────────
+    // ── InvalidateCaches() resets both caches ─────────────────────────────
 
     [Fact]
-    public async Task LoadProjects_SecondCall_ReturnsCachedInstance()
+    public async Task InvalidateCaches_ClearsPipelineConfigCache_StoreSeesDirectDbWrite()
     {
-        var first = await _store.LoadProjectsAsync(CancellationToken.None);
-        var second = await _store.LoadProjectsAsync(CancellationToken.None);
+        // Arrange
+        var store = CreateStore();
+        await store.SavePipelineConfigAsync(
+            new PipelineConfiguration { MaxRetries = 1, WorkspaceBaseDirectory = "/initial" },
+            CancellationToken.None);
 
-        ReferenceEquals(first, second).Should().BeTrue();
-    }
+        // Populate the permanent pipeline-config cache
+        var cached = await store.LoadPipelineConfigAsync(CancellationToken.None);
+        cached.WorkspaceBaseDirectory.Should().Be("/initial");
 
-    [Fact]
-    public async Task SaveProject_InvalidatesCache()
-    {
-        // Initial load (contains Default project from constructor)
-        var initial = await _store.LoadProjectsAsync(CancellationToken.None);
-        var initialCount = initial.Count;
-
-        // Save a new project
-        var project = new PipelineProject
+        // Write a different value directly to the DB (bypassing the store)
+        await WriteDirectlyToPipelineConfigDbAsync(new PipelineConfiguration
         {
-            Id = Guid.NewGuid().ToString(),
-            Name = "CacheTestProject",
-            Enabled = true,
-            TemplateIds = []
-        };
-        await _store.SaveProjectAsync(project, CancellationToken.None);
+            MaxRetries = 55,
+            WorkspaceBaseDirectory = "/direct-after-invalidate"
+        });
 
-        // Next load should contain the new project
-        var reloaded = await _store.LoadProjectsAsync(CancellationToken.None);
-        reloaded.Count.Should().Be(initialCount + 1);
-        reloaded.Should().Contain(p => p.Name == "CacheTestProject");
-    }
+        // Act: call InvalidateCaches() — this must clear _pipelineConfigCache
+        store.InvalidateCaches();
+        var reloaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
 
-    // ── Templates cache ───────────────────────────────────────────────────
-
-    [Fact]
-    public async Task LoadAllTemplates_SecondCall_ReturnsCachedInstance()
-    {
-        var first = await _store.LoadAllTemplatesAsync(CancellationToken.None);
-        var second = await _store.LoadAllTemplatesAsync(CancellationToken.None);
-
-        ReferenceEquals(first, second).Should().BeTrue();
+        // Assert: the store fetched from DB, not from the now-cleared cache
+        reloaded.WorkspaceBaseDirectory.Should().Be("/direct-after-invalidate");
+        reloaded.MaxRetries.Should().Be(55);
     }
 
     [Fact]
-    public async Task SaveTemplate_InvalidatesTemplateAndProjectCache()
+    public async Task InvalidateCaches_ClearsProviderCache_StoreSeesDirectDbChange()
     {
-        // Use the Default project (always exists)
-        var projects = await _store.LoadProjectsAsync(CancellationToken.None);
-        var defaultProject = projects.First(p => p.Id == WellKnownIds.DefaultProjectId);
-
-        var template = new PipelineJobTemplate
+        // Arrange: use a long TTL so the cache would normally survive
+        var store = CreateStore(ttl: TimeSpan.FromMinutes(5));
+        var providerId = Guid.NewGuid().ToString();
+        var config = new ProviderConfig
         {
-            Id = Guid.NewGuid().ToString(),
-            Name = "CacheTestTemplate",
-            IssueProviderId = "issue-1",
-            RepoProviderId = "repo-1"
+            Id = providerId,
+            Kind = ProviderKind.Agent,
+            ProviderType = "Kiro",
+            DisplayName = "Agent Provider"
         };
-        await _store.SaveTemplateAsync(defaultProject.Id, template, CancellationToken.None);
+        await store.SaveProviderConfigAsync(config, CancellationToken.None);
 
-        // LoadAllTemplates should reflect the new template
-        var allTemplates = await _store.LoadAllTemplatesAsync(CancellationToken.None);
-        allTemplates.Should().Contain(t => t.Name == "CacheTestTemplate");
+        // Load to populate the TTL cache
+        var before = await store.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
+        before.Should().ContainSingle(c => c.Id == providerId);
+
+        // Delete directly from DB without going through the store
+        await DeleteDirectlyFromProviderConfigDbAsync(Guid.Parse(providerId));
+
+        // Without InvalidateCaches, the store would still return the cached item.
+        // Act: invalidate, then load
+        store.InvalidateCaches();
+        var after = await store.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
+
+        // Assert: deleted item is gone — cache was cleared
+        after.Should().NotContain(c => c.Id == providerId);
     }
 
-    // ── AgentProfiles cache ───────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────
 
-    [Fact]
-    public async Task LoadAgentProfiles_CacheInvalidatedOnSave()
+    private async Task WriteDirectlyToPipelineConfigDbAsync(PipelineConfiguration config)
     {
-        // Initial load
-        var initial = await _store.LoadAgentProfilesAsync(CancellationToken.None);
-        initial.Should().BeEmpty();
-
-        // Save a profile
-        var profile = new AgentProfile
+        await using var db = new CacheTestPipelineDbContext(_dbOptions);
+        var entity = await db.PipelineConfig.FirstOrDefaultAsync();
+        var json = JsonSerializer.Serialize(config, PipelineJsonOptions.Default);
+        if (entity is null)
         {
-            Id = "cache-profile-1",
-            DisplayName = "Cache Test Profile",
-            AgentProviderConfigId = "provider-abc",
-            Enabled = true,
-            Priority = 1
-        };
-        await _store.SaveAgentProfileAsync(profile, CancellationToken.None);
-
-        // Next load should return updated list containing the new profile
-        var reloaded = await _store.LoadAgentProfilesAsync(CancellationToken.None);
-        reloaded.Should().ContainSingle(p => p.Id == "cache-profile-1");
+            db.PipelineConfig.Add(new PipelineConfigEntity { Id = Guid.NewGuid(), Configuration = json });
+        }
+        else
+        {
+            entity.Configuration = json;
+        }
+        await db.SaveChangesAsync();
     }
+
+    private async Task DeleteDirectlyFromProviderConfigDbAsync(Guid providerId)
+    {
+        await using var db = new CacheTestPipelineDbContext(_dbOptions);
+        var entity = await db.ProviderConfigs.FirstOrDefaultAsync(e => e.Id == providerId);
+        if (entity is not null)
+        {
+            db.ProviderConfigs.Remove(entity);
+            await db.SaveChangesAsync();
+        }
+    }
+}
+
+file sealed class CacheTestPipelineDbContext : PipelineDbContext
+{
+    public CacheTestPipelineDbContext(DbContextOptions<PipelineDbContext> options) : base(options) { }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+        // Strip RowVersion and filtered indexes for InMemory compat
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            var rv = entityType.FindProperty("RowVersion");
+            if (rv != null)
+            {
+                rv.IsConcurrencyToken = false;
+                rv.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
+            }
+            foreach (var idx in entityType.GetIndexes().Where(i => i.GetFilter() != null).ToList())
+                entityType.RemoveIndex(idx);
+        }
+    }
+}
+
+file sealed class CacheTestDbContextFactory : IDbContextFactory<PipelineDbContext>
+{
+    private readonly DbContextOptions<PipelineDbContext> _options;
+    public CacheTestDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
+    public PipelineDbContext CreateDbContext() => new CacheTestPipelineDbContext(_options);
+    public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) =>
+        Task.FromResult(CreateDbContext());
 }

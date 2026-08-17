@@ -87,4 +87,7 @@ internal sealed class NullConfigurationStore : IConfigurationStore
 
     public Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct) =>
         Task.CompletedTask;
+
+    public Task<bool> HasEnabledTemplatesAsync(CancellationToken ct) =>
+        Task.FromResult(false);
 }

@@ -34,7 +34,7 @@ public sealed class AgentHubFacadeDbFactoryWiringTests
 
         var pipelineConfig = new PipelineConfiguration();
         services.AddSingleton(pipelineConfig);
-        services.AddOrchestrationServices(pipelineConfig, workDistributionMode: "SignalR");
+        services.AddOrchestrationServices(pipelineConfig);
 
         // Provide mocks for remaining dependencies that AddOrchestrationServices doesn't register itself
         services.AddSingleton(Moq.Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IConfigurationStore>());

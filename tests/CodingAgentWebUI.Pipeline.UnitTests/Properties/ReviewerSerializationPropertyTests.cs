@@ -16,7 +16,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 public class ReviewerSerializationPropertyTests
 {
     /// <summary>
-    /// Recreates the same JsonSerializerOptions used by JsonConfigurationStore.
+    /// Recreates the same JsonSerializerOptions used by IConfigurationStore implementations.
     /// (camelCase, indented, TimeSpanConverter, StringEnumConverter)
     /// </summary>
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -86,7 +86,7 @@ public class ReviewerSerializationPropertyTests
     }
 
     /// <summary>
-    /// TimeSpan converter matching JsonConfigurationStore's private implementation.
+    /// TimeSpan converter matching pipeline store's JSON implementation.
     /// Serializes TimeSpan as ISO 8601 duration string (e.g., "00:30:00").
     /// </summary>
     private sealed class TimeSpanJsonConverter : JsonConverter<TimeSpan>

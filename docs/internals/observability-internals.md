@@ -46,7 +46,7 @@ Metric `run_type` values are lowercased (`implementation`), while span `pipeline
 
 ## Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs`) emits metrics specific to DB+SignalR and DB+Kubernetes dispatch modes. These metrics are only active when the orchestrator is running with `Database__Host` configured.
+The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs`) emits metrics specific to Kubernetes dispatch. These metrics are active when the orchestrator is running with `Database__Host` configured.
 
 | Metric | Type | Unit | Description |
 |--------|------|------|-------------|
@@ -60,9 +60,9 @@ The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.
 | `workdistribution.credential_pool_claimed` | ObservableGauge | — | Claimed credential PVCs in the kiro pool (K8s mode) |
 | `workdistribution.workitems_by_status` | ObservableGauge | — | Count of work items grouped by status and agent_selector |
 
-## CriticalMessageBuffer (Agent-Side)
+## CriticalMessageBuffer (Chat Pod Agent-Side)
 
-`CriticalMessageBuffer` buffers failed `ReportJobCompleted` messages on the agent side for replay after reconnection. Failed deliveries are buffered silently — there is no dedicated metric counter for individual send failures; instead monitor `agent.reconnections` for connection instability.
+`CriticalMessageBuffer` buffers failed `ReportJobCompleted` messages on the agent side for replay after reconnection. It is used by **chat pods** (ephemeral K8s Jobs spawned without `--work-item-id`) which run `AgentWorkerService` and communicate with the orchestrator hub over SignalR. Failed deliveries are buffered silently — there is no dedicated metric counter for individual send failures; instead monitor `agent.reconnections` for connection instability.
 
 Drain behavior:
 - On reconnection, buffered messages are replayed (max 3 drain attempts per message)

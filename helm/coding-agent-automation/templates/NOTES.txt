@@ -8,7 +8,9 @@ To add the Helm repository:
 
 To install (example):
   helm install my-release chemsorly/coding-agent-automation \
-    --set secrets.agentApiKey=YOUR_API_KEY
+    --set secrets.agentApiKey=YOUR_API_KEY \
+    --set database.host=YOUR_POSTGRES_HOST \
+    --set database.auth.existingSecret=YOUR_SECRET_NAME
 
 The orchestrator is available at:
   http://{{ include "coding-agent-automation.fullname" . }}-orchestrator:{{ .Values.orchestrator.service.port }}
@@ -20,50 +22,43 @@ Ingress is enabled. Access the UI at:
 {{- end }}
 {{- end }}
 
-{{- if .Values.database.enabled }}
-
 ═══════════════════════════════════════════════════════════════════════════════
- POSTGRES WORK QUEUE — OPERATIONAL RUNBOOK
+ KUBERNETES DEPLOYMENT — OPERATIONAL RUNBOOK
 ═══════════════════════════════════════════════════════════════════════════════
 
-Mode: {{ .Values.workDistribution.mode }}
+Database: {{ .Values.database.host }}:{{ .Values.database.port | default 5432 }}
 {{- if .Values.database.migrateOnStartup }}
-Migrations: Applied on startup (dev mode)
+Migrations: Applied automatically on startup.
+  WARNING: Keep orchestrator.replicas=1 during upgrades to avoid concurrent
+  migration races (EF Core #13569). Scale up after the new pod reaches Ready.
 {{- else }}
-Migrations: Applied via Helm hook Job (production mode)
+Migrations: NOT applied on startup (migrateOnStartup=false).
+  Startup aborts when pending migrations are detected. Run migrations manually:
+    kubectl exec deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator \
+      -n {{ .Release.Namespace }} -- dotnet CodingAgentWebUI.dll migrate
 {{- end }}
+
+── First-Run ─────────────────────────────────────────────────────────────────
+
+On fresh install with an empty database, the UI shows a banner directing you to
+Settings → Job Templates. Configure at least one template to enable dispatch.
+
+To migrate config from an existing instance:
+  1. Export:  curl -H "Authorization: Bearer $AGENT_API_KEY" https://OLD_HOST/api/config/export > config.json
+  2. Import:  curl -X POST -H "Authorization: Bearer $AGENT_API_KEY" \
+                   -F "file=@config.json" https://NEW_HOST/api/config/import
+  WARNING: import is destructive — it clears existing config before importing.
+
+agents[] → jobTemplates[] migration:
+  The agents[] values section is removed. Define agent pod specs in jobTemplates[].
+  See values.yaml for the jobTemplates schema.
 
 ── Database ──────────────────────────────────────────────────────────────────
 
-External PostgreSQL:
-  Secret: {{ .Values.database.auth.existingSecret }} (keys: {{ .Values.database.auth.keys.username }}, {{ .Values.database.auth.keys.password }}, {{ .Values.database.auth.keys.database }})
-  Host: {{ .Values.database.host }}:{{ .Values.database.port | default 5432 }}
+Secret: {{ .Values.database.auth.existingSecret }} (keys: {{ .Values.database.auth.keys.username }}, {{ .Values.database.auth.keys.password }}, {{ .Values.database.auth.keys.database }})
+Host: {{ .Values.database.host }}:{{ .Values.database.port | default 5432 }}
 
-── Migrations ────────────────────────────────────────────────────────────────
-
-{{- if .Values.database.migrationJob.enabled }}
-A pre-install/pre-upgrade hook Job runs EF Core migrations before new pods deploy.
-Check migration status:
-  kubectl get jobs -l app.kubernetes.io/component=migration -n {{ .Release.Namespace }}
-  kubectl logs job/{{ include "coding-agent-automation.fullname" . }}-db-migrate -n {{ .Release.Namespace }}
-{{- end }}
-
-── Monitoring ────────────────────────────────────────────────────────────────
-
-Health endpoints:
-  Liveness:  /healthz (DB SELECT 1 on dedicated connection)
-  Readiness: /readyz  (unhealthy on DB loss, recovers on reconnect)
-
-Key metrics (OpenTelemetry):
-  workitems_by_status          — gauge by status and agent_selector
-  workitems_pending_duration_seconds — histogram
-  dispatch_latency_seconds     — histogram
-  dispatcher_last_poll_epoch_seconds — gauge (staleness detection)
-  credential_pool_available    — gauge (PVC pool headroom)
-
-{{- if eq .Values.workDistribution.mode "Kubernetes" }}
-
-── Kubernetes Mode Operations ────────────────────────────────────────────────
+── Kubernetes Operations ─────────────────────────────────────────────────────
 
 Agent Jobs are spawned by the DispatchService. Job naming: caa-{workItemId[0:8]}
 
@@ -87,17 +82,39 @@ PVC Pool (kiro credentials):
   Configured PVCs: {{ join ", " .Values.credentialPools.kiro }}
   DispatchService claims an available PVC per kiro Job.
   If pool is exhausted, Jobs wait (stay Pending) until a PVC is released.
-{{- end }}
+  PVCs must use ReadWriteOnce or ReadWriteOncePod access mode.
 {{- end }}
 
 ── Rollback Procedure ────────────────────────────────────────────────────────
 
-To export current DB state back to JSON files (enables rollback to pre-DB version):
+export-config is a backup tool — it exports DB state to JSON files for safekeeping.
+To export the current DB state:
   kubectl exec deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator -n {{ .Release.Namespace }} -- \
     dotnet CodingAgentWebUI.dll export-config --output /tmp/pipeline-export
 
 Then copy out:
   kubectl cp {{ .Release.Namespace }}/$(kubectl get pod -l app.kubernetes.io/component=orchestrator -n {{ .Release.Namespace }} -o jsonpath='{.items[0].metadata.name}'):/tmp/pipeline-export ./pipeline-backup
+
+To roll back to a previous version: restore from backup using the import endpoint (see First-Run above).
+
+── Upgrade Notes ─────────────────────────────────────────────────────────────
+
+Let in-flight work finish before upgrading — there is no drain hook. Jobs already
+dispatched run to completion regardless, but new dispatch is paused during the
+rollout. For zero downtime, wait until WorkItems reach terminal state, then upgrade.
+
+── Monitoring ────────────────────────────────────────────────────────────────
+
+Health endpoints:
+  Liveness:  /healthz (DB SELECT 1 on dedicated connection)
+  Readiness: /readyz  (unhealthy on DB loss, recovers on reconnect)
+
+Key metrics (OpenTelemetry):
+  workitems_by_status                    — gauge by status and agent_selector
+  workitems_pending_duration_seconds     — histogram
+  dispatch_latency_seconds               — histogram
+  dispatcher_last_poll_epoch_seconds     — gauge (staleness detection)
+  credential_pool_available              — gauge (PVC pool headroom)
 
 ── Scaling ───────────────────────────────────────────────────────────────────
 
@@ -115,6 +132,4 @@ Redis backplane enabled for SignalR cross-replica delivery.
 {{- else }}
 Single-replica mode. Scale to multiple replicas with:
   orchestrator.replicas: N  (requires signalr.redis.enabled: true)
-{{- end }}
-
 {{- end }}

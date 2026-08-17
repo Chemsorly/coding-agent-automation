@@ -60,8 +60,8 @@ public class PipelineIntegrationTests : IntegrationTestBase
 
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
 
-        // Load via a fresh store instance to ensure we're reading from disk
-        var freshStore = new JsonConfigurationStore(ConfigDir);
+        // Load via the same store (InMemoryConfigurationStore; no disk round-trip after Spec 041)
+        var freshStore = ConfigStore;
         var loaded = await freshStore.LoadPipelineConfigAsync(CancellationToken.None);
 
         loaded.MaxRetries.Should().Be(original.MaxRetries);
@@ -101,7 +101,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         };
 
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
-        var loaded = await new JsonConfigurationStore(ConfigDir).LoadPipelineConfigAsync(CancellationToken.None);
+        var loaded = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
 
         loaded.CodeReview.FixPrompt.Should().BeNull();
         loaded.LastUsedProviderIds.Should().BeEmpty();
@@ -122,7 +122,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         };
 
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
-        var loaded = await new JsonConfigurationStore(ConfigDir).LoadPipelineConfigAsync(CancellationToken.None);
+        var loaded = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
 
         loaded.AgentTimeout.Should().Be(TimeSpan.Zero);
         loaded.ExternalCiTimeout.Should().Be(TimeSpan.FromMilliseconds(1));
@@ -168,7 +168,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
         foreach (var config in configs)
             await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
 
-        var freshStore = new JsonConfigurationStore(ConfigDir);
+        var freshStore = ConfigStore;
 
         foreach (var original in configs)
         {

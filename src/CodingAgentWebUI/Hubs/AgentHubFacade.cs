@@ -28,7 +28,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IProviderFactory _providerFactory;
     private readonly WorkItemTransitionService? _workItemTransition;
     private readonly IWorkItemFallbackTransitionService? _workItemFallbackTransition;
-    private readonly PendingWorkItemDrainService? _pendingDrainService;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
     private readonly IProjectStore? _projectStore;
     private readonly ILogger<AgentHubFacadeDependencies> _logger;
@@ -55,7 +54,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _logger = deps.Logger;
         _workItemTransition = deps.WorkItemTransition;
         _workItemFallbackTransition = deps.WorkItemFallbackTransition;
-        _pendingDrainService = deps.PendingDrainService;
         _dbFactory = deps.DbFactory;
         _projectStore = deps.ProjectStore;
     }
@@ -159,7 +157,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
     public void Signal()
     {
         _drainService.Signal();
-        _pendingDrainService?.Signal();
     }
 
     /// <inheritdoc />

@@ -65,8 +65,18 @@ public class AgentMonitoringComponentTests : BunitContext
         Services.AddSingleton<IActiveRunQueryService>(_mockActiveRunQuery.Object);
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
         Services.AddSingleton(Mock.Of<IRunLifecycleManager>());
-        Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
-            Services.BuildServiceProvider().GetRequiredService<JobDeduplicationGuardService>()));
+
+        // Use a factory to create the mock so it can resolve JobDeduplicationGuardService lazily
+        // from the DI container — the mock delegates GetPendingJobsAsync to the real in-memory service.
+        // This replaces the deleted LegacyPendingWorkQuery which did the same thing.
+        Services.AddSingleton<IPendingWorkQuery>(sp =>
+        {
+            var dispatcherSvc = sp.GetRequiredService<JobDeduplicationGuardService>();
+            var mock = new Mock<IPendingWorkQuery>();
+            mock.Setup(q => q.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
+                .Returns(() => Task.FromResult<IReadOnlyList<PendingJob>>(dispatcherSvc.GetQueuedJobs().ToList()));
+            return mock.Object;
+        });
 
         Services.AddSingleton(TimeProvider.System);
 

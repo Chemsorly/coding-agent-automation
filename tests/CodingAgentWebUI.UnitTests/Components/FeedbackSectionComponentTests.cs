@@ -65,8 +65,8 @@ public class FeedbackSectionComponentTests : BunitContext
             s.GetActiveRunsAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ActiveRunSummary>>(Array.Empty<ActiveRunSummary>())));
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
         Services.AddSingleton(Mock.Of<IRunLifecycleManager>());
-        Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
-            Services.BuildServiceProvider().GetRequiredService<JobDeduplicationGuardService>()));
+        Services.AddSingleton<IPendingWorkQuery>(Mock.Of<IPendingWorkQuery>(q =>
+            q.GetPendingJobsAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<PendingJob>>(Array.Empty<PendingJob>())));
 
         Services.AddSingleton(TimeProvider.System);
 

@@ -1,7 +1,6 @@
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.GitLab;
-using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -20,30 +19,10 @@ namespace CodingAgentWebUI;
 public static partial class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers infrastructure services: configuration store interfaces, provider factory, and validation services.
-    /// </summary>
-    public static IServiceCollection AddInfrastructureServices(
-        this IServiceCollection services,
-        JsonConfigurationStore configStore,
-        PipelineConfiguration pipelineConfig)
-    {
-        services.AddSingleton<IConfigurationStore>(configStore);
-        WorkDistributionRegistration.RegisterConfigStoreSubInterfaces(services);
-
-        services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
-
-        services.AddTransient<GitHubValidationService>(sp =>
-            new GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
-        services.AddTransient<GitLabValidationService>();
-
-        return services;
-    }
-
-    /// <summary>
     /// Registers infrastructure services WITHOUT config store registrations.
     /// Used in DB mode where PostgresConfigurationStore is registered by AddWorkDistribution.
     /// </summary>
-    public static IServiceCollection AddInfrastructureServicesWithoutConfigStore(
+    public static IServiceCollection AddInfrastructureServices(
         this IServiceCollection services)
     {
         services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
@@ -60,10 +39,10 @@ public static partial class ServiceCollectionExtensions
     /// In DB mode, skips the in-memory history service registration (PostgresPipelineRunHistoryService
     /// is registered by AddWorkDistribution instead).
     /// </summary>
-    public static IServiceCollection AddPipelineCoreServices(this IServiceCollection services, bool isDatabaseMode = false)
+    public static IServiceCollection AddPipelineCoreServices(this IServiceCollection services)
     {
         // ── Lifecycle ──────────────────────────────────────────────────────
-        RegisterPipelineLifecycle(services, isDatabaseMode);
+        RegisterPipelineLifecycle(services);
 
         // ── Facades ────────────────────────────────────────────────────────
         RegisterPipelineFacades(services);
@@ -83,8 +62,7 @@ public static partial class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddOrchestrationServices(
         this IServiceCollection services,
-        PipelineConfiguration pipelineConfig,
-        string? workDistributionMode = null)
+        PipelineConfiguration pipelineConfig)
     {
         // ── Agent Registry ─────────────────────────────────────────────────
         RegisterAgentRegistry(services);
@@ -92,8 +70,8 @@ public static partial class ServiceCollectionExtensions
         // ── Token Vending & Run Services ───────────────────────────────────
         RegisterTokenAndRunServices(services, pipelineConfig);
 
-        // ── Conditional Background Services ────────────────────────────────
-        RegisterOrchestrationBackgroundServices(services, workDistributionMode);
+        // ── Background Services ────────────────────────────────────────────
+        RegisterOrchestrationBackgroundServices(services);
 
         // ── Job Dispatching ────────────────────────────────────────────────
         RegisterJobDispatching(services);

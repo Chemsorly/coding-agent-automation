@@ -17,8 +17,6 @@
 @inject IProviderFactory ProviderFactory
 @inject ModelFetchService ModelFetchService
 @inject NotificationService NotificationService
-@inject FeatureFlags Features
-@inject JobTemplateStore? JobTemplateStore
 @inject IServiceProvider ServiceProvider
 
 <PageTitle>Settings - Coding Agent</PageTitle>
@@ -82,7 +80,7 @@
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
                         ModelFetchService="ModelFetchService"
                         ModelFetchJobService="ModelFetchJobService"
-                        IsKubernetesMode="Features.IsKubernetesMode" />
+                        IsKubernetesMode="true" />
                     break;
                 case SettingsNodes.ProvidersPipeline:
                     <PipelineProviderSection
@@ -139,7 +137,7 @@
                         ConfigStore="ConfigStore"
                         AgentProviders="_agentProviders"
                         JobTemplateStore="JobTemplateStore"
-                        IsKubernetesMode="Features.IsKubernetesMode"
+                        IsKubernetesMode="true"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.QualityGateConfigs:
@@ -153,21 +151,9 @@
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.ConfigImportExport:
-                    @if (Features.IsDatabaseMode)
-                    {
-                        <ConfigImportExportSection
-                            OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
-                            OnImportCompleted="LoadAllData" />
-                    }
-                    else
-                    {
-                        <div class="section-content">
-                            <h2>Data Management</h2>
-                            <p class="section-description">
-                                Import/Export is only available in database mode. Configure <code>Database:Host</code> to enable PostgreSQL persistence.
-                            </p>
-                        </div>
-                    }
+                    <ConfigImportExportSection
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
+                        OnImportCompleted="LoadAllData" />
                     break;
             }
         </div>
@@ -192,6 +178,8 @@
     // Resolved optionally — only available in k8s mode
     private ModelFetchJobService? ModelFetchJobService =>
         ServiceProvider.GetService<ModelFetchJobService>();
+    private JobTemplateStore? JobTemplateStore =>
+        ServiceProvider.GetService<JobTemplateStore>();
     private string _selectedNode = SettingsNodes.ProvidersIssue;
 
     [Parameter]

@@ -6,7 +6,6 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -82,11 +81,11 @@ public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
     }
 
     [Fact]
-    public void IWorkDistributor_IsSignalR_InDbMode()
+    public void IWorkDistributor_IsKubernetes_InDbMode()
     {
         var distributor = _factory.Services.GetRequiredService<IWorkDistributor>();
-        distributor.Should().BeOfType<SignalRWorkDistributor>(
-            "SignalR DB mode must use SignalRWorkDistributor, not LegacyWorkDistributor");
+        distributor.Should().BeOfType<KubernetesWorkDistributor>(
+            "After Spec 041, Kubernetes is the only work distribution mode");
     }
 
     [Fact]
@@ -118,16 +117,6 @@ public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
         qualityGateStore.Should().BeSameAs(configStore);
         reviewerStore.Should().BeSameAs(configStore);
         projectStore.Should().BeSameAs(configStore);
-    }
-
-    // ── FeatureFlags Consistency ──────────────────────────────────────────
-
-    [Fact]
-    public void FeatureFlags_IsDatabaseMode_True_WhenDbConfigured()
-    {
-        var flags = _factory.Services.GetRequiredService<FeatureFlags>();
-        flags.IsDatabaseMode.Should().BeTrue(
-            "FeatureFlags.IsDatabaseMode must be true when Database:Host is configured");
     }
 
     // ── Behavioral Validation (round-trip tests) ─────────────────────────

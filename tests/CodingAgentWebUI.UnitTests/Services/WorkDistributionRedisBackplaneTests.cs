@@ -23,7 +23,6 @@ public class WorkDistributionRedisBackplaneTests
         {
             ["Database:Host"] = "localhost",
             ["Database:Name"] = "test",
-            ["WorkDistribution:Mode"] = "SignalR",
         };
 
         if (redisConnectionString is not null)
@@ -132,7 +131,6 @@ public class WorkDistributionRedisBackplaneTests
         {
             ["Database:Host"] = "localhost",
             ["Database:Name"] = "test",
-            ["WorkDistribution:Mode"] = "SignalR",
             ["SignalR:Redis:ConnectionString"] = "",
         };
 

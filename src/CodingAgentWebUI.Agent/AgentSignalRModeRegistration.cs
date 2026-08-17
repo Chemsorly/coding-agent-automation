@@ -8,8 +8,13 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
-/// Extension methods for registering SignalR-mode agent services.
-/// Extracted from Program.cs to reduce top-level statement complexity.
+/// Extension methods for registering chat-pod agent services.
+/// Reached when the agent pod is started without <c>--work-item-id</c> (chat mode).
+/// Registers <see cref="AgentWorkerService"/> and the full SignalR hub connection stack
+/// (<see cref="AgentConnectionLifecycle"/>, <see cref="AgentJobSlotManager"/>,
+/// <see cref="ChatJobHandler"/>, <see cref="ConsolidationJobHandler"/>,
+/// <see cref="SignalRCompletionReporter"/>, <see cref="CriticalMessageBuffer"/>)
+/// so the pod can serve interactive chat sessions and consolidation jobs.
 /// </summary>
 internal static class AgentSignalRModeRegistration
 {

@@ -189,20 +189,11 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 
 ### Service Names
 
-| Service | `service.name` | Description |
-|---------|---------------|-------------|
-| Orchestrator | `coding-agent-orchestrator` | Web UI + pipeline orchestration |
-| Agent Worker (.NET 1) | `coding-agent-worker-dotnet-1` | Kiro .NET agent container |
-| Agent Worker (.NET 2) | `coding-agent-worker-dotnet-2` | Kiro .NET agent container |
-| Agent Worker (Python) | `coding-agent-worker-python` | Kiro Python agent container |
-| Agent Worker (Java) | `coding-agent-worker-java` | Kiro Java agent container |
-| Agent Worker (OpenCode .NET) | `coding-agent-worker-opencode-dotnet` | OpenCode .NET agent container |
-| Agent Worker (OpenCode Python) | `coding-agent-worker-opencode-python` | OpenCode Python agent container |
-| Agent Worker (OpenCode Java) | `coding-agent-worker-opencode-java` | OpenCode Java agent container |
+Agent pods emit telemetry with `service.name` derived from the agent image and labels. The orchestrator uses `coding-agent-orchestrator`.
 
 ### Example: Grafana Cloud
 
-OTEL variables are configured in `docker-compose.yml` and sourced from `.env`. To connect to Grafana Cloud, set these values in your `.env` file:
+OTEL variables are configured via Helm values or the `OTEL_*` environment variables. To connect to Grafana Cloud, set these values in your `values.yaml` or as Helm `--set` arguments:
 
 ```env
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-prod-us-east-0.grafana.net/otlp
@@ -210,17 +201,16 @@ OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64-encoded-instance-id:token>
 ```
 
-See `.env.example` for the full template.
+See `.env.example` for a reference of available variables.
 
 ## Verification
 
 ### Metrics
 
-Use `dotnet-counters` to verify metrics are being recorded locally:
+Use `dotnet-counters` to verify metrics are being recorded. Exec into the orchestrator pod:
 
 ```bash
-# Inside the orchestrator container
-dotnet-counters monitor --counters CodingAgent.Pipeline
+kubectl exec -it <orchestrator-pod> -n coding-agent -- dotnet-counters monitor --counters CodingAgent.Pipeline
 ```
 
 Expected output after dispatching a job:

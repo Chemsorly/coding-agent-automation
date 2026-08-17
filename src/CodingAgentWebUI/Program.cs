@@ -44,48 +44,26 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 // ShutdownBudgetValidation warns if headroom drops below 5s (i.e., drain + shutdown > 35s).
 builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(40));
 
-// Pipeline — Configuration Store (created eagerly to load config before DI container is built)
-var configStore = new JsonConfigurationStore(PipelineConstants.ConfigBaseDirectory);
-var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
-
 // Domain service registrations (extracted into focused extension methods)
 var dbConnectionString = CodingAgentWebUI.Services.DatabaseConnectionResolver.Resolve(builder.Configuration);
-var workDistributionMode = builder.Configuration.GetValue<string>("WorkDistribution:Mode") ?? "SignalR";
-var isKubernetesMode = string.Equals(workDistributionMode, "Kubernetes", StringComparison.OrdinalIgnoreCase);
-builder.Services.AddSingleton(new CodingAgentWebUI.Services.FeatureFlags
-{
-    IsDatabaseMode = !string.IsNullOrEmpty(dbConnectionString),
-    IsKubernetesMode = isKubernetesMode
-});
 if (string.IsNullOrEmpty(dbConnectionString))
 {
-    // Legacy mode: JSON-based config store
-    builder.Services.AddInfrastructureServices(configStore, pipelineConfig);
+    Log.Fatal("Database__Host is not configured. Kubernetes deployment requires PostgreSQL. Exiting.");
+    return;
 }
-else
-{
-    // DB mode: infrastructure services without config store (handled by AddWorkDistribution)
-    builder.Services.AddInfrastructureServicesWithoutConfigStore();
-}
+
+// Bootstrap config for DI registration only — real config is loaded from Postgres at runtime.
+// NOTE: ClosedLoopAutoStart defaults to false here, so the pipeline loop does not auto-start.
+// Spec 045 Req 4.4 replaces this with a Postgres read.
+var pipelineConfig = new PipelineConfiguration();
+
+builder.Services.AddInfrastructureServices();
 builder.Services.AddPipelineServices(Serilog.Log.Logger);
-builder.Services.AddPipelineCoreServices(isDatabaseMode: !string.IsNullOrEmpty(dbConnectionString));
-builder.Services.AddOrchestrationServices(pipelineConfig,
-    string.IsNullOrEmpty(dbConnectionString) ? null : (builder.Configuration.GetValue<string>("WorkDistribution:Mode") ?? "SignalR"));
+builder.Services.AddPipelineCoreServices();
+builder.Services.AddOrchestrationServices(pipelineConfig);
 builder.Services.AddConsolidationServices(pipelineConfig);
 builder.Services.AddWorkDistribution(builder.Configuration);
 builder.Services.AddDatabaseHealthServices(builder.Configuration);
-
-// JobTemplateStore — registered unconditionally so Settings.razor injection never fails.
-// In k8s mode, the real store is registered inside AddWorkDistribution → RegisterKubernetesMode.
-// In all other modes, an empty sentinel is registered here.
-// The empty store is never used for dispatch (DispatchService only runs in k8s mode).
-if (!isKubernetesMode)
-{
-    builder.Services.AddSingleton<CodingAgentWebUI.Orchestration.Dispatch.JobTemplateStore>(
-        CodingAgentWebUI.Orchestration.Dispatch.JobTemplateStore.CreateEmpty());
-    // ModelFetchJobService is resolved via IServiceProvider.GetService<> (not @inject) in Settings.razor
-    // so no registration needed here — GetService<> returns null when the type is unregistered.
-}
 
 // Infrastructure health aggregation — reads from DatabaseHealthState + IConnectionMultiplexer (both optional)
 builder.Services.AddSingleton<CodingAgentWebUI.Services.InfrastructureHealthService>();

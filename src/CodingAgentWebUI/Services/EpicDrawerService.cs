@@ -19,7 +19,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     private readonly IProviderFactory _providerFactory;
     private readonly IWorkDistributor _workDistributor;
     private readonly IAgentRegistryService _agentRegistry;
-    private readonly IDispatchOrchestrationService? _dispatchOrchestration;
+    private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<IssueSummary> _epicDrawer;
 
@@ -27,7 +27,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
         IProviderFactory providerFactory,
         IWorkDistributor workDistributor,
         IAgentRegistryService agentRegistry,
-        IDispatchOrchestrationService? dispatchOrchestration = null)
+        IDispatchOrchestrationService dispatchOrchestration)
     {
         _providerFactory = providerFactory;
         _workDistributor = workDistributor;
@@ -140,34 +140,24 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
             ? PipelineRunType.Decomposition : PipelineRunType.DecompositionAnalysis;
         var phaseLabel = phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
 
-        if (_dispatchOrchestration is not null)
-        {
-            return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
-                _dispatchOrchestration,
-                project => _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
-                    new DecompositionDispatchOrchestrationRequest
-                    {
-                        EpicIdentifier = issue.Identifier,
-                        EpicTitle = issue.Title ?? "",
-                        PhaseType = phaseType,
-                        IssueProviderId = template.IssueProviderId,
-                        RepoProviderId = template.RepoProviderId,
-                        BrainProviderId = template.BrainProviderId,
-                        InitiatedBy = DrawerDispatchHelper.ManualInitiator,
-                        Project = project
-                    }, CancellationToken.None),
-                parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
-                "Could not dispatch — epic is already being processed or queued, or no agents are available.",
-                $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — waiting for an idle agent",
-                $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}");
-        }
-
-        var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, issue, phaseType, initiatedBy: DrawerDispatchHelper.ManualInitiator, timeoutSeconds: 3600,
-            projectId: parentProject?.Id, projectName: parentProject?.Name);
-        return await DrawerDispatchHelper.DispatchLegacyAsync(_workDistributor, minimalRequest,
-            $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}",
-            "Could not dispatch — epic is already being processed or queued, or no agents are available.");
+        return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
+            _dispatchOrchestration,
+            project => _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
+                new DecompositionDispatchOrchestrationRequest
+                {
+                    EpicIdentifier = issue.Identifier,
+                    EpicTitle = issue.Title ?? "",
+                    PhaseType = phaseType,
+                    IssueProviderId = template.IssueProviderId,
+                    RepoProviderId = template.RepoProviderId,
+                    BrainProviderId = template.BrainProviderId,
+                    InitiatedBy = DrawerDispatchHelper.ManualInitiator,
+                    Project = project
+                }, CancellationToken.None),
+            parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
+            "Could not dispatch — epic is already being processed or queued, or no agents are available.",
+            $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — waiting for an idle agent",
+            $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}");
     }
 
     // ── Drawer orchestration ──

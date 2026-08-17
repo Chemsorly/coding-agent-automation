@@ -73,21 +73,6 @@ public sealed record StalenessEvaluationRequest(
     Func<DateTimeOffset, CancellationToken, Task<int>>? GetCommitCount);
 
 /// <summary>
-/// Groups the mandatory constructor dependencies of <see cref="PendingWorkItemDrainService"/>
-/// to reduce constructor parameter count (S107).
-/// </summary>
-public sealed record DrainServiceDependencies(
-    Microsoft.EntityFrameworkCore.IDbContextFactory<PipelineDbContext> DbFactory,
-    ISignalRWorkDistributorAgentResolver AgentResolver,
-    IAgentCommunication AgentComm,
-    IOrchestratorRunService RunService,
-    WorkItemTransitionService TransitionService,
-    IPendingWorkQuery PendingWorkQuery,
-    ILabelSwapService LabelSwapper,
-    Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService> Logger,
-    DispatchRevertService RevertHandler);
-
-/// <summary>
 /// Parameter object for <see cref="DispatchLifecycleService.ExecuteDispatchLifecycleAsync"/>.
 /// Groups the non-delegate parameters to satisfy S107.
 /// </summary>

@@ -22,7 +22,6 @@ namespace CodingAgentWebUI.IntegrationTests.Smoke;
 /// This catches the class of bugs found during the Postgres introduction:
 /// - Services accidentally resolving to filesystem instead of DB-backed implementations
 /// - Missing interface registrations in DB mode
-/// - UI components crashing when FeatureFlags.IsDatabaseMode is true
 /// - ConfigurationStore wiring (PostgresConfigurationStore vs JsonConfigurationStore)
 /// </summary>
 public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>

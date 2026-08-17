@@ -24,7 +24,7 @@ Log.Logger = AgentSerilogConfiguration.CreateAgentLogger(startupConfig.AgentId);
 try
 {
     Log.Information("Agent Worker starting (AgentId={AgentId}, OrchestratorUrl={OrchestratorUrl}, Mode={Mode})",
-        startupConfig.AgentId, startupConfig.OrchestratorUrl, startupConfig.IsK8sMode ? "K8s" : "SignalR");
+        startupConfig.AgentId, startupConfig.OrchestratorUrl, startupConfig.IsWorkItemMode ? "WorkItem" : "Chat");
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -130,7 +130,7 @@ try
         Log.Logger));
 
     // ── Agent worker service (mode-conditional) ──
-    if (startupConfig.IsK8sMode)
+    if (startupConfig.IsWorkItemMode)
         builder.Services.AddK8sModeServices(startupConfig, Log.Logger);
     else
         builder.Services.AddSignalRModeServices(Log.Logger);
@@ -143,8 +143,8 @@ try
     // Mark startup complete once the host is listening
     app.Lifetime.ApplicationStarted.Register(HealthEndpoints.MarkStarted);
 
-    // ── SIGTERM handler for K8s mode ──
-    if (startupConfig.IsK8sMode)
+    // ── SIGTERM handler for work-item mode ──
+    if (startupConfig.IsWorkItemMode)
     {
         app.Lifetime.ApplicationStopping.Register(() =>
         {

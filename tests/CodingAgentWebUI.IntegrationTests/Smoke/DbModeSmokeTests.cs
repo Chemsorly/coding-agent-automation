@@ -6,7 +6,6 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -64,20 +63,10 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
     [InlineData(typeof(IActiveRunQueryService))]
     [InlineData(typeof(IPipelineRunHistoryService))]
     [InlineData(typeof(IDbContextFactory<PipelineDbContext>))]
-    [InlineData(typeof(FeatureFlags))]
     public void DbMode_KeyService_Resolves(Type serviceType)
     {
         var service = _factory.Services.GetService(serviceType);
         service.Should().NotBeNull($"{serviceType.Name} should be registered in DB mode");
-    }
-
-    // ── FeatureFlags Validation ──────────────────────────────────────────
-
-    [Fact]
-    public void FeatureFlags_IsDatabaseMode_IsTrue()
-    {
-        var flags = _factory.Services.GetRequiredService<FeatureFlags>();
-        flags.IsDatabaseMode.Should().BeTrue();
     }
 
     // ── Configuration Store Is DB-Backed ─────────────────────────────────
@@ -121,10 +110,10 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
     // ── Work Distributor Is DB-Backed ────────────────────────────────────
 
     [Fact]
-    public void WorkDistributor_IsSignalRImplementation()
+    public void WorkDistributor_IsKubernetesImplementation()
     {
         var distributor = _factory.Services.GetRequiredService<IWorkDistributor>();
-        distributor.Should().BeOfType<SignalRWorkDistributor>();
+        distributor.Should().BeOfType<KubernetesWorkDistributor>();
     }
 
     [Fact]

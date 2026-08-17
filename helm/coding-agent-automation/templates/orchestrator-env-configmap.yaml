@@ -12,12 +12,10 @@ data:
   PIPELINE_LOOP_STARTUP_DELAY_SECONDS: {{ .Values.orchestrator.env.pipelineLoopStartupDelaySeconds | quote }}
   READINESS_DRAIN_DELAY_SECONDS: {{ .Values.orchestrator.env.readinessDrainDelaySeconds | quote }}
   LOG_LEVEL: {{ .Values.orchestrator.env.logLevel | quote }}
-  {{- if .Values.database.enabled }}
   WorkDistribution__Dispatch__IntervalSeconds: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
   WorkDistribution__Dispatch__RateLimitPerSecond: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
   WorkDistribution__Reconciliation__IntervalSeconds: {{ .Values.workDistribution.reconciliation.intervalSeconds | quote }}
   WorkDistribution__Reconciliation__StaleRetentionDays: {{ .Values.workDistribution.reconciliation.staleRetentionDays | quote }}
-  {{- if eq .Values.workDistribution.mode "Kubernetes" }}
   WorkDistribution__OrchestratorUrl: "http://{{ include "coding-agent-automation.fullname" . }}-orchestrator.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.orchestrator.service.port }}"
   WorkDistribution__AgentApiKeySecretName: {{ include "coding-agent-automation.secretName" . | quote }}
   WorkDistribution__AgentServiceAccountName: "{{ include "coding-agent-automation.fullname" . }}-agent"
@@ -29,5 +27,3 @@ data:
   WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds: {{ .Values.workDistribution.dispatch.chatSessionMaxDurationSeconds | quote }}
   WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
   WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
-  {{- end }}
-  {{- end }}

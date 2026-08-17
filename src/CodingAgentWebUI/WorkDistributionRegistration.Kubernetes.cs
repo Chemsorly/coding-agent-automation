@@ -19,10 +19,29 @@ public static partial class WorkDistributionRegistration
 {
     private static void RegisterKubernetesMode(IServiceCollection services, IConfiguration configuration)
     {
-        // K8s client
+        // K8s client — in-cluster-first with kubeconfig fallback for local dev.
+        // BuildDefaultConfig() precedence: KUBECONFIG → ~/.kube/config → in-cluster → localhost.
+        // We force in-cluster when available so a stray kubeconfig in the image cannot silently
+        // redirect agent-Job creation to the wrong cluster. See requirements Req 5.9.
         services.AddSingleton<IKubernetes>(_ =>
         {
-            var config = KubernetesClientConfiguration.InClusterConfig();
+            var inCluster = KubernetesClientConfiguration.IsInCluster();
+            var config = inCluster
+                ? KubernetesClientConfiguration.InClusterConfig()
+                : KubernetesClientConfiguration.BuildDefaultConfig();
+
+            // Unconditional, Information level. This line is the only thing that would ever reveal
+            // an accidental kubeconfig taking over in a cluster deployment.
+            Log.Information("Kubernetes client configured: Source={Source} Host={Host}",
+                inCluster ? "in-cluster" : "kubeconfig", config.Host);
+
+            if (string.IsNullOrEmpty(config.Host) || config.Host == "http://localhost:8080")
+            {
+                Log.Fatal("No usable Kubernetes configuration. In-cluster: ensure the service account " +
+                          "token is mounted. Outside a cluster: set KUBECONFIG or provide ~/.kube/config.");
+                throw new InvalidOperationException("No usable Kubernetes configuration.");
+            }
+
             return new Kubernetes(config);
         });
 

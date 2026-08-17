@@ -21,7 +21,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     private readonly IDependencyChecker _dependencyChecker;
     private readonly IWorkDistributor _workDistributor;
     private readonly IAgentRegistryService _agentRegistry;
-    private readonly IDispatchOrchestrationService? _dispatchOrchestration;
+    private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<IssueSummary> _issueDrawer;
 
@@ -30,7 +30,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         IDependencyChecker dependencyChecker,
         IWorkDistributor workDistributor,
         IAgentRegistryService agentRegistry,
-        IDispatchOrchestrationService? dispatchOrchestration = null)
+        IDispatchOrchestrationService dispatchOrchestration)
     {
         _providerFactory = providerFactory;
         _dependencyChecker = dependencyChecker;
@@ -192,33 +192,23 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
                 return (false, $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", depResult.BlockedBy.Select(n => $"#{n}"))}", null);
         }
 
-        if (_dispatchOrchestration is not null)
-        {
-            return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
-                _dispatchOrchestration,
-                project => _dispatchOrchestration.PrepareDistributionRequestAsync(
-                    new ImplementationDispatchOrchestrationRequest
-                    {
-                        IssueIdentifier = issue.Identifier,
-                        IssueProviderId = template.IssueProviderId,
-                        RepoProviderId = template.RepoProviderId,
-                        BrainProviderId = template.BrainProviderId,
-                        PipelineProviderId = template.PipelineProviderId,
-                        InitiatedBy = DrawerDispatchHelper.ManualInitiator,
-                        Project = project
-                    }, CancellationToken.None),
-                parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
-                "Could not dispatch — distribution failed.",
-                $"⏳ Queued #{issue.Identifier} — waiting for an idle agent",
-                $"✅ Dispatched #{issue.Identifier}");
-        }
-
-        var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, issue, initiatedBy: DrawerDispatchHelper.ManualInitiator, timeoutSeconds: 3600,
-            projectId: parentProject?.Id, projectName: parentProject?.Name);
-        return await DrawerDispatchHelper.DispatchLegacyAsync(_workDistributor, minimalRequest,
-            $"✅ Dispatched #{issue.Identifier}",
-            "Could not dispatch — issue is already being processed or queued, or no agents are available.");
+        return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
+            _dispatchOrchestration,
+            project => _dispatchOrchestration.PrepareDistributionRequestAsync(
+                new ImplementationDispatchOrchestrationRequest
+                {
+                    IssueIdentifier = issue.Identifier,
+                    IssueProviderId = template.IssueProviderId,
+                    RepoProviderId = template.RepoProviderId,
+                    BrainProviderId = template.BrainProviderId,
+                    PipelineProviderId = template.PipelineProviderId,
+                    InitiatedBy = DrawerDispatchHelper.ManualInitiator,
+                    Project = project
+                }, CancellationToken.None),
+            parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
+            "Could not dispatch — distribution failed.",
+            $"⏳ Queued #{issue.Identifier} — waiting for an idle agent",
+            $"✅ Dispatched #{issue.Identifier}");
     }
 
     // ── Drawer orchestration ──

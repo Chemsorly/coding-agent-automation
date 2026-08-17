@@ -1,4 +1,6 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Infrastructure.Locking;
+using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
@@ -10,6 +12,8 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -35,6 +39,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
     {
         if (_factory is not null)
             await _factory.DisposeAsync();
+        ClearTestEnvironmentVariables();
     }
 
     [Fact]
@@ -83,7 +88,9 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            builder.UseSetting("Database:Host", "");
+            // Set test environment variables before the host builds — Program.cs's fast-fail check reads
+            // them during the config build phase, before ConfigureServices runs.
+            SetTestEnvironmentVariables();
             // Reset Serilog to prevent "logger is already frozen" across multiple factory instances
             Log.Logger = new LoggerConfiguration().MinimumLevel.Warning().WriteTo.Console().CreateBootstrapLogger();
             builder.ConfigureServices(services =>
@@ -96,6 +103,20 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                     sp.GetRequiredService<IOrchestrationShutdownAction>(),
                     new ShutdownSignal(),
                     Log.Logger));
+
+                // Replace the real Npgsql DbContext with InMemory EF Core
+                RemoveDbContextRegistrations(services);
+                services.AddSingleton<IDbContextFactory<PipelineDbContext>>(
+                    new InMemoryDbContextFactory($"GracefulShutdown-1-{Guid.NewGuid()}"));
+
+                // Replace distributed lock and database health
+                services.RemoveAll<IDistributedLockProvider>();
+                services.AddDistributedLockProvider(null);
+                services.RemoveAll<DatabaseHealthState>();
+                services.AddSingleton(new DatabaseHealthState());
+                services.RemoveAll<IDatabaseProbe>();
+                services.AddSingleton<IDatabaseProbe>(new NoOpDatabaseProbe());
+
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderConfigStore>(services, _mockConfigStore.Object);
@@ -190,7 +211,9 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            builder.UseSetting("Database:Host", "");
+            // Set test environment variables before the host builds — Program.cs's fast-fail check reads
+            // them during the config build phase, before ConfigureServices runs.
+            SetTestEnvironmentVariables();
             // Reset Serilog to prevent "logger is already frozen" across multiple factory instances
             Log.Logger = new LoggerConfiguration().MinimumLevel.Warning().WriteTo.Console().CreateBootstrapLogger();
             builder.ConfigureServices(services =>
@@ -202,6 +225,20 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                     sp.GetRequiredService<IOrchestrationShutdownAction>(),
                     new ShutdownSignal(),
                     Log.Logger));
+
+                // Replace the real Npgsql DbContext with InMemory EF Core
+                RemoveDbContextRegistrations(services);
+                services.AddSingleton<IDbContextFactory<PipelineDbContext>>(
+                    new InMemoryDbContextFactory($"GracefulShutdown-2-{Guid.NewGuid()}"));
+
+                // Replace distributed lock and database health
+                services.RemoveAll<IDistributedLockProvider>();
+                services.AddDistributedLockProvider(null);
+                services.RemoveAll<DatabaseHealthState>();
+                services.AddSingleton(new DatabaseHealthState());
+                services.RemoveAll<IDatabaseProbe>();
+                services.AddSingleton<IDatabaseProbe>(new NoOpDatabaseProbe());
+
                 ReplaceService<IConfigurationStore>(services, configStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, configStore.Object);
                 ReplaceService<IProviderConfigStore>(services, configStore.Object);
@@ -251,7 +288,9 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            builder.UseSetting("Database:Host", "");
+            // Set test environment variables before the host builds — Program.cs's fast-fail check reads
+            // them during the config build phase, before ConfigureServices runs.
+            SetTestEnvironmentVariables();
             // Reset Serilog to prevent "logger is already frozen" across multiple factory instances
             Log.Logger = new LoggerConfiguration().MinimumLevel.Warning().WriteTo.Console().CreateBootstrapLogger();
             builder.ConfigureServices(services =>
@@ -263,6 +302,20 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                     sp.GetRequiredService<IOrchestrationShutdownAction>(),
                     new ShutdownSignal(),
                     Log.Logger));
+
+                // Replace the real Npgsql DbContext with InMemory EF Core
+                RemoveDbContextRegistrations(services);
+                services.AddSingleton<IDbContextFactory<PipelineDbContext>>(
+                    new InMemoryDbContextFactory($"GracefulShutdown-3-{Guid.NewGuid()}"));
+
+                // Replace distributed lock and database health
+                services.RemoveAll<IDistributedLockProvider>();
+                services.AddDistributedLockProvider(null);
+                services.RemoveAll<DatabaseHealthState>();
+                services.AddSingleton(new DatabaseHealthState());
+                services.RemoveAll<IDatabaseProbe>();
+                services.AddSingleton<IDatabaseProbe>(new NoOpDatabaseProbe());
+
                 ReplaceService<IConfigurationStore>(services, _mockConfigStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderConfigStore>(services, _mockConfigStore.Object);
@@ -336,7 +389,9 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
-            builder.UseSetting("Database:Host", "");
+            // Set test environment variables before the host builds — Program.cs's fast-fail check reads
+            // them during the config build phase, before ConfigureServices runs.
+            SetTestEnvironmentVariables();
             // Reset Serilog to prevent "logger is already frozen" across multiple factory instances
             Log.Logger = new LoggerConfiguration().MinimumLevel.Warning().WriteTo.Console().CreateBootstrapLogger();
             builder.ConfigureServices(services =>
@@ -348,6 +403,20 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                     sp.GetRequiredService<IOrchestrationShutdownAction>(),
                     new ShutdownSignal(),
                     Log.Logger));
+
+                // Replace the real Npgsql DbContext with InMemory EF Core
+                RemoveDbContextRegistrations(services);
+                services.AddSingleton<IDbContextFactory<PipelineDbContext>>(
+                    new InMemoryDbContextFactory($"GracefulShutdown-4-{Guid.NewGuid()}"));
+
+                // Replace distributed lock and database health
+                services.RemoveAll<IDistributedLockProvider>();
+                services.AddDistributedLockProvider(null);
+                services.RemoveAll<DatabaseHealthState>();
+                services.AddSingleton(new DatabaseHealthState());
+                services.RemoveAll<IDatabaseProbe>();
+                services.AddSingleton<IDatabaseProbe>(new NoOpDatabaseProbe());
+
                 ReplaceService<IConfigurationStore>(services, configStore.Object);
                 ReplaceService<IPipelineConfigStore>(services, configStore.Object);
                 ReplaceService<IProviderConfigStore>(services, configStore.Object);
@@ -404,5 +473,97 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         mock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ConsolidationRun>());
         ReplaceService<IConsolidationService>(services, mock.Object);
+    }
+
+    private static void RemoveDbContextRegistrations(IServiceCollection services)
+    {
+        var toRemove = services
+            .Where(d => d.ServiceType == typeof(IDbContextFactory<PipelineDbContext>)
+                     || d.ServiceType == typeof(PipelineDbContext)
+                     || d.ServiceType == typeof(DbContextOptions<PipelineDbContext>)
+                     || d.ServiceType == typeof(DbContextOptions)
+                     || d.ServiceType.Name.Contains("DbContextPool"))
+            .ToList();
+        foreach (var d in toRemove) services.Remove(d);
+    }
+
+    private static void SetTestEnvironmentVariables()
+    {
+        Environment.SetEnvironmentVariable("Database__Host", "localhost");
+        Environment.SetEnvironmentVariable("Database__Port", "5432");
+        Environment.SetEnvironmentVariable("Database__Username", "test");
+        Environment.SetEnvironmentVariable("Database__Password", "test");
+        Environment.SetEnvironmentVariable("Database__Name", "test_db");
+        Environment.SetEnvironmentVariable("Database__SslMode", "Disable");
+        Environment.SetEnvironmentVariable("Database__MigrateOnStartup", "false");
+        Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
+        Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-api-key");
+    }
+
+    private static void ClearTestEnvironmentVariables()
+    {
+        Environment.SetEnvironmentVariable("Database__Host", null);
+        Environment.SetEnvironmentVariable("Database__Port", null);
+        Environment.SetEnvironmentVariable("Database__Username", null);
+        Environment.SetEnvironmentVariable("Database__Password", null);
+        Environment.SetEnvironmentVariable("Database__Name", null);
+        Environment.SetEnvironmentVariable("Database__SslMode", null);
+        Environment.SetEnvironmentVariable("Database__MigrateOnStartup", null);
+        Environment.SetEnvironmentVariable("Database__SkipStartupInit", null);
+        Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+    }
+
+    // ── Test Infrastructure ──────────────────────────────────────────────
+
+    private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
+    {
+        private readonly string _dbName;
+        public InMemoryDbContextFactory(string dbName) => _dbName = dbName;
+
+        public PipelineDbContext CreateDbContext()
+        {
+            var options = new DbContextOptionsBuilder<PipelineDbContext>()
+                .UseInMemoryDatabase(_dbName)
+                .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+                .Options;
+            return new TestPipelineDbContext(options);
+        }
+
+        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+            => Task.FromResult(CreateDbContext());
+    }
+
+    private sealed class TestPipelineDbContext : PipelineDbContext
+    {
+        public TestPipelineDbContext(DbContextOptions<PipelineDbContext> options) : base(options) { }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                var rowVersionProp = entityType.FindProperty("RowVersion");
+                if (rowVersionProp != null)
+                {
+                    rowVersionProp.IsConcurrencyToken = false;
+                    rowVersionProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
+                }
+            }
+
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                var indexesToRemove = entityType.GetIndexes()
+                    .Where(i => i.GetFilter() != null)
+                    .ToList();
+                foreach (var index in indexesToRemove)
+                    entityType.RemoveIndex(index);
+            }
+        }
+    }
+
+    private sealed class NoOpDatabaseProbe : IDatabaseProbe
+    {
+        public Task ProbeAsync(CancellationToken ct) => Task.CompletedTask;
     }
 }

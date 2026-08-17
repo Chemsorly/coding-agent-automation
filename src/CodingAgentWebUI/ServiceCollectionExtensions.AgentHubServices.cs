@@ -57,7 +57,6 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILogger<AgentHubFacadeDependencies>>(),
             sp.GetService<WorkItemTransitionService>(),
-            sp.GetService<PendingWorkItemDrainService>(),
             sp.GetService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<IProjectStore>(),
             sp.GetService<IWorkItemFallbackTransitionService>()));

@@ -19,7 +19,7 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
     private readonly IProviderFactory _providerFactory;
     private readonly IWorkDistributor _workDistributor;
     private readonly IAgentRegistryService _agentRegistry;
-    private readonly IDispatchOrchestrationService? _dispatchOrchestration;
+    private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<PullRequestSummary> _prDrawer;
 
@@ -27,7 +27,7 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
         IProviderFactory providerFactory,
         IWorkDistributor workDistributor,
         IAgentRegistryService agentRegistry,
-        IDispatchOrchestrationService? dispatchOrchestration = null)
+        IDispatchOrchestrationService dispatchOrchestration)
     {
         _providerFactory = providerFactory;
         _workDistributor = workDistributor;
@@ -113,41 +113,31 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
         if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
             return (false, "Could not dispatch — no agents are currently connected.", null);
 
-        if (_dispatchOrchestration is not null)
-        {
-            return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
-                _dispatchOrchestration,
-                project =>
+        return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
+            _dispatchOrchestration,
+            project =>
+            {
+                var reviewRequest = new ReviewDispatchRequest
                 {
-                    var reviewRequest = new ReviewDispatchRequest
-                    {
-                        PrIdentifier = pr.Identifier,
-                        PrBranchName = pr.BranchName,
-                        PrTitle = pr.Title ?? "",
-                        PrUrl = pr.Url,
-                        PrTargetBranch = pr.TargetBranch,
-                        PrDescription = pr.Description,
-                        PrAuthor = pr.Author,
-                        IssueProviderId = template.IssueProviderId,
-                        RepoProviderId = template.RepoProviderId,
-                        BrainProviderId = template.BrainProviderId,
-                        InitiatedBy = DrawerDispatchHelper.ManualInitiator
-                    };
-                    return _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
-                        reviewRequest, project, CancellationToken.None);
-                },
-                parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
-                $"PR #{pr.Identifier} is already being processed or queued.",
-                $"⏳ Queued PR #{pr.Identifier} for review — waiting for an idle agent",
-                $"PR #{pr.Identifier} dispatched for review.");
-        }
-
-        var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, pr, initiatedBy: DrawerDispatchHelper.ManualInitiator, timeoutSeconds: 3600,
-            projectId: parentProject?.Id, projectName: parentProject?.Name);
-        return await DrawerDispatchHelper.DispatchLegacyAsync(_workDistributor, minimalRequest,
-            $"PR #{pr.Identifier} dispatched for review.",
-            $"PR #{pr.Identifier} is already being processed or queued.");
+                    PrIdentifier = pr.Identifier,
+                    PrBranchName = pr.BranchName,
+                    PrTitle = pr.Title ?? "",
+                    PrUrl = pr.Url,
+                    PrTargetBranch = pr.TargetBranch,
+                    PrDescription = pr.Description,
+                    PrAuthor = pr.Author,
+                    IssueProviderId = template.IssueProviderId,
+                    RepoProviderId = template.RepoProviderId,
+                    BrainProviderId = template.BrainProviderId,
+                    InitiatedBy = DrawerDispatchHelper.ManualInitiator
+                };
+                return _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
+                    reviewRequest, project, CancellationToken.None);
+            },
+            parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
+            $"PR #{pr.Identifier} is already being processed or queued.",
+            $"⏳ Queued PR #{pr.Identifier} for review — waiting for an idle agent",
+            $"PR #{pr.Identifier} dispatched for review.");
     }
 
     // ── Drawer orchestration ──

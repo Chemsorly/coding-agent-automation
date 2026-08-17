@@ -19,16 +19,16 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.UnitTests.Dispatch;
 
 /// <summary>
-/// End-to-end tests for the DB+SignalR dispatch pipeline.
-/// Wires real <see cref="DispatchOrchestrationService"/> + real <see cref="SignalRWorkDistributor"/>
+/// End-to-end tests for the K8s dispatch pipeline.
+/// Wires real <see cref="DispatchOrchestrationService"/> + real <see cref="KubernetesWorkDistributor"/>
 /// (with InMemory EF) + real <see cref="OrchestratorRunService"/> to verify the full ID chain:
 ///
-///   PrepareDistributionRequestAsync → DistributeAsync → agent jobId → hub GetRun(jobId) → found
+///   PrepareDistributionRequestAsync → DistributeAsync → WorkItemId → DB state
 ///
-/// These tests would have caught the three bugs fixed in this session:
-/// 1. Provider configs missing from JobAssignmentMessage
-/// 2. RunId mismatch between PipelineRun and WorkItem
-/// 3. HeartbeatMonitor orphaning runs with AgentId="pending"
+/// These tests verify key dispatch invariants:
+/// 1. Provider configs resolved correctly
+/// 2. RunId consistent between PipelineRun and WorkItem
+/// 3. HeartbeatMonitor does not orphan dispatch-window runs
 /// </summary>
 public sealed class DispatchPipelineEndToEndTests : IDisposable
 {
@@ -39,8 +39,6 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
-    private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<ILogger> _mockLogger = new();
 
     private static readonly ProviderConfig RepoConfig = new()
@@ -142,10 +140,6 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .Returns<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>((c, _, _, _) => Task.FromResult(c));
-
-        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-agent-1", "agent-dotnet-1"));
-        _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
     }
 
     private DispatchOrchestrationService CreateOrchestrationService()
@@ -164,18 +158,16 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
                 runCreator,
                 _runService,
                 new Mock<IWorkDistributor>().Object,
-                // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
                 _mockConfigStore.Object,
                 _mockConfigStore.Object,
                 _mockConfigStore.Object),
             _mockLogger.Object);
     }
 
-    private SignalRWorkDistributor CreateDistributor()
+    private KubernetesWorkDistributor CreateDistributor()
     {
         var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
-        return new SignalRWorkDistributor(_dbFactory, _mockAgentComm.Object, transitionService,
-            _mockResolver.Object, _runService, new Mock<IProjectStore>().Object, NullLogger<SignalRWorkDistributor>.Instance);
+        return new KubernetesWorkDistributor(_dbFactory, transitionService, NullLogger<KubernetesWorkDistributor>.Instance);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -183,7 +175,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task FullDispatch_RunIdChain_AgentJobIdMatchesPipelineRunIdAndWorkItemId()
+    public async Task FullDispatch_RunIdChain_WorkItemIdMatchesPipelineRunId()
     {
         // Arrange
         var orchestration = CreateOrchestrationService();
@@ -203,26 +195,22 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         request.Should().NotBeNull();
         request!.RunId.Should().NotBeNullOrEmpty("orchestration must set RunId from PipelineRun.RunId");
 
-        // Act: distribute (creates WorkItem in DB, sends to agent)
+        // Act: distribute (creates WorkItem in DB as Pending)
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();
 
-        // Assert: all three IDs are the same
+        // Assert: WorkItem ID matches the PipelineRun RunId
         var runId = request.RunId!;
         result.WorkItemId.Should().Be(runId, "WorkItem ID must match PipelineRun.RunId");
 
-        // Assert: the agent received a message with JobId = runId
-        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-agent-1",
-            It.Is<JobAssignmentMessage>(m => m.JobId == runId), It.IsAny<CancellationToken>()));
-
-        // Assert: hub can find the run by jobId (simulates RequestTokenRefresh lookup)
+        // Assert: hub can find the run by jobId
         var foundRun = _runService.GetRun(runId);
         foundRun.Should().NotBeNull("hub must find PipelineRun by the same jobId the agent uses");
         foundRun!.IssueIdentifier.Value.Should().Be("org/repo#42");
     }
 
     [Fact]
-    public async Task FullDispatch_ProviderConfigsIncluded_InJobAssignmentMessage()
+    public async Task FullDispatch_ProviderConfigsIncluded_InDistributionRequest()
     {
         // Arrange
         var orchestration = CreateOrchestrationService();
@@ -246,51 +234,10 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();
-
-        // Verify agent received ProviderConfigs in the message
-        _mockAgentComm.Verify(c => c.AssignJobAsync(It.IsAny<string>(),
-            It.Is<JobAssignmentMessage>(m =>
-                m.ProviderConfigs.Any(p => p.Id == "repo-1") &&
-                m.ProviderConfigs.Any(p => p.Id == "agent-1")),
-            It.IsAny<CancellationToken>()));
     }
 
     [Fact]
-    public async Task FullDispatch_AgentIdUpdated_FromNullToActualAgent()
-    {
-        // Arrange
-        var orchestration = CreateOrchestrationService();
-        var distributor = CreateDistributor();
-
-        // Act
-        var request = await orchestration.PrepareDistributionRequestAsync(
-            new ImplementationDispatchOrchestrationRequest
-            {
-                IssueIdentifier = "org/repo#42",
-                IssueProviderId = "issue-1",
-                RepoProviderId = "repo-1",
-                InitiatedBy = "loop",
-                Project = TestProject
-            },
-            CancellationToken.None);
-        request.Should().NotBeNull();
-
-        // Before distribution, run has agentId=null (dispatch window)
-        var run = _runService.GetRun(request!.RunId!);
-        run.Should().NotBeNull();
-        run!.AgentId.Should().BeNull();
-
-        // Act: distribute
-        var result = await distributor.DistributeAsync(request, CancellationToken.None);
-        result.Success.Should().BeTrue();
-
-        // After distribution, run.AgentId updated to actual agent
-        run.AgentId.Should().Be("agent-dotnet-1",
-            "distributor must update run.AgentId from null to the resolved agent");
-    }
-
-    [Fact]
-    public async Task FullDispatch_WorkItemInDb_HasCorrectStateAndAgentId()
+    public async Task FullDispatch_WorkItemInDb_HasCorrectState()
     {
         // Arrange
         var orchestration = CreateOrchestrationService();
@@ -309,72 +256,13 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             CancellationToken.None);
         var result = await distributor.DistributeAsync(request!, CancellationToken.None);
 
-        // Assert: WorkItem in DB has correct state
+        // Assert: WorkItem in DB has correct state (K8s queues as Pending)
         await using var db = new InMemoryPipelineDbContext(_dbOptions);
         var workItem = await db.WorkItems.FindAsync(Guid.Parse(result.WorkItemId!));
         workItem.Should().NotBeNull();
-        workItem!.Status.Should().Be(WorkItemStatus.Dispatched);
-        workItem.AssignedAgentId.Should().Be("agent-dotnet-1");
+        workItem!.Status.Should().Be(WorkItemStatus.Pending);
         workItem.IssueIdentifier.Should().Be("org/repo#42");
-    }
-
-    [Fact]
-    public async Task FullDispatch_TokenRefreshLookup_Succeeds()
-    {
-        // This test simulates what happens when the agent calls RequestTokenRefresh:
-        // hub does _runService.GetRun(jobId) where jobId = the WorkItem ID sent to agent.
-        // If RunId passthrough is broken, this returns null and throws HubException.
-        var orchestration = CreateOrchestrationService();
-        var distributor = CreateDistributor();
-
-        var request = await orchestration.PrepareDistributionRequestAsync(
-            new ImplementationDispatchOrchestrationRequest
-            {
-                IssueIdentifier = "org/repo#42",
-                IssueProviderId = "issue-1",
-                RepoProviderId = "repo-1",
-                InitiatedBy = "loop",
-                Project = TestProject
-            },
-            CancellationToken.None);
-        var result = await distributor.DistributeAsync(request!, CancellationToken.None);
-
-        // The agent's jobId (what it passes to hub methods) is the WorkItemId
-        var agentJobId = result.WorkItemId!;
-
-        // Simulate hub looking up the run — this is what RequestTokenRefresh does
-        var run = _runService.GetRun(agentJobId);
-        run.Should().NotBeNull("agent's jobId must resolve to the PipelineRun in OrchestratorRunService");
-        run!.RepoProviderConfigId.Should().Be("repo-1");
-    }
-
-    [Fact]
-    public async Task FullDispatch_HeartbeatMonitor_DoesNotOrphanFreshRun()
-    {
-        // Verifies that after dispatch, the run has a real AgentId,
-        // so HeartbeatMonitor won't orphan it during its next sweep.
-        var orchestration = CreateOrchestrationService();
-        var distributor = CreateDistributor();
-
-        var request = await orchestration.PrepareDistributionRequestAsync(
-            new ImplementationDispatchOrchestrationRequest
-            {
-                IssueIdentifier = "org/repo#42",
-                IssueProviderId = "issue-1",
-                RepoProviderId = "repo-1",
-                InitiatedBy = "loop",
-                Project = TestProject
-            },
-            CancellationToken.None);
-        await distributor.DistributeAsync(request!, CancellationToken.None);
-
-        // Verify: all active runs have real agent IDs (not null or "pending")
-        var activeRuns = _runService.GetActiveRuns();
-        foreach (var run in activeRuns)
-        {
-            run.AgentId.Should().NotBeNullOrEmpty(
-                "after distribution, runs must have a resolved agent ID so HeartbeatMonitor doesn't orphan them");
-        }
+        workItem.AssignedAgentId.Should().BeNull("K8s defers agent assignment to the pod scheduler — AssignedAgentId is set when the pod connects, not at dispatch time");
     }
 
     [Fact]
@@ -421,14 +309,12 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         // Step 4: Distribution still works after the sweep
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();
-        run.AgentId.Should().Be("agent-dotnet-1");
     }
 
     [Fact]
-    public async Task FullDispatch_AgentAccepts_LabelSwapsToInProgressAfterDistribute()
+    public async Task FullDispatch_LabelConfirm_SwapsToInProgress()
     {
-        // Verify: label is NOT swapped during PrepareDistributionRequestAsync,
-        // and IS swapped after DistributeAsync succeeds with Queued=false.
+        // Verify label swap happens after ConfirmDistributionLabelAsync, not before.
         var orchestration = CreateOrchestrationService();
         var distributor = CreateDistributor();
 
@@ -448,47 +334,16 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Never);
 
-        // Distribute successfully (agent available)
+        // Distribute (K8s queues as Pending)
         var result = await distributor.DistributeAsync(request!, CancellationToken.None);
         result.Success.Should().BeTrue();
-        result.Queued.Should().BeFalse();
 
-        // Now confirm label
+        // Confirm label
         await orchestration.ConfirmDistributionLabelAsync(request!, CancellationToken.None);
 
         _mockLabelService.Verify(
             l => l.SwapLabelAsync("issue-1", "org/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Once);
-    }
-
-    [Fact]
-    public async Task FullDispatch_NoIdleAgent_LabelRemainsUnchanged()
-    {
-        // Verify: when no agent is available, label is never swapped to agent:in-progress
-        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns((AgentResolveResult?)null);
-
-        var orchestration = CreateOrchestrationService();
-        var distributor = CreateDistributor();
-
-        var request = await orchestration.PrepareDistributionRequestAsync(
-            new ImplementationDispatchOrchestrationRequest
-            {
-                IssueIdentifier = "org/repo#42",
-                IssueProviderId = "issue-1",
-                RepoProviderId = "repo-1",
-                InitiatedBy = "loop",
-                Project = TestProject
-            },
-            CancellationToken.None);
-
-        var result = await distributor.DistributeAsync(request!, CancellationToken.None);
-        result.Success.Should().BeTrue();
-        result.Queued.Should().BeTrue();
-
-        // Label was never swapped to in-progress
-        _mockLabelService.Verify(
-            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
-            Times.Never);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

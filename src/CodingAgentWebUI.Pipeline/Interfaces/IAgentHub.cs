@@ -60,6 +60,7 @@ public interface IAgentHub
 /// </summary>
 public interface IAgentHubClient
 {
+    // TODO(Spec 043/044, same branch): dead after 041 — no Legacy/SignalR dispatch remains. Removed when the hub moves out of the monolith.
     Task AssignJob(JobAssignmentMessage message);
     Task CancelJob(JobId jobId);
     Task AssignChatPrompt(ChatPromptMessage message);

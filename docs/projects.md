@@ -38,13 +38,11 @@ flowchart LR
 
 Templates do NOT carry behavioral overrides. They define provider bindings only (issue/repo/brain/pipeline provider IDs and feature toggles).
 
-## Project JSON Structure
+## Project Storage
 
-Each project is persisted as an individual JSON file at:
+Projects are persisted in PostgreSQL (the `Projects` table). Configuration is managed via the web UI (Settings → Projects) or the import/export HTTP API. There is no file-based storage — all project data is backed by the database.
 
-```
-config/pipeline/projects/{project-id}.json
-```
+The JSON bundle produced by `GET /api/config/export` includes a `projects` array with the same shape documented below. This bundle can be used to migrate project configuration between instances (see [Bootstrap](bootstrap.md)).
 
 ### Example: Mono-Repo Project (Settings Only)
 
@@ -189,7 +187,7 @@ Templates can be moved between projects via the **Agent Coding** page using the 
 When a non-Default project is deleted:
 
 1. All templates in that project are moved to the Default project (appended at the end)
-2. The project JSON file is removed from disk
+2. The project record is removed from the database
 
 This ensures no template is ever orphaned.
 

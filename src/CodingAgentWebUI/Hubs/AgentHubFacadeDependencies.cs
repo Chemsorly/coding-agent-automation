@@ -24,7 +24,6 @@ public sealed record AgentHubFacadeDependencies(
     IProviderFactory ProviderFactory,
     ILogger<AgentHubFacadeDependencies> Logger,
     WorkItemTransitionService? WorkItemTransition = null,
-    PendingWorkItemDrainService? PendingDrainService = null,
     IDbContextFactory<PipelineDbContext>? DbFactory = null,
     IProjectStore? ProjectStore = null,
     IWorkItemFallbackTransitionService? WorkItemFallbackTransition = null);

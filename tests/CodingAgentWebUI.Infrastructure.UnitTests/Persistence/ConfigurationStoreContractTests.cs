@@ -10,8 +10,7 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 
 /// <summary>
 /// Contract tests for <see cref="IConfigurationStore"/> implementations.
-/// Both JSON-backed and Postgres-backed stores must satisfy these behavioral contracts.
-/// Prevents behavioral drift between dev (JSON) and prod (Postgres) modes.
+/// Postgres-backed store must satisfy these behavioral contracts.
 /// 
 /// Derived classes provide a concrete store instance via <see cref="CreateStore"/>.
 /// </summary>
@@ -233,30 +232,6 @@ public abstract class ConfigurationStoreContractTests : IDisposable
         var loaded = await store.GetProviderConfigByIdAsync(id, ProviderKind.Repository, CancellationToken.None);
         loaded!.DisplayName.Should().Be("Updated Name");
         loaded.Settings["owner"].Should().Be("org2");
-    }
-}
-
-// ── JSON-backed implementation ──────────────────────────────────────────────
-
-/// <summary>
-/// Runs the contract tests against <see cref="JsonConfigurationStore"/>.
-/// </summary>
-public class JsonConfigurationStoreContractTests : ConfigurationStoreContractTests
-{
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), $"contract-json-{Guid.NewGuid()}");
-
-    public JsonConfigurationStoreContractTests()
-    {
-        Directory.CreateDirectory(_tempDir);
-    }
-
-    protected override IConfigurationStore CreateStore() => new JsonConfigurationStore(_tempDir);
-
-    public override void Dispose()
-    {
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
-        base.Dispose();
     }
 }
 

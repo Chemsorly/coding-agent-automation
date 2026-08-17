@@ -698,6 +698,14 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         return result;
     }
 
+    public async Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)
+    {
+        // Delegate to LoadAllTemplatesAsync so we benefit from the existing cache.
+        // The template list is already loaded in most request paths; this avoids a second DB round-trip.
+        var all = await LoadAllTemplatesAsync(ct);
+        return all.Any(t => t.Enabled);
+    }
+
     public async Task SaveTemplateAsync(
         string projectId, PipelineJobTemplate template, CancellationToken ct)
     {

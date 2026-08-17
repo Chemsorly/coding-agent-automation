@@ -65,7 +65,17 @@ public class MainLayoutComponentTests : BunitContext
         var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
         Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
-        Services.AddSingleton(new FeatureFlags());  // defaults: IsKubernetesMode = false
+
+        // FirstRunBanner.razor requires IKeyValueStore + IProjectStore (added by Spec 041)
+        var mockKeyValueStore = new Mock<IKeyValueStore>();
+        mockKeyValueStore.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        Services.AddSingleton(mockKeyValueStore.Object);
+
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        Services.AddSingleton(mockProjectStore.Object);
     }
 
     [Fact]
@@ -196,7 +206,7 @@ public class MainLayoutComponentTests : BunitContext
     [Fact]
     public void Sidebar_AgentChatLink_PresentInSignalRMode()
     {
-        // FeatureFlags defaults to IsKubernetesMode = false — link should be visible
+        // Nav link is always visible — no mode gate.
         var cut = Render<MainLayout>();
 
         Assert.Contains("agent-chat", cut.Markup);
@@ -206,8 +216,6 @@ public class MainLayoutComponentTests : BunitContext
     public void Sidebar_AgentChatLink_PresentInKubernetesMode()
     {
         // Task 9.2 removed the IsKubernetesMode gate — nav link now always visible.
-        Services.AddSingleton(new FeatureFlags { IsKubernetesMode = true });
-
         var cut = Render<MainLayout>();
 
         Assert.Contains("agent-chat", cut.Markup);

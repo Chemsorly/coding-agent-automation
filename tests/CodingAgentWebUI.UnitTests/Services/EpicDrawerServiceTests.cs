@@ -53,7 +53,8 @@ public class EpicDrawerServiceTests
         var svc = new EpicDrawerService(
             new Mock<IProviderFactory>().Object,
             new Mock<IWorkDistributor>().Object,
-            new Mock<IAgentRegistryService>().Object);
+            new Mock<IAgentRegistryService>().Object,
+            new Mock<IDispatchOrchestrationService>().Object);
         Assert.NotNull(svc);
         svc.Dispose();
     }
