@@ -15,7 +15,7 @@ public class IRepositoryProviderDefaultMethodTests
     /// This test locks in the parameter type — if it reverts to string, the explicit IssueIdentifier
     /// construction still compiles (via implicit conversion), but the test documents the intended type.
     /// </summary>
-    // TODO: Mock<IRepositoryProvider> with CallBase = true may not reliably invoke default interface
+    // Note: Mock<IRepositoryProvider> with CallBase = true may not reliably invoke default interface
     // method implementations (DIM) via Moq — this is undocumented Moq behaviour. If this test becomes
     // flaky, replace the Mock with a concrete minimal stub class that inherits IRepositoryProvider
     // without overriding FormatCloseReference, which guarantees the DIM is invoked.

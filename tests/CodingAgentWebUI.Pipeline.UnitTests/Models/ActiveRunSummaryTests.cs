@@ -14,7 +14,7 @@ public class ActiveRunSummaryTests
     /// Accessing .Value only compiles if the property is an IssueIdentifier struct — this test
     /// will fail to compile if the property type reverts to string.
     /// </summary>
-    // TODO: The type-lock is only partially enforced — `string issueIdStr = summary.IssueIdentifier`
+    // Note: The type-lock is only partially enforced — `string issueIdStr = summary.IssueIdentifier`
     // compiles whether the property is IssueIdentifier or string (implicit conversion goes both ways).
     // The real compile-time guard is `_ = summary.IssueIdentifier.Value`. Consider also adding edge
     // case assertions for default value and different identifier formats to improve coverage.
