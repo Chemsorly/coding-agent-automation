@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Infrastructure;
 
 /// <summary>
 /// Builds a PostgreSQL connection string from individual configuration components.

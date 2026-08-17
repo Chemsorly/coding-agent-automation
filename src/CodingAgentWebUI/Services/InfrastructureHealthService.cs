@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Infrastructure;
 using StackExchange.Redis;
 
 namespace CodingAgentWebUI.Services;

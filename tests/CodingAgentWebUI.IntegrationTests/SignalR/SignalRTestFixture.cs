@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Orchestration.Registry;

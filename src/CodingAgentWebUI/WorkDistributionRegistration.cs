@@ -33,7 +33,7 @@ public static partial class WorkDistributionRegistration
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = Services.DatabaseConnectionResolver.Resolve(configuration);
+        var connectionString = DatabaseConnectionResolver.Resolve(configuration);
 
         // ── Normalize connection string (Timeout=15, SslMode=Require for production) ──
         var isProduction = !string.Equals(
@@ -123,7 +123,7 @@ public static partial class WorkDistributionRegistration
         // Internal MemoryCache + _pipelineConfigCache only work correctly as singleton.
         services.AddSingleton<IConfigurationStore>(sp =>
             new PostgresConfigurationStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
-        RegisterConfigStoreSubInterfaces(services);
+        services.RegisterConfigStoreSubInterfaces();
 
         // ── Consolidation run persistence (DB-backed) ───────────────────────
         services.AddSingleton<IConsolidationRunStore>(sp =>
@@ -141,7 +141,7 @@ public static partial class WorkDistributionRegistration
             new PostgresHarnessSuggestionStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
         // ── Polly resilience pipelines ──────────────────────────────────────
-        RegisterResiliencePipelines(services);
+        services.RegisterResiliencePipelines();
 
         // ── WorkItem metrics background service (DB-mode only) ──────────────
         services.AddHostedService<WorkItemMetricsBackgroundService>();
@@ -173,21 +173,6 @@ public static partial class WorkDistributionRegistration
         // via the tracing/metrics builder callbacks. This method is a hook for any future
         // work-distribution-specific instrumentation setup.
         return services;
-    }
-
-    /// <summary>
-    /// Registers all IConfigurationStore sub-interface forwarding registrations.
-    /// Ensures both JSON and Postgres paths register the same set of sub-interfaces.
-    /// MUST be called AFTER IConfigurationStore itself is registered.
-    /// </summary>
-    internal static void RegisterConfigStoreSubInterfaces(IServiceCollection services)
-    {
-        services.AddSingleton<IPipelineConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IProviderConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<IConfigurationStore>());
     }
 
     /// <summary>
@@ -251,25 +236,5 @@ public static partial class WorkDistributionRegistration
         });
 
         Log.Information("WorkDistribution: SignalR Redis backplane configured with AbortOnConnectFail=false");
-    }
-
-    /// <summary>
-    /// Determines if an exception is a transient database error eligible for retry.
-    /// </summary>
-    private static bool IsTransientDbException(Exception ex)
-    {
-        // Npgsql transient errors
-        if (ex is Npgsql.NpgsqlException npgsqlEx && npgsqlEx.IsTransient)
-            return true;
-
-        // EF Core concurrency conflicts are not transient in the retry sense
-        if (ex is Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
-            return false;
-
-        // Generic timeout or I/O errors
-        if (ex is TimeoutException or System.IO.IOException)
-            return true;
-
-        return false;
     }
 }

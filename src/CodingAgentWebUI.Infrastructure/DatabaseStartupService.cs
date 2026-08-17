@@ -2,8 +2,9 @@ using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Infrastructure;
 
 /// <summary>
 /// Handles database initialization at startup:
@@ -101,7 +102,7 @@ public sealed class DatabaseStartupService
     /// When MigrateOnStartup is true (default for dev): acquires lock, applies migrations.
     /// When false (production): verifies no pending migrations, fails if any exist.
     /// </summary>
-    internal async Task HandleMigrationsAsync(CancellationToken ct)
+    public async Task HandleMigrationsAsync(CancellationToken ct)
     {
         var migrateOnStartup = _configuration.GetValue("Database:MigrateOnStartup", true);
 

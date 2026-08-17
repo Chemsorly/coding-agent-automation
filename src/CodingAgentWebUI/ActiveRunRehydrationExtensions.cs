@@ -1,8 +1,8 @@
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 

@@ -45,7 +45,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(40));
 
 // Domain service registrations (extracted into focused extension methods)
-var dbConnectionString = CodingAgentWebUI.Services.DatabaseConnectionResolver.Resolve(builder.Configuration);
+var dbConnectionString = DatabaseConnectionResolver.Resolve(builder.Configuration);
 if (string.IsNullOrEmpty(dbConnectionString))
 {
     Log.Fatal("Database__Host is not configured. Kubernetes deployment requires PostgreSQL. Exiting.");
