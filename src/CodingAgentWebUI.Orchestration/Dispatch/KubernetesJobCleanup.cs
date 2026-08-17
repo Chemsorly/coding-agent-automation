@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
+using CodingAgentWebUI.Pipeline.Models;
 using k8s.Autorest;
 using Microsoft.EntityFrameworkCore;
 using ILogger = Serilog.ILogger;
@@ -36,9 +37,9 @@ public sealed class KubernetesJobCleanup : IJobCleanupStrategy
     }
 
     /// <inheritdoc />
-    public async Task TryDeleteJobForRunAsync(string runId, CancellationToken ct)
+    public async Task TryDeleteJobForRunAsync(RunId runId, CancellationToken ct)
     {
-        if (!Guid.TryParse(runId, out var workItemId))
+        if (!Guid.TryParse(runId.Value, out var workItemId))
             return;
 
         try

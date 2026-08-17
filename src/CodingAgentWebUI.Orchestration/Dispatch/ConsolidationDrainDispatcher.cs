@@ -64,8 +64,10 @@ public sealed class ConsolidationDrainDispatcher : IConsolidationDrainDispatcher
         CancellationToken ct)
     {
         // Cancel-during-dispatch race guard: check if run was cancelled while queued
-        var runId = request.IssueIdentifier.Value; // RunId stored as IssueIdentifier for consolidation
-        var consolidationRun = await _consolidationRunStore.GetByIdAsync((RunId)runId, ct);
+        // RunId is stored as IssueIdentifier for consolidation jobs; convert once here so all
+        // downstream call sites receive RunId directly without boundary casts.
+        RunId runId = request.IssueIdentifier.Value;
+        var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
         if (consolidationRun is null ||
             consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
             consolidationRun.Status == ConsolidationRunStatus.Failed)

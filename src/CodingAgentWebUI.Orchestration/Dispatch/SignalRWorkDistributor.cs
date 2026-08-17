@@ -240,7 +240,14 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
                 // without warning. The IsNullOrEmpty guard above makes this safe at runtime, but
                 // consider adding nullable annotation to AgentId's implicit operator or explicit cast.
                 if (!string.IsNullOrEmpty(cancelledRun.AgentId) && _cancellationSender is not null)
-                    await _cancellationSender.SendCancelJobAsync(cancelledRun.AgentId, jobId.Value, ct);
+                {
+                    // Use cancelledRun.RunId (the authoritative run identifier from the lifecycle manager)
+                    // rather than jobId.Value. jobId is a JobId — using it directly would require an
+                    // explicit string-to-RunId cast at this interface boundary, which the RunId adoption
+                    // effort (#2069) aims to eliminate. cancelledRun.RunId is a string that implicitly
+                    // converts to RunId, keeping the boundary clean.
+                    await _cancellationSender.SendCancelJobAsync(cancelledRun.AgentId, cancelledRun.RunId, ct);
+                }
                 return true;
             }
 
