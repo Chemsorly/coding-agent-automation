@@ -1065,11 +1065,14 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task NotifyRunCancelledAsync_NullRunId_ThrowsArgumentNullException()
+    public async Task NotifyRunCancelledAsync_EmptyRunId_ThrowsArgumentException()
     {
         var svc = CreateService();
-        await svc.Invoking(s => s.NotifyRunCancelledAsync(null!, CancellationToken.None))
-            .Should().ThrowAsync<ArgumentNullException>();
+        // TODO: Also add a test for default(RunId) (i.e., new RunId(null!)) to verify the null-Value path
+        // of ArgumentException.ThrowIfNullOrEmpty(runId.Value). The guard handles both null and empty, but
+        // only the empty-string path is exercised here.
+        await svc.Invoking(s => s.NotifyRunCancelledAsync(new RunId(""), CancellationToken.None))
+            .Should().ThrowAsync<ArgumentException>();
     }
 
     #endregion
@@ -1077,11 +1080,14 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     #region TryDispatchToAgentAsync guard clauses
 
     [Fact]
-    public async Task TryDispatchToAgentAsync_NullRunId_ThrowsArgumentNullException()
+    public async Task TryDispatchToAgentAsync_EmptyRunId_ThrowsArgumentException()
     {
         var svc = CreateService();
-        await svc.Invoking(s => s.TryDispatchToAgentAsync(null!, ConsolidationRunType.BrainConsolidation, null, "/tmp", "agent-1", CancellationToken.None))
-            .Should().ThrowAsync<ArgumentNullException>();
+        // TODO: Also add a test for default(RunId) (i.e., new RunId(null!)) to verify the null-Value path
+        // of ArgumentException.ThrowIfNullOrEmpty(runId.Value). The guard handles both null and empty, but
+        // only the empty-string path is exercised here.
+        await svc.Invoking(s => s.TryDispatchToAgentAsync(new RunId(""), ConsolidationRunType.BrainConsolidation, null, "/tmp", "agent-1", CancellationToken.None))
+            .Should().ThrowAsync<ArgumentException>();
     }
 
     [Fact]

@@ -212,10 +212,14 @@ public sealed class JobQueueDrainService : BackgroundService
     {
         try
         {
+            // RunId is stored as IssueIdentifier for consolidation jobs; convert once here so all
+            // downstream call sites receive RunId directly without boundary casts.
+            RunId runId = pendingJob.IssueIdentifier.Value;
+
             // Cancel-during-dispatch race guard
             if (_consolidationRunStore is not null)
             {
-                var run = await _consolidationRunStore.GetByIdAsync((RunId)pendingJob.IssueIdentifier.Value, ct);
+                var run = await _consolidationRunStore.GetByIdAsync(runId, ct);
                 if (run is null ||
                     run.Status == Pipeline.Models.ConsolidationRunStatus.Cancelled ||
                     run.Status == Pipeline.Models.ConsolidationRunStatus.Failed)
@@ -229,7 +233,7 @@ public sealed class JobQueueDrainService : BackgroundService
             }
 
             var consolidationDispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
-                pendingJob.IssueIdentifier,
+                runId,
                 pendingJob.ConsolidationRunType!.Value,
                 string.IsNullOrEmpty(pendingJob.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)pendingJob.ConsolidationTemplateId,
                 pendingJob.ConsolidationWorkspacePath ?? "",

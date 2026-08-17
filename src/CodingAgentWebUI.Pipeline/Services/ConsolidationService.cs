@@ -306,7 +306,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             _runningRuns.TryRemove(key, out _);
 
             if (_dispatcher is not null)
-                await _dispatcher.NotifyRunCancelledAsync(runId.Value, ct);
+                await _dispatcher.NotifyRunCancelledAsync(runId, ct);
 
             _logger.Information("Consolidation run {RunId} cancelled", runId.Value);
             OnChange?.Invoke();

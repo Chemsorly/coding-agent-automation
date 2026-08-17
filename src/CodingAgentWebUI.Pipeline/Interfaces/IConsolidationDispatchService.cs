@@ -53,7 +53,7 @@ public interface IConsolidationDispatchService
     /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if dispatched successfully; <c>false</c> otherwise.</returns>
     Task<bool> TryDispatchToAgentAsync(
-        string runId,
+        RunId runId,
         ConsolidationRunType type,
         TemplateId? templateId,
         string workspacePath,
@@ -66,5 +66,5 @@ public interface IConsolidationDispatchService
     /// </summary>
     /// <param name="runId">The run ID that was cancelled.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task NotifyRunCancelledAsync(string runId, CancellationToken ct);
+    Task NotifyRunCancelledAsync(RunId runId, CancellationToken ct);
 }

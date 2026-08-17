@@ -166,14 +166,19 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     /// Token vending happens here (at dispatch time, not enqueue time).
     /// </summary>
     public async Task<bool> TryDispatchToAgentAsync(
-        string runId,
+        RunId runId,
         ConsolidationRunType type,
         TemplateId? templateId,
         string workspacePath,
         AgentId agentId,
         CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
+        // TODO: ThrowIfNullOrEmpty correctly handles both null (default(RunId).Value == null) and empty
+        // string. However, the guard tests (TryDispatchToAgentAsync_EmptyRunId_ThrowsArgumentException
+        // and NotifyRunCancelledAsync_EmptyRunId_ThrowsArgumentException) only exercise new RunId("") and
+        // do not verify the null-Value path via default(RunId). Consider adding a test for default(RunId)
+        // to confirm both paths of ThrowIfNullOrEmpty are covered.
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
         ArgumentNullException.ThrowIfNull(workspacePath);
         // TODO: AgentId is a readonly record struct so it cannot be null, but AgentId.Value can be null
         // if constructed via `new AgentId(null!)` or `default(AgentId)`. ThrowIfNullOrEmpty covers both
@@ -203,7 +208,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             return false;
 
         // Load the run from disk to get template name
-        var run = await LoadRunAsync(runId, ct);
+        var run = await LoadRunAsync(runId.Value, ct);
         if (run is null)
             return false;
 
@@ -213,7 +218,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             string? feedbackDataJson = null;
             if (type == ConsolidationRunType.HarnessSuggestions)
             {
-                feedbackDataJson = await RegenerateFeedbackDataAsync(runId, ct);
+                feedbackDataJson = await RegenerateFeedbackDataAsync(runId.Value, ct);
             }
 
             // Load live config at dispatch time (same fix as TryDispatchAsync — avoids stale startup singleton)
@@ -225,7 +230,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
 
             // Transition run from Queued → Running after successful dispatch
             // (previously done in the deleted DrainConsolidationJobsAsync)
-            await TransitionRunToRunningAsync(runId, ct);
+            await TransitionRunToRunningAsync(runId.Value, ct);
 
             return true;
         }
@@ -242,19 +247,22 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     }
 
     /// <inheritdoc />
-    public async Task NotifyRunCancelledAsync(string runId, CancellationToken ct)
+    public async Task NotifyRunCancelledAsync(RunId runId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
         // DB mode: transition WorkItem to Cancelled
         // TODO: CancelJobAsync uses Guid.TryParse(runId) as WorkItem.Id. This works because
         // InsertConsolidationAsPendingAsync sets WorkItem.Id = RunId (when parseable as GUID).
         // If the coupling breaks (e.g., RunId not parseable), cancellation silently fails.
         // Consider querying by IssueIdentifier instead of relying on ID equality. (#1084 follow-up)
-        await _workDistributor.CancelJobAsync(runId, ct);
+        await _workDistributor.CancelJobAsync(runId.Value, ct);
 
         // Legacy mode: remove from in-memory queue
-        _jobDispatcher.RemoveJob(runId);
+        // TODO: JobDeduplicationGuardService.RemoveJob still takes string — RunId.Value is unwrapped
+        // here at the JobDeduplicationGuardService boundary. Updating RemoveJob to accept RunId would
+        // close this remaining string crossing. (#2069 follow-up)
+        _jobDispatcher.RemoveJob(runId.Value);
     }
 
     /// <summary>
