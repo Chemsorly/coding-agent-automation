@@ -248,19 +248,12 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
     /// The fallback mapper is only invoked for WorkItems with no joined PipelineRun row, which
     /// are always newly-queued Phase 1 jobs.
     /// </summary>
-    // TODO: The theory below omits WorkItemTaskType.Consolidation because Consolidation items are
-    // pre-filtered out by the query and never reach MapTaskTypeToRunType (see companion test
-    // GetActiveRunsAsync_ConsolidationWorkItem_ExcludedFromResults). The Consolidation arm of
-    // MapTaskTypeToRunType is therefore unreachable dead code. If the pre-filter is ever relaxed,
-    // add [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Consolidation)] here and
-    // verify the arm remains correct. (Flagged by DotNetSpecialist + TestQualityReviewer.)
-    //
-    // TODO: The _ (default/fallback) arm of MapTaskTypeToRunType — which maps any unrecognised
-    // WorkItemTaskType to PipelineRunType.Implementation — is not exercised by this theory. If a
-    // new enum value is added without a corresponding switch arm, the silent fallback will produce
-    // an incorrect RunType with no test failure signalling the gap. Consider adding:
-    //   [InlineData((WorkItemTaskType)99, PipelineRunType.Implementation)]
-    // to pin this behaviour. (Flagged by Correctness + TestQualityReviewer.)
+    // TODO: The _ (default/fallback) arm of MapTaskTypeToRunType now throws UnreachableException for
+    // any unrecognised WorkItemTaskType. This throw path is not exercised by the theory below.
+    // Add a test that asserts Assert.Throws<UnreachableException>(...) (or an integration-level
+    // variant inserting an unrecognised TaskType directly into the DB) to lock in the fail-fast
+    // contract and prevent a silent regression if the switch is accidentally reverted.
+    // (Flagged by TestQualityReviewer.)
     [Theory]
     [InlineData(WorkItemTaskType.Implementation, PipelineRunType.Implementation)]
     [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
