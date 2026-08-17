@@ -100,6 +100,9 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
 
+        Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
+        Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();
+        Services.AddScoped<IEpicDrawerService, EpicDrawerService>();
         Services.AddScoped<AgentCodingPageService>();
         Services.AddScoped<NotificationService>();
     }
