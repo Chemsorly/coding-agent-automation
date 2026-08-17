@@ -386,7 +386,7 @@ public class AgentHubTests
         var summary = run.ToSummary();
 
         summary.RunId.Should().Be("run-1");
-        summary.IssueIdentifier.Should().Be("org/repo#1");
+        summary.IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#1");
         summary.IssueTitle.Should().Be("Test Issue");
         summary.FinalStep.Should().Be(PipelineStep.Completed);
         summary.RetryCount.Should().Be(1);

@@ -87,7 +87,7 @@ public class TestOrchestrationFactoryTests
 
         var history = await svc.GetRunHistoryAsync();
         history.Should().HaveCount(1);
-        history[0].IssueIdentifier.Should().Be("owner/repo#1");
+        history[0].IssueIdentifier.Should().Be((IssueIdentifier)"owner/repo#1");
     }
 
     [Fact]

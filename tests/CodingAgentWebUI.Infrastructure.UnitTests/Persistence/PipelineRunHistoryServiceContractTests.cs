@@ -47,7 +47,7 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
 
         history.Should().HaveCount(1);
         history[0].RunId.Should().Be(run.RunId);
-        history[0].IssueIdentifier.Should().Be("org/repo#42");
+        history[0].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#42");
         history[0].IssueTitle.Should().Be("Fix the flaky test");
         history[0].FinalStep.Should().Be(PipelineStep.Completed);
     }
@@ -78,9 +78,9 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         var history = await service.GetRunHistoryAsync();
 
         history.Should().HaveCount(3);
-        history[0].IssueIdentifier.Should().Be("issue-3"); // newest first
-        history[1].IssueIdentifier.Should().Be("issue-2");
-        history[2].IssueIdentifier.Should().Be("issue-1"); // oldest last
+        history[0].IssueIdentifier.Should().Be((IssueIdentifier)"issue-3"); // newest first
+        history[1].IssueIdentifier.Should().Be((IssueIdentifier)"issue-2");
+        history[2].IssueIdentifier.Should().Be((IssueIdentifier)"issue-1"); // oldest last
     }
 
     [Fact]
@@ -207,7 +207,7 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
 
         var restored = history[0];
         restored.RunId.Should().Be(runId);
-        restored.IssueIdentifier.Should().Be("org/repo#99");
+        restored.IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#99");
         restored.IssueTitle.Should().Be("Preserve all fields");
         restored.FinalStep.Should().Be(PipelineStep.Completed);
         restored.StartedAtOffset.Should().Be(startedAt);

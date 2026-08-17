@@ -82,6 +82,9 @@ public class DrawerMultiPanelTests : BunitContext
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
 
+        Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
+        Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();
+        Services.AddScoped<IEpicDrawerService, EpicDrawerService>();
         Services.AddScoped<AgentCodingPageService>();
         Services.AddScoped<NotificationService>();
     }
@@ -151,7 +154,7 @@ public class DrawerMultiPanelTests : BunitContext
                 HasMore = false
             });
 
-        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockRepoProvider.Setup(r => r.GetAgentPullRequestsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<LinkedPullRequest>());
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))

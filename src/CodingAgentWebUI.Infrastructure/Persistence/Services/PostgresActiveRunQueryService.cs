@@ -74,16 +74,13 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
     private static ActiveRunSummary MapRowToSummary(ActiveRunRow r)
     {
         var agentIdStr = r.AssignedAgentId ?? r.AgentId;
-        // TODO: PostgreSQL distinguishes NULL from '' — if the DB contains an empty string in
-        // assigned_agent_id or agent_id, the implicit (AgentId) cast throws ArgumentException.
-        // Guard with !string.IsNullOrEmpty instead of is not null to treat '' the same as NULL.
         return new ActiveRunSummary
         {
             RunId = r.RunId?.ToString() ?? r.WorkItemId.ToString(),
             IssueIdentifier = r.IssueIdentifier,
             IssueTitle = r.IssueTitle ?? "",
             RunType = r.RunType ?? MapTaskTypeToRunType(r.TaskType),
-            AgentId = agentIdStr is not null ? (AgentId)agentIdStr : (AgentId?)null,
+            AgentId = !string.IsNullOrEmpty(agentIdStr) ? (AgentId)agentIdStr : (AgentId?)null,
             StartedAt = r.DispatchedAt ?? r.CreatedAt,
             ProjectName = r.ProjectName,
             CurrentStep = MapStatusToStep(r.Status)
@@ -102,9 +99,7 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
             summaries[i] = summaries[i] with
             {
                 CurrentStep = liveRun.CurrentStep,
-                // TODO: PipelineRun.AgentId is string? with no validation — an empty string would cause
-                // the implicit (AgentId) cast to throw ArgumentException. Use !string.IsNullOrEmpty guard.
-                AgentId = summaries[i].AgentId ?? (liveRun.AgentId is not null ? (AgentId)liveRun.AgentId : (AgentId?)null),
+                AgentId = summaries[i].AgentId ?? (!string.IsNullOrEmpty(liveRun.AgentId) ? (AgentId)liveRun.AgentId : (AgentId?)null),
                 IssueTitle = !string.IsNullOrEmpty(liveRun.IssueTitle) ? liveRun.IssueTitle : summaries[i].IssueTitle,
                 ProjectName = summaries[i].ProjectName ?? liveRun.ProjectName
             };
@@ -136,9 +131,7 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
                 IssueIdentifier = liveRun.IssueIdentifier,
                 IssueTitle = liveRun.IssueTitle ?? "",
                 RunType = liveRun.RunType,
-                // TODO: PipelineRun.AgentId is string? with no validation — an empty string would cause
-                // the implicit (AgentId) cast to throw ArgumentException. Use !string.IsNullOrEmpty guard.
-                AgentId = liveRun.AgentId is not null ? (AgentId)liveRun.AgentId : (AgentId?)null,
+                AgentId = !string.IsNullOrEmpty(liveRun.AgentId) ? (AgentId)liveRun.AgentId : (AgentId?)null,
                 StartedAt = liveRun.StartedAtOffset,
                 ProjectName = liveRun.ProjectName,
                 CurrentStep = liveRun.CurrentStep

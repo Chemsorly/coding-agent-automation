@@ -406,14 +406,14 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
 
         // Setup: run exists and is Queued
-        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(It.Is<RunId>(r => r.Value == runId), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
 
         // Setup: dispatch simulates shutdown by cancelling CTS then throwing
         using var cts = new CancellationTokenSource();
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, (TemplateId?)"template-1", "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()))
-            .Returns((string _, ConsolidationRunType _, TemplateId? _, string _, AgentId _, CancellationToken _) =>
+            .Setup(d => d.TryDispatchToAgentAsync(It.Is<RunId>(r => r.Value == runId), ConsolidationRunType.BrainConsolidation, (TemplateId?)"template-1", "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()))
+            .Returns((RunId _, ConsolidationRunType _, TemplateId? _, string _, AgentId _, CancellationToken _) =>
             {
                 cts.Cancel(); // Simulate graceful shutdown — token is now cancelled
                 throw new OperationCanceledException(cts.Token);

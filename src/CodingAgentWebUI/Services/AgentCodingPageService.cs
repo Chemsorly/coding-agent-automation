@@ -1,71 +1,42 @@
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using Serilog;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Services;
 
 /// <summary>
-/// Encapsulates the business logic for the AgentCoding page — template CRUD, drawer operations,
-/// loop controls, and dispatch coordination. The Blazor component delegates to this service
-/// and retains only UI state (visibility, timers, JS interop, StateHasChanged).
+/// Coordinator for the AgentCoding page — owns template CRUD, loop controls, provider lists, and
+/// forwards drawer operations to the focused drawer services.
+/// The Blazor component delegates to this service and retains only UI state.
 /// Registered as Scoped because it holds per-page mutable state.
 /// </summary>
-public class AgentCodingPageService : IDisposable
+public class AgentCodingPageService
 {
-    private static readonly ILogger Logger = Log.ForContext<AgentCodingPageService>();
-
     private readonly IPipelineLoopService _loopService;
-    private readonly IWorkDistributor _workDistributor;
-    private readonly IAgentRegistryService _agentRegistry;
     private readonly IConfigurationStore _configStore;
     private readonly IProjectStore _projectStore;
-    private readonly IProviderFactory _providerFactory;
-    private readonly IDependencyChecker _dependencyChecker;
-    private readonly IDispatchOrchestrationService? _dispatchOrchestration;
+    private readonly IIssueDrawerService _issueDrawerService;
+    private readonly IPrReviewDrawerService _prReviewDrawerService;
+    private readonly IEpicDrawerService _epicDrawerService;
 
     public AgentCodingPageService(
         IPipelineLoopService loopService,
-        IWorkDistributor workDistributor,
-        IAgentRegistryService agentRegistry,
         IConfigurationStore configStore,
         IProjectStore projectStore,
-        IProviderFactory providerFactory,
-        IDependencyChecker dependencyChecker,
-        IDispatchOrchestrationService? dispatchOrchestration = null)
+        IIssueDrawerService issueDrawerService,
+        IPrReviewDrawerService prReviewDrawerService,
+        IEpicDrawerService epicDrawerService)
     {
         _loopService = loopService;
-        _workDistributor = workDistributor;
-        _agentRegistry = agentRegistry;
         _configStore = configStore;
         _projectStore = projectStore;
-        _providerFactory = providerFactory;
-        _dependencyChecker = dependencyChecker;
-        _dispatchOrchestration = dispatchOrchestration;
-
-        _issueDrawer = new DrawerStateService<IssueSummary>(
-            LoadDrawerIssuesAsync,
-            LoadDrawerLabelsPrivateAsync,
-            (issue, template) => DispatchIssueAsync(issue, template),
-            closeOnDispatch: true,
-            postLoadAsync: CheckDrawerDependenciesInBackgroundAsync);
-
-        _prDrawer = new DrawerStateService<PullRequestSummary>(
-            LoadPrDrawerPageAsync,
-            LoadPrDrawerLabelsAsync,
-            (pr, template) => DispatchPrReviewAsync(pr, template));
-
-        _epicDrawer = new DrawerStateService<IssueSummary>(
-            t => LoadEpicDrawerIssuesAsync(t, 1),
-            LoadEpicDrawerLabelsAsync,
-            (issue, template) => DispatchDecompositionAsync(issue, template),
-            closeOnDispatch: true);
+        _issueDrawerService = issueDrawerService;
+        _prReviewDrawerService = prReviewDrawerService;
+        _epicDrawerService = epicDrawerService;
     }
 
-    // ── State ──
+    // ── Configuration state ──
 
     public List<PipelineJobTemplate> Templates { get; private set; } = [];
     public IReadOnlyList<PipelineProject> Projects { get; private set; } = [];
@@ -79,53 +50,49 @@ public class AgentCodingPageService : IDisposable
     public PipelineConfiguration PipelineConfig { get; private set; } = new();
     public int MaxRetries { get; private set; } = 3;
 
-    // Drawer state — managed by DrawerStateService<TItem> instances
-    private readonly DrawerStateService<IssueSummary> _issueDrawer;
-    private readonly DrawerStateService<PullRequestSummary> _prDrawer;
-    private readonly DrawerStateService<IssueSummary> _epicDrawer;
+    // ── Drawer state accessors (forwarded to drawer services) ──
 
-    // ── Backward-compatible drawer accessors ──
+    public DrawerStateService<IssueSummary> IssueDrawer => _issueDrawerService.DrawerState;
+    public DrawerStateService<PullRequestSummary> PrDrawer => _prReviewDrawerService.DrawerState;
+    public DrawerStateService<IssueSummary> EpicDrawer => _epicDrawerService.DrawerState;
 
-    public DrawerStateService<IssueSummary> IssueDrawer => _issueDrawer;
-    public DrawerStateService<PullRequestSummary> PrDrawer => _prDrawer;
-    public DrawerStateService<IssueSummary> EpicDrawer => _epicDrawer;
+    public bool IsIssueDrawerOpen => _issueDrawerService.DrawerState.IsOpen;
+    public bool IsPrDrawerOpen => _prReviewDrawerService.DrawerState.IsOpen;
+    public bool IsEpicDrawerOpen => _epicDrawerService.DrawerState.IsOpen;
+    public PipelineJobTemplate? IssueDrawerTemplate => _issueDrawerService.DrawerState.Template;
+    public PipelineJobTemplate? PrDrawerTemplate => _prReviewDrawerService.DrawerState.Template;
+    public PipelineJobTemplate? EpicDrawerTemplate => _epicDrawerService.DrawerState.Template;
+    public bool IssueDrawerDispatching { get => _issueDrawerService.DrawerState.IsDispatching; set => _issueDrawerService.DrawerState.IsDispatching = value; }
+    public bool PrDrawerDispatching { get => _prReviewDrawerService.DrawerState.IsDispatching; set => _prReviewDrawerService.DrawerState.IsDispatching = value; }
+    public bool EpicDrawerDispatching { get => _epicDrawerService.DrawerState.IsDispatching; set => _epicDrawerService.DrawerState.IsDispatching = value; }
 
-    // Backward-compatible wrappers for existing consumers
-    public bool IsIssueDrawerOpen => _issueDrawer.IsOpen;
-    public bool IsPrDrawerOpen => _prDrawer.IsOpen;
-    public bool IsEpicDrawerOpen => _epicDrawer.IsOpen;
-    public PipelineJobTemplate? IssueDrawerTemplate => _issueDrawer.Template;
-    public PipelineJobTemplate? PrDrawerTemplate => _prDrawer.Template;
-    public PipelineJobTemplate? EpicDrawerTemplate => _epicDrawer.Template;
-    public bool IssueDrawerDispatching { get => _issueDrawer.IsDispatching; set => _issueDrawer.IsDispatching = value; }
-    public bool PrDrawerDispatching { get => _prDrawer.IsDispatching; set => _prDrawer.IsDispatching = value; }
-    public bool EpicDrawerDispatching { get => _epicDrawer.IsDispatching; set => _epicDrawer.IsDispatching = value; }
-    public List<IssueSummary> DrawerIssues => _issueDrawer.Items;
-    public int DrawerPage => _issueDrawer.Page;
-    public bool DrawerHasMore => _issueDrawer.HasMore;
-    public bool DrawerLoading => _issueDrawer.Loading;
-    public List<string> DrawerLabels => _issueDrawer.Labels;
-    public List<string> DrawerSelectedLabels => _issueDrawer.SelectedLabels;
-    public List<PullRequestSummary> PrDrawerPrs => _prDrawer.Items;
-    public int PrDrawerPage => _prDrawer.Page;
-    public bool PrDrawerHasMore => _prDrawer.HasMore;
-    public bool PrDrawerLoading => _prDrawer.Loading;
-    public List<string> PrDrawerLabels => _prDrawer.Labels;
-    public List<string> PrDrawerSelectedLabels => _prDrawer.SelectedLabels;
-    public List<IssueSummary> EpicDrawerIssues => _epicDrawer.Items;
-    public int EpicDrawerPage => _epicDrawer.Page;
-    public bool EpicDrawerHasMore => _epicDrawer.HasMore;
-    public bool EpicDrawerLoading => _epicDrawer.Loading;
-    public List<string> EpicDrawerLabels => _epicDrawer.Labels;
-    public List<string> EpicDrawerSelectedLabels => _epicDrawer.SelectedLabels;
-    public Dictionary<string, DependencyCheckResult> DrawerReadiness { get; private set; } = new();
+    public List<IssueSummary> DrawerIssues => _issueDrawerService.DrawerState.Items;
+    public int DrawerPage => _issueDrawerService.DrawerState.Page;
+    public bool DrawerHasMore => _issueDrawerService.DrawerState.HasMore;
+    public bool DrawerLoading => _issueDrawerService.DrawerState.Loading;
+    public List<string> DrawerLabels => _issueDrawerService.DrawerState.Labels;
+    public List<string> DrawerSelectedLabels => _issueDrawerService.DrawerState.SelectedLabels;
 
-    public HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssues { get; private set; } = new();
+    public List<PullRequestSummary> PrDrawerPrs => _prReviewDrawerService.DrawerState.Items;
+    public int PrDrawerPage => _prReviewDrawerService.DrawerState.Page;
+    public bool PrDrawerHasMore => _prReviewDrawerService.DrawerState.HasMore;
+    public bool PrDrawerLoading => _prReviewDrawerService.DrawerState.Loading;
+    public List<string> PrDrawerLabels => _prReviewDrawerService.DrawerState.Labels;
+    public List<string> PrDrawerSelectedLabels => _prReviewDrawerService.DrawerState.SelectedLabels;
+
+    public List<IssueSummary> EpicDrawerIssues => _epicDrawerService.DrawerState.Items;
+    public int EpicDrawerPage => _epicDrawerService.DrawerState.Page;
+    public bool EpicDrawerHasMore => _epicDrawerService.DrawerState.HasMore;
+    public bool EpicDrawerLoading => _epicDrawerService.DrawerState.Loading;
+    public List<string> EpicDrawerLabels => _epicDrawerService.DrawerState.Labels;
+    public List<string> EpicDrawerSelectedLabels => _epicDrawerService.DrawerState.SelectedLabels;
+
+    /// <summary>Forwarded to IssueDrawerService — used by the coordinator and all three drawer components.</summary>
+    public Dictionary<string, DependencyCheckResult> DrawerReadiness => _issueDrawerService.DrawerReadiness;
 
     private const string DrawerTabIssue = "issue";
     private const string DrawerTabPr = "pr";
     private const string DrawerTabEpic = "epic";
-    private const string InitiatedByManual = "manual";
 
     public string ActiveDrawerTab
     {
@@ -166,12 +133,37 @@ public class AgentCodingPageService : IDisposable
             QualityGateConfigs = await _configStore.LoadQualityGateConfigsAsync(CancellationToken.None);
             ReviewerConfigs = await _configStore.LoadReviewerConfigsAsync(CancellationToken.None);
             AgentProfiles = await _configStore.LoadAgentProfilesAsync(CancellationToken.None);
+
+            // Push provider context into drawer services so load callbacks have access
+            PropagateProviderContext();
+
             return null;
         }
         catch (Exception ex)
         {
             return $"Failed to load configuration: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Pushes the loaded provider lists into the drawer services.
+    /// Must be called after InitializeAsync populates IssueProviders / RepoProviders.
+    /// Also called by the drawer open methods to ensure context is fresh.
+    /// </summary>
+    private void PropagateProviderContext()
+    {
+        // TODO: [WARNING] These concrete type-casts silently no-op if the registered implementation is
+        // replaced by a decorator, proxy, or test double. If the cast fails, _cachedIssueProviders /
+        // _cachedRepoProviders remain null in the drawer service, causing all load calls to return
+        // "provider not found" without surfacing a clear error. Fix: lift SetProviderContext onto
+        // IIssueDrawerService, IPrReviewDrawerService, and IEpicDrawerService, or pass provider lists
+        // as parameters to each load method (matching the pattern already used for DispatchIssueAsync).
+        if (_issueDrawerService is IssueDrawerService issueImpl)
+            issueImpl.SetProviderContext(IssueProviders, RepoProviders);
+        if (_prReviewDrawerService is PrReviewDrawerService prImpl)
+            prImpl.SetProviderContext(IssueProviders, RepoProviders);
+        if (_epicDrawerService is EpicDrawerService epicImpl)
+            epicImpl.SetProviderContext(IssueProviders);
     }
 
     // ── Template Operations ──
@@ -298,534 +290,154 @@ public class AgentCodingPageService : IDisposable
 
     public void ResumeLoop() => _loopService.ResumeLoop();
 
-    // ── Issue Drawer Data ──
+    // ── Issue drawer forwarding wrappers ──
 
-    private async Task<string?> LoadDrawerIssuesAsync(PipelineJobTemplate template)
-    {
-        _issueDrawer.Loading = true;
-        _issueDrawer.Page = 1;
-        try
-        {
-            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
-            if (providerConfig == null) { _issueDrawer.Loading = false; return "Issue provider not found for this template."; }
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = _issueDrawer.SelectedLabels.Count > 0 ? _issueDrawer.SelectedLabels : null;
-            var result = await provider.ListOpenIssuesAsync(_issueDrawer.Page, 15, labels, CancellationToken.None);
-            _issueDrawer.Items = result.Items.ToList(); _issueDrawer.HasMore = result.HasMore;
-            return null;
-        }
-        catch (Exception ex) { _issueDrawer.Items.Clear(); return $"Failed to load issues: {ex.Message}"; }
-        finally { _issueDrawer.Loading = false; }
-    }
-
-    private async Task<string?> LoadDrawerLabelsPrivateAsync(PipelineJobTemplate template)
-    {
-        try
-        {
-            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
-            if (providerConfig == null) return null;
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
-            _issueDrawer.Labels = labels.ToList();
-            return null;
-        }
-        catch
-        {
-            _issueDrawer.Labels.Clear();
-            return null;
-        }
-    }
-
-    /// <summary>Public pagination-aware loader for issue drawer (used by Switch path and code-behind).</summary>
-    public async Task<string?> LoadDrawerIssuesPageAsync(PipelineJobTemplate template, int page)
-    {
-        _issueDrawer.Loading = true;
-        _issueDrawer.Page = page;
-        try
-        {
-            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
-            if (providerConfig == null) { _issueDrawer.Loading = false; return "Issue provider not found for this template."; }
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = _issueDrawer.SelectedLabels.Count > 0 ? _issueDrawer.SelectedLabels : null;
-            var result = await provider.ListOpenIssuesAsync(page, 15, labels, CancellationToken.None);
-            _issueDrawer.Items = result.Items.ToList(); _issueDrawer.HasMore = result.HasMore;
-            return null;
-        }
-        catch (Exception ex) { _issueDrawer.Items.Clear(); return $"Failed to load issues: {ex.Message}"; }
-        finally { _issueDrawer.Loading = false; }
-    }
-
-    // Backward-compatible wrapper for existing code-behind pagination
+    /// <summary>Public pagination-aware loader for issue drawer (called directly from AgentCoding.razor.cs).</summary>
     public Task<string?> LoadDrawerIssuesAsync(PipelineJobTemplate template, int page)
-        => LoadDrawerIssuesPageAsync(template, page);
+        => _issueDrawerService.LoadDrawerIssuesAsync(template, page);
+
+    public Task<string?> LoadDrawerIssuesPageAsync(PipelineJobTemplate template, int page)
+        => _issueDrawerService.LoadDrawerIssuesPageAsync(template, page);
 
     public Task<string?> LoadDrawerLabelsAsync(PipelineJobTemplate template)
-        => LoadDrawerLabelsPrivateAsync(template);
+        => _issueDrawerService.LoadDrawerLabelsAsync(template);
 
     /// <summary>
-    /// Checks dependency readiness for all current drawer issues asynchronously.
-    /// Results are stored in <see cref="DrawerReadiness"/> and the caller is notified via onProgress.
+    /// Checks dependency readiness for all current drawer issues (called directly from AgentCoding.razor.cs).
     /// </summary>
-    public async Task CheckDrawerDependenciesAsync(PipelineJobTemplate template, Action? onProgress = null, CancellationToken cancellationToken = default)
-    {
-        var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
-        if (providerConfig == null) return;
+    public Task CheckDrawerDependenciesAsync(PipelineJobTemplate template, Action? onProgress, CancellationToken cancellationToken)
+        => _issueDrawerService.CheckDrawerDependenciesAsync(template, onProgress, cancellationToken);
 
-        var issues = _issueDrawer.Items.ToList(); // snapshot
-        var stateCache = new Dictionary<int, bool>();
+    public void ClearDrawerIssues() => _issueDrawerService.ClearDrawerIssues();
 
-        try
-        {
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            foreach (var issue in issues)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var result = await _dependencyChecker.CheckAsync(
-                    issue.Identifier, issue.Description, provider, stateCache, cancellationToken);
-                DrawerReadiness[issue.Identifier] = result;
-                onProgress?.Invoke();
-            }
-        }
-        catch (OperationCanceledException) { throw; }
-        catch
-        {
-            // Best-effort: partial results are still useful
-        }
-    }
+    // ── PR drawer forwarding wrappers ──
 
-    public void ClearDrawerIssues() { _issueDrawer.Items.Clear(); _issueDrawer.Page = 1; _issueDrawer.HasMore = false; DrawerReadiness.Clear(); _issueDrawer.SelectedLabels.Clear(); }
+    /// <summary>Public pagination-aware loader for PR drawer (called directly from AgentCoding.razor.cs).</summary>
+    public Task<string?> LoadPrDrawerPageAsync(PipelineJobTemplate template, int page)
+        => _prReviewDrawerService.LoadPrDrawerPageAsync(template, page);
 
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchIssueAsync(
-        IssueSummary issue, PipelineJobTemplate template)
-    {
-        if (!IssueProviders.Any(p => p.Id == template.IssueProviderId) || !RepoProviders.Any(p => p.Id == template.RepoProviderId))
-            return (false, "Template references providers that no longer exist.", null);
-        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
-            return (false, "Could not dispatch — no agents are currently connected.", null);
+    public void ClearPrDrawerLabelFilter() => _prReviewDrawerService.ClearPrDrawerLabelFilter();
 
-        var depProviderConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
-        if (depProviderConfig != null)
-        {
-            await using var issueProvider = _providerFactory.CreateIssueProvider(depProviderConfig);
-            var depResult = await _dependencyChecker.CheckAsync(issue.Identifier, issue.Description, issueProvider, new Dictionary<int, bool>(), CancellationToken.None);
-            if (!depResult.IsReady)
-                return (false, $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", depResult.BlockedBy.Select(n => $"#{n}"))}", null);
-        }
+    // ── Epic drawer forwarding wrappers ──
 
-        // DB mode: use full orchestration to build a complete request with ProviderConfigs + token vending
-        if (_dispatchOrchestration is not null)
-        {
-            return await DispatchWithOrchestrationAsync(
-                template.Id,
-                project => _dispatchOrchestration.PrepareDistributionRequestAsync(
-                    new ImplementationDispatchOrchestrationRequest
-                    {
-                        IssueIdentifier = issue.Identifier,
-                        IssueProviderId = template.IssueProviderId,
-                        RepoProviderId = template.RepoProviderId,
-                        BrainProviderId = template.BrainProviderId,
-                        PipelineProviderId = template.PipelineProviderId,
-                        InitiatedBy = InitiatedByManual,
-                        Project = project
-                    }, CancellationToken.None),
-                "Could not dispatch — distribution failed.",
-                $"⏳ Queued #{issue.Identifier} — waiting for an idle agent",
-                $"✅ Dispatched #{issue.Identifier}");
-        }
+    /// <summary>Public pagination-aware loader for epic drawer (called directly from AgentCoding.razor.cs).</summary>
+    public Task<string?> LoadEpicDrawerIssuesAsync(PipelineJobTemplate template, int page = 1)
+        => _epicDrawerService.LoadEpicDrawerIssuesAsync(template, page);
 
-        // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
-        var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, issue, initiatedBy: InitiatedByManual, timeoutSeconds: 3600,
-            projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
-        return await DispatchLegacyAsync(minimalRequest,
-            $"✅ Dispatched #{issue.Identifier}",
-            "Could not dispatch — issue is already being processed or queued, or no agents are available.");
-    }
+    public void ClearEpicDrawerIssues() => _epicDrawerService.ClearEpicDrawerIssues();
 
-    // ── PR Drawer Data ──
+    // ── Active issues forwarding ──
 
-    private Task<string?> LoadPrDrawerPageAsync(PipelineJobTemplate template)
-        => LoadPrDrawerPageAsync(template, 1);
+    public Task RefreshActiveIssuesAsync() => _issueDrawerService.RefreshActiveIssuesAsync();
 
-    private async Task<string?> LoadPrDrawerLabelsAsync(PipelineJobTemplate template)
-    {
-        try
-        {
-            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
-            if (providerConfig == null) return null;
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
-            _prDrawer.Labels = labels.ToList();
-            return null;
-        }
-        catch (Exception ex) { Logger.Warning(ex, "Failed to load PR drawer labels"); _prDrawer.Labels.Clear(); return null; }
-    }
-
-    /// <summary>Public pagination-aware loader for PR drawer.</summary>
-    public async Task<string?> LoadPrDrawerPageAsync(PipelineJobTemplate template, int page)
-    {
-        _prDrawer.Loading = true;
-        _prDrawer.Page = page;
-        try
-        {
-            var repoConfig = RepoProviders.FirstOrDefault(p => p.Id == template.RepoProviderId);
-            if (repoConfig == null) { _prDrawer.Items = new(); _prDrawer.Loading = false; return null; }
-            await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
-            var labels = _prDrawer.SelectedLabels.Count > 0 ? _prDrawer.SelectedLabels : null;
-            var result = await repoProvider.ListOpenPullRequestsAsync(page, 15, labels, CancellationToken.None);
-            _prDrawer.Items = result.Items.ToList(); _prDrawer.HasMore = result.HasMore;
-            return null;
-        }
-        catch (Exception ex) { _prDrawer.Items = new(); return $"Failed to load pull requests: {ex.Message}"; }
-        finally { _prDrawer.Loading = false; }
-    }
-
-    public void ClearPrDrawerLabelFilter() { _prDrawer.Items.Clear(); _prDrawer.Page = 1; _prDrawer.HasMore = false; _prDrawer.SelectedLabels.Clear(); }
-
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchPrReviewAsync(
-        PullRequestSummary pr, PipelineJobTemplate template)
-    {
-        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
-            return (false, "Could not dispatch — no agents are currently connected.", null);
-
-        // DB mode: use full orchestration for ProviderConfigs + RunId + token vending
-        if (_dispatchOrchestration is not null)
-        {
-            return await DispatchWithOrchestrationAsync(
-                template.Id,
-                project =>
-                {
-                    var reviewRequest = new ReviewDispatchRequest
-                    {
-                        PrIdentifier = pr.Identifier,
-                        PrBranchName = pr.BranchName,
-                        PrTitle = pr.Title ?? "",
-                        PrUrl = pr.Url,
-                        PrTargetBranch = pr.TargetBranch,
-                        PrDescription = pr.Description,
-                        PrAuthor = pr.Author,
-                        IssueProviderId = template.IssueProviderId,
-                        RepoProviderId = template.RepoProviderId,
-                        BrainProviderId = template.BrainProviderId,
-                        InitiatedBy = InitiatedByManual
-                    };
-                    return _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
-                        reviewRequest, project, CancellationToken.None);
-                },
-                $"PR #{pr.Identifier} is already being processed or queued.",
-                $"⏳ Queued PR #{pr.Identifier} for review — waiting for an idle agent",
-                $"PR #{pr.Identifier} dispatched for review.");
-        }
-
-        // Legacy mode
-        var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, pr, initiatedBy: InitiatedByManual, timeoutSeconds: 3600,
-            projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
-        return await DispatchLegacyAsync(minimalRequest,
-            $"PR #{pr.Identifier} dispatched for review.",
-            $"PR #{pr.Identifier} is already being processed or queued.");
-    }
-
-    // ── Epic Drawer Data ──
-
-    private async Task<string?> LoadEpicDrawerLabelsAsync(PipelineJobTemplate template)
-    {
-        try
-        {
-            var parentProject = GetParentProject(template.Id);
-            var epicProviderId = !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId) ? parentProject.EpicIssueProviderId : template.IssueProviderId;
-            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == epicProviderId);
-            if (providerConfig == null) return null;
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
-            _epicDrawer.Labels = labels.Where(l => !l.StartsWith(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)).ToList();
-            return null;
-        }
-        catch (Exception ex) { Logger.Warning(ex, "Failed to load epic drawer labels"); _epicDrawer.Labels.Clear(); return null; }
-    }
-
-    /// <summary>Public pagination-aware loader for epic drawer.</summary>
-    public async Task<string?> LoadEpicDrawerIssuesAsync(PipelineJobTemplate template, int page = 1)
-    {
-        _epicDrawer.Loading = true;
-        _epicDrawer.Page = page;
-        try
-        {
-            var parentProject = GetParentProject(template.Id);
-            var epicProviderId = !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId) ? parentProject.EpicIssueProviderId : template.IssueProviderId;
-            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == epicProviderId);
-            if (providerConfig == null) { _epicDrawer.Loading = false; return "Epic issue provider not found."; }
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-
-            var epicLabels = new List<string> { AgentLabels.Epic };
-            if (_epicDrawer.SelectedLabels.Count > 0)
-                epicLabels.AddRange(_epicDrawer.SelectedLabels);
-
-            var approvedLabels = new List<string> { AgentLabels.EpicApproved };
-            if (_epicDrawer.SelectedLabels.Count > 0)
-                approvedLabels.AddRange(_epicDrawer.SelectedLabels);
-
-            var epicResult = await provider.ListOpenIssuesAsync(page, 8, epicLabels, CancellationToken.None);
-            var approvedResult = await provider.ListOpenIssuesAsync(page, 8, approvedLabels, CancellationToken.None);
-
-            _epicDrawer.Items = epicResult.Items.Concat(approvedResult.Items)
-                .GroupBy(i => i.Identifier)
-                .Select(g => g.First())
-                .ToList();
-            _epicDrawer.HasMore = epicResult.HasMore || approvedResult.HasMore;
-            return null;
-        }
-        catch (Exception ex) { _epicDrawer.Items.Clear(); return $"Failed to load epics: {ex.Message}"; }
-        finally { _epicDrawer.Loading = false; }
-    }
-
-    public void ClearEpicDrawerIssues() { _epicDrawer.Items.Clear(); _epicDrawer.Page = 1; _epicDrawer.HasMore = false; _epicDrawer.SelectedLabels.Clear(); }
-
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchDecompositionAsync(
-        IssueSummary issue, PipelineJobTemplate template)
-    {
-        if (!IssueProviders.Any(p => p.Id == template.IssueProviderId) || !RepoProviders.Any(p => p.Id == template.RepoProviderId))
-            return (false, "Template references providers that no longer exist.", null);
-        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
-            return (false, "Could not dispatch — no agents are currently connected.", null);
-
-        var phaseType = issue.Labels.Contains(AgentLabels.EpicApproved, StringComparer.OrdinalIgnoreCase)
-            ? PipelineRunType.Decomposition : PipelineRunType.DecompositionAnalysis;
-        var phaseLabel = phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
-
-        // DB mode: use full orchestration
-        if (_dispatchOrchestration is not null)
-        {
-            return await DispatchWithOrchestrationAsync(
-                template.Id,
-                project => _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
-                    new DecompositionDispatchOrchestrationRequest
-                    {
-                        EpicIdentifier = issue.Identifier,
-                        EpicTitle = issue.Title ?? "",
-                        PhaseType = phaseType,
-                        IssueProviderId = template.IssueProviderId,
-                        RepoProviderId = template.RepoProviderId,
-                        BrainProviderId = template.BrainProviderId,
-                        InitiatedBy = InitiatedByManual,
-                        Project = project
-                    }, CancellationToken.None),
-                "Could not dispatch — epic is already being processed or queued, or no agents are available.",
-                $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — waiting for an idle agent",
-                $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}");
-        }
-
-        // Legacy mode
-        var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, issue, phaseType, initiatedBy: InitiatedByManual, timeoutSeconds: 3600,
-            projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
-        return await DispatchLegacyAsync(minimalRequest,
-            $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}",
-            "Could not dispatch — epic is already being processed or queued, or no agents are available.");
-    }
-
-    // ── Drawer Orchestration ──
-
-    /// <summary>Refreshes the cached set of active issue identifiers from <see cref="IWorkDistributor"/>.</summary>
-    public async Task RefreshActiveIssuesAsync()
-    {
-        ActiveIssues = await _workDistributor.GetActiveIssueIdentifiersAsync(CancellationToken.None);
-    }
-
-    /// <summary>Synchronous check against the preloaded active issues set.</summary>
     public bool IsIssueActive(IssueIdentifier issueIdentifier, string issueProviderConfigId)
-        => ActiveIssues.Contains((issueIdentifier, issueProviderConfigId));
+        => _issueDrawerService.IsIssueActive(issueIdentifier, issueProviderConfigId);
+
+    /// <summary>
+    /// Checks if an issue is currently distributed (Pending, Dispatched, or Running).
+    /// Used by drawer components to show processing status.
+    /// </summary>
+    public Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId)
+        => _issueDrawerService.IsIssueDistributedAsync(issueIdentifier, issueProviderConfigId);
+
+    // ── Cross-drawer coordination ──
 
     private void HideOtherDrawers(string keepOpen)
     {
-        if (keepOpen != DrawerTabIssue) _issueDrawer.IsOpen = false;
-        if (keepOpen != DrawerTabPr) _prDrawer.IsOpen = false;
-        if (keepOpen != DrawerTabEpic) _epicDrawer.IsOpen = false;
+        if (keepOpen != DrawerTabIssue) _issueDrawerService.Hide();
+        if (keepOpen != DrawerTabPr) _prReviewDrawerService.Hide();
+        if (keepOpen != DrawerTabEpic) _epicDrawerService.Hide();
     }
 
     /// <summary>Closes whichever drawer is currently open.</summary>
     public void CloseActiveDrawer()
     {
-        if (_issueDrawer.IsOpen) _issueDrawer.Close();
-        else if (_prDrawer.IsOpen) _prDrawer.Close();
-        else if (_epicDrawer.IsOpen) _epicDrawer.Close();
+        if (IsIssueDrawerOpen) _issueDrawerService.CloseIssueDrawer();
+        else if (IsPrDrawerOpen) _prReviewDrawerService.ClosePrDrawer();
+        else if (IsEpicDrawerOpen) _epicDrawerService.CloseEpicDrawer();
     }
 
-    // ── Issue Drawer Orchestration ──
+    // ── Issue drawer orchestration ──
 
     public async Task<string?> OpenIssueDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
-        var template = Templates.FirstOrDefault(t => t.Id == templateId.Value);
-        if (template == null) return null;
+        PropagateProviderContext();
         HideOtherDrawers(DrawerTabIssue);
-        await RefreshActiveIssuesAsync();
-        return await _issueDrawer.OpenAsync(template, notifyStateChanged);
+        return await _issueDrawerService.OpenIssueDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
-    public void CloseIssueDrawer() { _issueDrawer.Close(); DrawerReadiness.Clear(); }
+    public void CloseIssueDrawer() => _issueDrawerService.CloseIssueDrawer();
 
     public Task<string?> SwitchToIssueDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
+        PropagateProviderContext();
         HideOtherDrawers(DrawerTabIssue);
-        return _issueDrawer.SwitchAsync(templateId, notifyStateChanged,
-            () => _issueDrawer.Items.Count > 0,
-            async (id, ns) =>
-            {
-                var template = Templates.FirstOrDefault(t => t.Id == id);
-                if (template == null) return null;
-                await RefreshActiveIssuesAsync();
-                return template;
-            });
+        return _issueDrawerService.SwitchToIssueDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(IssueSummary issue)
-        => _issueDrawer.DispatchAsync(issue, null);
-
-    // ── PR Drawer Orchestration ──
-
-    // TODO: Contract change — the prior string overload had an explicit `if (string.IsNullOrEmpty(templateId)) return null;`
-    // guard that was removed when adopting TemplateId. The implicit conversion operator on TemplateId calls
-    // ArgumentException.ThrowIfNullOrEmpty, so callers passing an empty string will now throw instead of getting
-    // a graceful null return. UI call sites are guarded by disabled buttons, but any future non-UI caller
-    // passing an optional/empty template ID must use `TemplateId?` and null-check before calling this method.
-    public async Task<string?> OpenPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
-        var template = Templates.FirstOrDefault(t => t.Id == templateId.Value);
-        if (template == null) return null;
-        HideOtherDrawers(DrawerTabPr);
-        return await _prDrawer.OpenAsync(template, notifyStateChanged);
+        var templateId = _issueDrawerService.DrawerState.Template?.Id;
+        var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
+        return _issueDrawerService.DispatchFromIssueDrawerAsync(issue, IssueProviders, RepoProviders, parentProject);
     }
 
-    public void ClosePrDrawer() => _prDrawer.Close();
+    // ── PR drawer orchestration ──
+
+    // TODO: Contract note — the prior string overload had an explicit `if (string.IsNullOrEmpty(templateId)) return null;`
+    // guard that was removed when adopting TemplateId. Callers passing an empty string will throw via
+    // ArgumentException.ThrowIfNullOrEmpty. Non-UI callers must use `TemplateId?` and null-check first.
+    public async Task<string?> OpenPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
+    {
+        PropagateProviderContext();
+        HideOtherDrawers(DrawerTabPr);
+        return await _prReviewDrawerService.OpenPrDrawerAsync(templateId, Templates, notifyStateChanged);
+    }
+
+    public void ClosePrDrawer() => _prReviewDrawerService.ClosePrDrawer();
 
     public Task<string?> SwitchToPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
+        PropagateProviderContext();
         HideOtherDrawers(DrawerTabPr);
-        return _prDrawer.SwitchAsync(templateId, notifyStateChanged,
-            () => _prDrawer.Items.Count > 0,
-            async (id, ns) =>
-            {
-                var template = Templates.FirstOrDefault(t => t.Id == id);
-                if (template == null) return null;
-                return template;
-            });
+        return _prReviewDrawerService.SwitchToPrDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)
-        => _prDrawer.DispatchAsync(pr, null);
-
-    // ── Epic Drawer Orchestration ──
-
-    // TODO: Same contract change as OpenPrDrawerAsync — the prior string overload had an explicit
-    // `if (string.IsNullOrEmpty(templateId)) return null;` guard that was removed when adopting TemplateId.
-    // Passing an empty string will throw via ArgumentException.ThrowIfNullOrEmpty. Non-UI callers must
-    // use `TemplateId?` and null-check before calling this method.
-    public async Task<string?> OpenEpicDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
-        var template = Templates.FirstOrDefault(t => t.Id == templateId.Value);
-        if (template == null) return null;
-        HideOtherDrawers(DrawerTabEpic);
-        return await _epicDrawer.OpenAsync(template, notifyStateChanged);
+        var templateId = _prReviewDrawerService.DrawerState.Template?.Id;
+        var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
+        return _prReviewDrawerService.DispatchFromPrDrawerAsync(pr, IssueProviders, RepoProviders, parentProject);
     }
 
-    public void CloseEpicDrawer() => _epicDrawer.Close();
+    // ── Epic drawer orchestration ──
+
+    // TODO: Same contract note as OpenPrDrawerAsync — passing an empty string will throw.
+    public async Task<string?> OpenEpicDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
+    {
+        PropagateProviderContext();
+        HideOtherDrawers(DrawerTabEpic);
+        return await _epicDrawerService.OpenEpicDrawerAsync(templateId, Templates, Projects, notifyStateChanged);
+    }
+
+    public void CloseEpicDrawer() => _epicDrawerService.CloseEpicDrawer();
 
     public Task<string?> SwitchToEpicDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
+        PropagateProviderContext();
         HideOtherDrawers(DrawerTabEpic);
-        return _epicDrawer.SwitchAsync(templateId, notifyStateChanged,
-            () => _epicDrawer.Items.Count > 0,
-            async (id, ns) =>
-            {
-                var template = Templates.FirstOrDefault(t => t.Id == id);
-                if (template == null) return null;
-                return template;
-            });
+        return _epicDrawerService.SwitchToEpicDrawerAsync(templateId, Templates, Projects, notifyStateChanged);
     }
 
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(IssueSummary issue)
-        => _epicDrawer.DispatchAsync(issue, null);
-
-    // ── Dependency Check (with CTS) ──
-
-    private async Task CheckDrawerDependenciesInBackgroundAsync(PipelineJobTemplate template)
     {
-        var token = _issueDrawer.CancellationToken;
-        try
-        {
-            await CheckDrawerDependenciesAsync(template, null, token);
-        }
-        catch (OperationCanceledException) { /* expected on drawer close */ }
+        var templateId = _epicDrawerService.DrawerState.Template?.Id;
+        var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
+        return _epicDrawerService.DispatchFromEpicDrawerAsync(issue, IssueProviders, RepoProviders, parentProject);
     }
 
     // ── Helpers ──
 
-    /// <summary>
-    /// Shared orchestration dispatch flow: resolve project → prepare request → distribute →
-    /// revert on failure / confirm label on direct dispatch → return result tuple.
-    /// </summary>
-    private async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchWithOrchestrationAsync(
-        TemplateId templateId,
-        Func<PipelineProject, Task<JobDistributionRequest?>> prepareAsync,
-        string distributionFailedError,
-        string queuedMessage,
-        string dispatchedMessage)
-    {
-        var project = GetParentProject(templateId) ?? new PipelineProject { Id = "", Name = "Unknown" };
-        var request = await prepareAsync(project);
-
-        if (request is null)
-            return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
-
-        var outcome = await _dispatchOrchestration!.DistributeAndFinalizeAsync(request, CancellationToken.None);
-        if (!outcome.Success)
-            return (false, distributionFailedError, null);
-
-        return (true, null, outcome.Queued ? queuedMessage : dispatchedMessage);
-    }
-
-    /// <summary>
-    /// Shared legacy dispatch flow: distribute a pre-built request and return success/failure messages.
-    /// </summary>
-    private async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchLegacyAsync(
-        JobDistributionRequest request,
-        string successMessage,
-        string failureError)
-    {
-        var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-        return result.Success
-            ? (true, null, successMessage)
-            : (false, failureError, null);
-    }
-
-    /// <summary>
-    /// Checks if an issue is currently distributed (Pending, Dispatched, or Running)
-    /// via <see cref="IWorkDistributor.IsIssueDistributedAsync"/>.
-    /// Used by drawer components to show processing status.
-    /// </summary>
-    public Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId)
-        => _workDistributor.IsIssueDistributedAsync(issueIdentifier, issueProviderConfigId, CancellationToken.None);
-
     public PipelineProject? GetParentProject(TemplateId templateId) =>
         Projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId.Value));
-
-    private bool _disposed;
-
-    protected virtual void Dispose(bool disposing)
-    {
-        if (_disposed) return;
-        if (disposing)
-        {
-            _issueDrawer.Dispose();
-            _prDrawer.Dispose();
-            _epicDrawer.Dispose();
-        }
-        _disposed = true;
-    }
-
-    public void Dispose()
-    {
-        Dispose(true);
-        GC.SuppressFinalize(this);
-    }
 }

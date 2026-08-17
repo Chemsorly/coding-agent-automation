@@ -116,6 +116,22 @@ public class AgentIdTests
 
         act.Should().Throw<ArgumentException>();
     }
+
+    [Fact]
+    public void Constructor_NullValue_Throws()
+    {
+        var act = () => new AgentId(null!);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Constructor_EmptyValue_Throws()
+    {
+        var act = () => new AgentId("");
+
+        act.Should().Throw<ArgumentException>();
+    }
 }
 
 public class AgentIdFormatterTests
@@ -215,5 +231,30 @@ public class AgentIdFormatterTests
 
         caughtEx.Should().NotBeNull();
         caughtEx!.Message.Should().Contain("AgentId cannot be deserialized from a nil token");
+    }
+
+    [Fact]
+    public void Deserialize_EmptyString_Throws()
+    {
+        // Write a zero-length fixstr on the wire
+        var writer = new ArrayBufferWriter<byte>();
+        var msgpackWriter = new MessagePackWriter(writer);
+        msgpackWriter.Write(string.Empty);
+        msgpackWriter.Flush();
+
+        // MessagePackReader is a ref struct — cannot be captured in a lambda.
+        var reader = new MessagePackReader(writer.WrittenMemory);
+        MessagePackSerializationException? caughtEx = null;
+        try
+        {
+            _formatter.Deserialize(ref reader, MessagePackSerializerOptions.Standard);
+        }
+        catch (MessagePackSerializationException ex)
+        {
+            caughtEx = ex;
+        }
+
+        caughtEx.Should().NotBeNull();
+        caughtEx!.Message.Should().Contain("AgentId cannot be deserialized from an empty string");
     }
 }

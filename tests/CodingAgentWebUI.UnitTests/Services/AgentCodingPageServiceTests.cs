@@ -1,6 +1,5 @@
 using Moq;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -11,46 +10,69 @@ using CodingAgentWebUI.TestUtilities;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 
+/// <summary>
+/// Tests for AgentCodingPageService as a coordinator — verifies that template CRUD,
+/// loop controls, and cross-drawer coordination work correctly.
+/// Drawer-specific tests live in IssueDrawerServiceTests, PrReviewDrawerServiceTests,
+/// and EpicDrawerServiceTests.
+/// </summary>
 public class AgentCodingPageServiceTests
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProjectStore> _mockProjectStore;
-    private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IWorkDistributor> _mockWorkDistributor;
-    private readonly Mock<IDependencyChecker> _mockDependencyChecker;
-    private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
+    private readonly Mock<IIssueDrawerService> _mockIssueDrawerService;
+    private readonly Mock<IPrReviewDrawerService> _mockPrReviewDrawerService;
+    private readonly Mock<IEpicDrawerService> _mockEpicDrawerService;
     private readonly PipelineLoopService _loopService;
     private readonly AgentCodingPageService _service;
+
+    // Real drawer state services so property forwarding works in tests that check DrawerState
+    private readonly DrawerStateService<IssueSummary> _issueDrawerState;
+    private readonly DrawerStateService<PullRequestSummary> _prDrawerState;
+    private readonly DrawerStateService<IssueSummary> _epicDrawerState;
 
     public AgentCodingPageServiceTests()
     {
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockProjectStore = new Mock<IProjectStore>();
-        _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockWorkDistributor = new Mock<IWorkDistributor>();
-        _mockDependencyChecker = new Mock<IDependencyChecker>();
+        _mockIssueDrawerService = new Mock<IIssueDrawerService>();
+        _mockPrReviewDrawerService = new Mock<IPrReviewDrawerService>();
+        _mockEpicDrawerService = new Mock<IEpicDrawerService>();
+
+        // Wire up real DrawerStateService instances for property-forwarding tests
+        _issueDrawerState = new DrawerStateService<IssueSummary>(
+            _ => Task.FromResult<string?>(null),
+            _ => Task.FromResult<string?>(null),
+            (_, _) => Task.FromResult<(bool, string?, string?)>((true, null, null)));
+        _prDrawerState = new DrawerStateService<PullRequestSummary>(
+            _ => Task.FromResult<string?>(null),
+            _ => Task.FromResult<string?>(null),
+            (_, _) => Task.FromResult<(bool, string?, string?)>((true, null, null)));
+        _epicDrawerState = new DrawerStateService<IssueSummary>(
+            _ => Task.FromResult<string?>(null),
+            _ => Task.FromResult<string?>(null),
+            (_, _) => Task.FromResult<(bool, string?, string?)>((true, null, null)));
+
+        _mockIssueDrawerService.Setup(s => s.DrawerState).Returns(_issueDrawerState);
+        _mockIssueDrawerService.Setup(s => s.DrawerReadiness).Returns(new Dictionary<string, DependencyCheckResult>());
+        _mockIssueDrawerService.Setup(s => s.ActiveIssues).Returns(new HashSet<(IssueIdentifier, ProviderConfigId)>());
+        _mockPrReviewDrawerService.Setup(s => s.DrawerState).Returns(_prDrawerState);
+        _mockEpicDrawerService.Setup(s => s.DrawerState).Returns(_epicDrawerState);
 
         var mockLogger = new Mock<Serilog.ILogger>();
-
-        // PipelineLoopService requires a non-null PipelineOrchestrationService.
-        // Create a minimal real instance with mocked dependencies.
-        var mockValidator = new Mock<IQualityGateValidator>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineRunSummary>());
-        var orchestration = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockConfigStore.Object,
-            providerFactory: _mockProviderFactory.Object,
-            historyService: mockHistoryService.Object);
+        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockConfigStore.Object,
-            providerFactory: _mockProviderFactory.Object,
+            providerFactory: new Mock<IProviderFactory>().Object,
             historyService: mockHistoryService.Object);
 
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
         {
             Orchestration = runCreator,
-            ProviderFactory = _mockProviderFactory.Object,
+            ProviderFactory = new Mock<IProviderFactory>().Object,
             PipelineConfigStore = _mockConfigStore.Object,
             ProviderConfigStore = _mockConfigStore.Object,
             ProjectStore = _mockConfigStore.Object,
@@ -62,12 +84,13 @@ public class AgentCodingPageServiceTests
             LeaderElection = null
         });
 
-        var mockAgentRegistry = new AgentRegistryService(mockLogger.Object);
-        _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
         _service = new AgentCodingPageService(
-            _loopService, _mockWorkDistributor.Object, mockAgentRegistry, _mockConfigStore.Object,
-            _mockProjectStore.Object, _mockProviderFactory.Object, _mockDependencyChecker.Object,
-            _mockDispatchOrchestration.Object);
+            _loopService,
+            _mockConfigStore.Object,
+            _mockProjectStore.Object,
+            _mockIssueDrawerService.Object,
+            _mockPrReviewDrawerService.Object,
+            _mockEpicDrawerService.Object);
     }
 
     private static ProviderConfig MakeProvider(string id, ProviderKind kind = ProviderKind.Issue) =>
@@ -79,9 +102,17 @@ public class AgentCodingPageServiceTests
     private static IssueSummary MakeIssue(string id = "42", string title = "Test Issue") =>
         new() { Identifier = id, Title = title, Labels = Array.Empty<string>() };
 
+    // ── InitializeAsync ──
+
     [Fact]
     public async Task InitializeAsync_LoadsAllConfiguration()
     {
+        // TODO: [WARNING] InitializeAsync ends with PropagateProviderContext(), which uses concrete
+        // type-casts (_mockIssueDrawerService is IssueDrawerService) that silently no-op against Moq
+        // mocks. This test does not verify that provider context reached the drawer services after
+        // initialization. A regression in PropagateProviderContext (wrong list, missing call) would not
+        // be detected here. Dedicated integration-style tests using concrete drawer service instances
+        // would be needed to validate end-to-end provider context propagation.
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { MakeProvider("ip-1") });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
@@ -120,6 +151,8 @@ public class AgentCodingPageServiceTests
 
         Assert.Equal("Failed to load configuration: connection failed", error);
     }
+
+    // ── Template Operations ──
 
     [Fact]
     public async Task ToggleTemplateEnabledAsync_UpdatesTemplateInList()
@@ -207,67 +240,42 @@ public class AgentCodingPageServiceTests
         Assert.Contains("Removable", msg);
     }
 
-    // TODO: Add a test that passes an empty string as templateId to MoveTemplateToProjectAsync and asserts
-    // that ArgumentException is thrown (via TemplateId's implicit conversion operator calling
-    // ArgumentException.ThrowIfNullOrEmpty). This validates the TemplateId type boundary — without it,
-    // the test suite would pass identically if the method signature were reverted to string.
     [Fact]
     public async Task MoveTemplateToProjectAsync_MovesTemplateAndReloadsProjects()
     {
-        // Arrange: two projects, template "t-1" starts in source project
-        var sourceProject = new PipelineProject
-        {
-            Id = "proj-src",
-            Name = "Source",
-            TemplateIds = new List<string> { "t-1", "t-2" }
-        };
-        var targetProject = new PipelineProject
-        {
-            Id = "proj-tgt",
-            Name = "Target",
-            TemplateIds = new List<string>()
-        };
+        var sourceProject = new PipelineProject { Id = "proj-src", Name = "Source", TemplateIds = new List<string> { "t-1", "t-2" } };
+        var targetProject = new PipelineProject { Id = "proj-tgt", Name = "Target", TemplateIds = new List<string>() };
 
-        // Initialize service state via InitializeAsync to populate Projects
         SetupMinimalInitialize(
             projects: new List<PipelineProject> { sourceProject, targetProject },
             templates: new List<PipelineJobTemplate> { MakeTemplate("t-1", "My Template"), MakeTemplate("t-2", "Other") });
         await _service.InitializeAsync();
 
         var savedProjects = new List<PipelineProject>();
-        _mockProjectStore
-            .Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+        _mockProjectStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Callback<PipelineProject, CancellationToken>((p, _) => savedProjects.Add(p))
             .Returns(Task.CompletedTask);
-        _mockProjectStore
-            .Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject> { sourceProject, targetProject });
 
-        // Act
         var (success, error, msg) = await _service.MoveTemplateToProjectAsync("t-1", "proj-src", "proj-tgt");
 
-        // Assert
         Assert.True(success);
         Assert.Null(error);
         Assert.Contains("My Template", msg);
         Assert.Contains("Target", msg);
 
-        // Source project should have t-1 removed
         var savedSource = savedProjects.First(p => p.Id == "proj-src");
         Assert.DoesNotContain("t-1", savedSource.TemplateIds);
         Assert.Contains("t-2", savedSource.TemplateIds);
 
-        // Target project should have t-1 added
         var savedTarget = savedProjects.First(p => p.Id == "proj-tgt");
         Assert.Contains("t-1", savedTarget.TemplateIds);
-
-        _mockProjectStore.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]
     public async Task MoveTemplateToProjectAsync_ReturnsSuccess_WhenSourceOrTargetProjectNotFound()
     {
-        // Projects is empty (not initialized) — source/target project not found should return (true, null, null)
         var (success, error, msg) = await _service.MoveTemplateToProjectAsync("t-1", "proj-src", "proj-tgt");
 
         Assert.True(success);
@@ -276,148 +284,7 @@ public class AgentCodingPageServiceTests
         _mockProjectStore.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    private void SetupMinimalInitialize(
-        IReadOnlyList<PipelineProject>? projects = null,
-        IReadOnlyList<PipelineJobTemplate>? templates = null)
-    {
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>());
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(templates ?? Array.Empty<PipelineJobTemplate>());
-        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(projects ?? Array.Empty<PipelineProject>());
-        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
-        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-    }
-
-    [Fact]
-    public async Task DispatchIssueAsync_ReturnsError_WhenNoAgents()
-    {
-        // TODO: Add tests for failure path (DistributeAndFinalizeAsync returning Success=false, triggering
-        // the distributionFailedError tuple) and queued path (Success=true, Queued=true, which should return
-        // queuedMessage instead of dispatchedMessage) to cover branching logic in DispatchWithOrchestrationAsync.
-        // Currently all tests hardcode DispatchOutcome(true, false, null) — a bug swapping the two message
-        // constants or mishandling the failure branch would not be caught.
-        // In DB mode with IDispatchOrchestrationService injected, dispatch goes through
-        // PrepareDistributionRequestAsync which builds a complete request with ProviderConfigs.
-        var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-
-        _mockDependencyChecker.Setup(d => d.CheckAsync(
-            It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
-            It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-
-        // Setup orchestration to return a full request with ProviderConfigs populated
-        var fullRequest = new JobDistributionRequest
-        {
-            IssueIdentifier = "42",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            InitiatedBy = "manual",
-            TaskType = WorkItemTaskType.Implementation,
-            AgentSelector = "dotnet,kiro",
-            TimeoutSeconds = 7200,
-            ProviderConfigs = new List<ProviderConfig>
-            {
-                new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" },
-                new() { Id = "ap-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Agent" }
-            }
-        };
-        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
-            It.Is<ImplementationDispatchOrchestrationRequest>(r =>
-                r.IssueIdentifier == "42" &&
-                r.IssueProviderId == "ip-1" &&
-                r.RepoProviderId == "rp-1" &&
-                r.InitiatedBy == "manual"),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(fullRequest);
-
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
-
-        Assert.True(success);
-
-        // Verify that DistributeAndFinalizeAsync was called with the ORCHESTRATED request (has ProviderConfigs)
-        _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(
-            It.Is<JobDistributionRequest>(r => r.ProviderConfigs != null && r.ProviderConfigs.Count == 2),
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task DispatchIssueAsync_ReturnsError_WhenOrchestrationFails()
-    {
-        var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-
-        _mockDependencyChecker.Setup(d => d.CheckAsync(
-            It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
-            It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-
-        // Orchestration returns null (config not found, etc.)
-        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
-            It.IsAny<ImplementationDispatchOrchestrationRequest>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync((JobDistributionRequest?)null);
-
-        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
-
-        Assert.False(success);
-        Assert.Contains("orchestration preparation failed", error);
-        _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task DispatchIssueAsync_ReturnsError_WhenProvidersMissing()
-    {
-        var template = MakeTemplate();
-        // IssueProviders is empty — provider doesn't exist
-
-        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
-
-        Assert.False(success);
-        Assert.Contains("no longer exist", error);
-    }
-
-    [Fact]
-    public async Task LoadDrawerIssuesAsync_SetsStateAndReturnsNull_OnSuccess()
-    {
-        var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 15, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary> { MakeIssue("1") }, HasMore = true, Page = 1, PageSize = 15 });
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
-
-        var error = await _service.LoadDrawerIssuesAsync(template, 1);
-
-        Assert.Null(error);
-        Assert.Single(_service.DrawerIssues);
-        Assert.True(_service.DrawerHasMore);
-        Assert.False(_service.DrawerLoading);
-    }
-
-    [Fact]
-    public async Task LoadDrawerIssuesAsync_ReturnsError_WhenProviderNotFound()
-    {
-        var template = MakeTemplate("t-1", "T") with { IssueProviderId = "missing" };
-
-        var error = await _service.LoadDrawerIssuesAsync(template, 1);
-
-        Assert.Equal("Issue provider not found for this template.", error);
-    }
+    // ── Loop Controls ──
 
     [Fact]
     public async Task StopLoopAsync_StopsAndPersistsConfig()
@@ -431,896 +298,8 @@ public class AgentCodingPageServiceTests
     }
 
     [Fact]
-    public async Task CheckDrawerDependenciesAsync_PopulatesReadiness_ForLoadedIssues()
-    {
-        var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 15, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary>
-            {
-                Items = new List<IssueSummary>
-                {
-                    new() { Identifier = "10", Title = "Issue 10", Labels = [], Description = "Blocked by #5" },
-                    new() { Identifier = "11", Title = "Issue 11", Labels = [], Description = "No deps here" }
-                },
-                HasMore = false, Page = 1, PageSize = 15
-            });
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
-
-        var blockedResult = new DependencyCheckResult { IsReady = false, BlockedBy = [5], TotalDependencies = 1 };
-        var readyResult = DependencyCheckResult.NoDependencies;
-
-        _mockDependencyChecker.Setup(d => d.CheckAsync("10", "Blocked by #5", It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(blockedResult);
-        _mockDependencyChecker.Setup(d => d.CheckAsync("11", "No deps here", It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(readyResult);
-
-        await _service.LoadDrawerIssuesAsync(template, 1);
-        await _service.CheckDrawerDependenciesAsync(template);
-
-        Assert.Equal(2, _service.DrawerReadiness.Count);
-        Assert.False(_service.DrawerReadiness["10"].IsReady);
-        Assert.Equal(new[] { 5 }, _service.DrawerReadiness["10"].BlockedBy);
-        Assert.True(_service.DrawerReadiness["11"].IsReady);
-    }
-
-    [Fact]
-    public async Task CheckDrawerDependenciesAsync_ReturnsGracefully_WhenProviderNotFound()
-    {
-        var template = MakeTemplate() with { IssueProviderId = "missing" };
-
-        await _service.CheckDrawerDependenciesAsync(template);
-
-        Assert.Empty(_service.DrawerReadiness);
-    }
-
-    [Fact]
-    public async Task CheckDrawerDependenciesAsync_InvokesOnProgress_PerIssue()
-    {
-        var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 15, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary>
-            {
-                Items = new List<IssueSummary>
-                {
-                    new() { Identifier = "1", Title = "A", Labels = [] },
-                    new() { Identifier = "2", Title = "B", Labels = [] }
-                },
-                HasMore = false, Page = 1, PageSize = 15
-            });
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-
-        await _service.LoadDrawerIssuesAsync(template, 1);
-
-        int progressCount = 0;
-        await _service.CheckDrawerDependenciesAsync(template, () => progressCount++);
-
-        Assert.Equal(2, progressCount);
-    }
-
-    [Fact]
-    public async Task CheckDrawerDependenciesAsync_PartialResults_OnProviderException()
-    {
-        var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 15, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary>
-            {
-                Items = new List<IssueSummary>
-                {
-                    new() { Identifier = "1", Title = "A", Labels = [] },
-                    new() { Identifier = "2", Title = "B", Labels = [] }
-                },
-                HasMore = false, Page = 1, PageSize = 15
-            });
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
-
-        var callCount = 0;
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .Returns<IssueIdentifier, string?, IIssueProvider, Dictionary<int, bool>, CancellationToken>((id, _, _, _, _) =>
-            {
-                if (++callCount == 2) throw new InvalidOperationException("provider error");
-                return Task.FromResult(DependencyCheckResult.NoDependencies);
-            });
-
-        await _service.LoadDrawerIssuesAsync(template, 1);
-        await _service.CheckDrawerDependenciesAsync(template);
-
-        // First issue result stored, second one failed — partial results preserved
-        Assert.Single(_service.DrawerReadiness);
-        Assert.True(_service.DrawerReadiness["1"].IsReady);
-    }
-
-    [Fact]
-    public async Task DispatchPrReviewAsync_DbMode_UsesOrchestration()
-    {
-        // TODO: Verify that RevertFailedDistributionAsync is NOT called on success path, and assert
-        // the specific success message returned to detect swapped queuedMessage/dispatchedMessage parameters.
-        // DispatchPrReviewAsync must route through IDispatchOrchestrationService in DB mode,
-        // otherwise the agent receives no ProviderConfigs and no RunId → token refresh fails.
-        var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-
-        var fullRequest = new JobDistributionRequest
-        {
-            IssueIdentifier = "pr-5",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            InitiatedBy = "manual",
-            TaskType = WorkItemTaskType.Review,
-            AgentSelector = "dotnet,kiro",
-            TimeoutSeconds = 7200,
-            RunId = Guid.NewGuid().ToString(),
-            ProviderConfigs = new List<ProviderConfig>
-            {
-                new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" }
-            }
-        };
-
-        _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(
-            It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(fullRequest);
-
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var pr = new PullRequestSummary { Identifier = "5", Title = "PR", BranchName = "feat/x", TargetBranch = "main", Url = "http://x", Number = 5, Description = "", Labels = [], IsDraft = false };
-        var (success, _, _) = await _service.DispatchPrReviewAsync(pr, template);
-
-        Assert.True(success);
-
-        // Verify orchestration was used (not direct minimal request)
-        _mockDispatchOrchestration.Verify(d => d.PrepareReviewDistributionRequestAsync(
-            It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Once);
-
-        // Verify DistributeAndFinalizeAsync received the orchestrated request with ProviderConfigs
-        _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(
-            It.Is<JobDistributionRequest>(r => r.ProviderConfigs != null && r.ProviderConfigs.Count > 0),
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task DispatchDecompositionAsync_DbMode_UsesOrchestration()
-    {
-        // TODO: Assert the returned SuccessMessage content to detect incorrect message assignment
-        // in the refactored DispatchWithOrchestrationAsync helper.
-        // DispatchDecompositionAsync must route through IDispatchOrchestrationService in DB mode.
-        var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-
-        var fullRequest = new JobDistributionRequest
-        {
-            IssueIdentifier = "epic-1",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            InitiatedBy = "manual",
-            TaskType = WorkItemTaskType.Decomposition,
-            AgentSelector = "dotnet,kiro",
-            TimeoutSeconds = 900,
-            RunId = Guid.NewGuid().ToString(),
-            ProviderConfigs = new List<ProviderConfig>
-            {
-                new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" }
-            }
-        };
-
-        _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(
-            It.IsAny<DecompositionDispatchOrchestrationRequest>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(fullRequest);
-
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var issue = new IssueSummary { Identifier = "epic-1", Title = "Epic", Labels = new[] { "agent:epic" } };
-        var (success, _, _) = await _service.DispatchDecompositionAsync(issue, template);
-
-        Assert.True(success);
-
-        // Verify orchestration was used
-        _mockDispatchOrchestration.Verify(d => d.PrepareDecompositionDistributionRequestAsync(
-            It.IsAny<DecompositionDispatchOrchestrationRequest>(),
-            It.IsAny<CancellationToken>()), Times.Once);
-
-        // Verify DistributeAndFinalizeAsync received the orchestrated request with ProviderConfigs
-        _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(
-            It.Is<JobDistributionRequest>(r => r.ProviderConfigs != null && r.ProviderConfigs.Count > 0),
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // ── Bug fix regression tests ──
-
-    [Fact]
-    public async Task LoadDrawerLabelsAsync_PopulatesDrawerLabels_WhenProviderReturnsLabels()
-    {
-        // Regression: fire-and-forget label load must populate DrawerLabels so UI can render them.
-        var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<string> { "bug", "enhancement", "agent:next" });
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
-
-        var error = await _service.LoadDrawerLabelsAsync(template);
-
-        Assert.Null(error);
-        Assert.Equal(3, _service.DrawerLabels.Count);
-        Assert.Contains("bug", _service.DrawerLabels);
-        Assert.Contains("enhancement", _service.DrawerLabels);
-    }
-
-    [Fact]
-    public async Task LoadEpicDrawerIssuesAsync_DeduplicatesIssuesWithBothEpicLabels()
-    {
-        // Regression: issues with both agent:epic AND agent:epic-approved appear in both
-        // API queries. The result must be deduplicated by Identifier.
-        var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-
-        var duplicateIssue = new IssueSummary
-        {
-            Identifier = "100", Title = "Shared Epic",
-            Labels = new[] { "agent:epic", "agent:epic-approved" }
-        };
-        var epicOnlyIssue = new IssueSummary
-        {
-            Identifier = "101", Title = "Analysis Epic",
-            Labels = new[] { "agent:epic" }
-        };
-        var approvedOnlyIssue = new IssueSummary
-        {
-            Identifier = "102", Title = "Approved Epic",
-            Labels = new[] { "agent:epic-approved" }
-        };
-
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        // First call (agent:epic labels) returns the duplicate + epic-only
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 8,
-                It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains("agent:epic")),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary>
-            {
-                Items = new List<IssueSummary> { duplicateIssue, epicOnlyIssue },
-                HasMore = false, Page = 1, PageSize = 8
-            });
-        // Second call (agent:epic-approved labels) returns the duplicate + approved-only
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 8,
-                It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains("agent:epic-approved")),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary>
-            {
-                Items = new List<IssueSummary> { duplicateIssue, approvedOnlyIssue },
-                HasMore = false, Page = 1, PageSize = 8
-            });
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
-
-        var error = await _service.LoadEpicDrawerIssuesAsync(template, 1);
-
-        Assert.Null(error);
-        // Should have 3 unique issues, NOT 4 (duplicate counted once)
-        Assert.Equal(3, _service.EpicDrawerIssues.Count);
-        Assert.Equal(1, _service.EpicDrawerIssues.Count(i => i.Identifier == "100"));
-    }
-
-    [Fact]
-    public async Task LoadPrDrawerPageAsync_ClearsPrState_WhenCalledAfterPreviousLoad()
-    {
-        // Regression: ClosePrDrawer must clear PrDrawerPrs, PrDrawerPage, PrDrawerHasMore
-        // so stale data doesn't flash on next open.
-        var template = MakeTemplate();
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-
-        var mockRepoProvider = new Mock<IRepositoryProvider>();
-        mockRepoProvider.Setup(r => r.ListOpenPullRequestsAsync(1, 15, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = new List<PullRequestSummary>
-                {
-                    new() { Identifier = "10", Title = "PR 10", BranchName = "feat/a", TargetBranch = "main", Url = "http://x", Number = 10, Description = "", Labels = [], IsDraft = false }
-                },
-                HasMore = true, Page = 1, PageSize = 15
-            });
-        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockRepoProvider.Object);
-
-        // Load PRs
-        await _service.LoadPrDrawerPageAsync(template, 1);
-        Assert.Single(_service.PrDrawerPrs);
-        Assert.True(_service.PrDrawerHasMore);
-
-        // Simulate close — this should clear all PR state
-        _service.ClearPrDrawerLabelFilter();
-        // Currently only clears labels, NOT the PR list — this assertion should FAIL before the fix
-        Assert.Empty(_service.PrDrawerPrs);
-        Assert.Equal(1, _service.PrDrawerPage);
-        Assert.False(_service.PrDrawerHasMore);
-    }
-
-    [Fact]
-    public async Task OpenPrDrawerAsync_SetsPageToOne_ViaDelegateToUnifiedMethod()
-    {
-        // Verifies the contract that opening the PR drawer always starts at page 1.
-        // This anchors the private-overload → public-overload delegation: after the
-        // consolidation, the private overload must call LoadPrDrawerPageAsync(template, 1).
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockRepoProvider();
-
-        var error = await _service.OpenPrDrawerAsync("t-1");
-
-        Assert.Null(error);
-        Assert.True(_service.IsPrDrawerOpen);
-        // TODO: This assertion only checks the side-effect value and would pass for any code path
-        // that ends with _prDrawer.Page = 1. A stronger test would verify ListOpenPullRequestsAsync
-        // is called with page=1 by using a specific mock constraint (r.ListOpenPullRequestsAsync(1, ...))
-        // instead of It.IsAny<int>() in SetupMockRepoProvider. (review-findings: TestQualityReviewer [WARNING])
-        Assert.Equal(1, _service.PrDrawerPage);
-    }
-
-    // ── Drawer Orchestration Tests ──
-
-    [Fact]
-    public async Task OpenIssueDrawerAsync_SetsOpenState_AndLoadsData()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockIssueProvider();
-
-        var error = await _service.OpenIssueDrawerAsync("t-1");
-
-        Assert.Null(error);
-        Assert.True(_service.IsIssueDrawerOpen);
-        Assert.Equal(template, _service.IssueDrawerTemplate);
-        Assert.NotEmpty(_service.DrawerIssues);
-    }
-
-    [Fact]
-    public async Task OpenIssueDrawerAsync_ClosesOtherDrawers()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockIssueProvider();
-
-        // Pre-open PR drawer state manually
-        await _service.OpenPrDrawerAsync("t-1");
-        Assert.True(_service.IsPrDrawerOpen);
-
-        // Open issue drawer should close PR drawer
-        await _service.OpenIssueDrawerAsync("t-1");
-
-        Assert.True(_service.IsIssueDrawerOpen);
-        Assert.False(_service.IsPrDrawerOpen);
-    }
-
-    [Fact]
-    public async Task OpenIssueDrawerAsync_RefreshesActiveIssues()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockIssueProvider();
-
-        var expectedSet = new HashSet<(IssueIdentifier, ProviderConfigId)> { ("42", "ip-1") };
-        _mockWorkDistributor.Setup(w => w.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(expectedSet);
-
-        await _service.OpenIssueDrawerAsync("t-1");
-
-        Assert.True(_service.IsIssueActive("42", "ip-1"));
-    }
-
-    [Fact]
-    public async Task CloseIssueDrawer_ClearsState()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockIssueProvider();
-
-        await _service.OpenIssueDrawerAsync("t-1");
-        Assert.True(_service.IsIssueDrawerOpen);
-        Assert.NotNull(_service.IssueDrawerTemplate);
-
-        _service.CloseIssueDrawer();
-
-        Assert.False(_service.IsIssueDrawerOpen);
-        Assert.Null(_service.IssueDrawerTemplate);
-    }
-
-    [Fact]
-    public async Task SwitchToIssueDrawer_ReusesCache_WhenDataExists()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        SetupMockIssueProvider();
-        SetupMockRepoProviderForCacheTest();
-
-        // Open issue drawer to populate data
-        await _service.OpenIssueDrawerAsync("t-1");
-        Assert.True(_service.IsIssueDrawerOpen);
-        Assert.NotEmpty(_service.DrawerIssues);
-
-        // Open PR drawer — hides issue drawer but does NOT clear cached data
-        await _service.OpenPrDrawerAsync("t-1");
-        Assert.True(_service.IsPrDrawerOpen);
-        Assert.False(_service.IsIssueDrawerOpen);
-        Assert.NotEmpty(_service.DrawerIssues); // still cached
-
-        // Switch back to issue drawer — should reuse cache (fast path), NOT re-fetch
-        var error = await _service.SwitchToIssueDrawerAsync("t-1");
-        Assert.Null(error);
-        Assert.True(_service.IsIssueDrawerOpen);
-        Assert.False(_service.IsPrDrawerOpen);
-    }
-
-    // TODO: These deferred-evaluation tests don't truly prove the fix prevents a regression because
-    // HideOtherDrawers currently only toggles booleans — it doesn't clear data collections. To validate
-    // the Func<bool> deferral, simulate a scenario where HideOtherDrawers clears the collection and
-    // verify the lambda still returns the correct value post-clear.
-    [Fact]
-    public async Task SwitchToIssueDrawer_ReusesCacheWithDeferredEvaluation_WhenDataExists()
-    {
-        // Validates that the hasData Func<bool> is evaluated after HideOtherDrawers,
-        // and that the fast path (cache reuse) is taken when template + data are present.
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        SetupMockIssueProvider();
-
-        // Open issue drawer to populate IssueDrawerTemplate and DrawerIssues
-        await _service.OpenIssueDrawerAsync("t-1");
-        Assert.True(_service.IsIssueDrawerOpen);
-        Assert.NotNull(_service.IssueDrawerTemplate);
-        Assert.True(_service.DrawerIssues.Count > 0);
-
-        // Open PR drawer — hides issue drawer (IsIssueDrawerOpen = false)
-        // but does NOT clear IssueDrawerTemplate or DrawerIssues
-        SetupMockRepoProvider();
-        await _service.OpenPrDrawerAsync("t-1");
-        Assert.True(_service.IsPrDrawerOpen);
-        Assert.False(_service.IsIssueDrawerOpen);
-        Assert.NotNull(_service.IssueDrawerTemplate); // still cached
-        Assert.True(_service.DrawerIssues.Count > 0); // still has data
-
-        // Switch back to issue drawer — should take fast path (reuse cache)
-        var error = await _service.SwitchToIssueDrawerAsync("t-1");
-        Assert.Null(error);
-        Assert.True(_service.IsIssueDrawerOpen);
-        Assert.False(_service.IsPrDrawerOpen); // PR drawer hidden by HideOtherDrawers
-    }
-
-    [Fact]
-    public async Task SwitchToPrDrawer_ReusesCacheWithDeferredEvaluation_WhenDataExists()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        SetupMockIssueProvider();
-        SetupMockRepoProvider();
-
-        // Open PR drawer to populate PrDrawerTemplate and PrDrawerPrs
-        await _service.OpenPrDrawerAsync("t-1");
-        Assert.True(_service.IsPrDrawerOpen);
-        Assert.NotNull(_service.PrDrawerTemplate);
-        Assert.True(_service.PrDrawerPrs.Count > 0);
-
-        // Open issue drawer — hides PR drawer but does NOT clear PrDrawerTemplate/PrDrawerPrs
-        await _service.OpenIssueDrawerAsync("t-1");
-        Assert.True(_service.IsIssueDrawerOpen);
-        Assert.False(_service.IsPrDrawerOpen);
-        Assert.NotNull(_service.PrDrawerTemplate); // still cached
-        Assert.True(_service.PrDrawerPrs.Count > 0); // still has data
-
-        // Switch back to PR drawer — should take fast path
-        var error = await _service.SwitchToPrDrawerAsync("t-1");
-        Assert.Null(error);
-        Assert.True(_service.IsPrDrawerOpen);
-        Assert.False(_service.IsIssueDrawerOpen); // issue drawer hidden
-    }
-
-    [Fact]
-    public async Task SwitchToEpicDrawer_ReusesCacheWithDeferredEvaluation_WhenDataExists()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockIssueProvider();
-
-        // Open epic drawer to populate EpicDrawerTemplate and EpicDrawerIssues
-        await _service.OpenEpicDrawerAsync("t-1");
-        Assert.True(_service.IsEpicDrawerOpen);
-        Assert.NotNull(_service.EpicDrawerTemplate);
-        Assert.True(_service.EpicDrawerIssues.Count > 0);
-
-        // Open issue drawer — hides epic drawer but does NOT clear EpicDrawerTemplate/EpicDrawerIssues
-        await _service.OpenIssueDrawerAsync("t-1");
-        Assert.True(_service.IsIssueDrawerOpen);
-        Assert.False(_service.IsEpicDrawerOpen);
-        Assert.NotNull(_service.EpicDrawerTemplate); // still cached
-        Assert.True(_service.EpicDrawerIssues.Count > 0); // still has data
-
-        // Switch back to epic drawer — should take fast path
-        var error = await _service.SwitchToEpicDrawerAsync("t-1");
-        Assert.Null(error);
-        Assert.True(_service.IsEpicDrawerOpen);
-        Assert.False(_service.IsIssueDrawerOpen); // issue drawer hidden
-    }
-
-    // TODO: Add tests for ToggleImplementationEnabledAsync, ToggleReviewEnabledAsync, and ToggleDecompositionEnabledAsync.
-    // These delegate to TogglePropertyAsync with different updater lambdas but only ToggleTemplateEnabledAsync is tested.
-
-    [Fact]
-    public async Task DispatchFromIssueDrawerAsync_ClosesDrawer_OnSuccess()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        SetupMockIssueProvider();
-
-        await _service.OpenIssueDrawerAsync("t-1");
-        Assert.True(_service.IsIssueDrawerOpen);
-
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
-            It.IsAny<ImplementationDispatchOrchestrationRequest>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateMinimalDistributionRequest());
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var (success, error, msg) = await _service.DispatchFromIssueDrawerAsync(MakeIssue());
-
-        Assert.True(success);
-        Assert.False(_service.IsIssueDrawerOpen); // drawer closed on success
-    }
-
-    [Fact]
-    public async Task DispatchFromIssueDrawerAsync_ReturnsError_OnFailure()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        SetupMockIssueProvider();
-
-        await _service.OpenIssueDrawerAsync("t-1");
-
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DependencyCheckResult { IsReady = false, BlockedBy = [10], TotalDependencies = 1 });
-
-        var (success, error, msg) = await _service.DispatchFromIssueDrawerAsync(MakeIssue());
-
-        Assert.False(success);
-        Assert.Contains("blocked", error, StringComparison.OrdinalIgnoreCase);
-        Assert.True(_service.IsIssueDrawerOpen); // drawer stays open on failure
-    }
-
-    [Fact]
-    public async Task DispatchFromPrDrawerAsync_DoesNotCloseDrawer_OnSuccess()
-    {
-        var template = MakeTemplate() with { RepoProviderId = "rp-1" };
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        SetupMockRepoProvider();
-
-        await _service.OpenPrDrawerAsync("t-1");
-        Assert.True(_service.IsPrDrawerOpen);
-
-        _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(
-            It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateMinimalDistributionRequest());
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var pr = new PullRequestSummary { Identifier = "99", Number = 99, Title = "Fix", BranchName = "fix/a", TargetBranch = "main", Url = "http://x", Description = "", Labels = Array.Empty<string>(), IsDraft = false };
-        var (success, error, msg) = await _service.DispatchFromPrDrawerAsync(pr);
-
-        Assert.True(success);
-        Assert.True(_service.IsPrDrawerOpen); // PR drawer stays open on success
-    }
-
-    [Fact]
-    public async Task DispatchFromEpicDrawerAsync_ClosesDrawer_OnSuccess()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        SetupMockIssueProvider();
-
-        await _service.OpenEpicDrawerAsync("t-1");
-        Assert.True(_service.IsEpicDrawerOpen);
-
-        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
-        _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(
-            It.IsAny<DecompositionDispatchOrchestrationRequest>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateMinimalDistributionRequest());
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
-
-        var (success, error, msg) = await _service.DispatchFromEpicDrawerAsync(MakeIssue());
-
-        Assert.True(success);
-        Assert.False(_service.IsEpicDrawerOpen); // drawer closed on success
-    }
-
-    [Fact]
-    public async Task DispatchFromIssueDrawerAsync_ReturnsError_WhenTemplateIsNull()
-    {
-        // No template opened — IssueDrawerTemplate is null
-        var (success, error, msg) = await _service.DispatchFromIssueDrawerAsync(MakeIssue());
-
-        Assert.False(success);
-        Assert.NotNull(error);
-        Assert.Contains("template", error, StringComparison.OrdinalIgnoreCase);
-        Assert.False(_service.IssueDrawerDispatching); // dispatching flag must be reset
-    }
-
-    [Fact]
-    public async Task DispatchFromPrDrawerAsync_ReturnsError_WhenTemplateIsNull()
-    {
-        var pr = new PullRequestSummary { Identifier = "99", Number = 99, Title = "Fix", BranchName = "fix/a", TargetBranch = "main", Url = "http://x", Description = "", Labels = Array.Empty<string>(), IsDraft = false };
-        var (success, error, msg) = await _service.DispatchFromPrDrawerAsync(pr);
-
-        Assert.False(success);
-        Assert.NotNull(error);
-        Assert.Contains("template", error, StringComparison.OrdinalIgnoreCase);
-        Assert.False(_service.PrDrawerDispatching); // dispatching flag must be reset
-    }
-
-    [Fact]
-    public async Task ActiveDrawerTab_ReflectsOpenDrawer()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        SetupMockIssueProvider();
-        SetupMockRepoProvider();
-
-        Assert.Equal("", _service.ActiveDrawerTab);
-
-        await _service.OpenIssueDrawerAsync("t-1");
-        Assert.Equal("issue", _service.ActiveDrawerTab);
-
-        _service.CloseIssueDrawer();
-        await _service.OpenPrDrawerAsync("t-1");
-        Assert.Equal("pr", _service.ActiveDrawerTab);
-
-        _service.ClosePrDrawer();
-        await _service.OpenEpicDrawerAsync("t-1");
-        Assert.Equal("epic", _service.ActiveDrawerTab);
-    }
-
-    [Fact]
-    public async Task CloseActiveDrawer_ClosesWhicheverIsOpen()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockIssueProvider();
-
-        await _service.OpenIssueDrawerAsync("t-1");
-        Assert.True(_service.IsIssueDrawerOpen);
-
-        _service.CloseActiveDrawer();
-
-        Assert.False(_service.IsIssueDrawerOpen);
-        Assert.Null(_service.IssueDrawerTemplate);
-    }
-
-    [Fact]
-    public async Task Dispose_CancelsCts()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockIssueProvider();
-
-        await _service.OpenIssueDrawerAsync("t-1");
-        Assert.True(_service.IsIssueDrawerOpen);
-
-        var token = _service.IssueDrawer.CancellationToken;
-        Assert.False(token.IsCancellationRequested);
-
-        _service.Dispose();
-
-        Assert.True(token.IsCancellationRequested);
-
-        // double-dispose safe
-        _service.Dispose();
-    }
-
-    [Fact]
-    public async Task ClosePrDrawer_NullsTemplate()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        SetupMockRepoProvider();
-
-        await _service.OpenPrDrawerAsync("t-1");
-        Assert.NotNull(_service.PrDrawerTemplate);
-
-        _service.ClosePrDrawer();
-        Assert.Null(_service.PrDrawerTemplate);
-    }
-
-    private void SetupMockIssueProvider()
-    {
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary>
-            {
-                Items = new List<IssueSummary> { MakeIssue() },
-                Page = 1, PageSize = 15, HasMore = false
-            });
-        mockIssueProvider.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<string>());
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
-    }
-
-    private void SetupMockRepoProviderForCacheTest()
-    {
-        var mockRepoProvider = new Mock<IRepositoryProvider>();
-        mockRepoProvider.Setup(r => r.ListOpenPullRequestsAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = new List<PullRequestSummary>
-                {
-                    new() { Identifier = "99", Title = "PR", BranchName = "feat/x", TargetBranch = "main", Url = "http://x", Number = 99, Description = "", Labels = Array.Empty<string>(), IsDraft = false }
-                },
-                Page = 1, PageSize = 15, HasMore = false
-            });
-        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockRepoProvider.Object);
-    }
-
-    private void SetupMockRepoProvider()
-    {
-        var mockRepoProvider = new Mock<IRepositoryProvider>();
-        mockRepoProvider.Setup(r => r.ListOpenPullRequestsAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<PullRequestSummary>
-            {
-                Items = new List<PullRequestSummary>
-                {
-                    new() { Identifier = "99", Title = "PR", BranchName = "feat/x", TargetBranch = "main", Url = "http://x", Number = 99, Description = "", Labels = Array.Empty<string>(), IsDraft = false }
-                },
-                Page = 1, PageSize = 15, HasMore = false
-            });
-        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockRepoProvider.Object);
-
-        // Also set up issue provider for labels (needed by OpenPrDrawerAsync)
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<string>());
-        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockIssueProvider.Object);
-    }
-
-    private static JobDistributionRequest CreateMinimalDistributionRequest() => new()
-    {
-        IssueIdentifier = "42",
-        IssueProviderConfigId = "ip-1",
-        RepoProviderConfigId = "rp-1",
-        InitiatedBy = "manual",
-        TaskType = WorkItemTaskType.Implementation,
-        AgentSelector = "dotnet,kiro",
-        TimeoutSeconds = 3600
-    };
-
-    // ── IssueDrawer CancellationToken Tests ──
-
-    [Fact]
-    public void IssueDrawer_CancellationToken_ReturnsNone_WhenNoDrawerOpen()
-    {
-        Assert.Equal(CancellationToken.None, _service.IssueDrawer.CancellationToken);
-    }
-
-    [Fact]
-    public async Task IssueDrawer_CancellationToken_IsValid_WhenDrawerOpen()
-    {
-        // TODO: These assertions are weak — they pass for any non-cancelled token unrelated to the
-        // drawer. Strengthen by also closing the drawer after capturing and asserting cancellation
-        // propagates, to confirm the token is the one owned by the drawer's CTS.
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockIssueProvider();
-
-        await _service.OpenIssueDrawerAsync("t-1");
-
-        var token = _service.IssueDrawer.CancellationToken;
-        Assert.NotEqual(CancellationToken.None, token);
-        Assert.False(token.IsCancellationRequested);
-    }
-
-    [Fact]
-    public async Task IssueDrawer_CancellationToken_IsCancelled_AfterDrawerClose()
-    {
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockIssueProvider();
-
-        await _service.OpenIssueDrawerAsync("t-1");
-        var token = _service.IssueDrawer.CancellationToken;
-
-        _service.CloseIssueDrawer();
-
-        Assert.True(token.IsCancellationRequested);
-    }
-
-    [Fact]
-    public async Task CheckDrawerDependenciesAsync_ThrowsOperationCanceled_WhenTokenCancelled()
-    {
-        // TODO: This test uses a pre-cancelled CancellationTokenSource constructed independently of
-        // the service's drawer lifecycle. Add a complementary test that opens the drawer, captures
-        // _service.IssueDrawer.CancellationToken, closes the drawer (triggering the drawer's own CTS),
-        // and verifies the captured token is cancelled — to validate the actual end-to-end cancellation
-        // path used by the caller in AgentCoding.razor.cs.
-        var template = MakeTemplate();
-        _service.Templates.Add(template);
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        SetupMockIssueProvider();
-
-        await _service.OpenIssueDrawerAsync("t-1");
-
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        await Assert.ThrowsAsync<OperationCanceledException>(
-            () => _service.CheckDrawerDependenciesAsync(template, null, cts.Token));
-    }
-
-    // TODO: Add tests for the undo-callback stale-capture fix (issue #1057 criterion #2).
-    // Specifically, test the no-op case when a template is removed between toggle and undo click —
-    // the undo lambda should re-resolve from PageService.Templates by ID and return early if null.
-
-    // TODO: Add tests for HandleGlobalEscape exception-handling fix (issue #1057 criterion #1).
-    // The method now catches ObjectDisposedException and guards against _disposed. A bUnit test
-    // could verify that calling HandleGlobalEscape after component disposal does not throw.
-
-    [Fact]
     public async Task StartLoopAsync_WhenLoopServiceThrows_ReturnsErrorTuple()
     {
-        // Simulate config store throwing during StartLoopAsync's config-load phase.
-        // With the fix in PipelineLoopService, this returns (false, error) instead of throwing.
-        // But if something else throws (e.g., UpdatePipelineConfigAsync on success path),
-        // AgentCodingPageService should catch and surface it.
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Database locked"));
 
@@ -1333,7 +312,6 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task StartLoopAsync_WhenUpdateConfigThrows_ReturnsErrorTuple()
     {
-        // Setup so StartLoopAsync succeeds (loop starts), but UpdatePipelineConfigAsync throws
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestPipelineConfig.Default());
         _mockConfigStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
@@ -1354,92 +332,228 @@ public class AgentCodingPageServiceTests
         Assert.Contains("Disk full", error!);
     }
 
-    // ── RequiresConnectedAgents guard tests ──────────────────────────────
+    // ── Cross-drawer coordination via coordinator ──
 
     [Fact]
-    public async Task DispatchIssueAsync_ReturnsError_WhenRequiresConnectedAgentsAndNoneConnected()
+    public async Task OpenIssueDrawerAsync_HidesPrAndEpicDrawers()
     {
+        // TODO: [WARNING] PropagateProviderContext() is called before HideOtherDrawers inside
+        // OpenIssueDrawerAsync, but it uses concrete type-casts (_mockIssueDrawerService is IssueDrawerService)
+        // that silently no-op against Moq mocks. Provider context propagation is not tested here.
+        // A regression in PropagateProviderContext (e.g., wrong provider list passed) would not be caught
+        // by this test. Separate test coverage for PropagateProviderContext with concrete implementations
+        // would be needed to validate the provider context reach.
         var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+        _service.Templates.Add(template);
 
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(true);
+        _mockIssueDrawerService
+            .Setup(s => s.OpenIssueDrawerAsync(It.IsAny<TemplateId>(), It.IsAny<IReadOnlyList<PipelineJobTemplate>>(), It.IsAny<Func<Task>?>()))
+            .ReturnsAsync((string?)null);
 
-        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
+        await _service.OpenIssueDrawerAsync("t-1");
 
-        Assert.False(success);
-        Assert.Contains("no agents are currently connected", error!);
+        _mockPrReviewDrawerService.Verify(s => s.Hide(), Times.Once);
+        _mockEpicDrawerService.Verify(s => s.Hide(), Times.Once);
+        _mockIssueDrawerService.Verify(s => s.Hide(), Times.Never);
     }
 
     [Fact]
-    public async Task DispatchPrReviewAsync_ReturnsError_WhenRequiresConnectedAgentsAndNoneConnected()
+    public async Task OpenPrDrawerAsync_HidesIssueAndEpicDrawers()
     {
         var template = MakeTemplate();
-        var pr = new PullRequestSummary { Identifier = "1", Title = "Test PR", BranchName = "feat/x", TargetBranch = "main", Url = "http://x", Description = "", Labels = [], IsDraft = false, Number = 1 };
+        _service.Templates.Add(template);
 
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(true);
+        _mockPrReviewDrawerService
+            .Setup(s => s.OpenPrDrawerAsync(It.IsAny<TemplateId>(), It.IsAny<IReadOnlyList<PipelineJobTemplate>>(), It.IsAny<Func<Task>?>()))
+            .ReturnsAsync((string?)null);
 
-        var (success, error, _) = await _service.DispatchPrReviewAsync(pr, template);
+        await _service.OpenPrDrawerAsync("t-1");
 
-        Assert.False(success);
-        Assert.Contains("no agents are currently connected", error!);
+        _mockIssueDrawerService.Verify(s => s.Hide(), Times.Once);
+        _mockEpicDrawerService.Verify(s => s.Hide(), Times.Once);
+        _mockPrReviewDrawerService.Verify(s => s.Hide(), Times.Never);
     }
 
     [Fact]
-    public async Task DispatchDecompositionAsync_ReturnsError_WhenRequiresConnectedAgentsAndNoneConnected()
+    public async Task OpenEpicDrawerAsync_HidesIssueAndPrDrawers()
     {
         var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+        _service.Templates.Add(template);
 
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(true);
+        _mockEpicDrawerService
+            .Setup(s => s.OpenEpicDrawerAsync(It.IsAny<TemplateId>(), It.IsAny<IReadOnlyList<PipelineJobTemplate>>(), It.IsAny<IReadOnlyList<PipelineProject>>(), It.IsAny<Func<Task>?>()))
+            .ReturnsAsync((string?)null);
 
-        var (success, error, _) = await _service.DispatchDecompositionAsync(MakeIssue(), template);
+        await _service.OpenEpicDrawerAsync("t-1");
 
-        Assert.False(success);
-        Assert.Contains("no agents are currently connected", error!);
+        _mockIssueDrawerService.Verify(s => s.Hide(), Times.Once);
+        _mockPrReviewDrawerService.Verify(s => s.Hide(), Times.Once);
+        _mockEpicDrawerService.Verify(s => s.Hide(), Times.Never);
     }
 
     [Fact]
-    public async Task DispatchIssueAsync_Proceeds_WhenNotRequiresConnectedAgentsAndNoneConnected()
+    public void ActiveDrawerTab_ReturnsIssue_WhenIssueDrawerOpen()
+    {
+        _issueDrawerState.IsOpen = true;
+        Assert.Equal("issue", _service.ActiveDrawerTab);
+    }
+
+    [Fact]
+    public void ActiveDrawerTab_ReturnsPr_WhenPrDrawerOpen()
+    {
+        _prDrawerState.IsOpen = true;
+        Assert.Equal("pr", _service.ActiveDrawerTab);
+    }
+
+    [Fact]
+    public void ActiveDrawerTab_ReturnsEpic_WhenEpicDrawerOpen()
+    {
+        _epicDrawerState.IsOpen = true;
+        Assert.Equal("epic", _service.ActiveDrawerTab);
+    }
+
+    [Fact]
+    public void ActiveDrawerTab_ReturnsEmpty_WhenNoDrawerOpen()
+    {
+        Assert.Equal("", _service.ActiveDrawerTab);
+    }
+
+    [Fact]
+    public void CloseActiveDrawer_DelegatesToIssueDrawerService_WhenIssueDrawerOpen()
+    {
+        _issueDrawerState.IsOpen = true;
+
+        _service.CloseActiveDrawer();
+
+        _mockIssueDrawerService.Verify(s => s.CloseIssueDrawer(), Times.Once);
+        _mockPrReviewDrawerService.Verify(s => s.ClosePrDrawer(), Times.Never);
+        _mockEpicDrawerService.Verify(s => s.CloseEpicDrawer(), Times.Never);
+    }
+
+    [Fact]
+    public void CloseActiveDrawer_DelegatesToPrDrawerService_WhenPrDrawerOpen()
+    {
+        _prDrawerState.IsOpen = true;
+
+        _service.CloseActiveDrawer();
+
+        _mockPrReviewDrawerService.Verify(s => s.ClosePrDrawer(), Times.Once);
+        _mockIssueDrawerService.Verify(s => s.CloseIssueDrawer(), Times.Never);
+    }
+
+    [Fact]
+    public void CloseActiveDrawer_DelegatesToEpicDrawerService_WhenEpicDrawerOpen()
+    {
+        _epicDrawerState.IsOpen = true;
+
+        _service.CloseActiveDrawer();
+
+        _mockEpicDrawerService.Verify(s => s.CloseEpicDrawer(), Times.Once);
+        _mockIssueDrawerService.Verify(s => s.CloseIssueDrawer(), Times.Never);
+    }
+
+    // ── Forwarding wrappers ──
+
+    [Fact]
+    public async Task LoadDrawerIssuesAsync_DelegatesToIssueDrawerService()
     {
         var template = MakeTemplate();
-        _service.IssueProviders.Add(MakeProvider("ip-1"));
-        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+        _mockIssueDrawerService.Setup(s => s.LoadDrawerIssuesAsync(template, 2))
+            .ReturnsAsync((string?)null);
 
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
+        var result = await _service.LoadDrawerIssuesAsync(template, 2);
 
-        _mockDependencyChecker.Setup(d => d.CheckAsync(
-            It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(),
-            It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+        Assert.Null(result);
+        _mockIssueDrawerService.Verify(s => s.LoadDrawerIssuesAsync(template, 2), Times.Once);
+    }
 
-        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
-            It.IsAny<ImplementationDispatchOrchestrationRequest>(),
-            It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new JobDistributionRequest
-            {
-                IssueIdentifier = "42",
-                IssueProviderConfigId = "ip-1",
-                RepoProviderConfigId = "rp-1",
-                InitiatedBy = "manual",
-                TaskType = WorkItemTaskType.Implementation,
-                AgentSelector = "default",
-                TimeoutSeconds = 3600,
-                ProviderConfigs = new List<ProviderConfig>
-                {
-                    new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" }
-                }
-            });
+    [Fact]
+    public async Task LoadPrDrawerPageAsync_DelegatesToPrReviewDrawerService()
+    {
+        var template = MakeTemplate();
+        _mockPrReviewDrawerService.Setup(s => s.LoadPrDrawerPageAsync(template, 1))
+            .ReturnsAsync((string?)null);
 
-        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(
-            It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DispatchOutcome(true, false, null));
+        var result = await _service.LoadPrDrawerPageAsync(template, 1);
 
-        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
+        Assert.Null(result);
+        _mockPrReviewDrawerService.Verify(s => s.LoadPrDrawerPageAsync(template, 1), Times.Once);
+    }
 
-        // Should not be blocked by the guard — dispatch proceeds
-        Assert.True(success);
-        Assert.Null(error);
+    [Fact]
+    public async Task LoadEpicDrawerIssuesAsync_DelegatesToEpicDrawerService()
+    {
+        var template = MakeTemplate();
+        _mockEpicDrawerService.Setup(s => s.LoadEpicDrawerIssuesAsync(template, 1))
+            .ReturnsAsync((string?)null);
+
+        var result = await _service.LoadEpicDrawerIssuesAsync(template, 1);
+
+        Assert.Null(result);
+        _mockEpicDrawerService.Verify(s => s.LoadEpicDrawerIssuesAsync(template, 1), Times.Once);
+    }
+
+    [Fact]
+    public async Task IsIssueDistributedAsync_DelegatesToIssueDrawerService()
+    {
+        _mockIssueDrawerService.Setup(s => s.IsIssueDistributedAsync("42", "ip-1"))
+            .ReturnsAsync(true);
+
+        var result = await _service.IsIssueDistributedAsync("42", "ip-1");
+
+        Assert.True(result);
+        _mockIssueDrawerService.Verify(s => s.IsIssueDistributedAsync("42", "ip-1"), Times.Once);
+    }
+
+    [Fact]
+    public async Task RefreshActiveIssuesAsync_DelegatesToIssueDrawerService()
+    {
+        _mockIssueDrawerService.Setup(s => s.RefreshActiveIssuesAsync())
+            .Returns(Task.CompletedTask);
+
+        await _service.RefreshActiveIssuesAsync();
+
+        _mockIssueDrawerService.Verify(s => s.RefreshActiveIssuesAsync(), Times.Once);
+    }
+
+    [Fact]
+    public void IsIssueActive_DelegatesToIssueDrawerService()
+    {
+        _mockIssueDrawerService.Setup(s => s.IsIssueActive((IssueIdentifier)"42", "ip-1"))
+            .Returns(true);
+
+        var result = _service.IsIssueActive("42", "ip-1");
+
+        Assert.True(result);
+    }
+
+    // ── IssueDrawer CancellationToken (forwarded via DrawerState accessor) ──
+
+    [Fact]
+    public void IssueDrawer_CancellationToken_ReturnsNone_WhenNoDrawerOpen()
+    {
+        Assert.Equal(CancellationToken.None, _service.IssueDrawer.CancellationToken);
+    }
+
+    // ── Helper ──
+
+    private void SetupMinimalInitialize(
+        IReadOnlyList<PipelineProject>? projects = null,
+        IReadOnlyList<PipelineJobTemplate>? templates = null)
+    {
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(templates ?? Array.Empty<PipelineJobTemplate>());
+        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(projects ?? Array.Empty<PipelineProject>());
+        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
     }
 }

@@ -54,7 +54,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         using var db = new InMemoryPipelineDbContext(_dbOptions);
         var entities = db.PipelineRuns.ToList();
         entities.Should().HaveCount(1);
-        entities[0].IssueIdentifier.Should().Be("owner/repo#1");
+        entities[0].IssueIdentifier.Should().Be((IssueIdentifier)"owner/repo#1");
         entities[0].IssueTitle.Should().Be("Fix bug");
         entities[0].FinalStep.Should().Be(PipelineStep.Completed);
         entities[0].SummaryJson.Should().NotBeNullOrEmpty();
@@ -117,7 +117,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
 
         var restored = history[0];
         restored.RunId.Should().Be(runId);
-        restored.IssueIdentifier.Should().Be("issue-full");
+        restored.IssueIdentifier.Should().Be((IssueIdentifier)"issue-full");
         restored.IssueTitle.Should().Be("Full fields");
         restored.AgentId.Should().Be("agent-full");
         restored.ModelName.Should().Be("gpt-4o");
@@ -153,7 +153,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         history.Should().HaveCount(1);
         var restored = history[0];
         restored.RunId.Should().Be(runId.ToString());
-        restored.IssueIdentifier.Should().Be("legacy-issue");
+        restored.IssueIdentifier.Should().Be((IssueIdentifier)"legacy-issue");
         restored.IssueTitle.Should().Be("Legacy run");
         restored.FinalStep.Should().Be(PipelineStep.Failed);
         restored.AgentId.Should().Be("agent-legacy");
@@ -268,7 +268,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         var result = await _sut.GetRunHistoryAsync(page: 1, pageSize: 10);
 
         result.Items.Should().HaveCount(1);
-        result.Items[0].IssueIdentifier.Should().Be("org/repo#1");
+        result.Items[0].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#1");
     }
 
     [Fact]
@@ -295,7 +295,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         var history = await _sut.GetRunHistoryAsync();
 
         history.Should().HaveCount(1);
-        history[0].IssueIdentifier.Should().Be("legacy-normal");
+        history[0].IssueIdentifier.Should().Be((IssueIdentifier)"legacy-normal");
     }
 
     [Fact]
@@ -381,7 +381,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
 
         // Consolidation ghost excluded; normal run included with "manual" InitiatedBy
         history.Should().HaveCount(1);
-        history[0].IssueIdentifier.Should().Be("normal-fallback");
+        history[0].IssueIdentifier.Should().Be((IssueIdentifier)"normal-fallback");
         history[0].InitiatedBy.Should().Be("manual");
     }
 
@@ -421,7 +421,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         history.Should().HaveCount(1);
         var restored = history[0];
         restored.RunId.Should().Be(runId.ToString());
-        restored.IssueIdentifier.Should().Be("owner/repo#42");
+        restored.IssueIdentifier.Should().Be((IssueIdentifier)"owner/repo#42");
         restored.IssueTitle.Should().Be("Fallback title");
         restored.FinalStep.Should().Be(PipelineStep.Failed);
         restored.StartedAtOffset.Should().Be(startedAt);
@@ -485,7 +485,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
 
         // Assert: only the normal run should appear
         history.Should().HaveCount(1);
-        history[0].IssueIdentifier.Should().Be("org/repo#1");
+        history[0].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#1");
     }
 
     [Fact]
@@ -532,7 +532,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         var history = await _sut.GetRunHistoryAsync();
 
         history.Should().HaveCount(1);
-        history[0].IssueIdentifier.Should().Be("org/repo#2");
+        history[0].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#2");
     }
 
     [Fact]
@@ -722,9 +722,9 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         result.Items.Should().HaveCount(3);
         result.HasMore.Should().BeTrue();
         // Newest first (StartedAt descending)
-        result.Items[0].IssueIdentifier.Should().Be("org/repo#1");
-        result.Items[1].IssueIdentifier.Should().Be("org/repo#2");
-        result.Items[2].IssueIdentifier.Should().Be("org/repo#3");
+        result.Items[0].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#1");
+        result.Items[1].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#2");
+        result.Items[2].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#3");
     }
 
     [Fact]
@@ -749,8 +749,8 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         result.PageSize.Should().Be(3);
         result.Items.Should().HaveCount(2);
         result.HasMore.Should().BeFalse();
-        result.Items[0].IssueIdentifier.Should().Be("org/repo#4");
-        result.Items[1].IssueIdentifier.Should().Be("org/repo#5");
+        result.Items[0].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#4");
+        result.Items[1].IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#5");
     }
 
     [Fact]

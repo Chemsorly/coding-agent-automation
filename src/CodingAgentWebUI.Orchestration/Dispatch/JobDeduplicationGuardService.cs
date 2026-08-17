@@ -281,6 +281,10 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
     /// Removes a queued job by its RunId (IssueIdentifier for consolidation jobs).
     /// Used when a consolidation run is cancelled while queued.
     /// </summary>
+    // TODO: This method still accepts a raw string. Callers (e.g., ConsolidationDispatchService.NotifyRunCancelledAsync)
+    // must unwrap RunId.Value before calling here, which is a string boundary crossing that the RunId adoption
+    // effort (#2069) aims to eliminate. Updating this signature to accept RunId would close the remaining
+    // string crossing at ConsolidationDispatchService.cs NotifyRunCancelledAsync.
     public bool RemoveJob(string runId)
     {
         ArgumentNullException.ThrowIfNull(runId);

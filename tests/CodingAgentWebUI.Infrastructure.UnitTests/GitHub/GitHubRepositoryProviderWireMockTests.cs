@@ -203,6 +203,18 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
         result[0].ReviewComments.Should().NotContain(c => c.Body.Contains("<!-- agent:"));
     }
 
+    [Fact]
+    public async Task GetAgentPullRequestsAsync_DefaultIdentifier_ReturnsEmpty()
+    {
+        // IssueIdentifier is a non-nullable struct; default(IssueIdentifier) has Value = null.
+        // The null guard should return empty without making any HTTP requests.
+        await using var provider = CreateProvider();
+
+        var result = await provider.GetAgentPullRequestsAsync(default, CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
     #endregion
 
     #region UpdatePullRequestAsync
