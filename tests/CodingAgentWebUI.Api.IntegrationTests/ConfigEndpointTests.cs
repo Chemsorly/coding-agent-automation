@@ -96,6 +96,11 @@ public sealed class ConfigEndpointTests
             {
                 ["apiToken"] = "super-secret-token",
                 ["baseUrl"] = "https://api.github.com"
+            },
+            Secrets = new Dictionary<string, string>
+            {
+                ["privateKeyPem"] = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAK...",
+                ["webhookSecret"] = "wh-secret-value"
             }
         };
 
@@ -114,9 +119,14 @@ public sealed class ConfigEndpointTests
         saved.Should().NotBeNull();
         saved!.Settings.Should().NotBeNull();
         saved.Settings!.Values.Should().AllSatisfy(v => v.Should().Be("****"),
-            "GET /api/config/provider-configs must redact all secret values");
+            "GET /api/config/provider-configs must redact all Settings values");
         saved.Settings.Keys.Should().BeEquivalentTo(config.Settings.Keys,
-            "key names must be preserved");
+            "Settings key names must be preserved");
+        saved.Secrets.Should().NotBeNull();
+        saved.Secrets!.Values.Should().AllSatisfy(v => v.Should().Be("****"),
+            "GET /api/config/provider-configs must redact all Secrets values");
+        saved.Secrets.Keys.Should().BeEquivalentTo(config.Secrets.Keys,
+            "Secrets key names must be preserved");
     }
 
     // ── Auth: operator vs agent key ────────────────────────────────────────────────

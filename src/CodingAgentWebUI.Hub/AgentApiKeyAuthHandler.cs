@@ -111,8 +111,10 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
             return Task.FromResult(AuthenticateResult.Fail("Invalid API key"));
         }
 
-        // Create a claims identity with the authenticated agent ID
-        var claimId = !string.IsNullOrEmpty(agentId) ? agentId : "agent";
+        // NameIdentifier identifies the caller: the agentId when authenticating as an agent,
+        // or "operator" when authenticating as the operator (no agentId query parameter).
+        // auth_kind carries the tier distinction; NameIdentifier must agree with it.
+        var claimId = !string.IsNullOrEmpty(agentId) ? agentId : "operator";
         var authKind = string.IsNullOrEmpty(agentId) ? "operator" : "agent";
         var claims = new[]
         {

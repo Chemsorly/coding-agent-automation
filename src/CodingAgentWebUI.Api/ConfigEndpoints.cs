@@ -381,11 +381,13 @@ public static class ConfigEndpoints
     /// </summary>
     private static ProviderConfig RedactProviderConfig(ProviderConfig config)
     {
-        if (config.Settings is not { Count: > 0 })
-            return config;
+        var redactedSettings = config.Settings is { Count: > 0 }
+            ? config.Settings.ToDictionary(kv => kv.Key, _ => "****")
+            : config.Settings;
 
-        var redactedSettings = config.Settings
-            .ToDictionary(kv => kv.Key, _ => "****");
+        var redactedSecrets = config.Secrets is { Count: > 0 }
+            ? config.Secrets.ToDictionary(kv => kv.Key, _ => "****")
+            : config.Secrets;
 
         // ProviderConfig is a class (not a record), so manually construct the redacted copy.
         return new ProviderConfig
@@ -397,7 +399,7 @@ public static class ConfigEndpoints
             ProviderType = config.ProviderType,
             RepositoryRole = config.RepositoryRole,
             RequiredLabels = config.RequiredLabels,
-            Secrets = config.Secrets,
+            Secrets = redactedSecrets,
             Settings = redactedSettings,
             SetupSteps = config.SetupSteps,
             SteeringContent = config.SteeringContent
