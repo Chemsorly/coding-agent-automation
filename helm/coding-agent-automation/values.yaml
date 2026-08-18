@@ -223,3 +223,28 @@ monitoring:
   prometheusRules:
     # Create PrometheusRule resources for alerting (requires Prometheus Operator).
     enabled: false
+
+# ── Pipeline API ─────────────────────────────────────────────────────────────
+
+api:
+  # api.enabled must be false by default — the API is dark until Spec 044 re-points agents.
+  enabled: false
+  image:
+    repository: chemsorly/coding-agent
+    tag: coding-agent-api
+  # api.replicas MUST remain 1. Redis backplane handles hub message delivery but does NOT
+  # make multiple API replicas safe — AgentRegistryService, OrchestratorRunService, and all
+  # in-memory locking state is per-process. Spec 045 Task 13a rewrites the concurrency model
+  # for multi-process topology. Do NOT increase replicas before that lands.
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8090
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  terminationGracePeriodSeconds: 30

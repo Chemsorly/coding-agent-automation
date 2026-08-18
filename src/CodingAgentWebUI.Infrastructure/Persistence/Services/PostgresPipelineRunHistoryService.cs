@@ -91,6 +91,31 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
+    public async Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var entity = await db.PipelineRuns
+            .AsNoTracking()
+            .Where(r => r.RunId == runId)
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+
+        return entity is null ? null : DeserializeSummary(entity);
+    }
+
+    /// <inheritdoc />
+    public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
+
+        if (!feedbackOnly)
+            return await GetRunHistoryAsync(page, pageSize, ct).ConfigureAwait(false);
+
+        return await GetRunHistoryPagedWithFeedbackFilterInternalAsync(page, pageSize, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory)
     {
         if (string.IsNullOrEmpty(workspacePath) || !Directory.Exists(workspacePath))
@@ -164,8 +189,65 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
     // ── Async internals ─────────────────────────────────────────────────
 
-    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryInternalAsync(CancellationToken ct)
+    private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedWithFeedbackFilterInternalAsync(int page, int pageSize, CancellationToken ct)
     {
+        // Filter feedbackOnly at the DB query level using Postgres JSONB `?` (key-exists) operator.
+        // Since "Feedback" is embedded in the SummaryJson JSONB column (not a standalone column),
+        // we use raw SQL to filter server-side before page offsets are computed.
+        // This ensures the page boundary is correctly applied after the feedback filter —
+        // unlike the export endpoint (faithful port of legacy in-memory-post-paging behaviour).
+        // Spec 045 reconciles the divergence.
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+
+        var skip = checked((page - 1) * pageSize);
+        const int batchMultiplier = 2;
+        var items = new List<PipelineRunSummary>();
+        var dbOffset = skip;
+        var hasMore = false;
+
+        while (items.Count < pageSize + 1)
+        {
+            var batchSize = (pageSize + 1 - items.Count) * batchMultiplier;
+
+            // Use Postgres JSONB ? operator (key existence) to check "Feedback" key exists and is non-null.
+            // FromSqlRaw produces the WHERE at DB level; OFFSET/LIMIT control paging after the filter.
+            var entities = await db.PipelineRuns
+                .FromSqlRaw(
+                    @"SELECT * FROM ""PipelineRuns"" WHERE ""SummaryJson"" IS NOT NULL AND ""SummaryJson"" ? 'Feedback' AND ""SummaryJson"" ->> 'Feedback' IS NOT NULL ORDER BY ""StartedAt"" DESC OFFSET {0} LIMIT {1}",
+                    dbOffset, batchSize)
+                .AsNoTracking()
+                .ToListAsync(ct).ConfigureAwait(false);
+
+            if (entities.Count == 0)
+                break;
+
+            var batch = entities
+                .Select(DeserializeSummary)
+                .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy && s.Feedback is not null)
+                .Select(s => s!)
+                .ToList();
+
+            items.AddRange(batch);
+            dbOffset += entities.Count;
+
+            if (entities.Count < batchSize)
+                break;
+        }
+
+        hasMore = items.Count > pageSize;
+        if (hasMore)
+            items = items.Take(pageSize).ToList();
+
+        return new PagedResult<PipelineRunSummary>
+        {
+            Items = items,
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        };
+    }
+
+    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryInternalAsync(CancellationToken ct)    {
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
         var entities = await db.PipelineRuns
             .AsNoTracking()

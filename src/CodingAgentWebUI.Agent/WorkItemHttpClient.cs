@@ -4,6 +4,8 @@ using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
+// WorkItemStatusUpdate moved to CodingAgentWebUI.Pipeline.Models (Spec 042 Req 7.2a)
+
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
@@ -146,18 +148,6 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
             }
         }
     }
-}
-
-/// <summary>
-/// DTO for POST /api/work-items/{id}/status request body.
-/// </summary>
-public sealed class WorkItemStatusUpdate
-{
-    public required string Status { get; init; }
-    public string? AgentId { get; init; }
-    public string? Result { get; init; }
-    public string? ErrorMessage { get; init; }
-    public string? FailureReason { get; init; }
 }
 
 /// <summary>

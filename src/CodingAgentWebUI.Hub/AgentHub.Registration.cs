@@ -73,6 +73,11 @@ public sealed partial class AgentHub
 
         _facade.Register(message, Context.ConnectionId);
 
+        var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "unknown";
+        _logger.Information(
+            "Agent registered: AgentId={AgentId} ServiceName={ServiceName} ConnectionId={ConnectionId}",
+            message.AgentId, serviceName, Context.ConnectionId);
+
         await _orphanRecoveryService.RecoverOrphanedStateAsync(message, message.AgentId);
     }
 

@@ -51,9 +51,15 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         TimeSpan? cacheTtl = null)
     {
         _dbFactory = dbFactory;
+        // A null or non-positive TTL means "no caching" — skip _cache.Set entirely.
+        // TimeSpan.Zero is not valid for MemoryCache AbsoluteExpirationRelativeToNow
+        // (it throws ArgumentOutOfRangeException), so we treat <= 0 as a disabled signal
+        // rather than passing it to the cache.
         _cacheTtl = cacheTtl ?? TimeSpan.FromSeconds(30);
         _cache = new MemoryCache(new MemoryCacheOptions());
     }
+
+    private bool CacheEnabled => _cacheTtl > TimeSpan.Zero;
 
     // ── IPipelineConfigStore ─────────────────────────────────────────────
 
@@ -190,7 +196,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             .ToList()
             .AsReadOnly();
 
-        _cache.Set(cacheKey, result, _cacheTtl);
+        if (CacheEnabled) _cache.Set(cacheKey, result, _cacheTtl);
         return result;
     }
 
@@ -282,7 +288,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             .ToList()
             .AsReadOnly();
 
-        _cache.Set(ProfilesCacheKey, result, _cacheTtl);
+        if (CacheEnabled) _cache.Set(ProfilesCacheKey, result, _cacheTtl);
         return result;
     }
 
@@ -354,7 +360,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             .ToList()
             .AsReadOnly();
 
-        _cache.Set(QualityGatesCacheKey, result, _cacheTtl);
+        if (CacheEnabled) _cache.Set(QualityGatesCacheKey, result, _cacheTtl);
         return result;
     }
 
@@ -426,7 +432,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             .ToList()
             .AsReadOnly();
 
-        _cache.Set(ReviewersCacheKey, result, _cacheTtl);
+        if (CacheEnabled) _cache.Set(ReviewersCacheKey, result, _cacheTtl);
         return result;
     }
 
@@ -523,7 +529,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             .ToList()
             .AsReadOnly();
 
-        _cache.Set(ProjectsCacheKey, result, _cacheTtl);
+        if (CacheEnabled) _cache.Set(ProjectsCacheKey, result, _cacheTtl);
         return result;
     }
 
@@ -694,7 +700,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             .ToList()
             .AsReadOnly();
 
-        _cache.Set(AllTemplatesCacheKey, result, _cacheTtl);
+        if (CacheEnabled) _cache.Set(AllTemplatesCacheKey, result, _cacheTtl);
         return result;
     }
 

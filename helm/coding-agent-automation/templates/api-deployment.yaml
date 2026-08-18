@@ -1,0 +1,98 @@
+{{- if .Values.api.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-api
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  # api.replicas MUST remain 1 — Redis backplane handles message delivery but not
+  # in-memory singleton state (AgentRegistryService, OrchestratorRunService, etc.).
+  # See Req 9.8a. Do NOT increase without completing Spec 045 Task 13a.
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "coding-agent-automation.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-api
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
+      containers:
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.service.port }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.api.service.port }}
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.api.service.port }}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.api.service.port }}
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          env:
+            - name: ASPNETCORE_URLS
+              value: "http://+:{{ .Values.api.service.port }}"
+            - name: AGENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.secretName" . }}
+                  key: agent-api-key
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.secretName" . }}
+                  key: otel-headers
+                  optional: true
+            - name: Database__Host
+              value: {{ required "database.host is required" .Values.database.host | quote }}
+            - name: Database__Port
+              value: {{ .Values.database.port | default 5432 | quote }}
+            - name: Database__Name
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.auth.existingSecret is required" .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.database | default "POSTGRES_DB" }}
+            - name: Database__Username
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.username | default "POSTGRES_USER" }}
+            - name: Database__Password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.password | default "POSTGRES_PASSWORD" }}
+            {{- if .Values.database.sslMode }}
+            - name: Database__SslMode
+              value: {{ .Values.database.sslMode | quote }}
+            {{- end }}
+            # API never applies migrations (Req 9.5a).
+            # HandleMigrationsAsync with false VERIFIES schema and throws on pending migrations.
+            - name: Database__MigrateOnStartup
+              value: "false"
+            {{- if .Values.signalr.redis.connectionString }}
+            - name: SignalR__Redis__ConnectionString
+              value: {{ .Values.signalr.redis.connectionString | quote }}
+            {{- end }}
+{{- end }}

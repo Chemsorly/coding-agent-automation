@@ -56,7 +56,7 @@ public sealed class DatabaseStartupService
     /// <summary>
     /// Retries DB connection with exponential backoff: 2s → 4s → 8s → 16s → 30s (capped), max 10 attempts.
     /// </summary>
-    internal async Task WaitForDatabaseConnectionAsync(CancellationToken ct)
+    public async Task WaitForDatabaseConnectionAsync(CancellationToken ct)
     {
         var delay = InitialDelay;
 

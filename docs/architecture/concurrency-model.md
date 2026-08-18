@@ -6,6 +6,7 @@ modifying concurrency-related code in these services, read this document first.
 
 ## Overview
 
+<!-- TODO(Spec 045): Spec 042 introduced a second host process (CodingAgentWebUI.Api). The single-process premise below and the guarantees claimed for _queueLock / _selectionLock / SyncRoot need restating for a multi-process topology. Latent until Spec 044 wires agents to the API hub. Spec 045 resolves this with a full concurrency model rewrite for the final topology. -->
 The orchestrator runs as a single process with several singleton services that receive
 concurrent access from:
 

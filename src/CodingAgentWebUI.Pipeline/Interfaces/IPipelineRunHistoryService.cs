@@ -21,4 +21,14 @@ public interface IPipelineRunHistoryService
     /// <param name="pageSize">Number of items per page.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default);
+
+    /// <summary>Retrieves a single pipeline run summary by run ID. Returns null if not found.</summary>
+    Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>Retrieves paginated run history filtered to runs that have feedback.</summary>
+    /// <param name="page">1-based page number.</param>
+    /// <param name="pageSize">Number of items per page.</param>
+    /// <param name="feedbackOnly">When true, returns only runs with non-null Feedback. Filter is applied in the DB query, not after paging.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default);
 }

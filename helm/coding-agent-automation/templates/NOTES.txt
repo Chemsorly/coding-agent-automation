@@ -133,3 +133,21 @@ Redis backplane enabled for SignalR cross-replica delivery.
 Single-replica mode. Scale to multiple replicas with:
   orchestrator.replicas: N  (requires signalr.redis.enabled: true)
 {{- end }}
+
+{{- if .Values.api.enabled }}
+
+## Pipeline API (api.enabled=true)
+
+**api.replicas must remain 1.**
+The SignalR Redis backplane (signalr.redis.enabled) enables hub message delivery across
+replicas but does NOT make multiple API replicas safe. AgentRegistryService,
+OrchestratorRunService, and all in-memory locking state are per-process singletons.
+Do NOT scale to replicas > 1 before Spec 045 completes its concurrency model rewrite.
+
+**Expected restarts during schema upgrades (Req 9.5b).**
+When the orchestrator is applying database migrations, the API pod will repeatedly log:
+  "Database has N pending migration(s)" (Error level)
+and restart with backoff until the migration completes. This is normal and self-resolving.
+Do NOT roll back on seeing these restarts — the API automatically recovers once the
+orchestrator finishes. Migration duration varies by schema change, typically 1–3 minutes.
+{{- end }}

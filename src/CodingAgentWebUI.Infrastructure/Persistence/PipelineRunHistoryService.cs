@@ -66,6 +66,46 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
         }
     }
 
+    /// <inheritdoc />
+    public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        var runIdStr = runId.ToString();
+        lock (_lock)
+        {
+            var summary = _runHistory.FirstOrDefault(s => s.RunId == runIdStr);
+            return Task.FromResult(summary);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
+    {
+        if (!feedbackOnly)
+            return GetRunHistoryAsync(page, pageSize, ct);
+
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+
+        lock (_lock)
+        {
+            // In-memory filter for feedbackOnly; this service is file-backed (not Postgres)
+            var filtered = _runHistory.Where(s => s.Feedback is not null).ToList();
+            var skip = checked((page - 1) * pageSize);
+            var items = filtered.Skip(skip).Take(pageSize + 1).ToList();
+            var hasMore = items.Count > pageSize;
+            if (hasMore)
+                items = items.Take(pageSize).ToList();
+
+            return Task.FromResult(new PagedResult<PipelineRunSummary>
+            {
+                Items = items.AsReadOnly(),
+                Page = page,
+                PageSize = pageSize,
+                HasMore = hasMore
+            });
+        }
+    }
+
     /// <summary>Adds a completed run to history and persists the summary to disk.</summary>
     public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
     {

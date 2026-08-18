@@ -8,9 +8,11 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgentWebUI" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Api" />
     <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.IntegrationTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.E2ETests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Api.IntegrationTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Orchestration.UnitTests" />

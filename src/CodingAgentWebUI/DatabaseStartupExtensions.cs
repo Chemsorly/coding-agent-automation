@@ -34,9 +34,9 @@ public static class DatabaseStartupExtensions
         var normalizedConnectionString = DatabaseReadinessMonitor.NormalizeConnectionString(
             connectionString, isProduction);
 
-        services.AddSingleton<DatabaseHealthState>();
+        services.AddSingleton<CodingAgentWebUI.Services.DatabaseHealthState>();
         services.AddSingleton(sp => new DatabaseReadinessMonitor(
-            sp.GetRequiredService<DatabaseHealthState>(),
+            sp.GetRequiredService<CodingAgentWebUI.Services.DatabaseHealthState>(),
             normalizedConnectionString,
             Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<DatabaseReadinessMonitor>());

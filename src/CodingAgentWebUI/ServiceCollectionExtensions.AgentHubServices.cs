@@ -1,4 +1,4 @@
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
@@ -46,64 +46,5 @@ public static partial class ServiceCollectionExtensions
     /// hub facade, issue operations, orphan recovery, and job lifecycle.
     /// </summary>
     private static void RegisterAgentHubServices(IServiceCollection services)
-    {
-        services.AddSingleton<AgentHubFacadeDependencies>(sp => new AgentHubFacadeDependencies(
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<OrchestratorRunService>(),
-            sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<JobQueueDrainService>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILogger<AgentHubFacadeDependencies>>(),
-            sp.GetService<WorkItemTransitionService>(),
-            sp.GetService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<IProjectStore>(),
-            sp.GetService<IWorkItemFallbackTransitionService>()));
-
-        services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(
-            sp.GetRequiredService<AgentHubFacadeDependencies>()));
-
-        services.AddSingleton<IHubIssueOperations>(sp => new AgentIssueOperations(
-            sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<ILabelService>(),
-            Log.Logger));
-
-        services.AddSingleton<IAgentOrphanRecoveryService>(sp => new AgentOrphanRecoveryService(
-            sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<IChangeNotifier>(),
-            Log.Logger));
-
-        services.AddSingleton<IAgentJobLifecycleService>(sp => new AgentJobLifecycleService(
-            sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<IRunLifecycleManager>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<IHubIssueOperations>(),
-            sp.GetRequiredService<IChangeNotifier>(),
-            Log.Logger));
-
-        services.AddSingleton<IAgentTokenRefreshService>(sp => new AgentTokenRefreshService(
-            sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<ITokenVendingService>(),
-            Log.Logger));
-
-        services.AddSingleton<IGateCommentFormatter>(sp => new GateCommentFormatter(
-            Log.Logger));
-
-        // AgentHubDependencies is scoped to match the Hub's per-connection lifetime.
-        // All 12 wrapped dependencies are singletons, so this is a safe downgrade.
-        services.AddScoped(sp => new AgentHubDependencies(
-            sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<IChatNotifier>(),
-            sp.GetRequiredService<IChangeNotifier>(),
-            sp.GetRequiredService<ModelFetchService>(),
-            sp.GetRequiredService<IConsolidationService>(),
-            sp.GetRequiredService<ConsolidationBadgeService>(),
-            sp.GetRequiredService<IHubIssueOperations>(),
-            sp.GetRequiredService<IAgentJobLifecycleService>(),
-            sp.GetRequiredService<IAgentTokenRefreshService>(),
-            sp.GetRequiredService<IGateCommentFormatter>(),
-            Log.Logger,
-            sp.GetRequiredService<IAgentOrphanRecoveryService>()));
-    }
+        => services.AddAgentHubServices();
 }

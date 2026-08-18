@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using CodingAgentWebUI.Agent;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ILogger = Serilog.ILogger;
 
@@ -112,7 +113,12 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
 
         // Create a claims identity with the authenticated agent ID
         var claimId = !string.IsNullOrEmpty(agentId) ? agentId : "agent";
-        var claims = new[] { new Claim(ClaimTypes.NameIdentifier, claimId) };
+        var authKind = string.IsNullOrEmpty(agentId) ? "operator" : "agent";
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, claimId),
+            new Claim("auth_kind", authKind)
+        };
         var identity = new ClaimsIdentity(claims, Scheme.Name);
         var principal = new ClaimsPrincipal(identity);
         var ticket = new AuthenticationTicket(principal, Scheme.Name);

@@ -80,4 +80,20 @@ spec:
           annotations:
             summary: "Dispatch service stalled"
             description: "Dispatcher has not polled for pending work items in over 2 minutes."
+{{- if .Values.api.enabled }}
+        # Alert when the API pod is Running but not Ready.
+        # Separate from OrchestratorDatabaseUnreachable — the API's most likely cause during
+        # upgrades is pending migrations (Req 9.5b), which is expected and self-resolving.
+        - alert: PipelineApiNotReady
+          expr: |
+            kube_pod_status_ready{pod=~".*-api-.*", condition="true"} == 0
+            and
+            kube_pod_status_phase{pod=~".*-api-.*", phase="Running"} == 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pipeline API not ready"
+            description: "API pod is Running but not Ready for over 2 minutes. Check database connectivity and pending migrations (Req 9.5b — expected during upgrades, self-resolving)."
+{{- end }}
 {{- end }}

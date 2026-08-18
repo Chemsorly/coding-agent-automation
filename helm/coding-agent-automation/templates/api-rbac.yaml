@@ -1,0 +1,41 @@
+{{- if .Values.api.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-api
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  annotations:
+    # Empty rules as of Spec 042 — the API creates no Jobs, manages no Secrets, no leader election.
+    # Spec 043 grants batch/jobs, pods, and job-templates ConfigMap access when dispatch moves here.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-api
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+# EMPTY rules — this is correct for Spec 042 only.
+# Spec 043 reverses this: adds batch/jobs (create/get/delete), pods (get/list),
+# and ConfigMap (get) for job-templates when the API takes over dispatch.
+# Do not "fix" the empty list — it documents that no K8s API calls happen in 042.
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-api
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "coding-agent-automation.fullname" . }}-api
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: {{ include "coding-agent-automation.fullname" . }}-api
+{{- end }}

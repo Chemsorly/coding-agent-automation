@@ -126,6 +126,8 @@ jobs:
             tag: coding-agent-opencode-java21
           - dockerfile: dockerfiles/opencode/agent-opencode-python312.Dockerfile
             tag: coding-agent-opencode-python312
+          - dockerfile: dockerfiles/api.Dockerfile
+            tag: coding-agent-api
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -209,6 +211,7 @@ jobs:
           - tag: coding-agent-opencode-dotnet10
           - tag: coding-agent-opencode-java21
           - tag: coding-agent-opencode-python312
+          - tag: coding-agent-api
 
     steps:
       - name: Create and push multi-arch manifest for ${{ matrix.tag }}
