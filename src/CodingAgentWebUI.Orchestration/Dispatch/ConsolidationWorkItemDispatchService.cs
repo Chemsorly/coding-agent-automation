@@ -2,7 +2,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
-using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;

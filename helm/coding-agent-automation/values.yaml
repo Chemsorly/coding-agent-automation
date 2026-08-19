@@ -23,6 +23,11 @@ orchestrator:
   podSecurityContext: {}
   # Extra initContainers injected before the main container (e.g., permission fixers)
   initContainers: []
+  leaderElection:
+    # Override the PipelineLoopService leader election lease name.
+    # Empty (default) = release-scoped: caa-<release>-pipeline-loop-lock
+    # Set explicitly to use a fixed name across Helm releases.
+    pipelineLoopLeaseName: ""
   service:
     type: ClusterIP
     port: 8080
@@ -248,3 +253,30 @@ api:
       cpu: 500m
       memory: 512Mi
   terminationGracePeriodSeconds: 30
+
+# ── Job Controller ────────────────────────────────────────────────────────────
+
+jobController:
+  # Enable the Job Controller. Set to true only in the same helm upgrade that deploys
+  # the updated monolith image (without DispatchService). See NOTES.txt for cutover notes.
+  enabled: false
+  image:
+    repository: chemsorly/coding-agent
+    tag: coding-agent-jobcontroller
+  # replicas: leader election (caa-dispatch-lock) handles multi-replica safety.
+  # Only the leader pod dispatches and reconciles; others idle waiting for leadership.
+  replicas: 1
+  service:
+    port: 8091
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  leaderElection:
+    # Override the dispatch lease name.
+    # Empty (default) = release-scoped: caa-<release>-dispatch-lock
+    # Set explicitly to use a fixed name across Helm releases (e.g. shared namespaces).
+    dispatchLeaseName: ""

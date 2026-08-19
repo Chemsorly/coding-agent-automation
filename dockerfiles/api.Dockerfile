@@ -20,6 +20,7 @@ COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAg
 COPY src/CodingAgentWebUI.Pipeline.CodeReview/CodingAgentWebUI.Pipeline.CodeReview.csproj src/CodingAgentWebUI.Pipeline.CodeReview/
 COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj src/CodingAgentWebUI.Infrastructure/
 COPY src/CodingAgentWebUI.Orchestration/CodingAgentWebUI.Orchestration.csproj src/CodingAgentWebUI.Orchestration/
+COPY src/CodingAgentWebUI.Kubernetes/CodingAgentWebUI.Kubernetes.csproj src/CodingAgentWebUI.Kubernetes/
 COPY src/CodingAgentWebUI.Hub/CodingAgentWebUI.Hub.csproj src/CodingAgentWebUI.Hub/
 COPY src/CodingAgentWebUI.Api/CodingAgentWebUI.Api.csproj src/CodingAgentWebUI.Api/
 RUN dotnet restore src/CodingAgentWebUI.Api/CodingAgentWebUI.Api.csproj -a $TARGETARCH

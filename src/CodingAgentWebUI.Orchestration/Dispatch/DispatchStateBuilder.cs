@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Threading.RateLimiting;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
-using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;

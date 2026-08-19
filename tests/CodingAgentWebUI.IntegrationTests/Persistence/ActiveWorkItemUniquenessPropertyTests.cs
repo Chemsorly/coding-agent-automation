@@ -1,6 +1,7 @@
 // Feature: Persistence Integration Tests
 // Property 2: Active WorkItem Uniqueness — Application-level dedup prevents duplicate active work items
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
@@ -12,6 +13,7 @@ using FsCheck.Xunit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace CodingAgentWebUI.IntegrationTests.Persistence;
 
@@ -51,7 +53,33 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
         var transitionService = new WorkItemTransitionService(
             _dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+
+        var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        mockApiClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async (JobDistributionRequest req, CancellationToken ct) =>
+            {
+                // Mirror what the real Pipeline API does: insert a Pending WorkItem into the DB
+                // so that IsIssueDistributedAsync (which queries the DB via DbWorkDistributorBase)
+                // can find it and return true.
+                var newId = Guid.NewGuid();
+                await using var db = await _dbFactory.CreateDbContextAsync(ct);
+                db.WorkItems.Add(new WorkItemEntity
+                {
+                    Id = newId,
+                    IssueIdentifier = req.IssueIdentifier,
+                    IssueProviderConfigId = req.IssueProviderConfigId,
+                    Status = WorkItemStatus.Pending,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    AgentSelector = req.AgentSelector,
+                    TimeoutSeconds = req.TimeoutSeconds,
+                });
+                await db.SaveChangesAsync(ct);
+                return newId;
+            });
+
         _distributor = new KubernetesWorkDistributor(
+            mockApiClient.Object,
             _dbFactory, transitionService, NullLogger<KubernetesWorkDistributor>.Instance);
     }
 

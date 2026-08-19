@@ -189,7 +189,13 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 
 ### Service Names
 
-Agent pods emit telemetry with `service.name` derived from the agent image and labels. The orchestrator uses `coding-agent-orchestrator`.
+Agent pods emit telemetry with `service.name` derived from the agent image and labels.
+
+| `service.name` | Component | Port |
+|----------------|-----------|------|
+| `coding-agent-orchestrator` | Orchestrator | — |
+| `coding-agent-api` | REST/WebSocket API | Port 8090 |
+| `coding-agent-jobcontroller` | Job Controller | Port 8091 |
 
 ### Example: Grafana Cloud
 

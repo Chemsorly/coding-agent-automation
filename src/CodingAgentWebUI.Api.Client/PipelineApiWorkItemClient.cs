@@ -100,6 +100,37 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
     }
 
+    public async Task PostLabelSwapAsync(Guid workItemId, string label, CancellationToken ct = default)
+    {
+        var body = new { label };
+        var response = await _http.PostAsJsonAsync(
+            $"/api/work-items/{workItemId}/label-swap",
+            body,
+            PipelineJsonOptions.Default,
+            ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds, CancellationToken ct = default)
+    {
+        var result = await _http.GetFromJsonAsync<List<ActiveWorkItemDto>>(
+            $"/api/work-items/active?olderThanSeconds={olderThanSeconds}",
+            PipelineJsonOptions.Default,
+            ct);
+        return result ?? [];
+    }
+
+    public async Task PostLastProgressAsync(Guid workItemId, DateTimeOffset timestamp, CancellationToken ct = default)
+    {
+        var body = new { timestamp };
+        var response = await _http.PostAsJsonAsync(
+            $"/api/work-items/{workItemId}/last-progress",
+            body,
+            PipelineJsonOptions.Default,
+            ct);
+        response.EnsureSuccessStatusCode();
+    }
+
     // Internal DTO for retry-count response
     private sealed record RetryCountResponse
     {

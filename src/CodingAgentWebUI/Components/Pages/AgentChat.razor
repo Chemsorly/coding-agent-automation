@@ -6,6 +6,7 @@
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Orchestration
 @using CodingAgentWebUI.Orchestration.Dispatch
+@using CodingAgentWebUI.Kubernetes
 @using CodingAgentWebUI.Orchestration.Health
 @using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
@@ -18,7 +19,7 @@
 @inject IHubContext<CodingAgentWebUI.Hub.AgentHub, IAgentHubClient> HubContext
 @inject IJSRuntime JS
 @inject IChatJobDispatcher ChatDispatcher
-@inject JobTemplateStore TemplateStore
+@inject JobTemplateStore? TemplateStore
 @inject IConfiguration Configuration
 
 <PageTitle>Agent Chat - Coding Agent</PageTitle>
@@ -175,7 +176,7 @@
         _options_connectTimeout = Configuration.GetValue<int>(
             "WorkDistribution:Dispatch:ChatPodConnectTimeoutSeconds", 120);
 
-        _templates = TemplateStore.GetAllTemplates();
+        _templates = TemplateStore?.GetAllTemplates() ?? [];
     }
 
     protected override async Task OnInitializedAsync()

@@ -98,6 +98,9 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         return Task.CompletedTask;
     }
 
+    public Task DeleteSecretAsync(string name, string ns, CancellationToken ct = default)
+        => Task.CompletedTask;
+
     public Task<V1PodList> ListPodsAsync(string ns, string labelSelector, CancellationToken ct = default)
     {
         return Task.FromResult(new V1PodList { Items = new List<V1Pod>() });

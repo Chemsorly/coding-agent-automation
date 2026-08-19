@@ -56,11 +56,12 @@ public class WorkDistributionRegistrationTests
     }
 
     [Fact]
-    public void RegisterKubernetesMode_ViaReflection_RegistersDispatchStateBuilderAndRelatedServices()
+    public void RegisterConsolidationServices_ViaReflection_RegistersIKubernetesAndRelatedServices()
     {
-        // Calls the private static RegisterKubernetesMode method directly via reflection
+        // Calls the private static RegisterConsolidationServices method directly via reflection
         // to exercise the DI registration lambdas without requiring a real Kubernetes cluster.
         // Verifies that registrations are ADDED to the container (not resolved).
+        // This method replaced RegisterKubernetesMode after Spec 043 Task 9.
         var configData = new Dictionary<string, string?>
         {
             ["WorkDistribution:Namespace"] = "default",
@@ -73,16 +74,16 @@ public class WorkDistributionRegistrationTests
         services.AddLogging();
 
         var method = typeof(WorkDistributionRegistration)
-            .GetMethod("RegisterKubernetesMode",
+            .GetMethod("RegisterConsolidationServices",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
 
-        method.Should().NotBeNull("RegisterKubernetesMode must exist as a private static method");
+        method.Should().NotBeNull("RegisterConsolidationServices must exist as a private static method");
         method!.Invoke(null, [services, config]);
 
-        var dispatchStateBuilderDescriptor = services.FirstOrDefault(
-            d => d.ServiceType == typeof(DispatchStateBuilder));
-        dispatchStateBuilderDescriptor.Should().NotBeNull(
-            "RegisterKubernetesMode must register DispatchStateBuilder as a singleton");
-        dispatchStateBuilderDescriptor!.Lifetime.Should().Be(ServiceLifetime.Singleton);
+        var pendingWorkQueryDescriptor = services.FirstOrDefault(
+            d => d.ServiceType == typeof(CodingAgentWebUI.Pipeline.Interfaces.IPendingWorkQuery));
+        pendingWorkQueryDescriptor.Should().NotBeNull(
+            "RegisterConsolidationServices must register IPendingWorkQuery as a singleton");
+        pendingWorkQueryDescriptor!.Lifetime.Should().Be(ServiceLifetime.Singleton);
     }
 }

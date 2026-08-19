@@ -23,17 +23,16 @@ public class KubernetesClientConfigurationTests
         var services = new ServiceCollection();
         services.AddLogging();
 
-        // Call RegisterKubernetesMode directly to bypass the in-cluster guard in
-        // AddWorkDistribution (guard removed in Task 7.1; these tests use the factory
-        // descriptor approach so they remain valid before and after that change).
+        // Call RegisterConsolidationServices directly to bypass the startup guard.
+        // This method replaced RegisterKubernetesMode after Spec 043 Task 9.
         var method = typeof(WorkDistributionRegistration)
-            .GetMethod("RegisterKubernetesMode",
+            .GetMethod("RegisterConsolidationServices",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-        method.Should().NotBeNull("RegisterKubernetesMode must exist");
+        method.Should().NotBeNull("RegisterConsolidationServices must exist");
         method!.Invoke(null, [services, config]);
 
         var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IKubernetes));
-        descriptor.Should().NotBeNull("RegisterKubernetesMode must register IKubernetes");
+        descriptor.Should().NotBeNull("RegisterConsolidationServices must register IKubernetes");
         descriptor!.ImplementationFactory.Should().NotBeNull(
             "IKubernetes must be registered via a factory (deferred, so it runs at resolve-time)");
 

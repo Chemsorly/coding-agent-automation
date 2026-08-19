@@ -6,19 +6,15 @@ metadata:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
     app.kubernetes.io/component: orchestrator
 rules:
-  # Job management for agent dispatch
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  # Leader election via Lease
+  # Leader election via Lease — PipelineLoopService and ConsolidationWorkItemDispatchService (Spec 043).
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["create", "get", "update"]
-  # Per-job secrets for project credentials
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["create", "delete"]
-  # Pod status checks (startup failure detection)
+  # batch/jobs required for ChatJobDispatcher (still runs in orchestrator until Spec 044)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # pods get/list for startup failure detection in ChatJobDispatcher
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]

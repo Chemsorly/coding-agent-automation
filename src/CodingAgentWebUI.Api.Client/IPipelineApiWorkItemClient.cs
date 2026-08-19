@@ -15,4 +15,7 @@ public interface IPipelineApiWorkItemClient
     Task<int> GetRetryCountAsync(Guid workItemId, CancellationToken ct = default);
     Task<WorkItemStalenessResult?> GetStalenessAsync(string issueIdentifier, string issueProviderConfigId, DateTimeOffset since, CancellationToken ct = default);
     Task<Guid> CreateAsync(JobDistributionRequest request, CancellationToken ct = default);
+    Task PostLabelSwapAsync(Guid workItemId, string label, CancellationToken ct = default);
+    Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds, CancellationToken ct = default);
+    Task PostLastProgressAsync(Guid workItemId, DateTimeOffset timestamp, CancellationToken ct = default);
 }

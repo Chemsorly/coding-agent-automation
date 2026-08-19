@@ -43,10 +43,13 @@ public static class WorkItemEndpoints
         // ── New endpoints ──────────────────────────────────────────────────
         group.MapPost("/", CreateWorkItem);
         group.MapGet("/pending", GetPendingWorkItems);
+        group.MapGet("/active", GetActiveWorkItems);
         group.MapPost("/{id:guid}/claim", ClaimWorkItem);
         group.MapPost("/{id:guid}/requeue", RequeueWorkItem);
         group.MapGet("/{id:guid}/retry-count", GetRetryCount);
         group.MapGet("/staleness", GetStaleness);
+        group.MapPost("/{id:guid}/label-swap", PostLabelSwap);
+        group.MapPost("/{id:guid}/last-progress", PostLastProgress);
     }
 
     // ── GET /{id}/assignment — mirror of monolith ─────────────────────────
@@ -144,7 +147,11 @@ public static class WorkItemEndpoints
         [FromBody] JobDistributionRequest request,
         IDbContextFactory<PipelineDbContext> dbFactory)
     {
-        var workItemId = Guid.NewGuid();
+        // Use RunId from request if provided (ensures WorkItem.Id == PipelineRun.RunId for hub routing).
+        // Fall back to a new GUID when no RunId is set (e.g., direct API calls without orchestration).
+        var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
+            ? parsedRunId
+            : Guid.NewGuid();
         var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
 
         var entity = new WorkItemEntity
@@ -377,6 +384,106 @@ public static class WorkItemEndpoints
         });
     }
 
+    // ── GET /active ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// GET /api/work-items/active?olderThanSeconds=N
+    /// Returns WorkItems in Dispatched or Running status with DispatchedAt &lt; now - N seconds.
+    /// Used by ReconciliationService for timeout enforcement and short-circuit Dispatched sweep.
+    /// </summary>
+    internal static async Task<IResult> GetActiveWorkItems(
+        int olderThanSeconds,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddSeconds(-olderThanSeconds);
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var items = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+                     && w.DispatchedAt < cutoff)
+            .Select(w => new ActiveWorkItemDto
+            {
+                Id = w.Id,
+                Status = w.Status,
+                DispatchedAt = w.DispatchedAt,
+                AgentSelector = w.AgentSelector,
+                IssueIdentifier = w.IssueIdentifier
+            })
+            .ToListAsync(ct);
+
+        return TypedResults.Ok((IReadOnlyList<ActiveWorkItemDto>)items);
+    }
+
+    // ── POST /{id}/label-swap ─────────────────────────────────────────────
+
+    /// <summary>
+    /// POST /api/work-items/{id}/label-swap
+    /// Body: { "label": string } — the label field is kept for wire compatibility but is NOT
+    /// used to drive behavior. The handler always calls SwapLabelWithRetryAsync with
+    /// LabelTargetKind.Issue (work items are always issue-origin at dispatch time).
+    /// Returns 200, 404 if WorkItem not found.
+    /// </summary>
+    internal static async Task<IResult> PostLabelSwap(
+        Guid id,
+        [FromBody] LabelSwapRequest request,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        ILabelSwapService? labelSwapService,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var item = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => w.Id == id)
+            .Select(w => new { w.IssueProviderConfigId, w.IssueIdentifier })
+            .FirstOrDefaultAsync(ct);
+
+        if (item is null)
+            return TypedResults.NotFound();
+
+        if (labelSwapService is not null)
+        {
+            var providerConfigId = new ProviderConfigId(item.IssueProviderConfigId);
+            var issueIdentifier = new IssueIdentifier(item.IssueIdentifier);
+
+            // Label field is not used — always swap to agent:in-progress (LabelTargetKind.Issue)
+            await labelSwapService.SwapLabelWithRetryAsync(
+                id, providerConfigId, issueIdentifier, LabelTargetKind.Issue, ct);
+        }
+
+        return TypedResults.Ok();
+    }
+
+    // ── POST /{id}/last-progress ──────────────────────────────────────────
+
+    /// <summary>
+    /// POST /api/work-items/{id}/last-progress
+    /// Body: { "timestamp": DateTimeOffset }
+    /// Updates the LastProgressAt field. Returns 200 or 404.
+    /// NOTE: LastProgressAt column already exists via migration AddLastProgressAtToWorkItems.
+    /// No EF migration is needed.
+    /// </summary>
+    internal static async Task<IResult> PostLastProgress(
+        Guid id,
+        [FromBody] LastProgressRequest request,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var item = await db.WorkItems
+            .Where(w => w.Id == id)
+            .FirstOrDefaultAsync(ct);
+
+        if (item is null)
+            return TypedResults.NotFound();
+
+        item.LastProgressAt = request.Timestamp;
+        await db.SaveChangesAsync(ct);
+
+        return TypedResults.Ok();
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────
 
     private static void ApplyStatusMutation(WorkItemEntity entity, WorkItemStatusRequest request)
@@ -463,4 +570,23 @@ public sealed class WorkItemStatusRequest
     public string? Result { get; init; }
     public string? ErrorMessage { get; init; }
     public string? FailureReason { get; init; }
+}
+
+/// <summary>
+/// Request body for POST /api/work-items/{id}/label-swap.
+/// The <see cref="Label"/> field is kept for wire compatibility but is NOT used to drive behavior.
+/// The handler always calls <see cref="ILabelSwapService.SwapLabelWithRetryAsync"/> with
+/// <see cref="LabelTargetKind.Issue"/> — the string value is ignored.
+/// </summary>
+public sealed class LabelSwapRequest
+{
+    public string Label { get; init; } = "";
+}
+
+/// <summary>
+/// Request body for POST /api/work-items/{id}/last-progress.
+/// </summary>
+public sealed class LastProgressRequest
+{
+    public required DateTimeOffset Timestamp { get; init; }
 }

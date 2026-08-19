@@ -34,6 +34,23 @@ internal static class AgentK8SModeRegistration
             options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
         });
 
+        // Capture agentId at registration time; set it after the typed client is resolved.
+        // Using AddSingleton with a factory so AgentId is embedded in the closure rather than
+        // requiring DI to inject it (which would break the single-ctor contract for typed clients).
+        // Note: AddHttpClient<WorkItemHttpClient> also registers a transient; this singleton wins
+        // for GetRequiredService<WorkItemHttpClient>() because it is registered last.
+        var agentIdValue = config.AgentId.Value;
+        services.AddSingleton<WorkItemHttpClient>(sp =>
+        {
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var httpClient = factory.CreateClient(nameof(WorkItemHttpClient));
+            var client = new WorkItemHttpClient(httpClient, Serilog.Log.Logger)
+            {
+                AgentId = agentIdValue // Spec 043 Req 8a.2: append ?agentId= to work-item API calls
+            };
+            return client;
+        });
+
         services.AddSingleton<IWorkItemExecutor>(sp => new WorkItemExecutorRouter(
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IConsolidationExecutor>(),

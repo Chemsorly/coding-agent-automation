@@ -455,4 +455,110 @@ public sealed class WorkItemEndpointTests
         result!.HasAgentErrorSince.Should().BeTrue();
         result.LastSuccessfulCompletion.Should().NotBeNull();
     }
+
+    // ── Active ────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetActiveWorkItems_ReturnsDispatchedAndRunning_OlderThanThreshold()
+    {
+        var dispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-300);
+        var dispatched = SeedEntity(WorkItemStatus.Dispatched);
+        var running = SeedEntity(WorkItemStatus.Running);
+        var recentlyDispatched = SeedEntity(WorkItemStatus.Dispatched);
+
+        // Manually set DispatchedAt to control timing
+        using (var db = _factory.CreateDbContext())
+        {
+            var d = await db.WorkItems.FindAsync(dispatched.Id);
+            d!.DispatchedAt = dispatchedAt;
+            var r = await db.WorkItems.FindAsync(running.Id);
+            r!.DispatchedAt = dispatchedAt;
+            var rd = await db.WorkItems.FindAsync(recentlyDispatched.Id);
+            rd!.DispatchedAt = DateTimeOffset.UtcNow; // recent — should NOT appear
+            await db.SaveChangesAsync();
+        }
+
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=60");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        items!.Should().Contain(i => i.Id == dispatched.Id);
+        items.Should().Contain(i => i.Id == running.Id);
+        items.Should().NotContain(i => i.Id == recentlyDispatched.Id);
+    }
+
+    [Fact]
+    public async Task GetActiveWorkItems_DoesNotReturnPendingOrTerminal()
+    {
+        var pending = SeedEntity(WorkItemStatus.Pending);
+        var succeeded = SeedEntity(WorkItemStatus.Succeeded);
+        var failed = SeedEntity(WorkItemStatus.Failed);
+
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=0");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        items!.Should().NotContain(i => i.Id == pending.Id);
+        items.Should().NotContain(i => i.Id == succeeded.Id);
+        items.Should().NotContain(i => i.Id == failed.Id);
+    }
+
+    // ── LabelSwap ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PostLabelSwap_Returns200_WhenWorkItemExists()
+    {
+        // ILabelSwapService is registered but ILabelService is a mock with no configured provider.
+        // The endpoint's ILabelSwapService? nullable injection: endpoint returns 200 even if
+        // LabelSwapService is null. Integration tests mock IProviderFactory, so swap is skipped.
+        var entity = SeedEntity(WorkItemStatus.Dispatched);
+        var body = new { label = "agent:in-progress" };
+
+        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/label-swap", body,
+            PipelineJsonOptions.Default);
+
+        // 200 is expected — the handler degrades gracefully when ILabelSwapService cannot
+        // complete the swap (no configured provider factory in integration tests).
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task PostLabelSwap_Returns404_WhenWorkItemNotFound()
+    {
+        var body = new { label = "agent:in-progress" };
+        var response = await _client.PostAsJsonAsync($"/api/work-items/{Guid.NewGuid()}/label-swap", body,
+            PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    // ── LastProgress ──────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PostLastProgress_Returns200_AndUpdatesField()
+    {
+        var entity = SeedEntity(WorkItemStatus.Running);
+        var progressTime = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var body = new { timestamp = progressTime };
+
+        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/last-progress", body,
+            PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(entity.Id);
+        updated!.LastProgressAt.Should().NotBeNull();
+        // Allow ±1s tolerance for serialization rounding
+        updated.LastProgressAt!.Value.Should().BeCloseTo(progressTime, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task PostLastProgress_Returns404_WhenWorkItemNotFound()
+    {
+        var body = new { timestamp = DateTimeOffset.UtcNow };
+        var response = await _client.PostAsJsonAsync($"/api/work-items/{Guid.NewGuid()}/last-progress", body,
+            PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
 }

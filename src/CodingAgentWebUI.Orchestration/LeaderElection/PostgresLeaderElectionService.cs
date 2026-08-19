@@ -1,4 +1,5 @@
 using System.Data;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Serilog;

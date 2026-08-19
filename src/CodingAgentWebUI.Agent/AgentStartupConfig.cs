@@ -39,7 +39,35 @@ internal sealed record AgentStartupConfig
         var workItemId = args
             .FirstOrDefault(a => a.StartsWith(AgentDefaults.CliWorkItemIdPrefix, StringComparison.OrdinalIgnoreCase))
             ?.Substring(AgentDefaults.CliWorkItemIdPrefix.Length);
-        var isWorkItemMode = workItemId is not null;
+
+        // Parse --mode flag (Spec 043 Req 13b.2).
+        // Valid values: "workitem" | "chat". Absent or unknown → fallback to work-item-id inference.
+        var modeArg = args
+            .FirstOrDefault(a => a.StartsWith("--mode=", StringComparison.OrdinalIgnoreCase))
+            ?.Split('=', 2)[1];
+
+        bool isWorkItemMode;
+        if (modeArg != null && string.Equals(modeArg, "workitem", StringComparison.OrdinalIgnoreCase))
+        {
+            if (workItemId is null)
+                throw new InvalidOperationException(
+                    "--mode=workitem was set but --work-item-id is absent. Both flags must be present for work-item mode.");
+            isWorkItemMode = true;
+        }
+        else if (modeArg != null && string.Equals(modeArg, "chat", StringComparison.OrdinalIgnoreCase))
+        {
+            isWorkItemMode = false;
+        }
+        else
+        {
+            // Fallback: --mode absent → use inference (is --work-item-id present?)
+            // --mode will be mandatory in Spec 044; this branch is a backward-compat shim.
+            isWorkItemMode = workItemId is not null;
+            if (modeArg is not null)
+                Serilog.Log.Warning("Unknown --mode value '{Mode}' — falling back to work-item-id inference. Expected: workitem | chat", modeArg);
+            else
+                Serilog.Log.Debug("--mode flag absent — falling back to work-item-id inference. Chat pods do not yet emit --mode (Spec 044 adds it).");
+        }
 
         // Read API key: from file (K8s mode) or env var (SignalR mode)
         string agentApiKey;

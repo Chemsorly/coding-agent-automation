@@ -4,7 +4,7 @@ using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;

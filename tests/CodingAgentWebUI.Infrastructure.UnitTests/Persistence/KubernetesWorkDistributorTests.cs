@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
@@ -7,18 +8,21 @@ using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 
 /// <summary>
 /// Unit tests for KubernetesWorkDistributor.
-/// Validates: Requirements 4.4 (insert Pending), 4.6 (IsIssueDistributed), 4.8 (crash-resilient persistence).
+/// Validates: Requirements 4.6 (IsIssueDistributed), 4.8 (crash-resilient persistence),
+/// and Req 5.2 (DistributeAsync uses IPipelineApiWorkItemClient.CreateAsync).
 /// </summary>
 public class KubernetesWorkDistributorTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly InMemoryDbContextFactory _dbFactory;
+    private readonly Mock<IPipelineApiWorkItemClient> _mockApiClient;
     private readonly KubernetesWorkDistributor _distributor;
 
     public KubernetesWorkDistributorTests()
@@ -37,8 +41,17 @@ public class KubernetesWorkDistributorTests : IDisposable
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
         var transitionService = new WorkItemTransitionService(
             _dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+
+        _mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        _mockApiClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => Guid.NewGuid());
+
         _distributor = new KubernetesWorkDistributor(
-            _dbFactory, transitionService, NullLogger<KubernetesWorkDistributor>.Instance);
+            _mockApiClient.Object,
+            _dbFactory,
+            transitionService,
+            NullLogger<KubernetesWorkDistributor>.Instance);
     }
 
     public void Dispose()
@@ -47,63 +60,63 @@ public class KubernetesWorkDistributorTests : IDisposable
         db.Database.EnsureDeleted();
     }
 
-    // ── DistributeAsync ─────────────────────────────────────────────────
+    // ── DistributeAsync — API-backed (Req 5.2) ──────────────────────────
 
     [Fact]
-    public async Task DistributeAsync_InsertsWorkItemWithPendingStatus()
+    public async Task DistributeAsync_CallsApiClientCreateAsync()
     {
         var request = CreateRequest("owner/repo#1", "provider-1");
 
+        await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        _mockApiClient.Verify(
+            c => c.CreateAsync(
+                It.Is<JobDistributionRequest>(r => r.IssueIdentifier == request.IssueIdentifier),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_ReturnsSuccessWithWorkItemId()
+    {
+        var expectedId = Guid.NewGuid();
+        _mockApiClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expectedId);
+
+        var request = CreateRequest("owner/repo#2", "provider-2");
         var result = await _distributor.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeTrue();
         result.Queued.Should().BeTrue();
-        result.WorkItemId.Should().NotBeNullOrEmpty();
+        result.WorkItemId.Should().Be(expectedId.ToString());
         result.ErrorMessage.Should().BeNull();
-
-        // Verify row in DB
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.FirstOrDefaultAsync(w => w.Id == Guid.Parse(result.WorkItemId!));
-        item.Should().NotBeNull();
-        item!.Status.Should().Be(WorkItemStatus.Pending);
-        item.IssueIdentifier.Should().Be("owner/repo#1");
-        item.IssueProviderConfigId.Should().Be("provider-1");
-        item.AgentSelector.Should().Be("kiro,linux");
-        item.TimeoutSeconds.Should().Be(1800);
-        item.TaskType.Should().Be(WorkItemTaskType.Implementation);
-        item.ProjectId.Should().Be("proj-1");
-        item.Payload.Should().NotBeNull();
     }
 
     [Fact]
-    public async Task DistributeAsync_SerializesPayloadAsJsonb()
+    public async Task DistributeAsync_WhenApiThrows_ReturnsFailureResult()
     {
-        var request = CreateRequest("owner/repo#2", "provider-2");
+        _mockApiClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Pipeline API unreachable"));
 
-        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
-
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.FirstAsync(w => w.Id == Guid.Parse(result.WorkItemId!));
-
-        // Payload should contain the serialized request
-        item.Payload.Should().Contain("owner/repo#2");
-        item.Payload.Should().Contain("provider-2");
-    }
-
-    [Fact]
-    public async Task DistributeAsync_SetsCreatedAtToCurrentTime()
-    {
-        var before = DateTimeOffset.UtcNow;
         var request = CreateRequest("owner/repo#3", "provider-3");
-
         var result = await _distributor.DistributeAsync(request, CancellationToken.None);
 
-        var after = DateTimeOffset.UtcNow;
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.FirstAsync(w => w.Id == Guid.Parse(result.WorkItemId!));
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Pipeline API unreachable");
+    }
 
-        item.CreatedAt.Should().BeOnOrAfter(before);
-        item.CreatedAt.Should().BeOnOrBefore(after);
+    [Fact]
+    public async Task DistributeAsync_DoesNotInsertIntoDB()
+    {
+        var request = CreateRequest("owner/repo#4", "provider-4");
+        await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        // API-backed: no row should appear in local DB
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var count = await db.WorkItems.CountAsync();
+        count.Should().Be(0, "DistributeAsync now creates WorkItems via the Pipeline API, not local DB");
     }
 
     // ── CancelJobAsync ──────────────────────────────────────────────────
@@ -111,14 +124,14 @@ public class KubernetesWorkDistributorTests : IDisposable
     [Fact]
     public async Task CancelJobAsync_PendingItem_TransitionsToCancelled()
     {
-        var request = CreateRequest("owner/repo#4", "provider-4");
-        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+        // Insert row directly (DistributeAsync no longer inserts locally)
+        var workItemId = await InsertPendingWorkItemAsync("owner/repo#cancel-1", "provider-c1");
 
-        var cancelled = await _distributor.CancelJobAsync(result.WorkItemId!, CancellationToken.None);
+        var cancelled = await _distributor.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
 
         cancelled.Should().BeTrue();
         await using var db = await _dbFactory.CreateDbContextAsync();
-        var item = await db.WorkItems.FirstAsync(w => w.Id == Guid.Parse(result.WorkItemId!));
+        var item = await db.WorkItems.FirstAsync(w => w.Id == workItemId);
         item.Status.Should().Be(WorkItemStatus.Cancelled);
     }
 
@@ -141,10 +154,9 @@ public class KubernetesWorkDistributorTests : IDisposable
     [Fact]
     public async Task GetJobStatusAsync_ExistingPendingItem_ReturnsPending()
     {
-        var request = CreateRequest("owner/repo#5", "provider-5");
-        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+        var workItemId = await InsertPendingWorkItemAsync("owner/repo#status-1", "provider-s1");
 
-        var status = await _distributor.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
+        var status = await _distributor.GetJobStatusAsync(workItemId.ToString(), CancellationToken.None);
 
         status.Should().Be(JobDistributionStatus.Pending);
     }
@@ -166,11 +178,10 @@ public class KubernetesWorkDistributorTests : IDisposable
     [Fact]
     public async Task GetJobStatusAsync_CancelledItem_ReturnsCancelled()
     {
-        var request = CreateRequest("owner/repo#6", "provider-6");
-        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
-        await _distributor.CancelJobAsync(result.WorkItemId!, CancellationToken.None);
+        var workItemId = await InsertPendingWorkItemAsync("owner/repo#status-2", "provider-s2");
+        await _distributor.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
 
-        var status = await _distributor.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
+        var status = await _distributor.GetJobStatusAsync(workItemId.ToString(), CancellationToken.None);
 
         status.Should().Be(JobDistributionStatus.Cancelled);
     }
@@ -180,8 +191,7 @@ public class KubernetesWorkDistributorTests : IDisposable
     [Fact]
     public async Task IsIssueDistributedAsync_PendingItem_ReturnsTrue()
     {
-        var request = CreateRequest("owner/repo#7", "provider-7");
-        await _distributor.DistributeAsync(request, CancellationToken.None);
+        await InsertWorkItemAsync("owner/repo#7", "provider-7", WorkItemStatus.Pending);
 
         var distributed = await _distributor.IsIssueDistributedAsync(
             "owner/repo#7", "provider-7", CancellationToken.None);
@@ -192,11 +202,8 @@ public class KubernetesWorkDistributorTests : IDisposable
     [Fact]
     public async Task IsIssueDistributedAsync_CancelledItem_WithinCooldown_ReturnsTrue()
     {
-        // A just-cancelled item is within the restart dedup cooldown window,
-        // so IsIssueDistributed returns true to prevent re-dispatch during restart scenarios.
-        var request = CreateRequest("owner/repo#8", "provider-8");
-        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
-        await _distributor.CancelJobAsync(result.WorkItemId!, CancellationToken.None);
+        var workItemId = await InsertPendingWorkItemAsync("owner/repo#8", "provider-8");
+        await _distributor.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
 
         var distributed = await _distributor.IsIssueDistributedAsync(
             "owner/repo#8", "provider-8", CancellationToken.None);
@@ -216,19 +223,7 @@ public class KubernetesWorkDistributorTests : IDisposable
     [Fact]
     public async Task IsIssueDistributedAsync_DispatchedItem_ReturnsTrue()
     {
-        // Manually insert a Dispatched item
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        db.WorkItems.Add(new WorkItemEntity
-        {
-            Id = Guid.NewGuid(),
-            IssueIdentifier = "owner/repo#9",
-            IssueProviderConfigId = "provider-9",
-            Status = WorkItemStatus.Dispatched,
-            CreatedAt = DateTimeOffset.UtcNow,
-            AgentSelector = "kiro",
-            TimeoutSeconds = 1800
-        });
-        await db.SaveChangesAsync();
+        await InsertWorkItemAsync("owner/repo#9", "provider-9", WorkItemStatus.Dispatched);
 
         var distributed = await _distributor.IsIssueDistributedAsync(
             "owner/repo#9", "provider-9", CancellationToken.None);
@@ -239,18 +234,7 @@ public class KubernetesWorkDistributorTests : IDisposable
     [Fact]
     public async Task IsIssueDistributedAsync_RunningItem_ReturnsTrue()
     {
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        db.WorkItems.Add(new WorkItemEntity
-        {
-            Id = Guid.NewGuid(),
-            IssueIdentifier = "owner/repo#10",
-            IssueProviderConfigId = "provider-10",
-            Status = WorkItemStatus.Running,
-            CreatedAt = DateTimeOffset.UtcNow,
-            AgentSelector = "kiro",
-            TimeoutSeconds = 1800
-        });
-        await db.SaveChangesAsync();
+        await InsertWorkItemAsync("owner/repo#10", "provider-10", WorkItemStatus.Running);
 
         var distributed = await _distributor.IsIssueDistributedAsync(
             "owner/repo#10", "provider-10", CancellationToken.None);
@@ -261,18 +245,7 @@ public class KubernetesWorkDistributorTests : IDisposable
     [Fact]
     public async Task IsIssueDistributedAsync_SucceededItem_ReturnsFalse()
     {
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        db.WorkItems.Add(new WorkItemEntity
-        {
-            Id = Guid.NewGuid(),
-            IssueIdentifier = "owner/repo#11",
-            IssueProviderConfigId = "provider-11",
-            Status = WorkItemStatus.Succeeded,
-            CreatedAt = DateTimeOffset.UtcNow,
-            AgentSelector = "kiro",
-            TimeoutSeconds = 1800
-        });
-        await db.SaveChangesAsync();
+        await InsertWorkItemAsync("owner/repo#11", "provider-11", WorkItemStatus.Succeeded);
 
         var distributed = await _distributor.IsIssueDistributedAsync(
             "owner/repo#11", "provider-11", CancellationToken.None);
@@ -283,18 +256,7 @@ public class KubernetesWorkDistributorTests : IDisposable
     [Fact]
     public async Task IsIssueDistributedAsync_FailedItem_ReturnsFalse()
     {
-        await using var db = await _dbFactory.CreateDbContextAsync();
-        db.WorkItems.Add(new WorkItemEntity
-        {
-            Id = Guid.NewGuid(),
-            IssueIdentifier = "owner/repo#12",
-            IssueProviderConfigId = "provider-12",
-            Status = WorkItemStatus.Failed,
-            CreatedAt = DateTimeOffset.UtcNow,
-            AgentSelector = "kiro",
-            TimeoutSeconds = 1800
-        });
-        await db.SaveChangesAsync();
+        await InsertWorkItemAsync("owner/repo#12", "provider-12", WorkItemStatus.Failed);
 
         var distributed = await _distributor.IsIssueDistributedAsync(
             "owner/repo#12", "provider-12", CancellationToken.None);
@@ -350,6 +312,27 @@ public class KubernetesWorkDistributorTests : IDisposable
         ProjectId = "proj-1",
         RunType = PipelineRunType.Implementation
     };
+
+    private async Task<Guid> InsertPendingWorkItemAsync(string issueId, string providerId)
+        => await InsertWorkItemAsync(issueId, providerId, WorkItemStatus.Pending);
+
+    private async Task<Guid> InsertWorkItemAsync(string issueId, string providerId, WorkItemStatus status)
+    {
+        var id = Guid.NewGuid();
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = id,
+            IssueIdentifier = issueId,
+            IssueProviderConfigId = providerId,
+            Status = status,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "kiro",
+            TimeoutSeconds = 1800
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
 
     // ── Test Infrastructure ─────────────────────────────────────────────
 

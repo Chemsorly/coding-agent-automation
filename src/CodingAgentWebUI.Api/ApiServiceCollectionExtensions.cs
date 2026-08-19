@@ -4,14 +4,17 @@ using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Infrastructure.Persistence.Stores;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Polly.Registry;
@@ -171,6 +174,14 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IProviderFactory>(),
             Log.Logger));
 
+        // ── ILabelSwapService ─────────────────────────────────────────────────
+        // Registered conditionally so the API degrades gracefully when ILabelService is unconfigured.
+        // LabelSwapService is internal sealed — accessed here through the same assembly.
+        services.AddSingleton<ILabelSwapService>(sp =>
+            new LabelSwapService(
+                sp.GetRequiredService<ILabelService>(),
+                sp.GetRequiredService<ILoggerFactory>().CreateLogger<LabelSwapService>()));
+
         // ── PipelineRunLifecycleService — implements IChangeNotifier + IChatNotifier ──
         services.AddSingleton<PipelineRunLifecycleService>(sp => new PipelineRunLifecycleService(
             sp.GetRequiredService<IPipelineRunHistoryService>(),
@@ -224,6 +235,67 @@ public static class ApiServiceCollectionExtensions
 
         // NO DatabaseMaintenanceService (Req 5.6a — ungated sweep on every API replica)
         // NO WorkItemMetricsBackgroundService (Req 5.6a — duplicate static telemetry callback)
+
+        // ── DispatchLifecycleService (API copy, EF-coupled) ─────────────────────────────
+        // Used by ConsolidationWorkItemDispatchService and ModelFetchJobService.
+        // Relocated from CodingAgentWebUI.Orchestration (Spec 043 Task 8b + 9).
+        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(sp =>
+        {
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            if (string.IsNullOrEmpty(options.AgentMasterApiKey))
+            {
+                Serilog.Log.Warning(
+                    "AddApiOrchestration: AGENT_API_KEY is not configured. " +
+                    "ModelFetchJobService and ConsolidationWorkItemDispatchService will use an empty master key " +
+                    "for HMAC derivation — this is a security misconfiguration.");
+            }
+            return new CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService(
+                sp.GetRequiredService<IKubernetesJobClient>(),
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                options);
+        });
+
+        // ── DispatchStateBuilder (API copy, EF-coupled) ─────────────────────────────────
+        // Used by ConsolidationWorkItemDispatchService.
+        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder>(sp => new CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(),
+            sp.GetRequiredService<JobTemplateStore>(),
+            new CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver(
+                sp.GetService<IAgentProfileStore>(),
+                sp.GetRequiredService<JobTemplateStore>()),
+            DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>())));
+
+        // ── ConsolidationWorkItemDispatchService (relocated from Orchestration, Spec 043 Task 9) ──
+        // Registers as a hosted service in the API. Handles consolidation work items (TaskType=Consolidation).
+        // ILabelSwapService accessibility: LabelSwapService is internal sealed in Orchestration,
+        // but CodingAgentWebUI.Api is in InternalsVisibleTo — registered above as ILabelSwapService.
+        services.AddHostedService(sp => new CodingAgentWebUI.Api.Dispatch.ConsolidationWorkItemDispatchService(
+            new CodingAgentWebUI.Api.Dispatch.ConsolidationWorkItemDispatchServiceDependencies(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<ILeaderElectionService>(),
+                sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(),
+                sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetService<IConsolidationRunStore>(),
+                sp.GetService<IConsolidationService>(),
+                sp.GetService<IConsolidationJobPreparationService>(),
+                sp.GetService<IPipelineConfigStore>(),
+                sp.GetService<IProjectStore>(),
+                sp.GetService<IAgentProfileStore>(),
+                sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder>())));
+
+        // ── ModelFetchJobService (relocated from Orchestration monolith, Spec 043 Task 9) ──
+        // Registers as a singleton in the API. The API has K8s RBAC for batch/jobs (Req 9.3b).
+        services.AddSingleton<ModelFetchJobService>(sp => new ModelFetchJobService(
+            new ModelFetchJobDependencies(
+                sp.GetRequiredService<IKubernetesJobClient>(),
+                sp.GetRequiredService<JobTemplateStore>(),
+                DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>()),
+                sp.GetRequiredService<IPipelineConfigStore>(),
+                sp.GetRequiredService<ModelFetchService>(),
+                Logger: Log.Logger)));
 
         return services;
     }

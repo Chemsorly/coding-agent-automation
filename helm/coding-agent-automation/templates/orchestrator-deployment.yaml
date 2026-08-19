@@ -122,6 +122,14 @@ spec:
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}
             {{- end }}
+            # Leader election lease name — release-scoped to prevent collision when multiple
+            # Helm releases share a namespace (Req 6.3). Overridable via values.yaml.
+            - name: LeaderElection__PipelineLoopLeaseName
+              value: {{ if .Values.orchestrator.leaderElection.pipelineLoopLeaseName -}}
+                {{- .Values.orchestrator.leaderElection.pipelineLoopLeaseName | quote }}
+              {{- else -}}
+                {{- printf "caa-%s-pipeline-loop-lock" .Release.Name | quote }}
+              {{- end }}
           volumeMounts:
             - name: job-templates
               mountPath: /app/config/job-templates.yaml

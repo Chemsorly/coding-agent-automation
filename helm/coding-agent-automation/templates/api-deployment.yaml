@@ -95,4 +95,45 @@ spec:
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}
             {{- end }}
+            # WorkDistribution env vars — required by DispatchServiceOptionsFactory.Create(),
+            # consumed by ModelFetchJobService and ConsolidationWorkItemDispatchService (Req 9.3c).
+            # Without these the factory returns empty OrchestratorUrl / ServiceAccount, and
+            # JobSpecBuilder emits a Job spec the K8s admission webhook rejects.
+            - name: WorkDistribution__OrchestratorUrl
+              value: "http://{{ include "coding-agent-automation.fullname" . }}-orchestrator.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.orchestrator.service.port }}"
+            - name: WorkDistribution__AgentApiKeySecretName
+              value: {{ include "coding-agent-automation.secretName" . | quote }}
+            - name: WorkDistribution__AgentServiceAccountName
+              value: "{{ include "coding-agent-automation.fullname" . }}-agent"
+            - name: WorkDistribution__Namespace
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: WorkDistribution__OpencodeConfigSecretName
+              value: {{ include "coding-agent-automation.secretName" . | quote }}
+            - name: WorkDistribution__JobTemplatesPath
+              value: "/app/config/job-templates.yaml"
+            - name: WorkDistribution__Dispatch__IntervalSeconds
+              value: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
+            - name: WorkDistribution__Dispatch__RateLimitPerSecond
+              value: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
+            - name: WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds
+              value: {{ .Values.workDistribution.dispatch.chatSessionMaxDurationSeconds | quote }}
+            - name: WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds
+              value: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
+            - name: WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds
+              value: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
+            {{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}
+            - name: WorkDistribution__CredentialPools__Kiro__{{ $i }}
+              value: {{ $pvc | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: job-templates
+              mountPath: /app/config
+              readOnly: true
+      volumes:
+        - name: job-templates
+          configMap:
+            name: {{ include "coding-agent-automation.fullname" . }}-job-templates
+            optional: true
 {{- end }}

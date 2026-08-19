@@ -3,6 +3,7 @@
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
@@ -11,6 +12,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 
@@ -49,7 +51,14 @@ public class IsIssueDistributedConsistencyPropertyTests : IDisposable
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
         var transitionService = new WorkItemTransitionService(
             _dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+
+        var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        mockApiClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => Guid.NewGuid());
+
         _distributor = new KubernetesWorkDistributor(
+            mockApiClient.Object,
             _dbFactory, transitionService, NullLogger<KubernetesWorkDistributor>.Instance);
     }
 

@@ -3,6 +3,7 @@ using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using Microsoft.Extensions.Options;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;

@@ -1,7 +1,10 @@
+// DEAD CODE (Spec 043) — this class is no longer registered as a hosted service in any host.
+// Source retained because test projects in CodingAgentWebUI.Pipeline.UnitTests directly
+// instantiate it via 'new ReconciliationService(...)'. Spec 045 task: migrate those tests and delete.
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
-using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;

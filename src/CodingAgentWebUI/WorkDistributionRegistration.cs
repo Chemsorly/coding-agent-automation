@@ -3,6 +3,7 @@ using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Infrastructure.Persistence.Stores;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -149,8 +150,9 @@ public static partial class WorkDistributionRegistration
         // ── Database maintenance (retention cleanup — both DB modes) ────────
         services.AddHostedService<DatabaseMaintenanceService>();
 
-        // ── Kubernetes-mode registrations ────────────────────────────────────
-        RegisterKubernetesMode(services, configuration);
+        // ── Consolidation/surviving registrations ────────────────────────────────────────
+        // IPendingWorkQuery, ChatJobDispatcher remain registered in the monolith.
+        RegisterConsolidationServices(services, configuration);
 
         // ── SignalR Redis backplane (optional) ────────────────────────────────
         ConfigureSignalRRedisBackplane(services, configuration);

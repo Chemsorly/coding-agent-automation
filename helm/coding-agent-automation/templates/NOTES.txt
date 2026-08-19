@@ -103,6 +103,59 @@ Let in-flight work finish before upgrading — there is no drain hook. Jobs alre
 dispatched run to completion regardless, but new dispatch is paused during the
 rollout. For zero downtime, wait until WorkItems reach terminal state, then upgrade.
 
+Spec 043 changes (current):
+  - Template validation in Settings is unavailable after 043 until a
+    GET /api/config/job-templates endpoint is added.
+  - "Fetch Models" in Settings UI is non-functional from 043 until Spec 044
+    adds GET /api/config/models and re-points the UI.
+  - The job-templates.yaml ConfigMap must be mounted to the Job Controller pod
+    (not the orchestrator). Changes to job-templates.yaml require a Job Controller
+    rollout: kubectl rollout restart deployment/<release>-jobcontroller -n <namespace>
+
+{{- if .Values.jobController.enabled }}
+
+── Job Controller ────────────────────────────────────────────────────────────
+
+Service: {{ include "coding-agent-automation.fullname" . }}-jobcontroller:{{ .Values.jobController.service.port }}
+Leader election Lease: caa-{{ .Release.Name }}-dispatch-lock (in namespace {{ .Release.Namespace }})
+
+Readiness check (run after deploy — must return 200 within 60 seconds):
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/component=jobcontroller
+  kubectl exec -n {{ .Release.Namespace }} <jobcontroller-pod> -- \
+    curl -s -o /dev/null -w "%{http_code}" http://localhost:{{ .Values.jobController.service.port }}/readyz
+  Expected: 200. If 503: leader election not yet complete, retry. If CrashLoopBackOff:
+  check logs for fast-fail messages (missing PipelineApi:BaseUrl, AGENT_API_KEY, or not-in-cluster).
+
+ATOMIC CUTOVER REQUIREMENT:
+  The monolith's DispatchService is removed starting from this image tag. The Job
+  Controller takes over dispatch. These TWO changes must ship in ONE helm upgrade:
+    1. Updated monolith image (without DispatchService)
+    2. jobController.enabled=true
+  DO NOT enable the Job Controller against an old monolith image — both services
+  would compete to claim WorkItems. The ClaimAsync 409 protects DB integrity, but
+  a race at the wrong moment can produce a duplicate K8s Job.
+
+IMMUTABLE IMAGE TAGS:
+  Use semver or SHA tags — NOT the mutable "coding-agent-webui" latest tag.
+  A mutable tag means helm rollback will NOT restore the old image, only values.
+
+ROLLBACK PROCEDURE (if upgrade fails):
+  1. helm rollback {{ .Release.Name }} <previous-revision>
+     (restores jobController.enabled=false and old monolith image tag)
+  2. Verify Job Controller Deployment deleted:
+       kubectl get deployment -n {{ .Release.Namespace }} | grep jobcontroller
+  3. Verify DispatchService logs in monolith:
+       kubectl logs -n {{ .Release.Namespace }} deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator | grep DispatchService
+  4. Check for orphaned WorkItems stuck in Dispatched state (claimed before crash):
+       GET /api/work-items/active?olderThanSeconds=0
+     Manually requeue via POST /api/work-items/{id}/requeue, or wait 120s for the
+     monolith's ReconciliationService short-circuit sweep to recover them.
+
+Job-templates ConfigMap changes require a Job Controller rollout to take effect
+(templates are loaded once at startup):
+  kubectl rollout restart deployment/{{ include "coding-agent-automation.fullname" . }}-jobcontroller -n {{ .Release.Namespace }}
+{{- end }}
+
 ── Monitoring ────────────────────────────────────────────────────────────────
 
 Health endpoints:

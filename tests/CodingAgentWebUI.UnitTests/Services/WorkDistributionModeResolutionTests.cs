@@ -46,8 +46,11 @@ public class WorkDistributionModeResolutionTests
     }
 
     [Fact]
-    public void KubernetesMode_Registers_DispatchStateBuilder()
+    public void KubernetesMode_Registers_IPendingWorkQuery()
     {
+        // Verifies that AddWorkDistribution registers IPendingWorkQuery (ObservableGaugeRegistrationExtensions
+        // calls GetRequiredService unconditionally — missing registration is a hard startup crash).
+        // DispatchStateBuilder was previously registered here but is now in the API (Spec 043 Task 9).
         var configData = new Dictionary<string, string?>
         {
             ["Database:Host"] = "localhost",
@@ -62,7 +65,7 @@ public class WorkDistributionModeResolutionTests
 
         services.AddWorkDistribution(config);
 
-        var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(DispatchStateBuilder));
+        var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IPendingWorkQuery));
         descriptor.Should().NotBeNull();
         descriptor!.Lifetime.Should().Be(ServiceLifetime.Singleton);
     }

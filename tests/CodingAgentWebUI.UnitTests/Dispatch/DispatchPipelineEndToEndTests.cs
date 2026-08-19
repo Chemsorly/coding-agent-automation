@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
@@ -167,7 +168,20 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     private KubernetesWorkDistributor CreateDistributor()
     {
         var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
-        return new KubernetesWorkDistributor(_dbFactory, transitionService, NullLogger<KubernetesWorkDistributor>.Instance);
+        var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        mockApiClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDistributionRequest req, CancellationToken _) =>
+            {
+                // Simulate the API honoring request.RunId (consistent with ResolveWorkItemId in base class)
+                // This is required for the hub routing invariant: WorkItem.Id must match PipelineRun.RunId
+                if (!string.IsNullOrEmpty(req.RunId) && Guid.TryParse(req.RunId, out var runId))
+                    return runId;
+                return Guid.NewGuid();
+            });
+        return new KubernetesWorkDistributor(
+            mockApiClient.Object,
+            _dbFactory, transitionService, NullLogger<KubernetesWorkDistributor>.Instance);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -237,9 +251,10 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     }
 
     [Fact]
-    public async Task FullDispatch_WorkItemInDb_HasCorrectState()
+    public async Task FullDispatch_DistributeAsync_CallsApiClient_NotLocalDb()
     {
-        // Arrange
+        // After Task 8 refactor: DistributeAsync creates the WorkItem via Pipeline API,
+        // NOT via local DB insert. This test verifies the API-backed behavior.
         var orchestration = CreateOrchestrationService();
         var distributor = CreateDistributor();
 
@@ -256,13 +271,14 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             CancellationToken.None);
         var result = await distributor.DistributeAsync(request!, CancellationToken.None);
 
-        // Assert: WorkItem in DB has correct state (K8s queues as Pending)
+        // Assert: Result is success, with a WorkItemId from the API
+        result.Success.Should().BeTrue();
+        result.WorkItemId.Should().NotBeNullOrEmpty("API returns a WorkItemId");
+
+        // No local DB row — creation went through the API
         await using var db = new InMemoryPipelineDbContext(_dbOptions);
         var workItem = await db.WorkItems.FindAsync(Guid.Parse(result.WorkItemId!));
-        workItem.Should().NotBeNull();
-        workItem!.Status.Should().Be(WorkItemStatus.Pending);
-        workItem.IssueIdentifier.Should().Be("org/repo#42");
-        workItem.AssignedAgentId.Should().BeNull("K8s defers agent assignment to the pod scheduler — AssignedAgentId is set when the pod connects, not at dispatch time");
+        workItem.Should().BeNull("Task 8: DistributeAsync is API-backed and does not write to local DB; state lives in the Pipeline API");
     }
 
     [Fact]

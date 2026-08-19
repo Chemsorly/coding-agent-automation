@@ -182,6 +182,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 **Reassess when:** If the system needs per-agent revocation without rotating the master key (e.g., a compromised agent that must be isolated without restarting others). This would require individual secrets or a revocation list.
 
+**Status (2026-08-17):** Resolved in Spec 043. JobSpecBuilder now vends HMAC-SHA256(master, agentId) via per-Job Secret with ownerReference. WorkItemHttpClient appends ?agentId= on GetAssignment and PostStatus. The divergence predated specs 041–045; prior to this spec, every agent pod mounted the master Secret directly despite the HMAC derivation logic existing at the auth layer.
+
 ---
 
 ### Telemetry philosophy: instrument every decision point for full run traceability

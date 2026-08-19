@@ -31,7 +31,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\CodingAgentWebUI.Api.Client\CodingAgentWebUI.Api.Client.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Kubernetes\CodingAgentWebUI.Kubernetes.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
   </ItemGroup>
 
