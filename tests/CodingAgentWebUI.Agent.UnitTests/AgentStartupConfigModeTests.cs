@@ -96,6 +96,19 @@ public class AgentStartupConfigModeTests
         ex.And.Message.Should().Contain("chat");
     }
 
+    [Fact]
+    public async Task ResolveAsync_EmptyModeValue_Throws()
+    {
+        using var _ = SetRequiredEnvVars();
+
+        // "--mode=" produces modeArg="" (not null) — routes to the unknown-value throw path
+        var act = async () => await AgentStartupConfig.ResolveAsync(["--mode="]);
+
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.And.Message.Should().Contain("workitem");
+        ex.And.Message.Should().Contain("chat");
+    }
+
     // ── Helper ───────────────────────────────────────────────────────────────
 
     private sealed class EnvVarCleanup : IDisposable
