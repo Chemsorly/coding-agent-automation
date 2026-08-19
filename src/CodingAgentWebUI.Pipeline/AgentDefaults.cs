@@ -104,4 +104,11 @@ public static class AgentDefaults
 
     /// <summary>CLI argument prefix for work item ID (K8s mode).</summary>
     public const string CliWorkItemIdPrefix = "--work-item-id=";
+
+    /// <summary>
+    /// CLI argument emitted on chat pod specs (Spec 044 Req C5.1a).
+    /// Phase 2 (Spec 044 Task 15b.2) makes <c>--mode</c> mandatory;
+    /// this constant ensures both emitters use the same literal.
+    /// </summary>
+    public const string CliModeChat = "--mode=chat";
 }

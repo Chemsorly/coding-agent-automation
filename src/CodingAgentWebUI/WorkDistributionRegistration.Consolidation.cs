@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Kubernetes;
@@ -8,7 +7,6 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using k8s;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -21,11 +19,8 @@ public static partial class WorkDistributionRegistration
     /// - K8s infrastructure (IKubernetes, IKubernetesJobClient, IJobCleanupStrategy)
     /// - Leader election (ILeaderElectionService)
     /// - IWorkDistributor (KubernetesWorkDistributor)
-    /// - JobTemplateStore (used by ChatJobDispatcher)
-    /// - DispatchLifecycleService + DispatchStateBuilder (used by DispatchService until Task 9.6)
+    /// - JobTemplateStore
     /// - IPendingWorkQuery (hard startup crash if missing — ObservableGaugeRegistrationExtensions)
-    /// - ChatJobDispatcher (IHostedService — silent regression if missing)
-    /// - DispatchService + ReconciliationService hosted services (deleted in Task 9.6)
     /// - Pipeline API client
     /// </summary>
     private static void RegisterConsolidationServices(IServiceCollection services, IConfiguration configuration)
@@ -126,27 +121,9 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<IPendingWorkQuery>(sp =>
             new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
-        // ── ChatJobDispatcher — MUST be re-registered ─────────────────────────
-        // 042 moved the source file into CodingAgentWebUI.Hub.
-        // The three DI lines lived in WorkDistributionRegistration.Kubernetes.cs (now deleted).
-        // ChatJobDispatcher is an IHostedService — losing the registration is not a compile error;
-        // agent chat just silently stops dispatching pods. Re-registration per Req 5.1b.
-        services.AddSingleton<ChatJobDispatcher>(sp =>
-        {
-            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
-            options.ValidateAndClamp(Log.Logger);
-            return new ChatJobDispatcher(
-                sp.GetRequiredService<IKubernetesJobClient>(),
-                sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
-                sp.GetRequiredService<JobTemplateStore>(),
-                sp.GetRequiredService<AgentRegistryService>(),
-                options,
-                sp.GetRequiredService<ILeaderElectionService>(),
-                Log.Logger);
-        });
-        services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());
-        services.AddSingleton<IChatJobDispatcher>(sp => sp.GetRequiredService<ChatJobDispatcher>());
+        // ChatJobDispatcher moved to CodingAgentWebUI.Api in Spec 044 Task 6 (Req 2.7).
+        // Registration removed here after API registration confirmed.
 
-        Log.Information("WorkDistribution: Kubernetes infrastructure registered (LeaderElection, K8s client, ChatJobDispatcher)");
+        Log.Information("WorkDistribution: Kubernetes infrastructure registered (LeaderElection, K8s client)");
     }
 }

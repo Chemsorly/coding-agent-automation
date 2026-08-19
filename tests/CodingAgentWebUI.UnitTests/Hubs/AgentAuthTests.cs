@@ -502,7 +502,7 @@ public class AgentAuthorizationFilterInvokeTests
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
         hub.Context = MakeContext(connectionId);
         return hub;
     }

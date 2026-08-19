@@ -18,7 +18,6 @@ public sealed record AgentHubFacadeDependencies(
     IAgentRegistryService Registry,
     OrchestratorRunService RunService,
     JobDeduplicationGuardService Dispatcher,
-    JobQueueDrainService DrainService,
     IPipelineRunHistoryService HistoryService,
     IConfigurationStore ConfigStore,
     IProviderFactory ProviderFactory,

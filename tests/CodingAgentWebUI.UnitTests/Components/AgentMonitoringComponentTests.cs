@@ -1,15 +1,11 @@
 using Bunit;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Hub;
-using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.JSInterop;
@@ -20,7 +16,6 @@ namespace CodingAgentWebUI.UnitTests.Components;
 
 public class AgentMonitoringComponentTests : BunitContext
 {
-    private readonly PipelineRunLifecycleService _lifecycle;
     private readonly Mock<IActiveRunQueryService> _mockActiveRunQuery = new();
 
     public AgentMonitoringComponentTests()
@@ -40,9 +35,6 @@ public class AgentMonitoringComponentTests : BunitContext
         mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
-        var runService = new OrchestratorRunService(mockLogger.Object);
-        _lifecycle = new PipelineRunLifecycleService(mockHistory.Object, runService, mockLogger.Object);
-
         var registry = new AgentRegistryService(mockLogger.Object);
 
         _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
@@ -50,25 +42,19 @@ public class AgentMonitoringComponentTests : BunitContext
 
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
-        Services.AddSingleton(_lifecycle);
-        Services.AddSingleton<IChangeNotifier>(_lifecycle);
+        Services.AddSingleton<IChangeNotifier>(new NullChangeNotifier());
         Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
-        Services.AddSingleton(runService);
-        Services.AddSingleton<IOrchestratorRunService>(runService);
         Services.AddSingleton(mockStore.Object);
         Services.AddSingleton(mockHistory.Object);
-        Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(Mock.Of<ILabelService>());
         Services.AddSingleton(Mock.Of<IConsolidationService>(s =>
             s.GetRunHistoryAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ConsolidationRun>>(Array.Empty<ConsolidationRun>())));
         Services.AddSingleton<IActiveRunQueryService>(_mockActiveRunQuery.Object);
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
-        Services.AddSingleton(Mock.Of<IRunLifecycleManager>());
 
         // Use a factory to create the mock so it can resolve JobDeduplicationGuardService lazily
         // from the DI container — the mock delegates GetPendingJobsAsync to the real in-memory service.
-        // This replaces the deleted LegacyPendingWorkQuery which did the same thing.
         Services.AddSingleton<IPendingWorkQuery>(sp =>
         {
             var dispatcherSvc = sp.GetRequiredService<JobDeduplicationGuardService>();
@@ -80,24 +66,16 @@ public class AgentMonitoringComponentTests : BunitContext
 
         Services.AddSingleton(TimeProvider.System);
 
-        // TODO: This AgentMonitoringPageServiceDependencies registration block is copy-pasted verbatim in
-        // AgentMonitoringComponentTests, AgentMonitoringPageComponentTests, and FeedbackSectionComponentTests.
-        // Any future change to AgentMonitoringPageServiceDependencies constructor signature must be applied
-        // in all three places. Extract into a shared helper or base class to avoid drift.
         // Register AgentMonitoringPageServiceDependencies so DI can auto-construct AgentMonitoringPageService.
         Services.AddScoped(sp => new AgentMonitoringPageServiceDependencies(
             sp.GetRequiredService<IActiveRunQueryService>(),
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<PipelineRunLifecycleService>(),
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<IPendingWorkQuery>(),
             sp.GetRequiredService<IWorkDistributor>(),
-            sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IRunLifecycleManager>()));
+            sp.GetRequiredService<IPipelineRunHistoryService>()));
 
         // Page service — resolved via DI with all dependencies above
         Services.AddScoped<AgentMonitoringPageService>();
@@ -432,9 +410,10 @@ public class AgentMonitoringComponentTests : BunitContext
         RepoProviderConfigId = "rp-1"
     };
 
-    private void SetActiveRun(PipelineRun run)
+    private void SetActiveRunSummary(ActiveRunSummary summary)
     {
-        _lifecycle.ActiveRun = run;
+        _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { summary });
     }
 
     private static ActiveRunSummary CreateRunSummary(string issueTitle) => new()
@@ -449,75 +428,15 @@ public class AgentMonitoringComponentTests : BunitContext
         CurrentStep = PipelineStep.GeneratingCode
     };
 
-    private void SetActiveRunSummary(ActiveRunSummary summary)
-    {
-        _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { summary });
-    }
-
     [Fact]
-    public async Task CancelButton_ConnectedAgent_CallsCancelRunAsyncAndSendsCancelJob()
+    public async Task CancelButton_ConnectedAgent_CallsCancelJobViaWorkDistributor()
     {
-        // Arrange: set up mock IRunLifecycleManager and IHubContext to verify cancel behavior
-        var mockLifecycleManager = new Mock<IRunLifecycleManager>();
-        var mockHubContext = new Mock<IHubContext<AgentHub, IAgentHubClient>>();
-        var mockClients = new Mock<IHubClients<IAgentHubClient>>();
-        var mockClient = new Mock<IAgentHubClient>();
-
-        mockHubContext.Setup(h => h.Clients).Returns(mockClients.Object);
-        mockClients.Setup(c => c.Client("conn-agent-1")).Returns(mockClient.Object);
-        mockClient.Setup(c => c.CancelJob("run-connected-1")).Returns(Task.CompletedTask);
-
-        mockLifecycleManager
-            .Setup(l => l.CancelRunAsync("run-connected-1", It.IsAny<CancellationToken>(), It.IsAny<string?>()))
-            .ReturnsAsync((PipelineRun?)null); // Return value not checked by component
-
-        // Override DI registrations (last-wins in bUnit)
-        Services.AddSingleton<IHubContext<AgentHub, IAgentHubClient>>(mockHubContext.Object);
-        Services.AddSingleton<IRunLifecycleManager>(mockLifecycleManager.Object);
-
-        // Create an OrchestratorRunService and use it both in DI and inside PipelineOrchestrationService
-        var runService = new OrchestratorRunService(Mock.Of<ILogger>());
-        Services.AddSingleton(runService);
-        Services.AddSingleton<IOrchestratorRunService>(runService);
-
-        // Rebuild PipelineOrchestrationService with the same runService so GetAllActiveRuns() can find it
-        var mockStore = new Mock<IConfigurationStore>();
-        mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-        mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-        mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
-
-        var pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: mockStore.Object,
-            providerFactory: new Mock<IProviderFactory>().Object,
-            runService: runService);
-        Services.AddSingleton(pipelineService);
-
-        // Add an in-memory active run with an assigned agent
-        var run = new PipelineRun
-        {
-            RunId = "run-connected-1",
-            AgentId = "agent-1",
-            IssueIdentifier = "org/repo#100",
-            IssueTitle = "Test Issue",
-            CurrentStep = PipelineStep.GeneratingCode,
-            StartedAt = DateTime.UtcNow.AddMinutes(-2),
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1"
-        };
-        runService.AddRun(run);
-
-        // Register the agent in the registry (with matching connection ID)
-        var registry = Services.GetRequiredService<AgentRegistryService>();
-        registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-1",
-            Hostname = "test-host",
-            Labels = new[] { "kiro" }
-        }, "conn-agent-1");
+        // Spec 044 (degraded mode): cancel routes through IWorkDistributor — no hub context.
+        var mockWorkDistributor = new Mock<IWorkDistributor>();
+        mockWorkDistributor
+            .Setup(w => w.CancelJobAsync("run-connected-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        Services.AddSingleton<IWorkDistributor>(mockWorkDistributor.Object);
 
         // Ensure the active run appears in the UI table
         _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
@@ -543,15 +462,11 @@ public class AgentMonitoringComponentTests : BunitContext
             .First(b => b.TextContent.Trim() == "Cancel");
         await cut.InvokeAsync(() => cancelBtn.Click());
 
-        // Assert: CancelJob signal was sent to the agent
-        mockClient.Verify(c => c.CancelJob("run-connected-1"), Times.Once,
-            "CancelJob signal must be sent to the connected agent");
-
-        // Assert: CancelRunAsync was called to immediately persist the cancelled state
-        mockLifecycleManager.Verify(
-            l => l.CancelRunAsync("run-connected-1", It.IsAny<CancellationToken>(), It.IsAny<string?>()),
+        // Assert: cancel was routed through IWorkDistributor (degraded mode)
+        mockWorkDistributor.Verify(
+            w => w.CancelJobAsync("run-connected-1", It.IsAny<CancellationToken>()),
             Times.Once,
-            "CancelRunAsync must be called to immediately persist PipelineStep.Cancelled");
+            "In Spec 044 degraded mode, cancel routes through IWorkDistributor");
     }
 
     [Fact]

@@ -143,25 +143,6 @@ public static class ApiServiceCollectionExtensions
         // ── JobDeduplicationGuardService ────────────────────────────────────
         services.AddSingleton<JobDeduplicationGuardService>();
 
-        // ── JobQueueDrainService (needed by AgentHubFacadeDependencies) ─────
-        // Registered with explicit factory because the constructor is internal.
-        // IJobDispatcher and IConsolidationDispatchService are no-op stubs because
-        // Legacy queue dispatch is dead after Spec 041.
-        // TODO(Spec 043/044, same branch): remove when hub moves out of the monolith.
-        services.AddSingleton<IJobDispatcher>(_ => new NullJobDispatcher());
-        services.AddSingleton<IConsolidationDispatchService>(_ => new NullConsolidationDispatchService());
-        services.AddSingleton<IShutdownSignal>(new ShutdownSignal());
-        services.AddSingleton(sp => new JobQueueDrainService(
-            new JobQueueDrainDependencies(
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
-                sp.GetRequiredService<IAgentRegistryService>(),
-                sp.GetRequiredService<IJobDispatcher>(),
-                sp.GetRequiredService<IConfigurationStore>(),
-                sp.GetRequiredService<IConsolidationDispatchService>(),
-                sp.GetRequiredService<IShutdownSignal>(),
-                Log.Logger,
-                sp.GetService<IConsolidationRunStore>())));
-
         // ── ITokenVendingService ─────────────────────────────────────────────
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler();

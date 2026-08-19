@@ -59,7 +59,7 @@ public static partial class ServiceCollectionExtensions
 
     /// <summary>
     /// Registers multi-agent orchestration services: agent registry, job dispatch, token vending,
-    /// heartbeat monitoring, and the AgentHub facade.
+    /// heartbeat monitoring, and job dispatching. Hub services moved to API in Spec 044.
     /// </summary>
     public static IServiceCollection AddOrchestrationServices(
         this IServiceCollection services,
@@ -76,9 +76,6 @@ public static partial class ServiceCollectionExtensions
 
         // ── Job Dispatching ────────────────────────────────────────────────
         RegisterJobDispatching(services);
-
-        // ── Agent Hub Services ─────────────────────────────────────────────
-        RegisterAgentHubServices(services);
 
         return services;
     }

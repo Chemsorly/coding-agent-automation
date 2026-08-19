@@ -50,13 +50,9 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
-        var drainService = new JobQueueDrainService(
-            new JobQueueDrainDependencies(dispatcher, registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
-            new ShutdownSignal(), mockLogger.Object));
 
         _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
-            registry, runService, dispatcher, drainService,
+            registry, runService, dispatcher,
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
@@ -109,13 +105,9 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
-        var drainService = new JobQueueDrainService(
-            new JobQueueDrainDependencies(dispatcher, registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
-            new ShutdownSignal(), mockLogger.Object));
 
         var facadeWithoutTransition = new AgentHubFacade(new AgentHubFacadeDependencies(
-            registry, runService, dispatcher, drainService,
+            registry, runService, dispatcher,
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),

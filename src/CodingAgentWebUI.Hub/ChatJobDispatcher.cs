@@ -211,6 +211,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var job = JobSpecBuilder.Build(template, ctx);
 
         var container = job.Spec.Template.Spec.Containers[0];
+
+        // Spec 044 Req C5.1a: emit --mode=chat so AgentStartupConfig can identify the pod shape.
+        // Phase 2 (Task 15b.2) makes --mode mandatory; this emitter must land first.
+        container.Args ??= new List<string>();
+        container.Args.Add(AgentDefaults.CliModeChat);
+
         container.Env ??= new List<V1EnvVar>();
         container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatMode, Value = "true" });
         container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatSessionId, Value = dispatchId.ToString() });

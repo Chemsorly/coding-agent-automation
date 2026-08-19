@@ -3,6 +3,7 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
+using Microsoft.AspNetCore.SignalR;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Hub;
@@ -23,4 +24,5 @@ public sealed record AgentHubDependencies(
     IAgentTokenRefreshService TokenRefreshService,
     IGateCommentFormatter GateCommentFormatter,
     ILogger Logger,
-    IAgentOrphanRecoveryService OrphanRecoveryService);
+    IAgentOrphanRecoveryService OrphanRecoveryService,
+    IHubContext<AgentHub> UiContext);

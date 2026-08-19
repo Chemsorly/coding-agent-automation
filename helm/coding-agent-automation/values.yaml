@@ -76,9 +76,10 @@ orchestrator:
     #    hosts:
     #      - coding-agent.example.com
   env:
-    # Seconds to wait before resuming pipeline loop after pod restart (prevents dispatch to
-    # agents mid-termination during rolling updates). Must be > agent terminationGracePeriodSeconds.
-    pipelineLoopStartupDelaySeconds: 30
+    # Startup delay was previously needed to give the monolith hub time to rehydrate active runs
+    # before dispatching. After Spec 044, the API owns IOrchestratorRunService and rehydrates on
+    # its own startup; the orchestrator no longer dispatches directly. Set to 0 (Spec 044 Req 7.2).
+    pipelineLoopStartupDelaySeconds: 0
     # Seconds to wait after marking /readyz as 503 before proceeding with shutdown.
     readinessDrainDelaySeconds: 15
     # Log level for the orchestrator application
@@ -245,6 +246,11 @@ api:
   service:
     type: ClusterIP
     port: 8090
+  # serviceUrl is the in-cluster URL that agent pods use to reach the API hub and HTTP
+  # endpoints (ORCHESTRATOR_URL). Both work-item pods and chat pods share this single config
+  # key (WorkDistribution__OrchestratorUrl) — changing it re-points both shapes simultaneously
+  # (Spec 044 Req C2.1 option a). Default derives from release name and api.service.port.
+  serviceUrl: ""
   resources:
     requests:
       cpu: 100m

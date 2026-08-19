@@ -165,6 +165,42 @@ public class ChatJobDispatcherTests
 
     // ─── 2. DispatchChatPodAsync — active chat job exists ────────────────────
 
+    /// <summary>
+    /// Spec 044 Req C5.1, C5.1a: ChatJobDispatcher MUST emit --mode=chat in the container Args.
+    /// This is phase 1 of making --mode mandatory (Task 15b.2 enforces it in AgentStartupConfig).
+    /// </summary>
+    [Fact]
+    public async Task DispatchChatPodAsync_PodSpec_ContainsModeChat()
+    {
+        // Arrange
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        V1Job? createdJob = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJob = j;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                if (!string.IsNullOrEmpty(dispatchId))
+                    RegisterChatAgent(registry, "agent-mode-test", dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+
+        // Act
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // Assert
+        createdJob.Should().NotBeNull("job must be created");
+        var container = createdJob!.Spec.Template.Spec.Containers[0];
+        container.Args.Should().Contain("--mode=chat",
+            "chat pods must emit --mode=chat so AgentStartupConfig can identify the pod shape (Spec 044 Req C5.1a)");
+        container.Args.Should().NotContain("--mode=workitem",
+            "chat pods must not emit --mode=workitem");
+    }
+
     [Fact]
     public async Task DispatchChatPodAsync_ActiveChatJobExists_ThrowsChatAlreadyActiveException()
     {

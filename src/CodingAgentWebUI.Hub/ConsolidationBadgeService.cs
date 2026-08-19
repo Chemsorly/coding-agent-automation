@@ -12,6 +12,7 @@ public sealed class ConsolidationBadgeService
 {
     private readonly object _lock = new();
     private int _badgeCount;
+    private bool _hasEverBeenIncremented;
 
     /// <summary>
     /// Current badge count (refactoring issues created + harness suggestions since last visit).
@@ -19,6 +20,18 @@ public sealed class ConsolidationBadgeService
     public int BadgeCount
     {
         get { lock (_lock) { return _badgeCount; } }
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> if <see cref="IncrementBy"/> has been called with a
+    /// positive count at least once since this service instance was created. Used by the UI
+    /// to distinguish "zero because nothing ran" from "zero because the user visited the page"
+    /// versus "stale — this instance never received any events (e.g. after agents moved to the
+    /// API hub)".
+    /// </summary>
+    public bool HasEverBeenIncremented
+    {
+        get { lock (_lock) { return _hasEverBeenIncremented; } }
     }
 
     /// <summary>
@@ -37,6 +50,7 @@ public sealed class ConsolidationBadgeService
         lock (_lock)
         {
             _badgeCount += count;
+            _hasEverBeenIncremented = true;
         }
 
         OnBadgeChanged?.Invoke();
@@ -45,6 +59,8 @@ public sealed class ConsolidationBadgeService
     /// <summary>
     /// Resets badge count to zero (called when user opens Consolidation page).
     /// Fires <see cref="OnBadgeChanged"/> after resetting.
+    /// Note: <see cref="HasEverBeenIncremented"/> is NOT reset — it persists for the process
+    /// lifetime so the UI can distinguish "visited page" from "stale instance".
     /// </summary>
     public void Reset()
     {

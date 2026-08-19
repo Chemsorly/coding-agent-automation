@@ -102,20 +102,9 @@ public static partial class WorkDistributionRegistration
                 Log.Logger);
         });
 
-        // ── IRunLifecycleManager (DB mode — coordinates in-memory + DB transitions) ──
-        // TODO: Use GetRequiredService<IJobCleanupStrategy>() instead of GetService to fail fast on
-        // misconfiguration (both K8s and SignalR modes always register an implementation).
-        services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
-            new Orchestration.RunLifecycleManagerDependencies(
-                sp.GetRequiredService<IOrchestratorRunService>(),
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<AgentRegistryService>(),
-                sp.GetRequiredService<ILabelService>(),
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
-                Log.Logger,
-                sp.GetRequiredService<WorkItemTransitionService>(),
-                sp.GetService<IJobCleanupStrategy>(),
-                sp.GetRequiredService<IWorkItemFallbackTransitionService>())));
+        // ── IRunLifecycleManager removed in Spec 044 Task 10 (moved to CodingAgentWebUI.Api). ──
+        // All consumers (HeartbeatMonitorService, AgentJobDispatcher, AgentMonitoringPageService)
+        // have been removed from the monolith.
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────
         // Singleton: consumed by singleton services (LabelService, DispatchResolutionService,
@@ -151,7 +140,7 @@ public static partial class WorkDistributionRegistration
         services.AddHostedService<DatabaseMaintenanceService>();
 
         // ── Consolidation/surviving registrations ────────────────────────────────────────
-        // IPendingWorkQuery, ChatJobDispatcher remain registered in the monolith.
+        // IPendingWorkQuery remains registered in the monolith.
         RegisterConsolidationServices(services, configuration);
 
         // ── SignalR Redis backplane (optional) ────────────────────────────────

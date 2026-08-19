@@ -57,13 +57,18 @@ internal static class EndpointRegistration
         app.UseAuthentication();
         app.UseAuthorization();
 
-        // SignalR hub endpoint for agent connections
-        app.MapHub<AgentHub>(HubRoutes.Agent).RequireAuthorization("AgentApiKey");
+        // SignalR hub endpoint removed (Spec 044 Task 8 / 15a.2): agents connect to CodingAgentWebUI.Api hub.
+        // CodingAgentWebUI.Hub project reference is RETAINED: AgentChat.razor injects
+        // IHubContext<AgentHub, IAgentHubClient> to send AssignChatPrompt to running agent pods,
+        // and RegisterJobDispatching wires SignalRAgentCommunication against the same context.
+        // Both require the Hub library type reference and AddSignalRServices() to compile and resolve.
+        // Note: the monolith IHubContext cannot reach agents connected to the API hub — it only
+        // sends to connections this process hosts. AgentChat.razor's send path will be updated in Spec 045.
 
-        // Work Item HTTP API — agents fetch assignments and report status (DB modes only)
+        // Config import/export endpoints for Blazor UI backup (DB modes only)
+        // Work Item HTTP API was removed — agents now use CodingAgentWebUI.Api endpoints
         if (!string.IsNullOrEmpty(dbConnectionString))
         {
-            app.MapWorkItemEndpoints();
             app.MapConfigImportExportEndpoints();
         }
 

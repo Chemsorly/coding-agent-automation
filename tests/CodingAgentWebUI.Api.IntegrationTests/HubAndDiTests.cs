@@ -260,9 +260,6 @@ internal sealed class ApiKestrelFactory : WebApplicationFactory<Program>
             services.RemoveAll<Pipeline.Interfaces.IConsolidationDispatchService>();
             services.AddSingleton<Pipeline.Interfaces.IConsolidationDispatchService>(
                 new KestrelNoOpConsolidationDispatchService());
-            services.RemoveAll<Pipeline.Interfaces.IJobDispatcher>();
-            services.AddSingleton<Pipeline.Interfaces.IJobDispatcher>(
-                new KestrelNoOpJobDispatcher());
         });
     }
 
@@ -409,23 +406,6 @@ internal sealed class MissingAgentApiKeyFactory : WebApplicationFactory<Program>
 }
 
 // Stub implementations for Legacy dispatch dependencies (dead after Spec 041)
-file sealed class KestrelNoOpJobDispatcher : CodingAgentWebUI.Pipeline.Interfaces.IJobDispatcher
-{
-    public bool HasRegisteredAgents => false;
-    public bool IsIssueBeingProcessedOrQueued(CodingAgentWebUI.Pipeline.Models.IssueIdentifier i, CodingAgentWebUI.Pipeline.Models.ProviderConfigId p) => false;
-    public Task<bool> TryDispatchAsync(CodingAgentWebUI.Pipeline.Models.IssueIdentifier i, CodingAgentWebUI.Pipeline.Models.ProviderConfigId ip, CodingAgentWebUI.Pipeline.Models.ProviderConfigId rp,
-        string? bp, string? pp, string by, CancellationToken ct, string? title = null, CodingAgentWebUI.Pipeline.Models.PipelineProject? proj = null)
-        => Task.FromResult(false);
-    public Task<bool> TryDispatchReviewAsync(CodingAgentWebUI.Pipeline.Models.ReviewDispatchRequest r, CancellationToken ct, CodingAgentWebUI.Pipeline.Models.PipelineProject? proj = null)
-        => Task.FromResult(false);
-    public Task<bool> TryDispatchDecompositionAsync(CodingAgentWebUI.Pipeline.Models.IssueIdentifier e, string t, CodingAgentWebUI.Pipeline.Models.PipelineRunType ph,
-        CodingAgentWebUI.Pipeline.Models.ProviderConfigId i, CodingAgentWebUI.Pipeline.Models.ProviderConfigId r, string? b, string by, CancellationToken ct,
-        string? s = null, CodingAgentWebUI.Pipeline.Models.PipelineProject? proj = null)
-        => Task.FromResult(false);
-    public Task<bool> DispatchToAgentDirectAsync(CodingAgentWebUI.Pipeline.Models.AgentEntry a, CodingAgentWebUI.Pipeline.Models.PendingJob j, IReadOnlyList<string> l, CancellationToken ct)
-        => Task.FromResult(false);
-}
-
 file sealed class KestrelNoOpConsolidationDispatchService : CodingAgentWebUI.Pipeline.Interfaces.IConsolidationDispatchService
 {
     public Task<CodingAgentWebUI.Pipeline.Interfaces.ConsolidationDispatchResult> TryDispatchAsync(CodingAgentWebUI.Pipeline.Models.ConsolidationRun r, CodingAgentWebUI.Pipeline.Models.ConsolidationRunType t,

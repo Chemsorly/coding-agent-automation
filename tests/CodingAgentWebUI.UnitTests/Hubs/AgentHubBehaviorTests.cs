@@ -51,7 +51,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -1000,7 +1000,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -1026,7 +1026,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            new AgentOrphanRecoveryService(_mockFacade.Object, changeNotifier, _mockLogger.Object)));
+            new AgentOrphanRecoveryService(_mockFacade.Object, changeNotifier, _mockLogger.Object), HubTestHelpers.CreateNoOpHubContext()));
 
         // Build a real HttpContext with the agentId query param
         var httpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();

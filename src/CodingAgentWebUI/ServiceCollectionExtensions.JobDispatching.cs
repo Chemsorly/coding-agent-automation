@@ -50,18 +50,6 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IAgentCommunication>(),
             Log.Logger));
 
-        // AgentJobDispatcher: registered as singleton (internal class).
-        // Consumed by JobQueueDrainService and LegacyWorkDistributor within the same assembly scope.
-        services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
-            new AgentJobDispatcherDependencies(
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
-                sp.GetRequiredService<IAgentRegistryService>(),
-                sp.GetRequiredService<IOrchestratorRunService>(),
-                sp.GetRequiredService<IDispatchRunCreator>(),
-                sp.GetRequiredService<DispatchInfrastructure>(),
-                sp.GetRequiredService<IAgentCommunication>(),
-                sp.GetRequiredService<IShutdownSignal>(),
-                Log.Logger,
-                sp.GetService<IRunLifecycleManager>())));
+        // AgentJobDispatcher, IJobDispatcher, JobQueueDrainService removed in Spec 044 Task 10/15d.
     }
 }

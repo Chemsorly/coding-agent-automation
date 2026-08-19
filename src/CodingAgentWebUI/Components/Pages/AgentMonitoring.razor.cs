@@ -1,9 +1,7 @@
-using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Registry;
-using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
@@ -12,6 +10,12 @@ using Serilog;
 
 namespace CodingAgentWebUI.Components.Pages;
 
+/// <summary>
+/// Spec 044: Degraded (history-only) mode.
+/// IOrchestratorRunService, IRunLifecycleManager, IHubContext, PipelineRunLifecycleService, and
+/// IChangeNotifier injections removed — the monolith no longer owns in-memory run state.
+/// Live streaming is restored in Spec 045.
+/// </summary>
 public partial class AgentMonitoring : IDisposable
 {
     private const string JsScrollToBottom = "scrollToBottom";
@@ -20,11 +24,8 @@ public partial class AgentMonitoring : IDisposable
     [Inject] private AgentMonitoringPageService PageService { get; set; } = default!;
     [Inject] private IJSRuntime JS { get; set; } = default!;
     [Inject] private TimeProvider Clock { get; set; } = default!;
-    [Inject] private IChangeNotifier ChangeNotifier { get; set; } = default!;
     [Inject] private IConsolidationService ConsolidationService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
-    [Inject] private IOrchestratorRunService RunService { get; set; } = default!;
-    [Inject] private PipelineRunLifecycleService Lifecycle { get; set; } = default!;
 
     // ── State forwarding from PageService ──
 
@@ -57,7 +58,8 @@ public partial class AgentMonitoring : IDisposable
     protected override async Task OnInitializedAsync()
     {
         _lastSuccessfulRefresh = Clock.GetUtcNow();
-        ChangeNotifier.OnChange += HandleStateChanged;
+        // Spec 044: IChangeNotifier removed — the monolith has NullChangeNotifier, so no event subscription.
+        // Events from ConsolidationService are still forwarded for the consolidation panel.
         ConsolidationService.OnChange += HandleStateChanged;
 
         // Refresh every 5 seconds for heartbeat/elapsed updates
@@ -247,7 +249,6 @@ public partial class AgentMonitoring : IDisposable
         if (disposing)
         {
             _refreshTimer?.Dispose();
-            ChangeNotifier.OnChange -= HandleStateChanged;
             ConsolidationService.OnChange -= HandleStateChanged;
         }
         _disposed = true;

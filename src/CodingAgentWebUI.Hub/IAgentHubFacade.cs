@@ -15,7 +15,6 @@ namespace CodingAgentWebUI.Hub;
 /// The facade absorbs: <see cref="CodingAgentWebUI.Orchestration.Registry.AgentRegistryService"/>,
 /// <see cref="CodingAgentWebUI.Orchestration.OrchestratorRunService"/>,
 /// <see cref="CodingAgentWebUI.Orchestration.Dispatch.JobDeduplicationGuardService"/>,
-/// <see cref="CodingAgentWebUI.Orchestration.Dispatch.JobQueueDrainService"/>,
 /// <see cref="IPipelineRunHistoryService"/>, <see cref="IConfigurationStore"/>,
 /// and <see cref="IProviderFactory"/>.
 /// </para>
@@ -102,7 +101,9 @@ public interface IAgentHubFacade
     void MarkIssueComplete(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
 
     /// <summary>
-    /// Signals the drain service to attempt dispatch for idle agents.
+    /// Signals that an agent may now be available to pick up pending work.
+    /// No-op after Spec 044 — Legacy/SignalR queue dispatch was removed in Spec 041.
+    /// Retained for interface compatibility; callers may be removed in Spec 045.
     /// </summary>
     void Signal();
 

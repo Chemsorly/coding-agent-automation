@@ -169,4 +169,42 @@ public sealed class ConsolidationBadgeServiceTests
         var shouldDisplay = _sut.BadgeCount > 0;
         shouldDisplay.Should().BeFalse();
     }
+
+    // ── HasEverBeenIncremented ─────────────────────────────────────────────
+
+    [Fact]
+    public void HasEverBeenIncremented_Initially_IsFalse()
+    {
+        // Validates: Req 3.9 — badge shows stale indicator when never incremented
+        _sut.HasEverBeenIncremented.Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasEverBeenIncremented_AfterIncrementByPositive_IsTrue()
+    {
+        // Validates: Req 3.9 — once events arrive, stale indicator no longer shown
+        _sut.IncrementBy(1);
+
+        _sut.HasEverBeenIncremented.Should().BeTrue();
+    }
+
+    [Fact]
+    public void HasEverBeenIncremented_AfterIncrementByZero_RemainseFalse()
+    {
+        // IncrementBy(0) is a no-op — should not count as "ever incremented"
+        _sut.IncrementBy(0);
+
+        _sut.HasEverBeenIncremented.Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasEverBeenIncremented_AfterReset_RemainsTrue()
+    {
+        // Validates: Req 3.9 — Reset resets the count but NOT the ever-incremented flag;
+        // "visited page" and "stale instance" must remain distinguishable.
+        _sut.IncrementBy(3);
+        _sut.Reset();
+
+        _sut.HasEverBeenIncremented.Should().BeTrue();
+    }
 }

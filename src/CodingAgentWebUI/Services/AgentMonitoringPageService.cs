@@ -1,12 +1,8 @@
-using CodingAgentWebUI.Hub;
-using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
-using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using Microsoft.AspNetCore.SignalR;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -17,6 +13,12 @@ namespace CodingAgentWebUI.Services;
 /// orchestration, and state management. The Blazor component delegates to this service
 /// and retains only UI state (modals, timers, JS interop, StateHasChanged).
 /// Registered as Scoped because it holds per-page mutable state.
+/// <para>
+/// Spec 044: Operates in degraded (history-only) mode. The monolith no longer owns
+/// in-memory run state — IOrchestratorRunService, IRunLifecycleManager, and IHubContext
+/// have been removed. Cancel/disconnect operations route through IWorkDistributor.
+/// Full live streaming is restored in Spec 045.
+/// </para>
 /// </summary>
 public class AgentMonitoringPageService
 {
@@ -25,30 +27,22 @@ public class AgentMonitoringPageService
     private readonly IActiveRunQueryService _activeRunQuery;
     private readonly IAgentRegistryService _registry;
     private readonly JobDeduplicationGuardService _dispatcher;
-    private readonly IOrchestratorRunService _runService;
-    private readonly PipelineRunLifecycleService _lifecycle;
     private readonly IConfigurationStore _configStore;
     private readonly IConsolidationService _consolidationService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly IWorkDistributor _workDistributor;
-    private readonly IHubContext<AgentHub, IAgentHubClient> _hubContext;
     private readonly IPipelineRunHistoryService _historyService;
-    private readonly IRunLifecycleManager _lifecycleManager;
 
     public AgentMonitoringPageService(AgentMonitoringPageServiceDependencies deps)
     {
         _activeRunQuery = deps.ActiveRunQuery;
         _registry = deps.Registry;
         _dispatcher = deps.Dispatcher;
-        _runService = deps.RunService;
-        _lifecycle = deps.Lifecycle;
         _configStore = deps.ConfigStore;
         _consolidationService = deps.ConsolidationService;
         _pendingWorkQuery = deps.PendingWorkQuery;
         _workDistributor = deps.WorkDistributor;
-        _hubContext = deps.HubContext;
         _historyService = deps.HistoryService;
-        _lifecycleManager = deps.LifecycleManager;
     }
 
     // ── State ──
@@ -159,31 +153,19 @@ public class AgentMonitoringPageService
 
     // ── Orchestration Methods ──
 
+    /// <summary>
+    /// Spec 044 (degraded mode): routes all cancel requests through IWorkDistributor.
+    /// IOrchestratorRunService and IRunLifecycleManager are no longer in the monolith.
+    /// </summary>
     public async Task CancelAgentRunByIdAsync(string runId)
     {
-        // TODO: Original code used PipelineService.GetAllActiveRuns() which also includes the legacy
-        // PipelineRunLifecycleService.ActiveRun. Using _runService.GetRun only checks OrchestratorRunService.
-        // Align if legacy ActiveRun is ever used in production.
-        var run = _runService.GetRun(runId);
-        if (run != null)
-        {
-            await CancelAgentRunAsync(run);
-            return;
-        }
-
-        // Run not in-memory (DB mode after restart) — cancel WorkItem directly
         try
         {
             var cancelled = await _workDistributor.CancelJobAsync(runId, CancellationToken.None);
             if (cancelled)
-            {
                 Logger.Information("Cancelled WorkItem {RunId} via IWorkDistributor", runId);
-            }
             else
-            {
-                // WorkItem might already be terminal (Failed/Succeeded) — just log
                 Logger.Information("WorkItem {RunId} could not be cancelled (already terminal or not found) — refreshing UI", runId);
-            }
         }
         catch (Exception ex)
         {
@@ -193,38 +175,24 @@ public class AgentMonitoringPageService
         await RefreshDataAsync();
     }
 
+    /// <summary>
+    /// Spec 044 (degraded mode): CancelJob hub message cannot be sent (hub is in the API).
+    /// Cancels via WorkDistributor only.
+    /// </summary>
     public async Task CancelAgentRunAsync(PipelineRun run)
     {
-        var agent = run.AgentId is not null ? _registry.GetByAgentId(run.AgentId) : null;
-
-        // If agent not found (disconnected, never registered, or null),
-        // delegate to lifecycle manager — there's no agent to send CancelJob to.
-        if (agent == null)
-        {
-            Logger.Information("Cancel: agent '{AgentId}' not found for run {RunId}, delegating to lifecycle manager", run.AgentId, run.RunId);
-            await _lifecycleManager.CancelRunAsync(run.RunId, CancellationToken.None, "Cancelled — agent not available");
-            await RefreshDataAsync();
-            return;
-        }
-
-        // Short-circuit: if the run is orphan-restored (agent crashed and lost its state),
-        // the agent can't act on CancelJob — delegate to lifecycle manager.
-        if (agent.OrphanRestoredAt is not null)
-        {
-            Logger.Information("Cancel short-circuit: run {RunId} is orphan-restored, delegating to lifecycle manager", run.RunId);
-            await _lifecycleManager.CancelRunAsync(run.RunId, CancellationToken.None, "Cancelled — agent lost job state (container restart)");
-            await RefreshDataAsync();
-            return;
-        }
-
+        // Spec 044: no hub context available in the monolith — cancel via WorkDistributor.
+        // CancelJob signal to the agent is not sent here; the agent will be notified via
+        // the API hub once 045 restores live streaming.
+        Logger.Information("Cancel (degraded mode): run {RunId} — delegating to IWorkDistributor", run.RunId);
         try
         {
-            await _hubContext.Clients.Client(agent.ConnectionId).CancelJob(run.RunId);
+            await _workDistributor.CancelJobAsync(run.RunId, CancellationToken.None);
         }
-        catch (Exception ex) { Logger.Warning(ex, "Failed to send CancelJob to agent {AgentId}", run.AgentId); }
-
-        // Delegate to lifecycle manager with failure reason
-        await _lifecycleManager.CancelRunAsync(run.RunId, CancellationToken.None, "Cancelled by user");
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to cancel WorkItem {RunId} via IWorkDistributor", run.RunId);
+        }
 
         await RefreshDataAsync();
     }
@@ -232,7 +200,6 @@ public class AgentMonitoringPageService
     public async Task RemoveFromQueueAsync(string issueIdentifier, string issueProviderId)
     {
         // In DB/K8s mode, pending jobs are WorkItem rows — cancel via WorkDistributor.
-        // Find the WorkItemId from the cached queue data.
         var job = QueuedJobs.FirstOrDefault(j => j.IssueIdentifier == issueIdentifier && j.IssueProviderId == issueProviderId);
         if (job?.WorkItemId is not null)
         {
@@ -247,7 +214,6 @@ public class AgentMonitoringPageService
         }
         else
         {
-            // Legacy in-memory mode fallback
             _dispatcher.RemoveFromQueue(issueIdentifier, issueProviderId);
         }
 
@@ -260,35 +226,24 @@ public class AgentMonitoringPageService
         await RefreshDataAsync(includeConsolidation: true);
     }
 
-    public async Task ForceDisconnectAsync(AgentEntry agent)
+    /// <summary>
+    /// Spec 044 (degraded mode): ForceDisconnect hub message cannot be sent (hub is in the API).
+    /// Deregisters the agent from the local registry only.
+    /// </summary>
+    public Task ForceDisconnectAsync(AgentEntry agent)
     {
         try
         {
-            if (agent.Status != AgentStatus.Disconnected)
-            {
-                try { await _hubContext.Clients.Client(agent.ConnectionId).ForceDisconnect(); }
-                catch (Exception ex) { Logger.Warning(ex, "Agent {AgentId} did not respond to force disconnect", agent.AgentId); }
-            }
-
-            if (agent.ActiveJobId != null)
-            {
-                var activeRun = _lifecycle.GetAllActiveRuns()
-                    .FirstOrDefault(r => r.RunId == agent.ActiveJobId);
-                if (activeRun != null)
-                {
-                    activeRun.FailureReason = "Force disconnected by operator";
-                    activeRun.CurrentStep = PipelineStep.Failed;
-                    // TODO: Original code only set CompletedAt (not CompletedAtOffset). MarkCompleted() now sets both — verify no downstream logic relies on CompletedAtOffset==null for force-disconnected runs.
-                    activeRun.MarkCompleted();
-                }
-            }
-
+            // Spec 044: no hub context available — skip ForceDisconnect signal.
+            // The agent will be swept by HeartbeatMonitorService in the API.
+            Logger.Information("ForceDisconnect (degraded mode): deregistering agent {AgentId} from local registry", agent.AgentId);
             _registry.Deregister(agent.AgentId);
         }
         catch (Exception ex)
         {
             Logger.Warning(ex, "Force disconnect failed for agent {AgentId}", agent.AgentId);
         }
+        return Task.CompletedTask;
     }
 
     public static void EnableAgent(AgentEntry agent) => agent.Disabled = false;

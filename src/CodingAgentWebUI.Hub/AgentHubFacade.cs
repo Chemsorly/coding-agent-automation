@@ -2,7 +2,6 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -22,7 +21,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IAgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
     private readonly JobDeduplicationGuardService _dispatcher;
-    private readonly JobQueueDrainService _drainService;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
@@ -38,7 +36,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
         ArgumentNullException.ThrowIfNull(deps.Registry);
         ArgumentNullException.ThrowIfNull(deps.RunService);
         ArgumentNullException.ThrowIfNull(deps.Dispatcher);
-        ArgumentNullException.ThrowIfNull(deps.DrainService);
         ArgumentNullException.ThrowIfNull(deps.HistoryService);
         ArgumentNullException.ThrowIfNull(deps.ConfigStore);
         ArgumentNullException.ThrowIfNull(deps.ProviderFactory);
@@ -47,7 +44,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _registry = deps.Registry;
         _runService = deps.RunService;
         _dispatcher = deps.Dispatcher;
-        _drainService = deps.DrainService;
         _historyService = deps.HistoryService;
         _configStore = deps.ConfigStore;
         _providerFactory = deps.ProviderFactory;
@@ -156,7 +152,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public void Signal()
     {
-        _drainService.Signal();
+        // No-op after Spec 044 — Legacy/SignalR queue dispatch removed in Spec 041.
+        // JobQueueDrainService was removed in Spec 044 Task 15d.
     }
 
     /// <inheritdoc />

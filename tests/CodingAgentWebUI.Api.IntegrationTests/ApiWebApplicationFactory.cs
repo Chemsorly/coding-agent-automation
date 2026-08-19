@@ -123,10 +123,6 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             // requires Kubernetes/hub infra that's not available in tests)
             services.RemoveAll<IConsolidationDispatchService>();
             services.AddSingleton<IConsolidationDispatchService>(new NoOpConsolidationDispatchService());
-
-            // Replace IJobDispatcher with a no-op stub (Legacy dispatch is dead after Spec 041)
-            services.RemoveAll<IJobDispatcher>();
-            services.AddSingleton<IJobDispatcher>(new NoOpJobDispatcher());
         });
     }
 
@@ -204,23 +200,6 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
     private sealed class NoOpDatabaseProbe : IDatabaseProbe
     {
         public Task ProbeAsync(CancellationToken ct) => Task.CompletedTask;
-    }
-
-    private sealed class NoOpJobDispatcher : IJobDispatcher
-    {
-        public bool HasRegisteredAgents => false;
-        public bool IsIssueBeingProcessedOrQueued(IssueIdentifier i, ProviderConfigId p) => false;
-        public Task<bool> TryDispatchAsync(IssueIdentifier i, ProviderConfigId ip, ProviderConfigId rp,
-            string? bp, string? pp, string by, CancellationToken ct, string? title = null, PipelineProject? proj = null)
-            => Task.FromResult(false);
-        public Task<bool> TryDispatchReviewAsync(ReviewDispatchRequest r, CancellationToken ct, PipelineProject? proj = null)
-            => Task.FromResult(false);
-        public Task<bool> TryDispatchDecompositionAsync(IssueIdentifier e, string t, PipelineRunType ph,
-            ProviderConfigId i, ProviderConfigId r, string? b, string by, CancellationToken ct,
-            string? s = null, PipelineProject? proj = null)
-            => Task.FromResult(false);
-        public Task<bool> DispatchToAgentDirectAsync(AgentEntry a, PendingJob j, IReadOnlyList<string> l, CancellationToken ct)
-            => Task.FromResult(false);
     }
 
     private sealed class NoOpConsolidationDispatchService : IConsolidationDispatchService

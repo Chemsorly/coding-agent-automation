@@ -99,15 +99,41 @@ To roll back to a previous version: restore from backup using the import endpoin
 
 ── Upgrade Notes ─────────────────────────────────────────────────────────────
 
-Let in-flight work finish before upgrading — there is no drain hook. Jobs already
-dispatched run to completion regardless, but new dispatch is paused during the
-rollout. For zero downtime, wait until WorkItems reach terminal state, then upgrade.
+⚠️  HUB CUTOVER (Spec 044) — IN-FLIGHT WORK IS NOT PRESERVED.
+Agent runs in progress at upgrade time will be orphaned. See procedure below.
 
-Spec 043 changes (current):
+To upgrade from a pre-044 deployment:
+
+  1. Record active agent Jobs before upgrading:
+       kubectl get jobs -l app.kubernetes.io/managed-by=caa-orchestrator \
+         -n {{ .Release.Namespace }}
+
+  2. Upgrade:
+       helm upgrade {{ .Release.Name }} <chart> [--values ...]
+
+  3. Explicitly delete orphaned Jobs if needed:
+       kubectl delete jobs -l app.kubernetes.io/managed-by=caa-orchestrator \
+         -n {{ .Release.Namespace }} --field-selector status.active=1
+     Note: HubConnectionManager uses InfiniteRetryPolicy — orphaned agents retry
+     forever rather than exiting. However, JobSpecBuilder sets ActiveDeadlineSeconds
+     (job timeout + 60s), so orphaned Jobs will expire automatically once their
+     deadline is reached. Step 3 is only required if you need immediate cleanup
+     before the deadline. Deleting a Job releases its credential PVC.
+
+  4. Re-queue failed WorkItems if needed:
+     WorkItems are reconciled to Failed by the reconciliation loop and can be
+     re-queued via POST /api/work-items/{id}/requeue.
+
+Spec 044 changes (current):
+  - Agent pods now connect to the Pipeline API (CodingAgentWebUI.Api) instead of
+    the orchestrator (CodingAgentWebUI). The ORCHESTRATOR_URL env var in agent Jobs
+    points at the API service URL.
+  - The orchestrator no longer hosts AgentHub or WorkItem HTTP endpoints.
+  - The Pipeline API is the authoritative hub for real-time agent communication.
+
+Spec 043 changes:
   - Template validation in Settings is unavailable after 043 until a
     GET /api/config/job-templates endpoint is added.
-  - "Fetch Models" in Settings UI is non-functional from 043 until Spec 044
-    adds GET /api/config/models and re-points the UI.
   - The job-templates.yaml ConfigMap must be mounted to the Job Controller pod
     (not the orchestrator). Changes to job-templates.yaml require a Job Controller
     rollout: kubectl rollout restart deployment/<release>-jobcontroller -n <namespace>
@@ -190,6 +216,11 @@ Single-replica mode. Scale to multiple replicas with:
 {{- if .Values.api.enabled }}
 
 ## Pipeline API (api.enabled=true)
+
+**REQUIRED for multi-replica API:** signalr.redis.enabled: true
+Without Redis, hub group events (OnOutputLines, OnStepTransition, etc.) are
+process-local and will not reach UI circuits connected to a different replica —
+runs will appear frozen in the UI.
 
 **api.replicas must remain 1.**
 The SignalR Redis backplane (signalr.redis.enabled) enables hub message delivery across

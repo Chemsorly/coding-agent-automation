@@ -68,45 +68,32 @@ public class AgentStartupConfigModeTests
         config.IsWorkItemMode.Should().BeFalse();
     }
 
-    // ── Fallback / regression guard for absent --mode ─────────────────────────
+    // ── Tests for absent --mode and unknown --mode → now throw ───────────────
 
     [Fact]
-    public async Task WhenModeIsAbsent_WithWorkItemId_FallsBackToInference_WorkItemMode()
+    public async Task ResolveAsync_NoMode_Throws()
     {
         using var _ = SetRequiredEnvVars();
 
-        // Regression guard: behavior must be unchanged when --mode is absent.
-        // If --work-item-id is present, IsWorkItemMode is true.
-        var config = await AgentStartupConfig.ResolveAsync(
-            ["--work-item-id=some-id"]);
+        var act = async () => await AgentStartupConfig.ResolveAsync([]);
 
-        config.IsWorkItemMode.Should().BeTrue();
-        config.WorkItemId.Should().Be("some-id");
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.And.Message.Should().Contain("--mode is required");
+        ex.And.Message.Should().Contain("workitem");
+        ex.And.Message.Should().Contain("chat");
     }
 
     [Fact]
-    public async Task WhenModeIsAbsent_WithoutWorkItemId_FallsBackToInference_ChatMode()
+    public async Task ResolveAsync_UnknownMode_Throws()
     {
         using var _ = SetRequiredEnvVars();
 
-        // Regression guard: no --mode and no --work-item-id → chat mode (IsWorkItemMode = false).
-        var config = await AgentStartupConfig.ResolveAsync([]);
+        var act = async () => await AgentStartupConfig.ResolveAsync(["--mode=unknown"]);
 
-        config.IsWorkItemMode.Should().BeFalse();
-    }
-
-    // ── Unknown --mode value ──────────────────────────────────────────────────
-
-    [Fact]
-    public async Task WhenModeIsUnknown_FallsBackToInference()
-    {
-        using var _ = SetRequiredEnvVars();
-
-        // Unknown value → fallback to work-item-id inference (no throw).
-        var config = await AgentStartupConfig.ResolveAsync(
-            ["--mode=unknown", "--work-item-id=wid-1"]);
-
-        config.IsWorkItemMode.Should().BeTrue("inference: work-item-id present → work-item mode");
+        var ex = await act.Should().ThrowAsync<InvalidOperationException>();
+        ex.And.Message.Should().Contain("unknown");
+        ex.And.Message.Should().Contain("workitem");
+        ex.And.Message.Should().Contain("chat");
     }
 
     // ── Helper ───────────────────────────────────────────────────────────────

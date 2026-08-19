@@ -30,6 +30,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly IGateCommentFormatter _gateCommentFormatter;
     private readonly IAgentOrphanRecoveryService _orphanRecoveryService;
     private readonly ILogger _logger;
+    private readonly IHubContext<AgentHub> _uiContext;
 
     /// <summary>
     /// Primary constructor used by SignalR's hub activator (ActivatorUtilities).
@@ -51,20 +52,31 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _gateCommentFormatter = deps.GateCommentFormatter;
         _orphanRecoveryService = deps.OrphanRecoveryService;
         _logger = deps.Logger;
+        _uiContext = deps.UiContext;
     }
 
     /// <summary>
     /// Validates that the connecting agent provided an <c>agentId</c> query parameter.
-    /// Rejects the connection if missing.
+    /// Operator connections (no <c>agentId</c>) are allowed through — they are authenticated
+    /// as "operator" callers for hub group subscriptions (e.g. UI circuits).
     /// </summary>
     public override Task OnConnectedAsync()
     {
         var agentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
         if (string.IsNullOrWhiteSpace(agentId))
         {
-            _logger.Warning("Connection {ConnectionId} rejected — missing agentId query parameter", Context.ConnectionId);
-            Context.Abort();
-            return Task.CompletedTask;
+            // Check auth_kind claim — operator connections are valid without agentId
+            var authKind = Context.User?.FindFirst("auth_kind")?.Value;
+            if (!string.Equals(authKind, "operator", StringComparison.Ordinal))
+            {
+                _logger.Warning("Connection {ConnectionId} rejected — missing agentId query parameter and not an operator",
+                    Context.ConnectionId);
+                Context.Abort();
+                return Task.CompletedTask;
+            }
+
+            _logger.Debug("Operator connection established: connectionId={ConnectionId}", Context.ConnectionId);
+            return base.OnConnectedAsync();
         }
 
         _logger.Information("Agent connection established: agentId={AgentId}, connectionId={ConnectionId}", agentId, Context.ConnectionId);

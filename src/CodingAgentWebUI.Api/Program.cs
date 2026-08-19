@@ -96,10 +96,9 @@ app.MapApiHealthEndpoints();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// SignalR hub — same type, same route as the monolith (dark until Spec 044)
+// SignalR hub -- agents connect here; ORCHESTRATOR_URL re-pointed to this host in Spec 044
 app.MapHub<AgentHub>(HubRoutes.Agent).RequireAuthorization("AgentApiKey");
 
-// REST endpoint stubs — Tasks 6-9 fill these in
 app.MapWorkItemEndpoints();
 app.MapPipelineRunEndpoints();
 app.MapConfigEndpoints();

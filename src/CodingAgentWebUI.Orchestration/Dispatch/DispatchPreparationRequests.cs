@@ -1,48 +1,10 @@
 using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
-
-/// <summary>
-/// Parameter object for <see cref="DecompositionDispatchPreparation"/> constructor.
-/// Groups the 12 dispatch-specific parameters to satisfy S107.
-/// </summary>
-internal sealed record DecompositionDispatchRequest(
-    DispatchInfrastructure Infra,
-    IDispatchRunCreator Orchestration,
-    ILogger Logger,
-    AgentEntry Agent,
-    IssueIdentifier EpicIdentifier,
-    string EpicTitle,
-    PipelineRunType PhaseType,
-    ProviderConfigId IssueProviderId,
-    ProviderConfigId RepoProviderId,
-    string? BrainProviderId,
-    string InitiatedBy,
-    string? DecompositionSource);
-
-/// <summary>
-/// Parameter object for <see cref="ImplementationDispatchPreparation"/> constructor.
-/// Groups the 11 dispatch-specific parameters to satisfy S107.
-/// </summary>
-internal sealed record ImplementationDispatchRequest(
-    DispatchInfrastructure Infra,
-    IDispatchRunCreator Orchestration,
-    ILogger Logger,
-    AgentEntry Agent,
-    IssueIdentifier IssueIdentifier,
-    ProviderConfigId IssueProviderId,
-    ProviderConfigId RepoProviderId,
-    string? BrainProviderId,
-    string? PipelineProviderId,
-    string InitiatedBy,
-    IReadOnlyList<string> RequiredLabels);
 
 /// <summary>
 /// Parameter object for <see cref="DispatchInfrastructure.PrepareDispatchCoreAsync"/>.

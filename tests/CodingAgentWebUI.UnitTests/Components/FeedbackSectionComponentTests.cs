@@ -1,15 +1,11 @@
 using Bunit;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Hub;
-using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Moq;
@@ -42,21 +38,14 @@ public class FeedbackSectionComponentTests : BunitContext
         var mockFactory = new Mock<IProviderFactory>();
         var mockValidator = new Mock<IQualityGateValidator>();
 
-        var runService = new OrchestratorRunService(mockLogger.Object);
-        var lifecycle = new PipelineRunLifecycleService(_mockHistoryService.Object, runService, mockLogger.Object);
-
         var registry = new AgentRegistryService(mockLogger.Object);
 
-        Services.AddSingleton(lifecycle);
-        Services.AddSingleton<IChangeNotifier>(lifecycle);
+        Services.AddSingleton<IChangeNotifier>(new NullChangeNotifier());
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
-        Services.AddSingleton(runService);
-        Services.AddSingleton<IOrchestratorRunService>(runService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockHistoryService.Object);
-        Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(Mock.Of<ILabelService>());
         Services.AddSingleton(Mock.Of<IConsolidationService>(s =>
@@ -64,30 +53,21 @@ public class FeedbackSectionComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<IActiveRunQueryService>(s =>
             s.GetActiveRunsAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ActiveRunSummary>>(Array.Empty<ActiveRunSummary>())));
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
-        Services.AddSingleton(Mock.Of<IRunLifecycleManager>());
         Services.AddSingleton<IPendingWorkQuery>(Mock.Of<IPendingWorkQuery>(q =>
             q.GetPendingJobsAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<PendingJob>>(Array.Empty<PendingJob>())));
 
         Services.AddSingleton(TimeProvider.System);
 
-        // TODO: This AgentMonitoringPageServiceDependencies registration block is copy-pasted verbatim in
-        // AgentMonitoringComponentTests, AgentMonitoringPageComponentTests, and FeedbackSectionComponentTests.
-        // Any future change to AgentMonitoringPageServiceDependencies constructor signature must be applied
-        // in all three places. Extract into a shared helper or base class to avoid drift.
         // Register AgentMonitoringPageServiceDependencies so DI can auto-construct AgentMonitoringPageService.
         Services.AddScoped(sp => new AgentMonitoringPageServiceDependencies(
             sp.GetRequiredService<IActiveRunQueryService>(),
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<PipelineRunLifecycleService>(),
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<IPendingWorkQuery>(),
             sp.GetRequiredService<IWorkDistributor>(),
-            sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IRunLifecycleManager>()));
+            sp.GetRequiredService<IPipelineRunHistoryService>()));
 
         // Page service — resolved via DI with all dependencies above
         Services.AddScoped<AgentMonitoringPageService>();

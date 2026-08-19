@@ -23,7 +23,6 @@ public sealed class AgentHubFacadeTests
     private readonly Mock<IPipelineRunHistoryService> _mockHistory = new();
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
-    private readonly JobQueueDrainService _drainService;
     private readonly AgentHubFacade _facade;
     private readonly ILogger<AgentHubFacadeDependencies> _facadeLogger = NullLogger<AgentHubFacadeDependencies>.Instance;
 
@@ -32,14 +31,11 @@ public sealed class AgentHubFacadeTests
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
-        _drainService = new JobQueueDrainService(new JobQueueDrainDependencies(_dispatcher, _registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(), new ShutdownSignal(), _mockLogger.Object));
 
         _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
             _registry,
             _runService,
             _dispatcher,
-            _drainService,
             _mockHistory.Object,
             _mockConfigStore.Object,
             _mockProviderFactory.Object,
@@ -51,49 +47,42 @@ public sealed class AgentHubFacadeTests
     [Fact]
     public void Ctor_NullRegistry_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(null!, _runService, _dispatcher, _drainService, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(null!, _runService, _dispatcher, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullRunService_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, null!, _dispatcher, _drainService, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, null!, _dispatcher, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullDispatcher_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, null!, _drainService, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void Ctor_NullDrainService_Throws()
-    {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _dispatcher, null!, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, null!, _mockHistory.Object, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullHistoryService_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _dispatcher, _drainService, null!, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _dispatcher, null!, _mockConfigStore.Object, _mockProviderFactory.Object, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullConfigStore_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _dispatcher, _drainService, _mockHistory.Object, null!, _mockProviderFactory.Object, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _dispatcher, _mockHistory.Object, null!, _mockProviderFactory.Object, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullProviderFactory_Throws()
     {
-        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _dispatcher, _drainService, _mockHistory.Object, _mockConfigStore.Object, null!, _facadeLogger));
+        var act = () => new AgentHubFacade(new AgentHubFacadeDependencies(_registry, _runService, _dispatcher, _mockHistory.Object, _mockConfigStore.Object, null!, _facadeLogger));
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -204,9 +193,10 @@ public sealed class AgentHubFacadeTests
     }
 
     [Fact]
-    public void Signal_DelegatesToDrainService()
+    public void Signal_IsNoOp_AfterSpec044()
     {
-        // Enqueue a job — Signal() is a no-op on queue contents (it just wakes the drain loop)
+        // Signal() is a no-op after Spec 044 — JobQueueDrainService was removed.
+        // Verify it does not throw and does not mutate the queue.
         _dispatcher.EnqueueJob(new PendingJob
         {
             IssueIdentifier = "org/repo#99",
@@ -219,7 +209,6 @@ public sealed class AgentHubFacadeTests
 
         _facade.Signal();
 
-        // Signal must not dequeue or otherwise mutate the job queue
         _dispatcher.QueueLength.Should().Be(queueLengthBefore, "Signal() must not modify the queue itself");
     }
 
@@ -287,7 +276,6 @@ public sealed class AgentHubFacadeTests
             _registry,
             _runService,
             _dispatcher,
-            _drainService,
             _mockHistory.Object,
             _mockConfigStore.Object,
             _mockProviderFactory.Object,

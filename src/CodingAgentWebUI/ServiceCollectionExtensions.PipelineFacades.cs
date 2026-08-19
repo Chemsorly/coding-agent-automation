@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
 using Serilog;
 
 namespace CodingAgentWebUI;
@@ -36,8 +37,11 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IProviderFactory>(),
                 Log.Logger));
         services.AddSingleton<IDispatchRunCreator>(sp => sp.GetRequiredService<DispatchRunCreationService>());
-        services.AddSingleton<IChangeNotifier>(sp =>
-            sp.GetRequiredService<PipelineRunLifecycleService>());
+
+        // Spec 044: IChangeNotifier replaced with NullChangeNotifier.
+        // The monolith no longer owns in-memory run state — IOrchestratorRunService moved to API.
+        // NullChangeNotifier bridges AgentMonitoring.razor.cs's [Inject] IChangeNotifier until Spec 045.
+        services.AddSingleton<IChangeNotifier, NullChangeNotifier>();
         services.AddSingleton<IChatNotifier>(sp =>
             sp.GetRequiredService<PipelineRunLifecycleService>());
     }

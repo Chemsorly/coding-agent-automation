@@ -1,7 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
-
 namespace CodingAgentWebUI.Hub;
 
 public sealed partial class AgentHub
@@ -33,6 +32,7 @@ public sealed partial class AgentHub
     /// <summary>
     /// Agent reports job completion. Updates the PipelineRun, persists to history,
     /// transitions agent to Idle, and signals the drain service for next dispatch.
+    /// Also pushes <see cref="IAgentHubUiClient.OnRunCompleted"/> to the run group.
     /// </summary>
     [RequiresActiveJob]
     public async Task ReportJobCompleted(JobId jobId, JobCompletionPayload payload)
@@ -41,15 +41,20 @@ public sealed partial class AgentHub
 
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         await _lifecycleService.HandleJobCompletedAsync(jobId, agent, payload, CancellationToken.None);
+
+        // Push completion event to subscribed UI circuits (Req 4.1, 5.2)
+        await _uiContext.Clients.Group($"run-{jobId.Value}")
+            .SendAsync(HubMethodNames.OnRunCompleted, jobId.Value, payload);
     }
 
     // ── Real-time status ────────────────────────────────────────────────
 
     /// <summary>
     /// Updates the PipelineRun's CurrentStep and HighWaterMark, applies optional step metadata, notifies UI.
+    /// Also pushes <see cref="IAgentHubUiClient.OnStepTransition"/> to the run group.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportStepTransition(JobId jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata = null)
+    public async Task ReportStepTransition(JobId jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata = null)
     {
         _lifecycleService.HandleStepTransition(jobId, step, timestamp, metadata);
 
@@ -63,14 +68,17 @@ public sealed partial class AgentHub
             agent.OrphanRestoredAt = null;
         }
 
-        return Task.CompletedTask;
+        // Push step transition event to subscribed UI circuits (Req 5.2)
+        await _uiContext.Clients.Group($"run-{jobId.Value}")
+            .SendAsync(HubMethodNames.OnStepTransition, jobId.Value, step, timestamp);
     }
 
     /// <summary>
     /// Reports the result of brain repository synchronization so the UI can display context status.
+    /// Also pushes <see cref="IAgentHubUiClient.OnBrainSyncResult"/> to the run group.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportBrainSyncResult(JobId jobId, bool contextLoaded, int knowledgeFileCount)
+    public async Task ReportBrainSyncResult(JobId jobId, bool contextLoaded, int knowledgeFileCount)
     {
         var run = _facade.GetRun(jobId);
         if (run is not null)
@@ -82,14 +90,17 @@ public sealed partial class AgentHub
             _changeNotifier.NotifyChange();
         }
 
-        return Task.CompletedTask;
+        // Push brain sync result to subscribed UI circuits (Req 5.2)
+        await _uiContext.Clients.Group($"run-{jobId.Value}")
+            .SendAsync(HubMethodNames.OnBrainSyncResult, jobId.Value, contextLoaded, knowledgeFileCount);
     }
 
     /// <summary>
     /// Enqueues output lines into the run's OutputRingBuffer and the run's OutputLines queue.
+    /// Also pushes <see cref="IAgentHubUiClient.OnOutputLines"/> to the run group.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportOutputLines(JobId jobId, IReadOnlyList<string> lines)
+    public async Task ReportOutputLines(JobId jobId, IReadOnlyList<string> lines)
     {
         ArgumentNullException.ThrowIfNull(lines);
 
@@ -106,28 +117,34 @@ public sealed partial class AgentHub
             _changeNotifier.NotifyChange();
         }
 
-        return Task.CompletedTask;
+        // Push output lines to subscribed UI circuits (Req 2.4, 5.2)
+        await _uiContext.Clients.Group($"run-{jobId.Value}")
+            .SendAsync(HubMethodNames.OnOutputLines, jobId.Value, lines);
     }
 
     /// <summary>
     /// Adds a chat entry to the run's chat history.
+    /// Also pushes <see cref="IAgentHubUiClient.OnChatEntry"/> to the run group.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportChatEntry(JobId jobId, ChatRole role, string content)
+    public async Task ReportChatEntry(JobId jobId, ChatRole role, string content)
     {
         ArgumentNullException.ThrowIfNull(content);
 
         var run = _facade.GetRun(jobId);
         run?.ChatHistory.Enqueue(new ChatEntry { Role = role, Content = content, Timestamp = DateTime.UtcNow });
 
-        return Task.CompletedTask;
+        // Push chat entry to subscribed UI circuits (Req 5.2)
+        await _uiContext.Clients.Group($"run-{jobId.Value}")
+            .SendAsync(HubMethodNames.OnChatEntry, jobId.Value, role, content);
     }
 
     /// <summary>
     /// Updates the run's quality gate report and history.
+    /// Also pushes <see cref="IAgentHubUiClient.OnQualityGateResult"/> to the run group.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportQualityGateResult(JobId jobId, QualityGateReport report)
+    public async Task ReportQualityGateResult(JobId jobId, QualityGateReport report)
     {
         ArgumentNullException.ThrowIfNull(report);
 
@@ -139,6 +156,8 @@ public sealed partial class AgentHub
             _logger.Information("Job {JobId} quality gate result received", jobId.Value);
         }
 
-        return Task.CompletedTask;
+        // Push quality gate result to subscribed UI circuits (Req 5.2)
+        await _uiContext.Clients.Group($"run-{jobId.Value}")
+            .SendAsync(HubMethodNames.OnQualityGateResult, jobId.Value, report);
     }
 }

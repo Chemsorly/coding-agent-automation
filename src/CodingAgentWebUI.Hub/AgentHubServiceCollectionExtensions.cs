@@ -7,6 +7,7 @@ using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -22,7 +23,6 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<AgentRegistryService>(),
             sp.GetRequiredService<OrchestratorRunService>(),
             sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<JobQueueDrainService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProviderFactory>(),
@@ -75,7 +75,8 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<IAgentTokenRefreshService>(),
             sp.GetRequiredService<IGateCommentFormatter>(),
             Log.Logger,
-            sp.GetRequiredService<IAgentOrphanRecoveryService>()));
+            sp.GetRequiredService<IAgentOrphanRecoveryService>(),
+            sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub>>()));
 
         return services;
     }

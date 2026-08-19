@@ -10,15 +10,18 @@ namespace CodingAgentWebUI.Agent;
 /// Agent pods run in one of two execution modes:
 /// <list type="bullet">
 ///   <item><term>Work-item mode</term><description>
-///     Started by <c>DispatchService</c> with <c>--work-item-id</c>. Runs
-///     <see cref="WorkItemAgentService"/> to execute a single pipeline work item, then exits.
+///     Started by <c>DispatchService</c> with <c>--mode=workitem</c> and <c>--work-item-id</c>.
+///     Runs <see cref="WorkItemAgentService"/> to execute a single pipeline work item, then exits.
 ///   </description></item>
 ///   <item><term>Chat mode</term><description>
-///     Started by <c>ChatJobDispatcher</c> without <c>--work-item-id</c>. Runs
+///     Started by <c>ChatJobDispatcher</c> with <c>--mode=chat</c>. Runs
 ///     <c>AgentWorkerService</c> and stays connected to the orchestrator hub to serve
 ///     interactive chat sessions and consolidation jobs.
 ///   </description></item>
 /// </list>
+/// <para>
+/// <c>--mode</c> is required. Absent or unrecognised values throw <see cref="InvalidOperationException"/>.
+/// </para>
 /// <see cref="IsWorkItemMode"/> discriminates between these two modes.
 /// </remarks>
 internal sealed record AgentStartupConfig
@@ -40,8 +43,8 @@ internal sealed record AgentStartupConfig
             .FirstOrDefault(a => a.StartsWith(AgentDefaults.CliWorkItemIdPrefix, StringComparison.OrdinalIgnoreCase))
             ?.Substring(AgentDefaults.CliWorkItemIdPrefix.Length);
 
-        // Parse --mode flag (Spec 043 Req 13b.2).
-        // Valid values: "workitem" | "chat". Absent or unknown → fallback to work-item-id inference.
+        // Parse --mode flag (Spec 043 Req 13b.2, mandatory as of Spec 044 Req C5.1b).
+        // Valid values: "workitem" | "chat". Absent or unknown → InvalidOperationException.
         var modeArg = args
             .FirstOrDefault(a => a.StartsWith("--mode=", StringComparison.OrdinalIgnoreCase))
             ?.Split('=', 2)[1];
@@ -58,15 +61,15 @@ internal sealed record AgentStartupConfig
         {
             isWorkItemMode = false;
         }
+        else if (modeArg is null)
+        {
+            throw new InvalidOperationException(
+                "--mode is required. Valid values: workitem | chat.");
+        }
         else
         {
-            // Fallback: --mode absent → use inference (is --work-item-id present?)
-            // --mode will be mandatory in Spec 044; this branch is a backward-compat shim.
-            isWorkItemMode = workItemId is not null;
-            if (modeArg is not null)
-                Serilog.Log.Warning("Unknown --mode value '{Mode}' — falling back to work-item-id inference. Expected: workitem | chat", modeArg);
-            else
-                Serilog.Log.Debug("--mode flag absent — falling back to work-item-id inference. Chat pods do not yet emit --mode (Spec 044 adds it).");
+            throw new InvalidOperationException(
+                $"Unknown --mode value '{modeArg}'. Valid values: workitem | chat.");
         }
 
         // Read API key: from file (K8s mode) or env var (SignalR mode)

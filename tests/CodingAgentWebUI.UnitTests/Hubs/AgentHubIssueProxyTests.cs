@@ -37,7 +37,7 @@ public sealed class AgentHubIssueProxyTests
             Mock.Of<IAgentTokenRefreshService>(),
             _mockGateFormatter.Object,
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);

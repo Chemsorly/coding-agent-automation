@@ -12,6 +12,10 @@ public interface IAgentHub
     Task RegisterAgent(AgentRegistrationMessage message);
     Task DeregisterAgent(AgentId agentId);
 
+    // UI group subscriptions (called by UI circuits, not agents)
+    Task SubscribeToRun(string jobId);
+    Task UnsubscribeFromRun(string jobId);
+
     // Job lifecycle
     Task JobAccepted(JobId jobId);
     Task JobRejected(JobId jobId, string reason);
@@ -56,11 +60,26 @@ public interface IAgentHub
 }
 
 /// <summary>
+/// Server-to-UI push events broadcast to subscribed UI circuits via hub groups.
+/// Placed in CodingAgentWebUI.Pipeline so Api.Client can reference these event names.
+/// NOT added to <see cref="IAgentHubClient"/> — that interface pushes to agent connections only.
+/// </summary>
+public interface IAgentHubUiClient
+{
+    Task OnOutputLines(string jobId, IReadOnlyList<string> lines);
+    Task OnStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp);
+    Task OnRunCompleted(string jobId, JobCompletionPayload payload);
+    Task OnChatEntry(string jobId, ChatRole role, string content);
+    Task OnQualityGateResult(string jobId, QualityGateReport report);
+    Task OnBrainSyncResult(string jobId, bool contextLoaded, int fileCount);
+}
+
+/// <summary>
 /// Client-side SignalR methods invoked by the orchestrator on agents.
 /// </summary>
 public interface IAgentHubClient
 {
-    // TODO(Spec 043/044, same branch): dead after 041 — no Legacy/SignalR dispatch remains. Removed when the hub moves out of the monolith.
+    // Hub moved to CodingAgentWebUI.Hub (Spec 042) and API (Spec 044). Monolith retains IHubContext<AgentHub,IAgentHubClient> for AgentChat.razor until Spec 045.
     Task AssignJob(JobAssignmentMessage message);
     Task CancelJob(JobId jobId);
     Task AssignChatPrompt(ChatPromptMessage message);

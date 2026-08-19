@@ -94,8 +94,7 @@ var app = builder.Build();
 
 // ── Post-Build startup sequence ─────────────────────────────────────────────
 // Each concern is extracted into its own WebApplication extension method.
-// Ordering matters: InitializeDatabaseAsync must precede RehydrateActiveRunsAsync (needs DB),
-// and MapApplicationEndpoints must precede RunConsolidationStartupAsync (needs middleware).
+// Ordering matters: InitializeDatabaseAsync must precede MapApplicationEndpoints.
 // TODO: Add unit/integration tests for each extracted startup extension method
 // (ValidateShutdownBudget, ValidateDiWiring, RegisterObservableGauges, RunConsolidationStartupAsync,
 // AutoStartPipelineLoopAsync). Extraction was done to enable independent testability but no tests
@@ -103,7 +102,8 @@ var app = builder.Build();
 
 app.ValidateShutdownBudget();
 await app.InitializeDatabaseAsync();
-await app.RehydrateActiveRunsAsync();
+// Spec 044: RehydrateActiveRunsAsync removed — IOrchestratorRunService rehydration is now performed
+// in CodingAgentWebUI.Api (Task 2). The monolith's in-memory run state is no longer authoritative.
 app.ValidateDiWiring();
 app.RegisterObservableGauges();
 app.MapApplicationEndpoints(dbConnectionString);

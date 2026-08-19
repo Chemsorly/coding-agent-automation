@@ -4,7 +4,6 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
-@using CodingAgentWebUI.Orchestration
 @using CodingAgentWebUI.Orchestration.Dispatch
 @using CodingAgentWebUI.Orchestration.Health
 @using CodingAgentWebUI.Orchestration.Registry
@@ -42,7 +41,10 @@
     @* ── Run Detail Modal ── *@
     @if (_showRunDetailModal)
     {
-        var modalRun = Lifecycle.GetAllActiveRuns().FirstOrDefault(r => r.RunId == _selectedRunId);
+        @* Spec 044 (degraded mode): PipelineRunLifecycleService removed from monolith.
+           In-memory active run state unavailable — modal shows a temporary message.
+           Full live run view restored in Spec 045 via API hub streaming. *@
+        var modalRun = (CodingAgentWebUI.Pipeline.Models.PipelineRun?)null;
         if (modalRun != null)
         {
             var modalAgent = modalRun.AgentId != null ? Registry.GetByAgentId(modalRun.AgentId) : null;
@@ -198,13 +200,14 @@
                             </div>
 
                             @{
-                                var buffer = RunService.GetOutputBuffer(modalRun.RunId);
-                                var outputLines = buffer.GetAll();
+                                // Spec 044 (degraded mode): IOrchestratorRunService removed from monolith.
+                                // Live output buffer unavailable — will be restored in Spec 045 via hub group streaming.
+                                var outputLines = System.Array.Empty<string>();
                             }
-                            @if (outputLines.Count > 0)
+                            @if (outputLines.Length > 0)
                             {
                                 <div>
-                                    <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Output (last @Math.Min(outputLines.Count, 100) lines)</h4>
+                                    <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Output (last @Math.Min(outputLines.Length, 100) lines)</h4>
                                     <div class="output-panel" id="modalOutputPanel">
                                         @foreach (var line in outputLines.TakeLast(100))
                                         {
