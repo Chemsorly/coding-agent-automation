@@ -2,7 +2,7 @@
 
 How to set up a fresh Kubernetes deployment or migrate configuration from an existing instance.
 
-<!-- TODO(Spec 045): update endpoint host/port once Spec 042 moves the config endpoints to the API service. -->
+<!-- Spec 045 Task 8b: config import/export endpoints moved to the API service (port :8090). -->
 
 ## Scenario A — Fresh Install
 
@@ -33,15 +33,17 @@ Use the HTTP API to export configuration from the old instance and import it int
 
 > ⚠️ **`POST /api/config/import` is destructive.** It clears ALL existing configuration (providers, profiles, quality gate configs, reviewer configs, projects, and job templates) before inserting the uploaded bundle. Run history, work items, and consolidation data are preserved. The operation is transactional — it fully commits or fully rolls back.
 
+> **Authentication:** Both endpoints require the `Authorization: Bearer <OPERATOR_API_KEY>` header with the operator-tier key. Agent pod keys (derived keys) are rejected with HTTP 403. Use the master key from `secrets.agentApiKey` in your Helm values for bootstrap operations. See [Authentication](#authentication) below.
+
 ### Step 1 — Export from the old instance
 
 ```bash
-curl -H "Authorization: Bearer $AGENT_API_KEY" \
+curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
   -o pipeline-config-export.json \
-  https://old-instance:8080/api/config/export
+  https://old-instance:8090/api/config/export
 ```
 
-The response is a JSON file download (`pipeline-config-export.json`) containing all configuration as a single bundle.
+The response is a JSON file download (`pipeline-config-export.json`) containing all configuration as a single bundle. **Provider secrets (Settings and Secrets dictionary values) are redacted in the export** — they appear as `"****"`. Credentials must be re-entered after import.
 
 ### Step 2 — Import into the new instance
 
@@ -49,9 +51,9 @@ The import endpoint accepts a `multipart/form-data` POST with a single form fiel
 
 ```bash
 curl -X POST \
-  -H "Authorization: Bearer $AGENT_API_KEY" \
+  -H "Authorization: Bearer $OPERATOR_API_KEY" \
   -F "file=@pipeline-config-export.json" \
-  https://new-instance:8080/api/config/import
+  https://new-instance:8090/api/config/import
 ```
 
 On success, the response body is:
@@ -67,7 +69,7 @@ On validation failure (invalid JSON, empty bundle, no file), HTTP 400 is returne
 
 ### Authentication
 
-Both endpoints require the `Authorization: Bearer <AGENT_API_KEY>` header. The `AGENT_API_KEY` is the master key set via the `secrets.agentApiKey` Helm value (or the `AGENT_API_KEY` environment variable for local runs).
+Both endpoints require the `Authorization: Bearer <OPERATOR_API_KEY>` header. The operator API key is the master key set via the `secrets.agentApiKey` Helm value (or the `AGENT_API_KEY` environment variable in the API pod). Agent-derived keys — held by agent pods — receive HTTP 403 on these endpoints (Tier 2 enforcement per Spec 042 Req 6.5).
 
 See [HTTP API Reference](api-reference.md) for full endpoint details.
 

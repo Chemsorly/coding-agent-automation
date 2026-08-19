@@ -9,13 +9,16 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using k8s;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using Polly.Registry;
 using Serilog;
@@ -214,8 +217,82 @@ public static class ApiServiceCollectionExtensions
                 sp.GetService<IJobCleanupStrategy>(),
                 sp.GetRequiredService<IWorkItemFallbackTransitionService>())));
 
-        // NO DatabaseMaintenanceService (Req 5.6a — ungated sweep on every API replica)
-        // NO WorkItemMetricsBackgroundService (Req 5.6a — duplicate static telemetry callback)
+        // ── IKubernetes + ILeaderElectionService ────────────────────────────────────────────
+        // Required by ConsolidationWorkItemDispatchService (already registered above as a hosted service)
+        // and DatabaseMaintenanceService (added in Spec 045 Task 8a.1, Req 1.3b/1.3c).
+        // LeaderElectionService uses K8s Lease-based election when running in-cluster.
+        // The Lease name is injected via LeaderElection:PipelineLoopLeaseName (Helm env var) or
+        // defaults to "caa-{release}-pipeline-loop-lock" set by orchestrator-deployment.yaml.
+        // api-rbac.yaml grants coordination.k8s.io/leases verbs (added in Spec 045 Task 8a.1).
+        services.AddSingleton<IKubernetes>(_ =>
+        {
+            try
+            {
+                var inCluster = KubernetesClientConfiguration.IsInCluster();
+                var config = inCluster
+                    ? KubernetesClientConfiguration.InClusterConfig()
+                    : KubernetesClientConfiguration.BuildDefaultConfig();
+
+                Log.Information("Kubernetes client configured (API): Source={Source} Host={Host}",
+                    inCluster ? "in-cluster" : "kubeconfig", config.Host);
+
+                if (string.IsNullOrEmpty(config.Host) || config.Host == "http://localhost:8080")
+                    return null!;
+
+                return new k8s.Kubernetes(config);
+            }
+            catch
+            {
+                Log.Warning("API: Kubernetes client unavailable — leader election inactive. " +
+                            "DatabaseMaintenanceService sweep runs ungated.");
+                return null!;
+            }
+        });
+        services.AddOptions<LeaderElectionOptions>()
+            .Configure<IConfiguration>((opts, config) =>
+            {
+                config.GetSection(LeaderElectionOptions.SectionName).Bind(opts);
+                // Also accept PipelineLoopLeaseName as an alias for LeaseName (Helm env var compat).
+                // LeaderElection__PipelineLoopLeaseName binds to LeaderElection:PipelineLoopLeaseName
+                // but LeaderElectionOptions has no such property — the alias maps it to LeaseName.
+                // Existing deployments using LeaderElection__LeaseName continue to work unchanged.
+                var leaseName = config.GetValue<string>($"{LeaderElectionOptions.SectionName}:PipelineLoopLeaseName");
+                if (!string.IsNullOrEmpty(leaseName))
+                    opts.LeaseName = leaseName;
+            });
+        // LeaderElectionService accepts a nullable IKubernetes — if null, it logs a warning
+        // and IsLeader remains false, so DatabaseMaintenanceService.RunMaintenanceCycleAsync
+        // runs ungated (the null-check guard is in the service itself via GetService).
+        services.AddSingleton<LeaderElectionService>(sp =>
+            new LeaderElectionService(
+                sp.GetRequiredService<IOptions<LeaderElectionOptions>>(),
+                sp.GetService<IKubernetes>()));
+        services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
+        services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
+
+        // ── DatabaseMaintenanceService (Spec 045 Task 8a.1, Req 1.3a/1.3b) ────────────────────
+        // Spec 042 Req 5.6a originally prohibited hosted services in the API due to ungated sweep
+        // risk. Spec 045 Task 8a.3 amends that prohibition: ILeaderElectionService is now
+        // registered above, gating the sweep via DatabaseMaintenanceService.RunMaintenanceCycleAsync()
+        // which calls _serviceProvider.GetService<ILeaderElectionService>().
+        // This is the ONLY retention sweep in the system — orphaning it causes Postgres to grow
+        // without bound while retention settings still render in the UI (Req 1.3a).
+        services.AddHostedService(sp => new DatabaseMaintenanceService(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<IConsolidationService>(),
+            sp,
+            sp.GetRequiredService<IConfiguration>(),
+            sp.GetRequiredService<IPipelineConfigStore>()));
+
+        // ── WorkItemMetricsBackgroundService (Spec 045 Task 8a.2, Req 1.3a/1.3d) ────────────────
+        // Feeds the static WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback.
+        // workdistribution.workitems_by_status is documented in observability-internals.md.
+        // Only one instance across the whole system — the monolith no longer registers it.
+        // Leader-gating is not needed: the static callback is overwritten on each registration,
+        // so two concurrent instances produce duplicate series at worst — acceptable during the
+        // brief RollingUpdate overlap window. Leader-gating would require leader acquisition
+        // before the first tick, delaying the metric rather than eliminating the brief duplicate.
+        services.AddHostedService<WorkItemMetricsBackgroundService>();
 
         // ── DispatchLifecycleService (API copy, EF-coupled) ─────────────────────────────
         // Used by ConsolidationWorkItemDispatchService and ModelFetchJobService.

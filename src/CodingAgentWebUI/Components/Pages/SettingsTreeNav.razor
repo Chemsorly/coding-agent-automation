@@ -1,7 +1,7 @@
-@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Services
-@inject IProjectStore ProjectStore
+@inject IPipelineApiConfigClient ConfigClient
 
 <div class="settings-tree">
     <div class="tree-group">
@@ -163,12 +163,12 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
+        _projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
     }
 
     public async Task RefreshProjectsAsync()
     {
-        _projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
+        _projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
         StateHasChanged();
     }
 

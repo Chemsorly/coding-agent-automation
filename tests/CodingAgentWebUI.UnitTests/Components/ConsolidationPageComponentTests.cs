@@ -1,4 +1,5 @@
 using Bunit;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -17,7 +18,7 @@ namespace CodingAgentWebUI.UnitTests.Components;
 public class ConsolidationPageComponentTests : BunitContext
 {
     private readonly Mock<IConsolidationService> _mockConsolidationService = new();
-    private readonly Mock<IConfigurationStore> _mockConfigStore = new();
+    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
     private readonly ConsolidationBadgeService _badgeService = new();
 
     private void RegisterServices(
@@ -27,7 +28,7 @@ public class ConsolidationPageComponentTests : BunitContext
     {
         var config = new PipelineConfiguration();
 
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
 
         _mockConsolidationService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
@@ -41,11 +42,11 @@ public class ConsolidationPageComponentTests : BunitContext
             .ReturnsAsync((ConsolidationRun?)null);
 
         Services.AddSingleton<IConsolidationService>(_mockConsolidationService.Object);
-        Services.AddSingleton<IConfigurationStore>(_mockConfigStore.Object);
+        Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton(_badgeService);
 
-        var mockProjectStore = new Mock<IProjectStore>();
-        mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        var mockConfigClientForProjects = _mockConfigClient;
+        mockConfigClientForProjects.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 var templateIds = (templates ?? Array.Empty<PipelineJobTemplate>()).Select(t => t.Id).ToList();
@@ -55,9 +56,8 @@ public class ConsolidationPageComponentTests : BunitContext
                     new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = templateIds, Enabled = true }
                 };
             });
-        mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        mockConfigClientForProjects.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => templates ?? Array.Empty<PipelineJobTemplate>());
-        Services.AddSingleton(mockProjectStore.Object);
     }
 
     private static PipelineJobTemplate CreateTemplate(

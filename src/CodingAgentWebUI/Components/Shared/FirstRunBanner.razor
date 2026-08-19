@@ -1,6 +1,5 @@
-@using CodingAgentWebUI.Pipeline.Interfaces
-@inject IProjectStore ProjectStore
-@inject IKeyValueStore KeyValueStore
+@using CodingAgentWebUI.Api.Client
+@inject IPipelineApiConfigClient ConfigClient
 @inject NavigationManager Navigation
 
 @if (_show)
@@ -24,8 +23,8 @@
 
     private async Task EvaluateAsync()
     {
-        var hasEnabled = await ProjectStore.HasEnabledTemplatesAsync(CancellationToken.None);
-        var dismissedValue = await KeyValueStore.GetAsync("first_run_banner_dismissed", CancellationToken.None);
+        var hasEnabled = await ConfigClient.HasEnabledTemplatesAsync(CancellationToken.None);
+        var dismissedValue = await ConfigClient.GetKeyValueAsync("first_run_banner_dismissed", CancellationToken.None);
         _dismissed = dismissedValue == "true";
 
         var currentPath = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/');
@@ -42,7 +41,7 @@
 
     private async Task DismissAsync()
     {
-        await KeyValueStore.SetAsync("first_run_banner_dismissed", "true", CancellationToken.None);
+        await ConfigClient.SetKeyValueAsync("first_run_banner_dismissed", "true", CancellationToken.None);
         _dismissed = true;
         await EvaluateAsync();
         StateHasChanged();

@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
@@ -465,6 +466,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
     /// <summary>
     /// Adds IConsolidationService mock to prevent Program.cs startup from hitting PostgreSQL.
+    /// Also mocks IPipelineApiConfigClient to prevent AutoStartPipelineLoopAsync from retrying
+    /// against localhost:9999 (which doesn't exist in tests, causing 300s retry delays).
     /// </summary>
     private static void MockConsolidationService(IServiceCollection services)
     {
@@ -474,6 +477,26 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         mock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ConsolidationRun>());
         ReplaceService<IConsolidationService>(services, mock.Object);
+
+        // Spec 045: mock IPipelineApiConfigClient to prevent AutoStartPipelineLoopAsync
+        // from attempting real HTTP calls to localhost:9999 (which retries for 300s per attempt).
+        // Without this mock, each test that calls MockConsolidationService would stall for minutes.
+        var configClientMock = new Mock<IPipelineApiConfigClient>();
+        configClientMock.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        configClientMock.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+        configClientMock.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+        configClientMock.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+        configClientMock.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        configClientMock.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        configClientMock.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+        ReplaceService<IPipelineApiConfigClient>(services, configClientMock.Object);
     }
 
     private static void RemoveDbContextRegistrations(IServiceCollection services)
@@ -499,6 +522,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("Database__MigrateOnStartup", "false");
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-api-key");
+        // Spec 045: PipelineApi:BaseUrl is required after Task 2 fast-fail was added.
+        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", "http://localhost:9999");
     }
 
     private static void ClearTestEnvironmentVariables()
@@ -512,6 +537,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("Database__MigrateOnStartup", null);
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", null);
         Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", null);
     }
 
     // ── Test Infrastructure ──────────────────────────────────────────────

@@ -1,9 +1,7 @@
 using CodingAgentWebUI;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure;
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Services;
-using CodingAgentWebUI.Infrastructure.Telemetry;
 using CodingAgentWebUI.Models;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
@@ -16,9 +14,6 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
 using Serilog.Enrichers.Span;
-
-// ── CLI command: export-config ──────────────────────────────────────────────
-if (await ExportConfigCommand.TryExecuteAsync(args)) return;
 
 // Bootstrap logger: captures log output during service registration (before UseSerilog takes over at Build())
 // TODO: Add integration test verifying ResolveApiKey log messages appear in output (review-findings #953)
@@ -44,17 +39,43 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 // ShutdownBudgetValidation warns if headroom drops below 5s (i.e., drain + shutdown > 35s).
 builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(40));
 
-// Domain service registrations (extracted into focused extension methods)
-var dbConnectionString = DatabaseConnectionResolver.Resolve(builder.Configuration);
-if (string.IsNullOrEmpty(dbConnectionString))
+// ── Pipeline API client (Spec 045 Req 2.1, 3.1, 3.6) ───────────────────────
+// Fast-fail: API URL required (replaces DB connection string as primary dependency check).
+// Helm injects this as PipelineApi__BaseUrl (double-underscore → colon convention).
+var apiBaseUrl = builder.Configuration.GetValue<string>("PipelineApi:BaseUrl");
+if (string.IsNullOrEmpty(apiBaseUrl))
 {
-    Log.Fatal("Database__Host is not configured. Kubernetes deployment requires PostgreSQL. Exiting.");
+    Log.Fatal("PipelineApi:BaseUrl is required. Ensure CodingAgentWebUI.Api is deployed first.");
     return;
 }
 
-// Bootstrap config for DI registration only — real config is loaded from Postgres at runtime.
-// NOTE: ClosedLoopAutoStart defaults to false here, so the pipeline loop does not auto-start.
-// Spec 045 Req 4.4 replaces this with a Postgres read.
+var agentApiKey = builder.Configuration.GetValue<string>("AGENT_API_KEY")
+    ?? Environment.GetEnvironmentVariable("AGENT_API_KEY")
+    ?? "";
+
+builder.Services.AddPipelineApiClient(new PipelineApiClientOptions
+{
+    BaseUrl = apiBaseUrl,
+    AgentApiKey = agentApiKey
+});
+
+// Scoped hub connection — one per Blazor circuit (overrides the Transient registered
+// by AddPipelineApiClient above). Connects to the API hub using AGENT_API_KEY as Bearer.
+// Helm injects PipelineApi__HubUrl (double-underscore → PipelineApi:HubUrl IConfiguration key).
+// Falls back to baseUrl + /hubs/agent if HubUrl is not set.
+// See Req 3.6 L1 for the explicit wiring requirement.
+var apiHubUrl = builder.Configuration.GetValue<string>("PipelineApi:HubUrl")
+    ?? $"{apiBaseUrl.TrimEnd('/')}/hubs/agent";
+builder.Services.AddScoped<IAgentHubConnection>(_ => new AgentHubConnection(apiHubUrl, agentApiKey));
+
+// Domain service registrations (extracted into focused extension methods)
+// dbConnectionString removed (Spec 045 Task 9 / Req 1.4, 7.2): monolith no longer has DB access.
+// AddApplicationTelemetry no longer receives a connection string — Npgsql tracing is removed.
+var dbConnectionString = (string?)null;
+
+// Bootstrap config for DI registration only — real config is loaded from Pipeline API at runtime.
+// NOTE: ClosedLoopAutoStart defaults to false here; AutoStartPipelineLoopAsync loads the real value
+// from the API (Spec 045 Req 4.4).
 var pipelineConfig = new PipelineConfiguration();
 
 builder.Services.AddInfrastructureServices();
@@ -63,9 +84,10 @@ builder.Services.AddPipelineCoreServices();
 builder.Services.AddOrchestrationServices(pipelineConfig);
 builder.Services.AddConsolidationServices(pipelineConfig);
 builder.Services.AddWorkDistribution(builder.Configuration);
-builder.Services.AddDatabaseHealthServices(builder.Configuration);
 
-// Infrastructure health aggregation — reads from DatabaseHealthState + IConnectionMultiplexer (both optional)
+// Infrastructure health aggregation — reads from IConnectionMultiplexer (Redis, optional)
+// DB health monitoring removed (Spec 045 Req 1.5): monolith no longer directly queries Postgres.
+// DatabaseHealthState was backed by DatabaseReadinessMonitor which pinged DB every 10s.
 builder.Services.AddSingleton<CodingAgentWebUI.Services.InfrastructureHealthService>();
 
 // Page-level services (scoped — one instance per Blazor circuit)
@@ -94,21 +116,21 @@ var app = builder.Build();
 
 // ── Post-Build startup sequence ─────────────────────────────────────────────
 // Each concern is extracted into its own WebApplication extension method.
-// Ordering matters: InitializeDatabaseAsync must precede MapApplicationEndpoints.
+// Ordering: ValidateShutdownBudget, ValidateDiWiring, RegisterObservableGauges, then MapApplicationEndpoints.
 // TODO: Add unit/integration tests for each extracted startup extension method
 // (ValidateShutdownBudget, ValidateDiWiring, RegisterObservableGauges, RunConsolidationStartupAsync,
 // AutoStartPipelineLoopAsync). Extraction was done to enable independent testability but no tests
 // were added yet. (review-findings)
 
 app.ValidateShutdownBudget();
-await app.InitializeDatabaseAsync();
+// InitializeDatabaseAsync removed (Spec 045 Task 9 / Req 1.4): monolith no longer has DB access.
 // Spec 044: RehydrateActiveRunsAsync removed — IOrchestratorRunService rehydration is now performed
 // in CodingAgentWebUI.Api (Task 2). The monolith's in-memory run state is no longer authoritative.
 app.ValidateDiWiring();
 app.RegisterObservableGauges();
-app.MapApplicationEndpoints(dbConnectionString);
+app.MapApplicationEndpoints();
 await app.RunConsolidationStartupAsync(pipelineConfig);
-await app.AutoStartPipelineLoopAsync(pipelineConfig);
+await app.AutoStartPipelineLoopAsync();
 
 app.Run();
 

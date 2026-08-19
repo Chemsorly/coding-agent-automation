@@ -1,7 +1,6 @@
 using Bunit;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Shared;
-using CodingAgentWebUI.Pipeline.Interfaces;
-using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -15,23 +14,21 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class FirstRunBannerComponentTests : BunitContext
 {
-    private readonly Mock<IProjectStore> _projectStore = new();
-    private readonly Mock<IKeyValueStore> _keyValueStore = new();
+    private readonly Mock<IPipelineApiConfigClient> _configClient = new();
 
     public FirstRunBannerComponentTests()
     {
-        Services.AddSingleton(_projectStore.Object);
-        Services.AddSingleton(_keyValueStore.Object);
+        Services.AddSingleton(_configClient.Object);
 
         // Default: no enabled templates, not dismissed, route is "/"
-        _projectStore
+        _configClient
             .Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
-        _keyValueStore
-            .Setup(s => s.GetAsync("first_run_banner_dismissed", It.IsAny<CancellationToken>()))
+        _configClient
+            .Setup(s => s.GetKeyValueAsync("first_run_banner_dismissed", It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        _keyValueStore
-            .Setup(s => s.SetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _configClient
+            .Setup(s => s.SetKeyValueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 
@@ -52,7 +49,7 @@ public class FirstRunBannerComponentTests : BunitContext
     public void Banner_IsHidden_WhenEnabledTemplatesExist()
     {
         // Arrange: at least one enabled template
-        _projectStore
+        _configClient
             .Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         SetCurrentUrl("http://localhost/");
@@ -77,11 +74,11 @@ public class FirstRunBannerComponentTests : BunitContext
     public async Task Banner_IsHidden_WhenDismissed_AndTemplatesExist()
     {
         // Arrange: templates exist and dismissed flag is set
-        _projectStore
+        _configClient
             .Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
-        _keyValueStore
-            .Setup(s => s.GetAsync("first_run_banner_dismissed", It.IsAny<CancellationToken>()))
+        _configClient
+            .Setup(s => s.GetKeyValueAsync("first_run_banner_dismissed", It.IsAny<CancellationToken>()))
             .ReturnsAsync("true");
         SetCurrentUrl("http://localhost/");
 
@@ -89,7 +86,7 @@ public class FirstRunBannerComponentTests : BunitContext
 
         Assert.DoesNotContain("No job templates configured", cut.Markup);
 
-        // Dismiss button click should have called SetAsync
+        // Dismiss button click should have called SetKeyValueAsync
         await Task.CompletedTask; // satisfy async signature
     }
 
@@ -98,8 +95,8 @@ public class FirstRunBannerComponentTests : BunitContext
     {
         // Spec Req 8.2: "notDismissed OR noEnabledTemplates" means when noEnabledTemplates is true,
         // the third clause is always true — dismissal does not suppress the banner with no templates.
-        _keyValueStore
-            .Setup(s => s.GetAsync("first_run_banner_dismissed", It.IsAny<CancellationToken>()))
+        _configClient
+            .Setup(s => s.GetKeyValueAsync("first_run_banner_dismissed", It.IsAny<CancellationToken>()))
             .ReturnsAsync("true");
         SetCurrentUrl("http://localhost/");
 
@@ -112,7 +109,7 @@ public class FirstRunBannerComponentTests : BunitContext
     }
 
     [Fact]
-    public async Task DismissButton_Click_CallsSetAsyncWithDismissedKey()
+    public async Task DismissButton_Click_CallsSetKeyValueAsyncWithDismissedKey()
     {
         // Arrange: banner is visible (no enabled templates, not dismissed, home route)
         SetCurrentUrl("http://localhost/");
@@ -123,9 +120,9 @@ public class FirstRunBannerComponentTests : BunitContext
         var dismissButton = cut.Find(".first-run-banner-dismiss");
         await cut.InvokeAsync(() => dismissButton.Click());
 
-        // Assert: SetAsync was called with the dismiss key and value "true"
-        _keyValueStore.Verify(
-            s => s.SetAsync("first_run_banner_dismissed", "true", It.IsAny<CancellationToken>()),
+        // Assert: SetKeyValueAsync was called with the dismiss key and value "true"
+        _configClient.Verify(
+            s => s.SetKeyValueAsync("first_run_banner_dismissed", "true", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 

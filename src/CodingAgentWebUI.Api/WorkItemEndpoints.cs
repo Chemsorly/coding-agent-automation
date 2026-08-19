@@ -2,6 +2,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
@@ -141,11 +142,14 @@ public static class WorkItemEndpoints
     /// <summary>
     /// POST /api/work-items
     /// Creates a new WorkItem with Status=Pending from a JobDistributionRequest.
+    /// Also materialises an in-memory <see cref="PipelineRun"/> in <see cref="IOrchestratorRunService"/>
+    /// so the UI can show the run immediately (Option A, Req 1a.1).
     /// Returns 201 + new GUID. Maps Postgres 23505 unique violation to 409 Conflict.
     /// </summary>
     internal static async Task<IResult> CreateWorkItem(
         [FromBody] JobDistributionRequest request,
-        IDbContextFactory<PipelineDbContext> dbFactory)
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IOrchestratorRunService runService)
     {
         // Use RunId from request if provided (ensures WorkItem.Id == PipelineRun.RunId for hub routing).
         // Fall back to a new GUID when no RunId is set (e.g., direct API calls without orchestration).
@@ -179,6 +183,12 @@ public static class WorkItemEndpoints
             // Postgres 23505: unique index on (IssueIdentifier, IssueProviderConfigId) for non-terminal statuses
             return TypedResults.Conflict("A live work item already exists for this issue.");
         }
+
+        // Materialise in-memory PipelineRun in the API's IOrchestratorRunService so the UI
+        // can subscribe to hub events and display the run immediately (Req 1a.1 Option A).
+        // WorkItem.Id == PipelineRun.RunId for deterministic hub-group routing.
+        var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
+        runService.AddRun(run);
 
         return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
     }

@@ -10,6 +10,23 @@ namespace CodingAgentWebUI.Orchestration;
 public static class PipelineRunFactory
 {
     /// <summary>
+    /// Creates a <see cref="PipelineRun"/> immediately after a WorkItem is persisted by the API.
+    /// Uses <paramref name="workItemId"/> as the RunId so the WorkItem and run share the same ID.
+    /// Called from <c>POST /api/work-items</c> to materialise the in-memory run in the API process
+    /// (Option A of Req 1a.1 — the API is the single place where both records are created).
+    /// </summary>
+    /// <param name="workItemId">The newly-persisted WorkItem GUID, used as the RunId.</param>
+    /// <param name="request">The <see cref="JobDistributionRequest"/> payload from the WorkItem.</param>
+    public static PipelineRun CreateFromWorkItem(Guid workItemId, JobDistributionRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Stamp the workItemId onto the request as RunId so FromDistributionRequest uses it.
+        var requestWithRunId = request with { RunId = workItemId.ToString() };
+        return FromDistributionRequest(requestWithRunId);
+    }
+
+    /// <summary>
     /// Creates a <see cref="PipelineRun"/> from a deserialized <see cref="JobDistributionRequest"/>.
     /// </summary>
     /// <param name="request">The deserialized job distribution request (must have non-null RunId).</param>

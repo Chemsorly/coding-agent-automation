@@ -1,4 +1,4 @@
-using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Pipeline.Services;
 using Serilog;
 
@@ -10,17 +10,24 @@ namespace CodingAgentWebUI;
 internal static class PipelineLoopAutoStartExtensions
 {
     /// <summary>
-    /// Auto-starts the pipeline loop if <see cref="PipelineConfiguration.ClosedLoopAutoStart"/> is enabled.
+    /// Auto-starts the pipeline loop if <see cref="CodingAgentWebUI.Pipeline.Models.PipelineConfiguration.ClosedLoopAutoStart"/> is enabled.
+    /// Loads the current configuration from the Pipeline API (Spec 045 Req 4.4).
+    /// If the API is unreachable, retries with exponential backoff (max 10 minutes) rather than
+    /// silently defaulting to disabled. Respects <see cref="IHostApplicationLifetime.ApplicationStopping"/>
+    /// so a host shutdown during startup exits cleanly instead of looping forever.
     /// </summary>
-    /// <remarks>
-    /// Should be the last startup task before <c>app.Run()</c> — the loop begins processing
-    /// issues immediately after starting.
-    /// </remarks>
-    public static async Task AutoStartPipelineLoopAsync(this WebApplication app, PipelineConfiguration pipelineConfig)
+    public static async Task AutoStartPipelineLoopAsync(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        // TODO: Add ArgumentNullException.ThrowIfNull(pipelineConfig) — pipelineConfig is dereferenced
-        // on ClosedLoopAutoStart but has no null guard (review-findings)
+
+        // Grab the stopping token from the host lifetime so retries abort on shutdown.
+        var stoppingToken = app.Lifetime.ApplicationStopping;
+
+        // Load ClosedLoopAutoStart from the API rather than using the default PipelineConfiguration()
+        // (which has ClosedLoopAutoStart=false and would silently prevent the loop from auto-starting).
+        // Spec 045 Req 4.4: do NOT pass pipelineConfig from Program.cs; always fetch from API.
+        var configClient = app.Services.GetRequiredService<IPipelineApiConfigClient>();
+        var pipelineConfig = await LoadConfigWithRetryAsync(configClient, stoppingToken);
 
         if (pipelineConfig.ClosedLoopAutoStart)
         {
@@ -31,5 +38,60 @@ internal static class PipelineLoopAutoStartExtensions
             else
                 Log.Warning("Pipeline loop auto-start requested but StartLoopAsync returned false (no valid templates?)");
         }
+    }
+
+    /// <summary>
+    /// Loads PipelineConfiguration from the API with exponential backoff on failure.
+    /// Spec 045 Req 4.4 / H6: if the API is unreachable at startup, log a warning and retry
+    /// (do NOT default to disabled). Hard limit: 10 minutes total wait. On host shutdown or
+    /// after exceeding the limit, returns a default config (ClosedLoopAutoStart=false).
+    /// </summary>
+    private static async Task<Pipeline.Models.PipelineConfiguration> LoadConfigWithRetryAsync(
+        IPipelineApiConfigClient configClient,
+        CancellationToken stoppingToken)
+    {
+        var delays = new[] { 2, 5, 10, 30, 60, 120, 300 }; // seconds
+        var attempt = 0;
+        var totalWaitedSeconds = 0;
+        const int MaxTotalWaitSeconds = 600;
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                return await configClient.GetPipelineConfigAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                Log.Warning("AutoStartPipelineLoopAsync: startup cancelled by host shutdown");
+                return new Pipeline.Models.PipelineConfiguration();
+            }
+            catch (Exception ex)
+            {
+                var delaySec = attempt < delays.Length ? delays[attempt] : delays[^1];
+                totalWaitedSeconds += delaySec;
+                if (totalWaitedSeconds >= MaxTotalWaitSeconds)
+                {
+                    Log.Fatal(ex,
+                        "AutoStartPipelineLoopAsync: API unreachable after {Total}s — defaulting to ClosedLoopAutoStart=false",
+                        totalWaitedSeconds);
+                    return new Pipeline.Models.PipelineConfiguration();
+                }
+                Log.Warning(ex,
+                    "AutoStartPipelineLoopAsync: attempt {Attempt}, retrying in {Delay}s (total waited {Total}s)",
+                    attempt + 1, delaySec, totalWaitedSeconds);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(delaySec), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return new Pipeline.Models.PipelineConfiguration();
+                }
+                attempt++;
+            }
+        }
+
+        return new Pipeline.Models.PipelineConfiguration();
     }
 }

@@ -1,8 +1,11 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.Hub;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -115,6 +118,7 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<Prog
             // ── K8s work distributor ──────────────────────────────────────
             services.RemoveAll<IWorkDistributor>();
             services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
+                sp.GetRequiredService<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>(),
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
                 sp.GetRequiredService<WorkItemTransitionService>(),
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>()
@@ -126,7 +130,7 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<Prog
 
             // ── Disable unneeded hosted services ──────────────────────────
             RemoveHostedService<PipelineLoopService>(services);
-            RemoveHostedService<PendingWorkItemDrainService>(services);
+            // PendingWorkItemDrainService was deleted in Spec 041 — no-op
 
             // ── JobTemplateStore with kiro,dotnet + kiro,python templates ─
             services.RemoveAll<JobTemplateStore>();

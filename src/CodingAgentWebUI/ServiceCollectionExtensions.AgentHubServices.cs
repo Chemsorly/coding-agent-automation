@@ -1,4 +1,4 @@
-using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -16,18 +16,21 @@ public static partial class ServiceCollectionExtensions
     /// Spec 044: IOrchestratorRunService, IRunLifecycleManager, PipelineRunLifecycleService, and
     /// IHubContext&lt;AgentHub&gt; removed — the monolith is in degraded (history-only) mode.
     /// </para>
+    /// <para>
+    /// Spec 045: IConfigurationStore replaced by IPipelineApiConfigClient;
+    /// IPipelineRunHistoryService replaced by IPipelineApiRunHistoryClient.
+    /// </para>
     /// </summary>
     public static IServiceCollection AddAgentMonitoringPageServiceDependencies(this IServiceCollection services)
     {
         services.AddScoped(sp => new AgentMonitoringPageServiceDependencies(
-            sp.GetRequiredService<IActiveRunQueryService>(),
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IPipelineApiConfigClient>(),
             sp.GetRequiredService<IConsolidationService>(),
-            sp.GetRequiredService<IPendingWorkQuery>(),
+            sp.GetService<IPendingWorkQuery>(),  // nullable — removed from monolith DI in Spec 045 Req 1.2
             sp.GetRequiredService<IWorkDistributor>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>()));
+            sp.GetRequiredService<IPipelineApiRunHistoryClient>()));
         return services;
     }
 

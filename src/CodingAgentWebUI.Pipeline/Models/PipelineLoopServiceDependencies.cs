@@ -3,7 +3,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
-/// Groups the 9 constructor parameters of <see cref="Services.PipelineLoopService"/>
+/// Groups the constructor parameters of <see cref="Services.PipelineLoopService"/>
 /// into a single parameter object to satisfy S107. Registered as singleton in DI.
 /// </summary>
 public sealed record PipelineLoopServiceDependencies

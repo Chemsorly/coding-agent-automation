@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -11,15 +12,21 @@ namespace CodingAgentWebUI.Services;
 /// <para>
 /// Spec 044: IOrchestratorRunService, IRunLifecycleManager, IHubContext, and PipelineRunLifecycleService
 /// removed — the monolith no longer owns in-memory run state or agent hub connections.
-/// Components now read history from the Pipeline API.
+/// Spec 045: IConfigurationStore replaced by IPipelineApiConfigClient; IPipelineRunHistoryService
+/// replaced by IPipelineApiRunHistoryClient; IActiveRunQueryService removed — active runs are now
+/// derived from run history via IPipelineApiRunHistoryClient by filtering non-terminal steps.
+/// The monolith has no direct Postgres access.
 /// </para>
 /// </summary>
 public sealed record AgentMonitoringPageServiceDependencies(
-    IActiveRunQueryService ActiveRunQuery,
     IAgentRegistryService Registry,
     JobDeduplicationGuardService Dispatcher,
-    IConfigurationStore ConfigStore,
+    IPipelineApiConfigClient ConfigClient,
     IConsolidationService ConsolidationService,
-    IPendingWorkQuery PendingWorkQuery,
+    /// <summary>
+    /// Optional — was removed from monolith DI in Spec 045 Req 1.2 (M1 gauge audit).
+    /// Will be null in production until migrated to IPipelineApiWorkItemClient.
+    /// </summary>
+    IPendingWorkQuery? PendingWorkQuery,
     IWorkDistributor WorkDistributor,
-    IPipelineRunHistoryService HistoryService);
+    IPipelineApiRunHistoryClient RunHistoryClient);

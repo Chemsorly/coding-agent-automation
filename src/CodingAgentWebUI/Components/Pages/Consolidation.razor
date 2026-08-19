@@ -1,5 +1,6 @@
 @page "/consolidation"
 @implements IDisposable
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
@@ -8,8 +9,7 @@
 @using Serilog
 @inject IConsolidationService ConsolidationService
 @inject ConsolidationBadgeService BadgeService
-@inject IConfigurationStore ConfigStore
-@inject IProjectStore ProjectStore
+@inject IPipelineApiConfigClient ConfigClient
 
 <PageTitle>Consolidation - Coding Agent</PageTitle>
 
@@ -303,8 +303,8 @@
     {
         try
         {
-            var allTemplates = await ProjectStore.LoadAllTemplatesAsync(CancellationToken.None);
-            var projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
+            var allTemplates = await ConfigClient.GetAllTemplatesAsync(CancellationToken.None);
+            var projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
             var templateLookup = allTemplates.ToDictionary(t => t.Id);
 
             _templates = projects
@@ -368,7 +368,7 @@
         // Load fresh config values when opening the modal
         try
         {
-            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
             _modalMaxProposals = config.MaxRefactoringProposals;
             _modalHotspotDays = (int)config.HotspotAnalysisLookback.TotalDays;
             _modalReviewEnabled = config.RefactoringReviewEnabled;

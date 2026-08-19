@@ -1,7 +1,9 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.E2ETests.Infrastructure;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -93,7 +95,7 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
             var entry = _registry.GetByAgentId(agentId)!;
             var hubContext = Fixture.Factory.Services
                 .GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<
-                    CodingAgentWebUI.Hubs.AgentHub,
+                    CodingAgentWebUI.Hub.AgentHub,
                     CodingAgentWebUI.Pipeline.Interfaces.IAgentHubClient>>();
 
             var sessionId = Guid.NewGuid().ToString();
@@ -244,7 +246,7 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
         var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
         var hubContext = Fixture.Factory.Services.GetRequiredService<
             Microsoft.AspNetCore.SignalR.IHubContext<
-                CodingAgentWebUI.Hubs.AgentHub,
+                CodingAgentWebUI.Hub.AgentHub,
                 CodingAgentWebUI.Pipeline.Interfaces.IAgentHubClient>>();
         var templateStore = Fixture.Factory.Services.GetRequiredService<JobTemplateStore>();
 
@@ -256,7 +258,7 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
             templateStore,
             registry,
             shortOptions,
-            Fixture.Factory.Services.GetRequiredService<CodingAgentWebUI.Orchestration.LeaderElection.ILeaderElectionService>(),
+            Fixture.Factory.Services.GetRequiredService<CodingAgentWebUI.Pipeline.LeaderElection.ILeaderElectionService>(),
             Serilog.Log.Logger);
 
         await dispatcher.StartAsync(CancellationToken.None);

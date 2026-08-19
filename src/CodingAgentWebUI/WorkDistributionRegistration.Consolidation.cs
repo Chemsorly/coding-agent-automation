@@ -20,30 +20,44 @@ public static partial class WorkDistributionRegistration
     /// - Leader election (ILeaderElectionService)
     /// - IWorkDistributor (KubernetesWorkDistributor)
     /// - JobTemplateStore
-    /// - IPendingWorkQuery (hard startup crash if missing — ObservableGaugeRegistrationExtensions)
+    /// - IPendingWorkQuery — removed (Spec 045 Req 1.2, M1): dispatch.queue.depth gauge moved to API.
+    ///   No PrometheusRule alerts reference dispatch.queue.depth, so removal is safe.
     /// - Pipeline API client
+    ///
+    /// NOTE: IJobCleanupStrategy (KubernetesJobCleanup) and IWorkDistributor (KubernetesWorkDistributor)
+    /// still use IDbContextFactory and WorkItemTransitionService for cancel/status/dedup queries.
+    /// These are registered in WorkDistributionRegistration.cs (the main AddWorkDistribution call).
+    /// A future spec should migrate those to API calls (IPipelineApiWorkItemClient) and
+    /// remove the remaining IDbContextFactory usage from the monolith.
     /// </summary>
     private static void RegisterConsolidationServices(IServiceCollection services, IConfiguration configuration)
     {
         // ── Pipeline API client ────────────────────────────────────────────────
-        var pipelineApiBaseUrl = configuration.GetValue<string>("PipelineApi:BaseUrl") ?? "";
-        var agentApiKey = configuration.GetValue<string>("AGENT_API_KEY")
-            ?? Environment.GetEnvironmentVariable("AGENT_API_KEY")
-            ?? "";
-        if (string.IsNullOrEmpty(pipelineApiBaseUrl) || string.IsNullOrEmpty(agentApiKey))
+        // NOTE: AddPipelineApiClient is now registered unconditionally in Program.cs (Spec 045 Task 2)
+        // before AddWorkDistribution is called. The registration here is retained only as a
+        // safety fallback for test environments that call AddWorkDistribution directly without
+        // going through Program.cs. We use TryAdd-style guard: skip if already registered.
+        if (!services.Any(sd => sd.ServiceType == typeof(PipelineApiClientOptions)))
         {
-            Log.Warning("WorkDistribution: PipelineApi:BaseUrl or AGENT_API_KEY not configured — " +
-                        "IPipelineApiWorkItemClient will not be registered. " +
-                        "KubernetesWorkDistributor will fail at startup if PipelineApi is required.");
-        }
-        else
-        {
-            services.AddPipelineApiClient(new PipelineApiClientOptions
+            var pipelineApiBaseUrl = configuration.GetValue<string>("PipelineApi:BaseUrl") ?? "";
+            var agentApiKey = configuration.GetValue<string>("AGENT_API_KEY")
+                ?? Environment.GetEnvironmentVariable("AGENT_API_KEY")
+                ?? "";
+            if (!string.IsNullOrEmpty(pipelineApiBaseUrl) && !string.IsNullOrEmpty(agentApiKey))
             {
-                BaseUrl = pipelineApiBaseUrl,
-                AgentApiKey = agentApiKey
-            });
-            Log.Information("WorkDistribution: Pipeline API client registered (BaseUrl={BaseUrl})", pipelineApiBaseUrl);
+                services.AddPipelineApiClient(new PipelineApiClientOptions
+                {
+                    BaseUrl = pipelineApiBaseUrl,
+                    AgentApiKey = agentApiKey
+                });
+                Log.Information("WorkDistribution: Pipeline API client registered (BaseUrl={BaseUrl})", pipelineApiBaseUrl);
+            }
+            else
+            {
+                Log.Warning("WorkDistribution: PipelineApi:BaseUrl or AGENT_API_KEY not configured — " +
+                            "IPipelineApiWorkItemClient will not be registered. " +
+                            "KubernetesWorkDistributor will fail at startup if PipelineApi is required.");
+            }
         }
 
         // ── K8s client — in-cluster-first with kubeconfig fallback for local dev ──
@@ -77,6 +91,9 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<IKubernetesJobClient>(sp => new KubernetesJobClient(sp.GetRequiredService<IKubernetes>()));
 
         // ── IJobCleanupStrategy ──────────────────────────────────────────────
+        // TODO(Spec 046): KubernetesJobCleanup still uses IDbContextFactory<PipelineDbContext> to
+        // look up K8s Job names from WorkItems. Migrate to IPipelineApiWorkItemClient to complete
+        // DB removal from the monolith. Tracked as a follow-up after Task 10.
         services.AddSingleton<IJobCleanupStrategy>(sp => new KubernetesJobCleanup(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<IKubernetesJobClient>(),
@@ -88,6 +105,9 @@ public static partial class WorkDistributionRegistration
         // ── IWorkDistributor (KubernetesWorkDistributor) ─────────────────────
         // Uses GetService (nullable) for IPipelineApiWorkItemClient since it may not be
         // registered in test environments where PipelineApi:BaseUrl is not configured.
+        // TODO(Spec 046): DbWorkDistributorBase (base class) uses IDbContextFactory for
+        // cancel/status/dedup queries. Migrate to IPipelineApiWorkItemClient to complete
+        // DB removal from the monolith.
         services.AddSingleton<IWorkDistributor>(sp =>
         {
             var apiClient = sp.GetService<IPipelineApiWorkItemClient>();
@@ -107,19 +127,12 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<JobTemplateStore>(sp =>
             DispatchService.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
 
-        // ── DispatchLifecycleService (Orchestration copy - used by ChatJobDispatcher's job creation path) ─
-        // Note: After Task 9.6 deletes DispatchService.cs from Orchestration, this is no longer needed
-        // for DispatchService, but ChatJobDispatcher still needs the Orchestration infrastructure for
-        // its job creation via JobSpecBuilder. KubernetesJobClient handles that.
-        // DispatchLifecycleService and DispatchStateBuilder are kept here in case
-        // ChatJobDispatcher's dispatch path uses them transitively.
-        // After spec 044 moves ChatJobDispatcher to the API, these can be removed from the monolith.
-
-        // ── IPendingWorkQuery — MUST remain in the monolith ──────────────────
-        // ObservableGaugeRegistrationExtensions.cs calls GetRequiredService<IPendingWorkQuery>()
-        // unconditionally from Program.cs. Removing this registration causes a hard startup crash.
-        services.AddSingleton<IPendingWorkQuery>(sp =>
-            new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
+        // ── IPendingWorkQuery — REMOVED in Spec 045 Req 1.2 (M1 gauge audit) ──────────────
+        // dispatch.queue.depth was backed by DbPendingWorkQuery (IDbContextFactory).
+        // No PrometheusRule alert references this metric name — removal is safe.
+        // The gauge is removed from ObservableGaugeRegistrationExtensions.cs.
+        // TODO(Spec 046): if dispatch queue depth monitoring is needed, implement via
+        // GET /api/work-items/pending-count on IPipelineApiWorkItemClient.
 
         // ChatJobDispatcher moved to CodingAgentWebUI.Api in Spec 044 Task 6 (Req 2.7).
         // Registration removed here after API registration confirmed.

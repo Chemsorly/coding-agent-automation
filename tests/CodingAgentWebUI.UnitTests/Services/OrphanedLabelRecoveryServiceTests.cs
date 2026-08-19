@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
@@ -18,34 +19,30 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 {
     private static readonly string[] InProgressLabels = ["agent:in-progress"];
     private readonly Mock<IOrchestratorRunService> _mockRunService;
-    private readonly Mock<IProjectStore> _mockProjectStore;
-    private readonly Mock<IProviderConfigStore> _mockProviderConfigStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
     private readonly Mock<ILabelService> _mockLabelService;
-    private readonly Mock<IPipelineConfigStore> _mockConfigStore;
     private readonly Mock<ILogger> _mockLogger;
     private readonly CancellationTokenSource _cts;
 
     public OrphanedLabelRecoveryServiceTests()
     {
         _mockRunService = new Mock<IOrchestratorRunService>();
-        _mockProjectStore = new Mock<IProjectStore>();
-        _mockProviderConfigStore = new Mock<IProviderConfigStore>();
+        _mockConfigClient = new Mock<IPipelineApiConfigClient>();
         _mockProviderFactory = new Mock<IProviderFactory>(MockBehavior.Strict);
         _mockLabelService = new Mock<ILabelService>();
-        _mockConfigStore = new Mock<IPipelineConfigStore>();
         _mockLogger = new Mock<ILogger>();
 
         _mockLogger
             .Setup(l => l.ForContext<OrphanedLabelRecoveryService>())
             .Returns(_mockLogger.Object);
 
-        _mockConfigStore
-            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { OrphanedLabelSweepIntervalMinutes = 30 });
 
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
 
         _cts = new CancellationTokenSource();
@@ -166,23 +163,31 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     [Fact]
     public async Task Sweep_ContinuesOnProviderScanFailure()
     {
-        // Arrange: two providers, first throws, second should still be scanned
+        // Arrange: two providers, first throws at provider factory, second should still be scanned
         var templates = new List<PipelineJobTemplate>
         {
             new() { Id = "t1", Name = "Template 1", IssueProviderId = "provider-1", RepoProviderId = "r1" },
             new() { Id = "t2", Name = "Template 2", IssueProviderId = "provider-2", RepoProviderId = "r2" }
         };
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
-        // Provider-1 config lookup fails
-        _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync("provider-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Provider unavailable"));
+        // Both providers configured
+        _mockConfigClient
+            .Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "provider-1", Kind = ProviderKind.Issue, DisplayName = "Provider 1", ProviderType = "GitHub", Settings = new Dictionary<string, string>() },
+                new() { Id = "provider-2", Kind = ProviderKind.Issue, DisplayName = "Provider 2", ProviderType = "GitHub", Settings = new Dictionary<string, string>() }
+            });
+
+        // Provider-1 factory throws (simulates scan failure)
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.Is<ProviderConfig>(c => c.Id == "provider-1")))
+            .Throws(new InvalidOperationException("Provider unavailable"));
 
         // Provider-2 succeeds
-        SetupProviderConfig("provider-2");
         SetupIssueProvider("provider-2", new IssueSummary
         {
             Identifier = "99",
@@ -227,8 +232,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         await Task.Delay(TimeSpan.FromSeconds(2));
 
         // Assert: no provider scans attempted
-        _mockProviderConfigStore.Verify(
-            s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()),
+        _mockConfigClient.Verify(
+            s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         _cts.Cancel();
@@ -244,12 +249,18 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             new() { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "r1" },
             new() { Id = "t2", Name = "T2", IssueProviderId = "provider-2", RepoProviderId = "r2" }
         };
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
-        SetupProviderConfig("provider-1");
-        SetupProviderConfig("provider-2");
+        // Both providers in one GetProviderConfigsAsync call (method returns full list)
+        _mockConfigClient
+            .Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "provider-1", Kind = ProviderKind.Issue, DisplayName = "Provider 1", ProviderType = "GitHub", Settings = new Dictionary<string, string>() },
+                new() { Id = "provider-2", Kind = ProviderKind.Issue, DisplayName = "Provider 2", ProviderType = "GitHub", Settings = new Dictionary<string, string>() }
+            });
         SetupIssueProvider("provider-1", new IssueSummary
         {
             Identifier = "10",
@@ -301,8 +312,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     public async Task ConfigIntervalBelowMinimum_ClampedWithWarning()
     {
         // Arrange: config with interval below minimum (1 minute < 5 minute minimum)
-        _mockConfigStore
-            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { OrphanedLabelSweepIntervalMinutes = 1 });
 
         SetupTemplateWithProvider("provider-1");
@@ -312,8 +323,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         // Track sweep calls to verify the service starts with a valid interval
         var sweepCount = 0;
         var firstSweepDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {
                 new() { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "r1" }
@@ -364,8 +375,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             new() { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "r1" },
             new() { Id = "t2", Name = "T2", IssueProviderId = "provider-1", RepoProviderId = "r2" }
         };
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
         SetupProviderConfig("provider-1");
@@ -393,9 +404,9 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
         completed.Should().BeSameAs(swapCalled.Task);
 
-        // Assert: provider was only scanned once (deduplicated)
-        _mockProviderConfigStore.Verify(
-            s => s.GetProviderConfigByIdAsync("provider-1", ProviderKind.Issue, It.IsAny<CancellationToken>()),
+        // Assert: provider config was only loaded once (deduplicated)
+        _mockConfigClient.Verify(
+            s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
 
         _cts.Cancel();
@@ -412,8 +423,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         var firstSweepDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sweepCount = 0;
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {
                 new() { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "r1" }
@@ -424,8 +435,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
                     firstSweepDone.TrySetResult();
             });
 
-        _mockConfigStore
-            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { OrphanedLabelSweepIntervalMinutes = 30 });
 
         // Act: start the service and wait for the first sweep to complete
@@ -450,8 +461,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             "PeriodicTimer.WaitForNextTickAsync, not completing or spinning");
 
         // Verify config was loaded exactly once to establish the timer interval
-        _mockConfigStore.Verify(
-            c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()),
+        _mockConfigClient.Verify(
+            c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()),
             Times.Once,
             "Config should be loaded exactly once after first sweep to determine periodic interval");
 
@@ -636,18 +647,16 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
     private OrphanedLabelRecoveryService CreateService() => new(
         _mockRunService.Object,
-        _mockProjectStore.Object,
-        _mockProviderConfigStore.Object,
+        _mockConfigClient.Object,
         _mockProviderFactory.Object,
         _mockLabelService.Object,
-        _mockConfigStore.Object,
         _mockLogger.Object,
         TimeSpan.FromMilliseconds(50)); // Short grace period for fast tests
 
     private void SetupTemplateWithProvider(string providerId)
     {
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {
                 new() { Id = "t1", Name = "Test Template", IssueProviderId = providerId, RepoProviderId = "repo-1" }
@@ -656,15 +665,18 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
     private void SetupProviderConfig(string providerId)
     {
-        _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync(providerId, ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProviderConfig
+        _mockConfigClient
+            .Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
             {
-                Id = providerId,
-                Kind = ProviderKind.Issue,
-                DisplayName = $"Provider {providerId}",
-                ProviderType = "GitHub",
-                Settings = new Dictionary<string, string>()
+                new()
+                {
+                    Id = providerId,
+                    Kind = ProviderKind.Issue,
+                    DisplayName = $"Provider {providerId}",
+                    ProviderType = "GitHub",
+                    Settings = new Dictionary<string, string>()
+                }
             });
     }
 

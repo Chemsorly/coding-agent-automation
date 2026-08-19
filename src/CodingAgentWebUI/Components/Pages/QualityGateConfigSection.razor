@@ -1,4 +1,4 @@
-@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
 
 <section class="settings-section">
@@ -183,7 +183,7 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private List<QualityGateConfiguration> _configs = new();
@@ -204,7 +204,7 @@
     {
         try
         {
-            _configs = (await ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None)).ToList();
+            _configs = (await ConfigClient.GetQualityGateConfigsAsync(CancellationToken.None)).ToList();
         }
         catch (Exception ex)
         {
@@ -290,7 +290,7 @@
 
         try
         {
-            await ConfigStore.SaveQualityGateConfigAsync(config, CancellationToken.None);
+            await ConfigClient.SaveQualityGateConfigAsync(config, CancellationToken.None);
             _showForm = false;
             await LoadConfigs();
             await OnShowStatus.InvokeAsync(("Quality gate configuration saved.", false));
@@ -313,7 +313,7 @@
 
         try
         {
-            await ConfigStore.DeleteQualityGateConfigAsync(_deletingConfig.Id, CancellationToken.None);
+            await ConfigClient.DeleteQualityGateConfigAsync(_deletingConfig.Id, CancellationToken.None);
             _showDeleteConfirm = false;
             _deletingConfig = null;
             await LoadConfigs();

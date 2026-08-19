@@ -21,8 +21,6 @@ PipelineRun.RunId = WorkItem.Id = K8s Job name suffix = hub GetRun(jobId)
 
 This ID alignment is critical — hub methods (`RequestTokenRefresh`, `ReportStepTransition`, `ReportJobCompleted`) look up the PipelineRun by the agent's `jobId`. If these don't match, the hub returns "No active run found".
 
-<!-- TODO(Spec 045): rewrite for the API / JobController / agent-pod topology. -->
-
 See also: [Configuration](configuration.md) for all pipeline settings, and [Issue Workflows](github-issue-workflows.md) for how users interact with the pipeline via labels.
 
 ```mermaid

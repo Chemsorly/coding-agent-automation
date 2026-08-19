@@ -15,9 +15,18 @@ public interface IAgentHubConnection : IAsyncDisposable
     /// <summary>Start the connection.</summary>
     Task StartAsync(CancellationToken ct = default);
 
-    /// <summary>Register a typed handler for a hub method that receives one argument.</summary>
-    IDisposable On<T>(string methodName, Action<T> handler);
+    /// <summary>Invoke a hub method with no return value.</summary>
+    Task InvokeAsync(string methodName, object? arg1, CancellationToken ct = default);
 
     /// <summary>Register a handler for a hub method that receives no arguments.</summary>
     IDisposable On(string methodName, Action handler);
+
+    /// <summary>Register a typed handler for a hub method that receives one argument.</summary>
+    IDisposable On<T>(string methodName, Action<T> handler);
+
+    /// <summary>Register a typed handler for a hub method that receives two arguments.</summary>
+    IDisposable On<T1, T2>(string methodName, Action<T1, T2> handler);
+
+    /// <summary>Register a typed handler for a hub method that receives three arguments.</summary>
+    IDisposable On<T1, T2, T3>(string methodName, Action<T1, T2, T3> handler);
 }

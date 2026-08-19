@@ -159,13 +159,14 @@ Phase 1 produces a plan for human review. Phase 2 runs only after explicit appro
 
 ### Deploy with Helm
 
-<!-- TODO(Spec 045): add api.* and jobController.* values once Specs 042–043 are implemented. -->
 ```bash
 # 1. Install the chart
 helm install coding-agent ./helm/coding-agent-automation \
   --set secrets.agentApiKey="$(openssl rand -hex 32)" \
   --set database.host=<postgres-host> \
-  --set database.auth.existingSecret=<k8s-secret-name>
+  --set database.auth.existingSecret=<k8s-secret-name> \
+  --set api.enabled=true \
+  --set jobController.enabled=true
 ```
 
 Open the orchestrator URL in your browser (check `kubectl get ingress -n coding-agent` or port-forward the service).

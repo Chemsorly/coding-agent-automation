@@ -1,4 +1,5 @@
 using CodingAgentWebUI.E2ETests.Fakes;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Orchestration;

@@ -76,6 +76,28 @@ public class DispatchFeedbackComponentTests : BunitContext
 
         Services.AddSingleton<IProjectStore>(_mockStore.Object);
 
+        // Spec 045: AgentCodingPageService now uses IPipelineApiConfigClient.
+        var mockConfigClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient>();
+        mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
+        mockConfigClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadPipelineConfigAsync(ct));
+        mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadAllTemplatesAsync(ct));
+        mockConfigClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadProjectsAsync(ct));
+        mockConfigClient.Setup(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadQualityGateConfigsAsync(ct));
+        mockConfigClient.Setup(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadReviewerConfigsAsync(ct));
+        mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadAgentProfilesAsync(ct));
+        mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockConfigClient.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        Services.AddSingleton<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient>(mockConfigClient.Object);
+
         var registry = new AgentRegistryService(mockLogger.Object);
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);

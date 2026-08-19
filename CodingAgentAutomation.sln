@@ -57,6 +57,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodingAgentWebUI.Kubernetes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodingAgentWebUI.JobController.UnitTests", "tests\CodingAgentWebUI.JobController.UnitTests\CodingAgentWebUI.JobController.UnitTests.csproj", "{2ECEFF8D-042B-41F7-84B1-4A2567ED6A63}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodingAgentWebUI.E2ETests", "tests\CodingAgentWebUI.E2ETests\CodingAgentWebUI.E2ETests.csproj", "{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -367,6 +369,18 @@ Global
 		{2ECEFF8D-042B-41F7-84B1-4A2567ED6A63}.Release|x64.Build.0 = Release|Any CPU
 		{2ECEFF8D-042B-41F7-84B1-4A2567ED6A63}.Release|x86.ActiveCfg = Release|Any CPU
 		{2ECEFF8D-042B-41F7-84B1-4A2567ED6A63}.Release|x86.Build.0 = Release|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Debug|x64.Build.0 = Debug|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Debug|x86.Build.0 = Debug|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Release|x64.ActiveCfg = Release|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Release|x64.Build.0 = Release|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Release|x86.ActiveCfg = Release|Any CPU
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -397,5 +411,6 @@ Global
 		{26324162-B198-4032-8579-BDBE479D2FDC} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{641D1303-E944-4B79-9B81-FE3E75E5ADC5} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{2ECEFF8D-042B-41F7-84B1-4A2567ED6A63} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{3AB3B149-2424-4DFB-802F-8F1AA3AA4E51} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

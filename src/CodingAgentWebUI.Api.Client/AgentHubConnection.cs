@@ -56,10 +56,20 @@ public sealed class AgentHubConnection : IAgentHubConnection
     public Task StartAsync(CancellationToken ct = default) => _connection.StartAsync(ct);
 
     /// <inheritdoc/>
-    public IDisposable On<T>(string methodName, Action<T> handler) => _connection.On(methodName, handler);
+    public Task InvokeAsync(string methodName, object? arg1, CancellationToken ct = default)
+        => _connection.InvokeAsync(methodName, arg1, ct);
 
     /// <inheritdoc/>
     public IDisposable On(string methodName, Action handler) => _connection.On(methodName, handler);
+
+    /// <inheritdoc/>
+    public IDisposable On<T>(string methodName, Action<T> handler) => _connection.On(methodName, handler);
+
+    /// <inheritdoc/>
+    public IDisposable On<T1, T2>(string methodName, Action<T1, T2> handler) => _connection.On(methodName, handler);
+
+    /// <inheritdoc/>
+    public IDisposable On<T1, T2, T3>(string methodName, Action<T1, T2, T3> handler) => _connection.On(methodName, handler);
 
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()

@@ -1,12 +1,8 @@
 @using CodingAgentWebUI.Agent
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline
-@using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
-@using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Orchestration
-@using CodingAgentWebUI.Orchestration.Dispatch
-@using CodingAgentWebUI.Orchestration.Health
-@using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
 @implements IAsyncDisposable
 
@@ -101,16 +97,7 @@
                         }
                         @if (_form.ProviderType == "KiroCli")
                         {
-                            var pvcMissing = IsKubernetesMode
-                                && (ModelFetchJobService is null || !ModelFetchJobService.IsPvcPoolConfigured);
-                            @if (pvcMissing)
-                            {
-                                <button class="btn-edit" disabled
-                                        title="No credential PVC configured — set WorkDistribution:KiroPvcPool to enable Fetch Models">
-                                    Fetch Models
-                                </button>
-                            }
-                            else if (_loadingModels)
+                            @if (_loadingModels)
                             {
                                 @* #2: Cancel button during active fetch *@
                                 <button class="btn-edit" disabled>
@@ -128,32 +115,21 @@
                             }
                         }
                     </div>
-                    @* #7: Inline PVC warning when pool is not configured *@
-                    @if (_form.ProviderType == "KiroCli" && IsKubernetesMode
-                         && (ModelFetchJobService is null || !ModelFetchJobService.IsPvcPoolConfigured))
-                    {
-                        <span class="form-hint" style="color: var(--warning-color, #e6a817);">
-                            <Icon Name="alert-triangle" Size="14" />
-                            Fetch Models requires a credential PVC. Configure at least one in <code>WorkDistribution:KiroPvcPool</code>.
-                        </span>
-                    }
-                    else
-                    {
-                        <span class="form-hint">
-                            @if (_form.ProviderType == "OpenCode")
-                            {
-                                @:Enter model in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>). Use <code>opencode models</code> in the container to list available models.
-                            }
-                            else if (IsKubernetesMode)
-                            {
-                                @:Click "Fetch Models" to dispatch a short-lived Kubernetes Job (~@(_modelFetchTimeoutSeconds)s) that queries available models from the Kiro service. Requires a credential PVC in <code>WorkDistribution:KiroPvcPool</code>. Or enter a model name manually.
-                            }
-                            else
-                            {
-                                @:Select a model or leave as "auto" for default. Click "Fetch Models" to query available models from the CLI.
-                            }
-                        </span>
-                    }
+                    @* #7: Inline PVC hint — API-side model fetch handles PVC selection *@
+                    <span class="form-hint">
+                        @if (_form.ProviderType == "OpenCode")
+                        {
+                            @:Enter model in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>). Use <code>opencode models</code> in the container to list available models.
+                        }
+                        else if (IsKubernetesMode)
+                        {
+                            @:Click "Fetch Models" to dispatch a short-lived Kubernetes Job (~@(_modelFetchTimeoutSeconds)s) that queries available models from the Kiro service. Requires a credential PVC in <code>WorkDistribution:KiroPvcPool</code>. Or enter a model name manually.
+                        }
+                        else
+                        {
+                            @:Select a model or leave as "auto" for default. Click "Fetch Models" to query available models from the CLI.
+                        }
+                    </span>
                 </div>
                 @if (_form.ProviderType == "KiroCli")
                 {
@@ -231,14 +207,13 @@
 
 @code {
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
-    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback<string> OnDelete { get; set; }
     [Parameter] public EventCallback OnSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
-    [Parameter] public ModelFetchService? ModelFetchService { get; set; }
-    /// <summary>K8s-mode fetch via one-shot Job + pod logs. Used when IsKubernetesMode is true.</summary>
-    [Parameter] public ModelFetchJobService? ModelFetchJobService { get; set; }
-    /// <summary>When true, Fetch Models uses ModelFetchJobService instead of ModelFetchService.</summary>
+    // ModelFetchService and ModelFetchJobService removed (Spec 045 Req 7a.3):
+    // model fetching now routes through ConfigClient.GetModelsAsync (GET /api/config/models).
+    /// <summary>When true, Fetch Models uses the API's model-fetch endpoint (K8s Job dispatch).</summary>
     [Parameter] public bool IsKubernetesMode { get; set; }
 
     private CancellationTokenSource _cts = new();
@@ -262,7 +237,7 @@
     {
         if (IsKubernetesMode)
         {
-            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
             _modelFetchTimeoutSeconds = config.ModelFetchTimeoutSeconds;
         }
     }
@@ -354,12 +329,12 @@
 
         try
         {
-            await ConfigStore.SaveProviderConfigAsync(config, _cts.Token);
+            await ConfigClient.SaveProviderConfigAsync(config, _cts.Token);
 
             // Save k8s model-fetch timeout when in k8s mode (global setting, not per-provider)
             if (IsKubernetesMode)
             {
-                await ConfigStore.UpdatePipelineConfigAsync(
+                await ConfigClient.UpdatePipelineConfigAsync(
                     current => current with { ModelFetchTimeoutSeconds = _modelFetchTimeoutSeconds },
                     _cts.Token);
             }
@@ -376,18 +351,6 @@
 
     private async Task FetchModels()
     {
-        // #1: Guard checks before setting _loadingModels to avoid stuck state on early exit
-        if (IsKubernetesMode && ModelFetchJobService is null)
-        {
-            await OnShowStatus.InvokeAsync(("Model fetch service is not available in k8s mode.", true));
-            return;
-        }
-        if (!IsKubernetesMode && ModelFetchService is null)
-        {
-            await OnShowStatus.InvokeAsync(("Model fetch service is not available.", true));
-            return;
-        }
-
         // #8: Reset elapsed counter and start timer
         _fetchPhase = "Creating job…";
         _fetchElapsedSeconds = 0;
@@ -398,26 +361,12 @@
             InvokeAsync(() => { _fetchElapsedSeconds++; StateHasChanged(); }),
             null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
-        // #8: Progress sink wires phase labels back into the UI
-        var progress = new Progress<string>(phase =>
-        {
-            _fetchPhase = phase;
-            InvokeAsync(StateHasChanged);
-        });
-
+        // #8: Progress sink — not available via HTTP, but phase will update on result
         try
         {
-            IReadOnlyList<AgentModelInfo> models;
-            string? error;
-
-            if (IsKubernetesMode)
-            {
-                (models, error) = await ModelFetchJobService!.FetchModelsAsync("kiro", _cts.Token, progress);
-            }
-            else
-            {
-                (models, error) = await ModelFetchService!.FetchModelsAsync(_cts.Token);
-            }
+            // Spec 045 Req 7a.3: delegate to GET /api/config/models (Option A passthrough).
+            // The API endpoint dispatches a one-shot K8s Job and returns results via the hub.
+            var (models, error) = await ConfigClient.GetModelsAsync(_cts.Token);
 
             if (error is not null)
             {

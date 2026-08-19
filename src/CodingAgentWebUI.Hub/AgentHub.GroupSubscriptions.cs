@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline.Interfaces;
 using Microsoft.AspNetCore.SignalR;
 
 namespace CodingAgentWebUI.Hub;
@@ -13,6 +14,9 @@ public sealed partial class AgentHub
     /// Ownership check (Req 5.3a): an agent-authenticated caller is only allowed to
     /// observe runs assigned to themselves. Operator-authenticated callers (those with
     /// no <c>agentId</c> query parameter) may subscribe to any run.
+    ///
+    /// Spec 045 Req 3.4a: immediately pushes the current output backlog to the new subscriber
+    /// so navigating to a mid-run page shows existing output without a separate fetch.
     /// </summary>
     public async Task SubscribeToRun(string jobId)
     {
@@ -37,6 +41,19 @@ public sealed partial class AgentHub
 
         await Groups.AddToGroupAsync(Context.ConnectionId, $"run-{jobId}");
         _logger.Debug("Connection {ConnectionId} subscribed to run-{JobId}", Context.ConnectionId, jobId);
+
+        // Push buffered output lines to the new subscriber immediately (Req 3.4a).
+        // This ensures a Blazor circuit navigating to a mid-run page sees existing output
+        // without a separate backlog fetch — the normal OnOutputLines handler receives them.
+        var buffer = _facade.GetOutputBuffer(new Pipeline.Models.JobId(jobId));
+        if (buffer.Count > 0)
+        {
+            var lines = buffer.GetAll();
+            await _uiContext.Clients.Client(Context.ConnectionId)
+                .SendAsync(HubMethodNames.OnOutputLines, jobId, lines);
+            _logger.Debug("Pushed {LineCount} buffered output lines to new subscriber for run-{JobId}",
+                lines.Count, jobId);
+        }
     }
 
     /// <summary>

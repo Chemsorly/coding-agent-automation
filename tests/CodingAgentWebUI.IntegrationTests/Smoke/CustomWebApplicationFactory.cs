@@ -1,8 +1,11 @@
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -42,6 +45,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             Environment.SetEnvironmentVariable("Database__MigrateOnStartup", null);
             Environment.SetEnvironmentVariable("Database__SkipStartupInit", null);
             Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+            Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", null);
         }
 
         base.Dispose(disposing);
@@ -60,6 +64,9 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Database__MigrateOnStartup", "false");
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-api-key");
+        // Spec 045: PipelineApi:BaseUrl is required after Task 2 fast-fail was added.
+        // Integration tests do not start a real API; use a stub URL to satisfy the check.
+        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", "http://localhost:9999");
 
         // Reset Serilog's global logger to a fresh bootstrap state.
         // This prevents "The logger is already frozen" when multiple WebApplicationFactory
@@ -122,6 +129,41 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             consolidationMock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<ConsolidationRun>());
             ReplaceService<IConsolidationService>(services, consolidationMock.Object);
+
+            // Spec 045: IDispatchOrchestrationService was removed from monolith DI (Task 8), but
+            // IssueDrawerService, PrReviewDrawerService, and EpicDrawerService still depend on it.
+            // Register a mock to satisfy DI validation in integration tests.
+            var dispatchOrchestrationMock = new Mock<IDispatchOrchestrationService>();
+            services.AddSingleton(dispatchOrchestrationMock.Object);
+
+            // Spec 045: IPipelineApiConfigClient is registered by AddPipelineApiClient() and points
+            // to a stub URL. Replace it with a mock to prevent real HTTP calls during startup.
+            var configClientMock = new Mock<IPipelineApiConfigClient>();
+            configClientMock.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PipelineConfiguration());
+            configClientMock.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ProviderConfig>());
+            configClientMock.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PipelineProject>());
+            configClientMock.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+            services.RemoveAll<IPipelineApiConfigClient>();
+            services.AddSingleton(configClientMock.Object);
+
+            // Spec 045: IAgentHubConnection is scoped (one per Blazor circuit). Replace with a mock
+            // to prevent real SignalR connection attempts to localhost:9999/hubs/agent in tests.
+            services.RemoveAll<IAgentHubConnection>();
+            services.AddScoped<IAgentHubConnection>(_ => new Mock<IAgentHubConnection>().Object);
+
+            // Spec 045: IPipelineApiRunHistoryClient is registered by AddPipelineApiClient() and would
+            // try to connect to localhost:9999. Replace with a mock to prevent real HTTP calls.
+            var runHistoryMock = new Mock<IPipelineApiRunHistoryClient>();
+            runHistoryMock.Setup(s => s.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = Array.Empty<PipelineRunSummary>(), Page = 1, PageSize = 50, HasMore = false });
+            runHistoryMock.Setup(s => s.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((PipelineRunSummary?)null);
+            services.RemoveAll<IPipelineApiRunHistoryClient>();
+            services.AddSingleton(runHistoryMock.Object);
         });
     }
 

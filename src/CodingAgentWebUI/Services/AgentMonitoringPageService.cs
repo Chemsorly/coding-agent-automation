@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -19,30 +20,46 @@ namespace CodingAgentWebUI.Services;
 /// have been removed. Cancel/disconnect operations route through IWorkDistributor.
 /// Full live streaming is restored in Spec 045.
 /// </para>
+/// <para>
+/// Spec 045: IConfigurationStore replaced by IPipelineApiConfigClient;
+/// IPipelineRunHistoryService replaced by IPipelineApiRunHistoryClient;
+/// IActiveRunQueryService removed — active runs are derived from run history by filtering
+/// non-terminal PipelineStep values (Completed, Failed, Cancelled). The monolith has no
+/// direct Postgres access.
+/// </para>
 /// </summary>
 public class AgentMonitoringPageService
 {
     private static readonly ILogger Logger = Log.ForContext<AgentMonitoringPageService>();
 
-    private readonly IActiveRunQueryService _activeRunQuery;
+    /// <summary>
+    /// Terminal steps that indicate a run is complete and should appear in history,
+    /// not the active-runs table. Must be kept in sync with PipelineStep enum.
+    /// </summary>
+    private static readonly HashSet<PipelineStep> s_terminalSteps =
+    [
+        PipelineStep.Completed,
+        PipelineStep.Failed,
+        PipelineStep.Cancelled
+    ];
+
     private readonly IAgentRegistryService _registry;
     private readonly JobDeduplicationGuardService _dispatcher;
-    private readonly IConfigurationStore _configStore;
+    private readonly IPipelineApiConfigClient _configClient;
     private readonly IConsolidationService _consolidationService;
-    private readonly IPendingWorkQuery _pendingWorkQuery;
+    private readonly IPendingWorkQuery? _pendingWorkQuery;
     private readonly IWorkDistributor _workDistributor;
-    private readonly IPipelineRunHistoryService _historyService;
+    private readonly IPipelineApiRunHistoryClient _runHistoryClient;
 
     public AgentMonitoringPageService(AgentMonitoringPageServiceDependencies deps)
     {
-        _activeRunQuery = deps.ActiveRunQuery;
         _registry = deps.Registry;
         _dispatcher = deps.Dispatcher;
-        _configStore = deps.ConfigStore;
+        _configClient = deps.ConfigClient;
         _consolidationService = deps.ConsolidationService;
         _pendingWorkQuery = deps.PendingWorkQuery;
         _workDistributor = deps.WorkDistributor;
-        _historyService = deps.HistoryService;
+        _runHistoryClient = deps.RunHistoryClient;
     }
 
     // ── State ──
@@ -65,7 +82,7 @@ public class AgentMonitoringPageService
     {
         try
         {
-            var config = await _configStore.LoadPipelineConfigAsync(CancellationToken.None);
+            var config = await _configClient.GetPipelineConfigAsync(CancellationToken.None);
             MaxRetries = config.MaxRetries;
         }
         catch (Exception ex)
@@ -77,7 +94,7 @@ public class AgentMonitoringPageService
         {
             var allConfigs = new List<ProviderConfig>();
             foreach (var kind in Enum.GetValues<ProviderKind>())
-                allConfigs.AddRange(await _configStore.LoadProviderConfigsAsync(kind, CancellationToken.None));
+                allConfigs.AddRange(await _configClient.GetProviderConfigsAsync(kind, CancellationToken.None));
             ProviderConfigLookup = allConfigs.DistinctBy(c => c.Id).ToDictionary(c => c.Id);
         }
         catch (Exception ex)
@@ -87,7 +104,7 @@ public class AgentMonitoringPageService
 
         try
         {
-            var profiles = await _configStore.LoadAgentProfilesAsync(CancellationToken.None);
+            var profiles = await _configClient.GetAgentProfilesAsync(CancellationToken.None);
             ProfileLookup = profiles.ToDictionary(p => p.Id);
         }
         catch (Exception ex)
@@ -97,7 +114,7 @@ public class AgentMonitoringPageService
 
         try
         {
-            var qgcs = await _configStore.LoadQualityGateConfigsAsync(CancellationToken.None);
+            var qgcs = await _configClient.GetQualityGateConfigsAsync(CancellationToken.None);
             QgcLookup = qgcs.ToDictionary(q => q.Id);
         }
         catch (Exception ex)
@@ -112,12 +129,26 @@ public class AgentMonitoringPageService
 
     public async Task RefreshDataAsync(bool includeConsolidation = false)
     {
-        ActiveRuns = (await _activeRunQuery.GetActiveRunsAsync())
-            .Where(r => r.AgentId.HasValue)
-            .ToList();
         Agents = _registry.GetAllAgents();
-        RunHistory = await _historyService.GetRunHistoryAsync();
-        var allQueuedJobs = await _pendingWorkQuery.GetPendingJobsAsync();
+        // Fetch run history via the Pipeline API (no direct DB access in Spec 045+).
+        // Request a large page to approximate "all" for the monitoring view; paging is
+        // supported by the underlying endpoint if larger datasets require it in future.
+        var historyPage = await _runHistoryClient.GetRunHistoryAsync(page: 1, pageSize: 1000, ct: CancellationToken.None);
+        RunHistory = historyPage.Items;
+
+        // Derive active runs from history by filtering non-terminal steps.
+        // Terminal steps (Completed, Failed, Cancelled) appear in history only.
+        // Non-terminal entries still in the API's run history represent dispatched/running jobs.
+        // Filter to runs that have an AgentId (assigned to an agent), matching the original
+        // IActiveRunQueryService behaviour in AgentMonitoringPageService.RefreshDataAsync.
+        ActiveRuns = historyPage.Items
+            .Where(r => !s_terminalSteps.Contains(r.FinalStep) && r.AgentId != null)
+            .Select(MapToActiveRunSummary)
+            .ToList();
+
+        var allQueuedJobs = _pendingWorkQuery is not null
+            ? await _pendingWorkQuery.GetPendingJobsAsync()
+            : (IReadOnlyList<PendingJob>)Array.Empty<PendingJob>();
         var consolidationJobs = allQueuedJobs.Where(j => j.IsConsolidation).ToList();
         QueuedJobs = allQueuedJobs.Where(j => !j.IsConsolidation).ToList();
 
@@ -132,6 +163,24 @@ public class AgentMonitoringPageService
         if (includeConsolidation)
             await RefreshConsolidationAsync();
     }
+
+    /// <summary>
+    /// Maps a non-terminal <see cref="PipelineRunSummary"/> to an <see cref="ActiveRunSummary"/>
+    /// for display in the Active Runs table. FinalStep (the last recorded step) is used as
+    /// CurrentStep — for in-flight runs the API stores the current step in FinalStep until
+    /// the run reaches a terminal state.
+    /// </summary>
+    private static ActiveRunSummary MapToActiveRunSummary(PipelineRunSummary run) => new()
+    {
+        RunId = run.RunId,
+        IssueIdentifier = run.IssueIdentifier,
+        IssueTitle = run.IssueTitle,
+        RunType = run.RunType,
+        AgentId = run.AgentId != null ? (AgentId?)new AgentId(run.AgentId) : null,
+        StartedAt = run.StartedAtOffset,
+        ProjectName = run.ProjectName,
+        CurrentStep = run.FinalStep
+    };
 
     public async Task RefreshConsolidationAsync()
     {

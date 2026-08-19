@@ -1,7 +1,10 @@
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -56,6 +59,7 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             Environment.SetEnvironmentVariable("Database__SkipStartupInit", null);
             Environment.SetEnvironmentVariable("WorkDistribution__Mode", null);
             Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+            Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", null);
         }
 
         base.Dispose(disposing);
@@ -75,6 +79,9 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("WorkDistribution__Mode", "SignalR");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-api-key");
+        // Spec 045: PipelineApi:BaseUrl is required after Task 2 fast-fail was added.
+        // Integration tests do not start a real API; use a stub URL to satisfy the check.
+        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", "http://localhost:9999");
 
         // Reset Serilog's global logger to a fresh bootstrap state.
         // This prevents "The logger is already frozen" when multiple WebApplicationFactory
@@ -121,6 +128,48 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
 
             // Register a no-op IDatabaseProbe so DatabaseStartupService skips real SQL connectivity check
             services.AddSingleton<IDatabaseProbe>(new NoOpDatabaseProbe());
+
+            // Spec 045: IDispatchOrchestrationService was removed from monolith DI (Task 8), but
+            // IssueDrawerService, PrReviewDrawerService, and EpicDrawerService still depend on it.
+            // Register a mock to satisfy DI validation.
+            services.AddSingleton(new Mock<IDispatchOrchestrationService>().Object);
+
+            // Spec 045: IPipelineApiConfigClient is registered by AddPipelineApiClient() and points
+            // to localhost:9999 (stub URL set above). Replace it with a mock to prevent real HTTP
+            // calls during test startup (ConsolidationRehydrationExtensions calls LoadPipelineConfigAsync).
+            var configClientMock = new Mock<IPipelineApiConfigClient>();
+            configClientMock.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PipelineConfiguration());
+            configClientMock.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ProviderConfig>());
+            configClientMock.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PipelineProject>());
+            configClientMock.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+            // Spec 045: additional setup for ApiConfigurationStore which resolves
+            // IAgentProfileStore, IQualityGateConfigStore, IReviewerConfigStore
+            configClientMock.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<AgentProfile>());
+            configClientMock.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+            configClientMock.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+            configClientMock.Setup(s => s.GetTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+            // Replace any existing IPipelineApiConfigClient registration
+            services.RemoveAll<IPipelineApiConfigClient>();
+            services.AddSingleton(configClientMock.Object);
+
+            // Replace IConsolidationService — Program.cs calls CleanupOrphanedRunsAsync
+            // and RehydrateQueuedRunsAsync during startup, which hit the database directly
+            // (not via a hosted service), so RemoveAll<IHostedService> doesn't prevent it.
+            var consolidationMock = new Mock<IConsolidationService>();
+            consolidationMock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            consolidationMock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ConsolidationRun>());
+            services.RemoveAll<IConsolidationService>();
+            services.AddSingleton(consolidationMock.Object);
         });
     }
 

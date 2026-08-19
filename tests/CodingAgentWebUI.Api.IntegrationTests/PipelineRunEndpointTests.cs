@@ -160,4 +160,46 @@ public sealed class PipelineRunEndpointTests
         // The run without feedback must not appear in feedbackOnly=true export
         body.Should().NotContain($"\"{withoutFeedback}\"");
     }
+
+    /// <summary>
+    /// Verifies the feedbackOnly filter and paging are wired end-to-end at the HTTP level.
+    ///
+    /// Seed 4 runs: 2 without feedback (page 1 of 2) and 2 with feedback (page 2 of 2).
+    /// Call GET /api/export/runs.json?feedbackOnly=true&page=1&pageSize=2.
+    /// The endpoint loads page 1 (2 runs), then applies feedbackOnly in-memory.
+    /// Because page 1 contains only non-feedback runs, the result must be empty.
+    ///
+    /// This test exercises the real HTTP endpoint to confirm both paging and filtering
+    /// are wired correctly — not just the simulation helper.
+    /// </summary>
+    [Fact]
+    public async Task ExportRunsJson_FeedbackOnly_PageWhereAllRunsLackFeedback_ReturnsEmpty()
+    {
+        // Seed 4 runs in a predictable order using controlled timestamps so we know which
+        // runs land on page 1 vs page 2.
+        // PipelineRunEntity rows are returned newest-first by the service.
+        // We insert the no-feedback runs LAST (newest) so they appear on page 1.
+        var withFeedback1 = SeedRun(hasFeedback: true);
+        var withFeedback2 = SeedRun(hasFeedback: true);
+        // These two are newer — they land on page 1 of size 2
+        var noFeedback1 = SeedRun(hasFeedback: false);
+        var noFeedback2 = SeedRun(hasFeedback: false);
+
+        // page=1&pageSize=2 returns the 2 most-recent runs (both without feedback).
+        // feedbackOnly=true applied in-memory → result must be empty.
+        var response = await _client.GetAsync("/api/export/runs.json?feedbackOnly=true&page=1&pageSize=2");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content.ReadAsStringAsync();
+        var runs = JsonSerializer.Deserialize<List<PipelineRunSummary>>(body, PipelineJsonOptions.Default);
+        runs.Should().NotBeNull();
+
+        // The no-feedback runs (page 1) are filtered out in-memory → empty result for this page.
+        runs!.Should().NotContain(r => r.RunId == noFeedback1.ToString());
+        runs.Should().NotContain(r => r.RunId == noFeedback2.ToString());
+
+        // The feedback runs are on page 2 and must NOT appear on page 1.
+        runs.Should().NotContain(r => r.RunId == withFeedback1.ToString());
+        runs.Should().NotContain(r => r.RunId == withFeedback2.ToString());
+    }
 }

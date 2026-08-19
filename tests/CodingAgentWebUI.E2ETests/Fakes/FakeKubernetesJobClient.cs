@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Kubernetes;
 using k8s.Models;
 
 namespace CodingAgentWebUI.E2ETests.Fakes;

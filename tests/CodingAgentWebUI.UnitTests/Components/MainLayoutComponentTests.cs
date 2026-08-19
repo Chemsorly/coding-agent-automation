@@ -67,16 +67,13 @@ public class MainLayoutComponentTests : BunitContext
         Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
 
-        // FirstRunBanner.razor requires IKeyValueStore + IProjectStore (added by Spec 041)
-        var mockKeyValueStore = new Mock<IKeyValueStore>();
-        mockKeyValueStore.Setup(s => s.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        // FirstRunBanner.razor requires IPipelineApiConfigClient (Spec 045 Task 3)
+        var mockConfigClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient>();
+        mockConfigClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        Services.AddSingleton(mockKeyValueStore.Object);
-
-        var mockProjectStore = new Mock<IProjectStore>();
-        mockProjectStore.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
+        mockConfigClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
-        Services.AddSingleton(mockProjectStore.Object);
+        Services.AddSingleton(mockConfigClient.Object);
     }
 
     [Fact]

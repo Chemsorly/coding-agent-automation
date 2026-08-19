@@ -1,5 +1,5 @@
 @page "/agent-monitoring"
-@implements IDisposable
+@implements IAsyncDisposable
 @using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
@@ -41,13 +41,15 @@
     @* ── Run Detail Modal ── *@
     @if (_showRunDetailModal)
     {
-        @* Spec 044 (degraded mode): PipelineRunLifecycleService removed from monolith.
-           In-memory active run state unavailable — modal shows a temporary message.
-           Full live run view restored in Spec 045 via API hub streaming. *@
-        var modalRun = (CodingAgentWebUI.Pipeline.Models.PipelineRun?)null;
+        @* Spec 045: live run view restored via IAgentHubConnection hub subscriptions.
+           _activeModalRun is loaded from GET /api/pipeline-runs/{runId} on modal open,
+           then refreshed on OnRunCompleted. Output lines stream in via OnOutputLines.
+           If the run is still active (not in history), _activeModalRun may be null until
+           the API returns it — show a loading indicator in that case. *@
+        var modalRun = _activeModalRun;
         if (modalRun != null)
         {
-            var modalAgent = modalRun.AgentId != null ? Registry.GetByAgentId(modalRun.AgentId) : null;
+            var modalAgent = modalRun.AgentId != null ? Registry.GetByAgentId(new Pipeline.Models.AgentId(modalRun.AgentId)) : null;
             <div class="modal-overlay" tabindex="-1" @ref="_modalOverlayRef" @onclick="DismissRunDetailModal" @onkeydown="HandleModalKeyDown">
                 <div class="modal-card modal-card-wide" @onclick:stopPropagation="true"
                      role="dialog" aria-modal="true" aria-labelledby="run-detail-title">
@@ -59,24 +61,10 @@
                         <div class="modal-column-left">
                             <div class="modal-provider-list">
                                 <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Providers</h4>
-                                @{ var issueConfig = ResolveProvider(modalRun.IssueProviderConfigId); }
-                                <div><strong>Issue:</strong> @(issueConfig?.DisplayName ?? "Unknown") (@(issueConfig?.ProviderType ?? "—"))</div>
-                                @{ var repoConfig = ResolveProvider(modalRun.RepoProviderConfigId); }
-                                <div><strong>Repository:</strong> @(repoConfig?.DisplayName ?? modalRun.RepositoryName ?? "Unknown") (@(repoConfig?.ProviderType ?? "—"))</div>
                                 @{
                                     var agentProviderConfig = ResolveProvider(modalRun.AgentProviderConfigId);
                                 }
                                 <div><strong>Agent:</strong> @(agentProviderConfig?.DisplayName ?? modalRun.AgentId ?? "—") (@(agentProviderConfig?.ProviderType ?? "—")) — Model: @(modalRun.ModelName ?? "—")</div>
-                                @if (modalRun.BrainProviderConfigId != null)
-                                {
-                                    var brainConfig = ResolveProvider(modalRun.BrainProviderConfigId);
-                                    <div><strong>Brain:</strong> @(brainConfig?.DisplayName ?? "Unknown")</div>
-                                }
-                                @if (modalRun.PipelineProviderConfigId != null)
-                                {
-                                    var pipelineConfig = ResolveProvider(modalRun.PipelineProviderConfigId);
-                                    <div><strong>Pipeline:</strong> @(pipelineConfig?.DisplayName ?? "Unknown") (@(pipelineConfig?.ProviderType ?? "—"))</div>
-                                }
                             </div>
 
                             <div class="monitoring-detail-grid">
@@ -89,35 +77,24 @@
                                 {
                                     <div><strong>Tokens:</strong> @CostFormatter.FormatTokens(modalRun.TotalTokens)</div>
                                 }
-                                @* TODO: CacheReadTokens/CacheWriteTokens are not rendered here (live run view).
-                                   HistoryRunDetailModal.razor was updated but this monitoring modal was not.
-                                   A run in progress will not show cache tokens until it surfaces in history.
-                                   Add a conditional block here matching the one in HistoryRunDetailModal.razor. *@
-                                @if (modalRun.BranchName != null)
+                                @if (modalRun.CacheReadTokens > 0 || modalRun.CacheWriteTokens > 0)
                                 {
-                                    <div><strong>Branch:</strong> @modalRun.BranchName</div>
+                                    <div><strong>Cache read/write:</strong> @CostFormatter.FormatTokens(modalRun.CacheReadTokens) / @CostFormatter.FormatTokens(modalRun.CacheWriteTokens)</div>
                                 }
-                                @if (!string.IsNullOrEmpty(modalRun.ResolvedProfileId))
-                                {
-                                    <div><strong>Profile:</strong> @ResolveProfileName(modalRun.ResolvedProfileId)</div>
-                                }
-                                @if (modalRun.ResolvedQualityGateConfigIds.Count > 0)
-                                {
-                                    <div><strong>Quality Gates:</strong> @string.Join(", ", modalRun.ResolvedQualityGateConfigIds.Select(ResolveQgcName))</div>
-                                }
+                                <div><strong>Step:</strong> @(_activeModalCurrentStep ?? modalRun.FinalStep)</div>
                             </div>
 
-                            @if (modalRun.Metrics.PhaseBreakdown.Count > 0)
+                            @if (modalRun.PhaseBreakdown is { Count: > 0 } phaseBreakdown)
                             {
                                 <Collapsible CssClass="phase-breakdown" HeaderClass="phase-breakdown-header" BodyClass="phase-breakdown-body">
                                     <Header>
-                                        <span>Cost Breakdown (@modalRun.Metrics.PhaseBreakdown.Count phases)</span>
+                                        <span>Cost Breakdown (@phaseBreakdown.Count phases)</span>
                                     </Header>
                                     <ChildContent>
                                         <table class="monitoring-table" style="margin-top: 6px;">
                                             <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
                                             <tbody>
-                                            @foreach (var phase in modalRun.Metrics.PhaseBreakdown
+                                            @foreach (var phase in phaseBreakdown
                                                 .OrderByDescending(p => p.Value.Cost ?? 0m)
                                                 .ThenByDescending(p => p.Value.Tokens))
                                             {
@@ -199,17 +176,14 @@
                                 }
                             </div>
 
-                            @{
-                                // Spec 044 (degraded mode): IOrchestratorRunService removed from monolith.
-                                // Live output buffer unavailable — will be restored in Spec 045 via hub group streaming.
-                                var outputLines = System.Array.Empty<string>();
-                            }
-                            @if (outputLines.Length > 0)
+                            @* Spec 045: output lines streamed live via IAgentHubConnection OnOutputLines events.
+                               Backlog is pushed by AgentHub.SubscribeToRun immediately on subscribe (Req 3.4a). *@
+                            @if (_activeModalOutputLines.Count > 0)
                             {
                                 <div>
-                                    <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Output (last @Math.Min(outputLines.Length, 100) lines)</h4>
+                                    <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Output (last @Math.Min(_activeModalOutputLines.Count, 100) lines)</h4>
                                     <div class="output-panel" id="modalOutputPanel">
-                                        @foreach (var line in outputLines.TakeLast(100))
+                                        @foreach (var line in _activeModalOutputLines.TakeLast(100))
                                         {
                                             <div class="output-line">@line</div>
                                         }
@@ -219,8 +193,13 @@
                         </div>
 
                         <div class="modal-column-right">
-                            <PipelineSidebar Run="modalRun" IsRunning="true" MaxRetries="@_maxRetries"
-                                             OnCancel="() => CancelAgentRun(modalRun)" />
+                            @* Spec 045: PipelineSidebar expects PipelineRun (in-memory type); replaced with
+                               a lightweight step + feedback display using PipelineRunSummary from the API.
+                               PipelineSidebar will be restored when a live PipelineRun representation is
+                               available from the API (follow-up task). *@
+                            <div class="monitoring-detail-grid" style="margin-bottom: 8px;">
+                                <div><strong>Current Step:</strong> @(_activeModalCurrentStep ?? modalRun.FinalStep)</div>
+                            </div>
 
                             @* ── Feedback Section ── *@
                             <CodingAgentWebUI.Components.Shared.FeedbackSection Feedback="modalRun.Feedback" />
@@ -232,7 +211,7 @@
                         @if (modalRun.AgentId != null)
                         {
                             <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
-                                    @onclick="() => CancelAgentRun(modalRun)">
+                                    @onclick="() => CancelAgentRunById(modalRun.RunId)">
                                 Cancel Run
                             </button>
                         }

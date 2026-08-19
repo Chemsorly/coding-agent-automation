@@ -12,6 +12,12 @@ public interface IPipelineApiConfigClient
     Task<PipelineConfiguration> GetPipelineConfigAsync(CancellationToken ct = default);
     Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct = default);
 
+    /// <summary>
+    /// Atomically loads, transforms, and saves the pipeline configuration.
+    /// Client-side read-modify-write: calls GetPipelineConfigAsync, applies transform, then SavePipelineConfigAsync.
+    /// </summary>
+    Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct = default);
+
     // Provider configs
     Task<IReadOnlyList<ProviderConfig>> GetProviderConfigsAsync(ProviderKind kind, CancellationToken ct = default);
     Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct = default);
@@ -20,8 +26,42 @@ public interface IPipelineApiConfigClient
     // Agent profiles
     Task<IReadOnlyList<AgentProfile>> GetAgentProfilesAsync(CancellationToken ct = default);
     Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct = default);
+    Task DeleteAgentProfileAsync(string id, CancellationToken ct = default);
+
+    // Quality gate configs
+    Task<IReadOnlyList<QualityGateConfiguration>> GetQualityGateConfigsAsync(CancellationToken ct = default);
+    Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct = default);
+    Task DeleteQualityGateConfigAsync(string id, CancellationToken ct = default);
+
+    // Reviewer configs
+    Task<IReadOnlyList<ReviewerConfiguration>> GetReviewerConfigsAsync(CancellationToken ct = default);
+    Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct = default);
+    Task DeleteReviewerConfigAsync(string id, CancellationToken ct = default);
+    Task ResetReviewerConfigsToDefaultAsync(CancellationToken ct = default);
+
+    // Projects
+    Task<IReadOnlyList<PipelineProject>> GetProjectsAsync(CancellationToken ct = default);
+    Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct = default);
+    Task SaveProjectAsync(PipelineProject project, CancellationToken ct = default);
+    Task DeleteProjectAsync(string id, CancellationToken ct = default);
+    Task<bool> HasEnabledTemplatesAsync(CancellationToken ct = default);
+
+    // Templates
+    Task<IReadOnlyList<PipelineJobTemplate>> GetAllTemplatesAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<PipelineJobTemplate>> GetTemplatesForProjectAsync(string projectId, CancellationToken ct = default);
+    Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct = default);
+    Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct = default);
+    Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, string templateId, CancellationToken ct = default);
 
     // Key-value store
     Task<string?> GetKeyValueAsync(string key, CancellationToken ct = default);
     Task SetKeyValueAsync(string key, string value, CancellationToken ct = default);
+    Task DeleteKeyValueAsync(string key, CancellationToken ct = default);
+
+    // Config import/export (Spec 045 Req 2.4a — implemented in Task 8b on the API side)
+    Task<byte[]> ExportConfigAsync(CancellationToken ct = default);
+    Task ImportConfigAsync(Stream jsonStream, string fileName, CancellationToken ct = default);
+
+    // Model fetch (Spec 045 Req 7a.2 — Option A passthrough via GET /api/config/models)
+    Task<(IReadOnlyList<AgentModelInfo> Models, string? Error)> GetModelsAsync(CancellationToken ct = default);
 }

@@ -1,20 +1,20 @@
 # Deployment
 
-<!-- TODO(Spec 045): rewrite for the API / JobController / agent-pod topology. -->
-
 ## Architecture
 
-The application runs on Kubernetes. The orchestrator is a Blazor Server application managing all
-pipeline orchestration, the SignalR hub, and the web UI. Agent pods are ephemeral Kubernetes Jobs
-spawned on demand.
+The application runs on Kubernetes as four distinct processes:
 
-<!-- TODO(Spec 045): rewrite the Architecture section for the API / JobController / agent-pod topology. -->
+- **Orchestrator** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI and `PipelineLoopService`. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (scoped per circuit) subscribes to the API hub for live run streaming.
+- **Pipeline API** (`CodingAgentWebUI.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `JobDeduplicationGuardService`, `ConsolidationWorkItemDispatchService`, `DatabaseMaintenanceService`, and `WorkItemMetricsBackgroundService`.
+- **Job Controller** (`CodingAgentWebUI.JobController`) — Kubernetes Job dispatch. Claims `WorkItem` rows from the API and creates K8s Jobs. Leader-elected via `caa-{release}-dispatch-lock` Lease. Stateless between dispatches; all state lives in Postgres via the API.
+- **Agent Host** (`CodingAgentWebUI.Agent`) — Ephemeral K8s Job pod. Connects to the Pipeline API hub using `AGENT_API_KEY` as a Bearer token. Picks up assignments via `GET /api/work-items/{id}/assignment`, reports progress and terminal status via hub methods and `POST /api/work-items/{id}/status`. Two execution modes: _work-item pods_ (spawned with `--work-item-id`) and _chat pods_.
 
-- **WebUI** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI, SignalR hub, API endpoints, background services (OrphanedLabelRecovery, LoopStatePersistence, LeaderElection).
-- **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic (`DispatchService`, `ReconciliationService`, `KubernetesWorkDistributor`), agent registry, run lifecycle management, leader election, telemetry.
-- **Infrastructure** (`CodingAgentWebUI.Infrastructure`) — Provider implementations (GitHub, filesystem), config store, resilience pipelines, token vending.
-- **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline orchestration (`PipelineOrchestrationService`, facades, `PipelineLoopService`), step execution, models, interfaces, constants.
-- **Agent Host** (`CodingAgentWebUI.Agent`) — Agent executable. Manages SignalR/HTTP connection to orchestrator, work item lifecycle, health endpoints, heartbeat, and reconnection logic. Two execution modes: _work-item pods_ (spawned with `--work-item-id`) and _chat pods_ (spawned without, for interactive chat sessions).
+Supporting libraries (shared, not deployed independently):
+
+- **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API.
+- **Infrastructure** (`CodingAgentWebUI.Infrastructure`) — Provider implementations (GitHub, GitLab, filesystem), EF Core context, config store. Linked into the Pipeline API only — the Orchestrator has no reference to this library.
+- **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, interfaces, constants. Linked into the Orchestrator and Pipeline API.
+- **Hub** (`CodingAgentWebUI.Hub`) — `AgentHub` definition and client contracts. Linked into the Pipeline API and Orchestrator.
 
 ## Authentication
 
@@ -52,19 +52,22 @@ For Kubernetes deployments, a Helm chart is provided at `helm/coding-agent-autom
 ### Install
 
 ```bash
-# TODO(Spec 045): finalize --set values once api.* and jobController.* are added in Specs 042–043.
+# 1. Install the chart
 helm install coding-agent ./helm/coding-agent-automation \
   --set secrets.agentApiKey="$(openssl rand -hex 32)" \
-  --set database.host=postgres.coding-agent.svc.cluster.local \
-  --set database.auth.existingSecret=postgres-secret \
-  --set orchestrator.image.tag=coding-agent-webui
+  --set database.host=<postgres-host> \
+  --set database.auth.existingSecret=<k8s-secret-name> \
+  --set api.enabled=true \
+  --set jobController.enabled=true
 ```
 
 ### Architecture
 
 The chart deploys:
-- **1 Orchestrator Deployment** — Blazor Server app with pipeline orchestration
-- **No persistent agent Deployments** — All agents are ephemeral K8s Jobs dispatched on demand by `DispatchService`
+- **1 Orchestrator Deployment** — Blazor Server app (`CodingAgentWebUI`). Connects to the API for all data access; no direct database connection.
+- **1 Pipeline API Deployment** — `CodingAgentWebUI.Api`. Authoritative database owner, agent hub, and config/run-history server.
+- **1 Job Controller Deployment** — `CodingAgentWebUI.JobController`. Claims WorkItems and dispatches K8s Jobs. Leader-elected.
+- **No persistent agent Deployments** — All agents are ephemeral K8s Jobs dispatched on demand by the Job Controller.
 
 ### Key values.yaml Settings
 

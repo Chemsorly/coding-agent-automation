@@ -38,10 +38,10 @@ public static partial class ServiceCollectionExtensions
                 Log.Logger));
         services.AddSingleton<IDispatchRunCreator>(sp => sp.GetRequiredService<DispatchRunCreationService>());
 
-        // Spec 044: IChangeNotifier replaced with NullChangeNotifier.
-        // The monolith no longer owns in-memory run state — IOrchestratorRunService moved to API.
-        // NullChangeNotifier bridges AgentMonitoring.razor.cs's [Inject] IChangeNotifier until Spec 045.
-        services.AddSingleton<IChangeNotifier, NullChangeNotifier>();
+        // Spec 045: IChangeNotifier / NullChangeNotifier bridge removed.
+        // AgentMonitoring.razor.cs no longer injects IChangeNotifier — change notification
+        // arrives via IAgentHubConnection hub events (OnStepTransition, OnRunCompleted, etc.).
+        // IChangeNotifier is still registered in CodingAgentWebUI.Hub for AgentHub internals.
         services.AddSingleton<IChatNotifier>(sp =>
             sp.GetRequiredService<PipelineRunLifecycleService>());
     }

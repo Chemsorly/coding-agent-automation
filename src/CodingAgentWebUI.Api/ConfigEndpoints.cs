@@ -1,6 +1,12 @@
+using System.Text.Json;
+using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgentWebUI.Api;
 
@@ -8,11 +14,32 @@ namespace CodingAgentWebUI.Api;
 /// Minimal API endpoints for config CRUD operations.
 /// All endpoints require the OperatorApiKey authorization policy (Req 6.5b).
 /// Secret redaction is applied on all GET endpoints returning ProviderConfig (Req 6.4a).
-/// GET /api/config/export and POST /api/config/import are NOT ported — they stay in the
-/// monolith (Req 6.3b). Spec 045 decides their final home.
+/// GET /api/config/export and POST /api/config/import are implemented here per Spec 045
+/// Req 2.4a — guarded by OperatorApiKey (Tier 2, not AgentApiKey, per 042 Req 6.5).
 /// </summary>
 public static class ConfigEndpoints
 {
+    private static readonly JsonSerializerOptions ExportOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    private static readonly JsonSerializerOptions ImportOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
+    // Used when deserializing ProviderConfig blobs for redaction — case-insensitive so
+    // blobs serialized with any casing policy have Settings/Secrets properly populated.
+    private static readonly JsonSerializerOptions _redactDeserializeOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
     /// <summary>
     /// Maps all config endpoints onto the application endpoint route builder.
     /// </summary>
@@ -20,6 +47,16 @@ public static class ConfigEndpoints
     {
         var group = app.MapGroup("/api/config")
             .RequireAuthorization("OperatorApiKey");
+
+        // ── Config import/export (Spec 045 Req 2.4a — OperatorApiKey Tier 2) ──────
+        // NOTE: POST /api/config/import is destructive — clears all config before import.
+        // Guarded by OperatorApiKey (not AgentApiKey) so agent pods cannot overwrite config.
+        group.MapGet("/export", ExportConfigAsync);
+        group.MapPost("/import", ImportConfigAsync)
+            .DisableAntiforgery();
+
+        // ── Model fetch (Spec 045 Req 7a.1 — passthrough to ModelFetchJobService) ──
+        group.MapGet("/models", GetModels);
 
         // ── Pipeline config ─────────────────────────────────────────────
         group.MapGet("/pipeline", GetPipelineConfig);
@@ -45,7 +82,7 @@ public static class ConfigEndpoints
         group.MapGet("/reviewer-configs", GetReviewerConfigs);
         group.MapPut("/reviewer-configs", SaveReviewerConfig);
         group.MapDelete("/reviewer-configs/{id}", DeleteReviewerConfig);
-        group.MapPost("/reviewer-configs/reset", ResetReviewerConfigs);
+        group.MapPost("/reviewer-configs/reset-to-defaults", ResetReviewerConfigs);
 
         // ── Projects (requires two store calls — Req 6.3a) ─────────────
         group.MapGet("/projects", GetProjects);
@@ -372,6 +409,264 @@ public static class ConfigEndpoints
         return TypedResults.Ok();
     }
 
+    // ── Model fetch (Spec 045 Req 7a.1) ───────────────────────────────────
+
+    /// <summary>
+    /// Delegates to <see cref="ModelFetchJobService"/> to dispatch a one-shot K8s Job
+    /// that queries available models from the Kiro CLI. Results are returned via the
+    /// normal agent hub protocol — no pod log reads required.
+    /// Option A passthrough: Settings.razor calls this instead of injecting ModelFetchJobService directly.
+    /// </summary>
+    internal static async Task<IResult> GetModels(
+        ModelFetchJobService fetchService,
+        CancellationToken ct)
+    {
+        var (models, error) = await fetchService.FetchModelsAsync("kiro", ct);
+        if (error is not null)
+            return TypedResults.Problem(error, statusCode: 502);
+        return TypedResults.Ok(models);
+    }
+
+    // ── Config import/export (Spec 045 Req 2.4a) ──────────────────────────
+
+    /// <summary>
+    /// GET /api/config/export
+    /// Returns a JSON file download containing all config (providers, profiles, gate configs, etc.)
+    /// with provider Settings and Secrets values redacted (042 Req 6.4).
+    /// Requires OperatorApiKey policy (042 Req 6.5, Tier 2) — agent-derived keys receive 403.
+    /// </summary>
+    internal static async Task<IResult> ExportConfigAsync(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        var bundle = new ConfigBundle
+        {
+            PipelineConfig = await LoadFirstEntityJson(db.PipelineConfig, e => e.Configuration, ct),
+            ProviderConfigs = await db.ProviderConfigs.AsNoTracking().Select(e => new ProviderConfigDto
+            {
+                Id = e.Id,
+                Kind = e.Kind,
+                DisplayName = e.DisplayName,
+                ProviderType = e.ProviderType,
+                Enabled = e.Enabled,
+                // Redact the raw Configuration JSON blob so provider credentials are never
+                // exposed in exports (042 Req 6.4). Deserialize → redact → re-serialize.
+                Configuration = e.Configuration
+            }).ToListAsync(ct),
+            AgentProfiles = await db.AgentProfiles.AsNoTracking().Select(e => new NamedConfigDto
+            {
+                Id = e.Id,
+                Name = e.Name,
+                Configuration = e.Configuration
+            }).ToListAsync(ct),
+            QualityGateConfigs = await db.QualityGateConfigs.AsNoTracking().Select(e => new NamedConfigDto
+            {
+                Id = e.Id,
+                Name = e.Name,
+                Configuration = e.Configuration
+            }).ToListAsync(ct),
+            ReviewerConfigs = await db.ReviewerConfigs.AsNoTracking().Select(e => new NamedConfigDto
+            {
+                Id = e.Id,
+                Name = e.Name,
+                Configuration = e.Configuration
+            }).ToListAsync(ct),
+            Projects = await db.Projects.AsNoTracking().Select(e => new ProjectDto
+            {
+                Id = e.Id,
+                Name = e.Name,
+                Enabled = e.Enabled,
+                Description = e.Description,
+                Settings = e.Settings,
+                TemplateIds = e.TemplateIds
+            }).ToListAsync(ct),
+            JobTemplates = await db.PipelineJobTemplates.AsNoTracking().Select(e => new JobTemplateDto
+            {
+                Id = e.Id,
+                ProjectId = e.ProjectId,
+                Name = e.Name,
+                Configuration = e.Configuration
+            }).ToListAsync(ct)
+        };
+
+        // Redact Settings and Secrets values in each ProviderConfig blob (042 Req 6.4).
+        // The Configuration field is a serialized ProviderConfig JSON string; deserialize,
+        // apply redaction, then re-serialize back into the DTO.
+        if (bundle.ProviderConfigs is not null)
+        {
+            for (var i = 0; i < bundle.ProviderConfigs.Count; i++)
+            {
+                var dto = bundle.ProviderConfigs[i];
+                if (dto.Configuration is null) continue;
+
+                var parsed = JsonSerializer.Deserialize<ProviderConfig>(
+                    dto.Configuration, _redactDeserializeOptions);
+                if (parsed is null) continue;
+
+                var redacted = RedactProviderConfig(parsed);
+                bundle.ProviderConfigs[i] = dto with
+                {
+                    Configuration = JsonSerializer.Serialize(redacted, PipelineJsonOptions.Default)
+                };
+            }
+        }
+
+        var json = JsonSerializer.Serialize(bundle, ExportOptions);
+        return Results.File(
+            System.Text.Encoding.UTF8.GetBytes(json),
+            "application/json",
+            "pipeline-config-export.json");
+    }
+
+    /// <summary>
+    /// POST /api/config/import
+    /// Accepts a JSON file upload (multipart/form-data, field name "file") containing the config
+    /// bundle. Clears ALL existing config before inserting — operation is transactional.
+    /// Requires OperatorApiKey policy (042 Req 6.5, Tier 2) — agent-derived keys receive 403.
+    /// WARNING: This is destructive — run history and work items are preserved, but all config
+    /// (providers, profiles, quality gate configs, reviewer configs, projects, templates) is erased.
+    /// </summary>
+    internal static async Task<IResult> ImportConfigAsync(
+        IFormFile file,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IConfigurationStore configStore,
+        CancellationToken ct)
+    {
+        if (file is null || file.Length == 0)
+            return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "No file uploaded" });
+
+        ConfigBundle? bundle;
+        try
+        {
+            using var stream = file.OpenReadStream();
+            bundle = await JsonSerializer.DeserializeAsync<ConfigBundle>(stream, ImportOptions, ct);
+        }
+        catch (JsonException ex)
+        {
+            return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid JSON: {ex.Message}" });
+        }
+
+        if (bundle is null)
+            return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "Empty or invalid bundle" });
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+
+        // Clear existing config (not runs, consolidation data, or work items — those are preserved).
+        db.PipelineConfig.RemoveRange(db.PipelineConfig);
+        db.ProviderConfigs.RemoveRange(db.ProviderConfigs);
+        db.AgentProfiles.RemoveRange(db.AgentProfiles);
+        db.QualityGateConfigs.RemoveRange(db.QualityGateConfigs);
+        db.ReviewerConfigs.RemoveRange(db.ReviewerConfigs);
+        db.Projects.RemoveRange(db.Projects);
+        db.PipelineJobTemplates.RemoveRange(db.PipelineJobTemplates);
+        await db.SaveChangesAsync(ct);
+
+        if (bundle.PipelineConfig is not null)
+        {
+            db.PipelineConfig.Add(new PipelineConfigEntity
+            {
+                Id = Guid.NewGuid(),
+                Configuration = bundle.PipelineConfig
+            });
+        }
+
+        foreach (var p in bundle.ProviderConfigs ?? [])
+        {
+            db.ProviderConfigs.Add(new ProviderConfigEntity
+            {
+                Id = p.Id,
+                Kind = p.Kind,
+                DisplayName = p.DisplayName,
+                ProviderType = p.ProviderType,
+                Enabled = p.Enabled,
+                Configuration = p.Configuration
+            });
+        }
+
+        foreach (var a in bundle.AgentProfiles ?? [])
+        {
+            db.AgentProfiles.Add(new AgentProfileEntity
+            {
+                Id = a.Id,
+                Name = a.Name,
+                Configuration = a.Configuration
+            });
+        }
+
+        foreach (var q in bundle.QualityGateConfigs ?? [])
+        {
+            db.QualityGateConfigs.Add(new QualityGateConfigEntity
+            {
+                Id = q.Id,
+                Name = q.Name,
+                Configuration = q.Configuration
+            });
+        }
+
+        foreach (var r in bundle.ReviewerConfigs ?? [])
+        {
+            db.ReviewerConfigs.Add(new ReviewerConfigEntity
+            {
+                Id = r.Id,
+                Name = r.Name,
+                Configuration = r.Configuration
+            });
+        }
+
+        foreach (var proj in bundle.Projects ?? [])
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = proj.Id,
+                Name = proj.Name,
+                Enabled = proj.Enabled,
+                Description = proj.Description,
+                Settings = proj.Settings,
+                TemplateIds = proj.TemplateIds ?? []
+            });
+        }
+
+        foreach (var t in bundle.JobTemplates ?? [])
+        {
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            {
+                Id = t.Id,
+                ProjectId = t.ProjectId,
+                Name = t.Name,
+                Configuration = t.Configuration
+            });
+        }
+
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+
+        // Invalidate config store caches after the raw DB write (bypasses the store layer).
+        configStore.InvalidateCaches();
+
+        return TypedResults.Ok(new ImportExportResult
+        {
+            Success = true,
+            Message = $"Imported: {bundle.ProviderConfigs?.Count ?? 0} providers, " +
+                      $"{bundle.AgentProfiles?.Count ?? 0} profiles, " +
+                      $"{bundle.QualityGateConfigs?.Count ?? 0} quality gates, " +
+                      $"{bundle.ReviewerConfigs?.Count ?? 0} reviewers, " +
+                      $"{bundle.Projects?.Count ?? 0} projects, " +
+                      $"{bundle.JobTemplates?.Count ?? 0} templates"
+        });
+    }
+
+    private static async Task<string?> LoadFirstEntityJson<T>(
+        Microsoft.EntityFrameworkCore.DbSet<T> dbSet,
+        Func<T, string?> selector,
+        CancellationToken ct) where T : class
+    {
+        var entity = await dbSet.AsNoTracking().FirstOrDefaultAsync(ct);
+        return entity is null ? null : selector(entity);
+    }
+
     // ── Secret redaction helper (Req 6.4a) ────────────────────────────────
 
     /// <summary>
@@ -421,4 +716,67 @@ public sealed class ProjectWithTemplates
 public sealed class KeyValueSetRequest
 {
     public required string Value { get; init; }
+}
+
+// ── DTOs for config import/export bundle (Spec 045 Req 2.4a / Task 8b) ───────────
+
+/// <summary>
+/// The full config bundle — serialized to/from JSON for export/import.
+/// Same schema as the monolith's ConfigBundle so existing exports remain importable.
+/// </summary>
+public sealed class ConfigBundle
+{
+    public string? PipelineConfig { get; set; }
+    public List<ProviderConfigDto>? ProviderConfigs { get; set; }
+    public List<NamedConfigDto>? AgentProfiles { get; set; }
+    public List<NamedConfigDto>? QualityGateConfigs { get; set; }
+    public List<NamedConfigDto>? ReviewerConfigs { get; set; }
+    public List<ProjectDto>? Projects { get; set; }
+    public List<JobTemplateDto>? JobTemplates { get; set; }
+}
+
+/// <summary>Provider config row — Configuration is a serialized ProviderConfig JSON blob.</summary>
+public sealed record ProviderConfigDto
+{
+    public Guid Id { get; init; }
+    public ProviderKind Kind { get; init; }
+    public string DisplayName { get; init; } = "";
+    public string ProviderType { get; init; } = "";
+    public bool Enabled { get; init; }
+    public string? Configuration { get; init; }
+}
+
+/// <summary>Generic named config row (agent profiles, quality gate configs, reviewer configs).</summary>
+public sealed class NamedConfigDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = "";
+    public string? Configuration { get; set; }
+}
+
+/// <summary>Project row.</summary>
+public sealed class ProjectDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = "";
+    public bool Enabled { get; set; }
+    public string? Description { get; set; }
+    public string? Settings { get; set; }
+    public List<string>? TemplateIds { get; set; }
+}
+
+/// <summary>Pipeline job template row.</summary>
+public sealed class JobTemplateDto
+{
+    public Guid Id { get; set; }
+    public Guid ProjectId { get; set; }
+    public string Name { get; set; } = "";
+    public string? Configuration { get; set; }
+}
+
+/// <summary>Response body for POST /api/config/import.</summary>
+public sealed class ImportExportResult
+{
+    public bool Success { get; init; }
+    public required string Message { get; init; }
 }

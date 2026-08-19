@@ -86,12 +86,6 @@ public class DispatchOrchestrationServiceTests
             .Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockRepoProvider.Object);
 
-        var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: _mockProviderConfigStore.Object,
-            providerFactory: _mockProviderFactory.Object,
-            logger: _mockLogger.Object,
-            runService: _runService);
-
         return new DispatchOrchestrationService(
             new DispatchOrchestrationServiceDependencies(
                 new DispatchInfrastructure(
@@ -99,8 +93,6 @@ public class DispatchOrchestrationServiceTests
                     _mockProviderFactory.Object,
                     _mockLabelService.Object,
                     _resolution),
-                runCreator,
-                _runService,
                 _mockWorkDistributor.Object,
                 _mockAgentProfileStore.Object,
                 _mockProviderConfigStore.Object,
@@ -357,8 +349,9 @@ public class DispatchOrchestrationServiceTests
         result!.CreatedRun.IssueIdentifier.Value.Should().Be("issue-42");
         result.CreatedRun.ProjectId.Should().Be("proj-1");
         result.CreatedRun.ProjectName.Should().Be("TestProject");
-        // Run should be tracked
-        _runService.GetRun(result.CreatedRun.RunId).Should().NotBeNull();
+        // Run is no longer registered in the monolith's OrchestratorRunService (Req 1a.1 Option A).
+        // The API registers it when POST /api/work-items persists the WorkItem.
+        result.CreatedRun.RunId.Should().NotBeNullOrEmpty("dispatch request must carry a RunId for hub routing");
     }
 
     [Fact]
@@ -742,11 +735,12 @@ public class DispatchOrchestrationServiceTests
 
         result.Should().NotBeNull();
 
-        // The critical assertion: the in-memory PipelineRun must carry RunType=Review
-        var inMemoryRun = _runService.GetRun(result!.RunId!);
-        inMemoryRun.Should().NotBeNull();
-        inMemoryRun!.RunType.Should().Be(PipelineRunType.Review,
-            "the in-memory PipelineRun must have RunType=Review so label swaps target PRs and history shows correct type");
+        // The critical assertion: Run is no longer registered in the monolith's OrchestratorRunService
+        // (Req 1a.1 Option A — API owns the in-memory run). The dispatch request carries RunType
+        // for the API's PipelineRunFactory.CreateFromWorkItem to use when registering the run there.
+        result!.RunType.Should().Be(PipelineRunType.Review,
+            "the dispatch request must carry RunType=Review so the API creates the PipelineRun with the correct type");
+        result.RunId.Should().NotBeNullOrEmpty("dispatch request must carry RunId for hub routing");
     }
 
     [Fact]
@@ -907,10 +901,12 @@ public class DispatchOrchestrationServiceTests
 
         result.Should().NotBeNull();
 
-        var inMemoryRun = _runService.GetRun(result!.RunId!);
-        inMemoryRun.Should().NotBeNull();
-        inMemoryRun!.RunType.Should().Be(PipelineRunType.DecompositionAnalysis,
-            "the in-memory PipelineRun must carry the correct decomposition phase RunType");
+        // Run is no longer registered in the monolith's OrchestratorRunService (Req 1a.1 Option A).
+        // The API registers it when POST /api/work-items persists the WorkItem.
+        // The dispatch request still carries the RunId for hub routing.
+        result!.RunId.Should().NotBeNullOrEmpty("dispatch request must carry RunId for hub routing");
+        result.RunType.Should().Be(PipelineRunType.DecompositionAnalysis,
+            "the PrepareDecompositionDistributionRequestAsync must propagate the correct decomposition phase RunType");
     }
 
     [Fact]
@@ -1026,9 +1022,11 @@ public class DispatchOrchestrationServiceTests
             CancellationToken.None);
 
         result.Should().NotBeNull();
-        // The run should be registered in OrchestratorRunService
+        // Run is no longer registered in the monolith's OrchestratorRunService (Req 1a.1 Option A).
+        // The API registers it when POST /api/work-items persists the WorkItem.
         var activeRuns = _runService.GetActiveRuns();
-        activeRuns.Should().Contain(r => r.IssueIdentifier == "issue-42");
+        activeRuns.Should().NotContain(r => r.IssueIdentifier == "issue-42",
+            "the monolith no longer registers runs locally; runs are owned by the API (Req 1a.1)");
     }
 
     [Fact]
@@ -1070,11 +1068,9 @@ public class DispatchOrchestrationServiceTests
         result.Should().NotBeNull();
         result!.RunType.Should().Be(PipelineRunType.Review);
 
-        // The in-memory run must carry the same RunType
-        var inMemoryRun = _runService.GetRun(result.RunId!);
-        inMemoryRun.Should().NotBeNull();
-        inMemoryRun!.RunType.Should().Be(PipelineRunType.Review,
-            "PrepareDistributionRequestAsync must propagate non-default runType to the in-memory PipelineRun");
+        // Run is no longer registered in the monolith's OrchestratorRunService (Req 1a.1 Option A).
+        // The dispatch request still carries the RunType for hub routing / history display.
+        result.RunId.Should().NotBeNullOrEmpty("dispatch request must carry RunId for hub routing");
     }
 
     // ── MCP merge integration tests ────────────────────────────────────────────
@@ -1249,23 +1245,11 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             mockConfigStore.Object,
             _mockLogger.Object);
 
-        var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: mockConfigStore.Object,
-            providerFactory: mockProviderFactory.Object,
-            logger: _mockLogger.Object,
-            runService: _runService);
-
-        // TODO: Split mockConfigStore into three separate typed mocks (Mock<IAgentProfileStore>,
-        // Mock<IConfigurationStore>, Mock<IPipelineConfigStore>) so a constructor parameter swap
-        // between the second and third store slots would be caught by test failures here too
-        // (acceptance criterion: parameter swap causes at least one test to fail).
         _service = new DispatchOrchestrationService(
             new DispatchOrchestrationServiceDependencies(
                 new DispatchInfrastructure(
                     mockTokenVending.Object, mockProviderFactory.Object,
                     _mockLabelService.Object, resolution),
-                runCreator,
-                _runService,
                 new Mock<IWorkDistributor>().Object,
                 mockConfigStore.Object,
                 mockConfigStore.Object,
@@ -1297,17 +1281,9 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
     [Fact]
     public async Task RevertFailedDistribution_RemovesDanglingRun()
     {
-        // Arrange: simulate a dangling run
-        var run = new PipelineRun
-        {
-            RunId = "run-abc",
-            IssueIdentifier = "owner/repo#20",
-            IssueTitle = "Test issue",
-            IssueProviderConfigId = "ipc-2",
-            RepoProviderConfigId = "rpc-2"
-        };
-        _runService.AddRun(run);
-
+        // After Req 1a.1 Option A, the monolith no longer manages in-memory runs.
+        // Runs are owned by the API's OrchestratorRunService.
+        // RevertFailedDistributionAsync now only reverts the label — there is no local run to remove.
         var request = new JobDistributionRequest
         {
             IssueIdentifier = "owner/repo#20",
@@ -1319,11 +1295,17 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             TimeoutSeconds = 3600
         };
 
-        // Act
+        // Act — should not throw; only label revert happens
         await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
 
-        // Assert: run removed
-        _runService.GetActiveRuns().Should().NotContain(r => r.IssueIdentifier == "owner/repo#20");
+        // Assert: label was reverted
+        _mockLabelService.Verify(
+            s => s.SwapLabelAsync("ipc-2", "owner/repo#20", AgentLabels.Next, It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Assert: no run was ever registered in the local _runService (monolith is no longer authoritative)
+        _runService.GetActiveRuns().Should().BeEmpty(
+            "monolith no longer registers runs locally; run cleanup happens in the API (Req 1a.1)");
     }
 
     [Fact]
@@ -1413,23 +1395,11 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
             mockConfigStore.Object,
             _mockLogger.Object);
 
-        var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: mockConfigStore.Object,
-            providerFactory: mockProviderFactory.Object,
-            logger: _mockLogger.Object,
-            runService: _runService);
-
-        // TODO: Split mockConfigStore into three separate typed mocks (Mock<IAgentProfileStore>,
-        // Mock<IConfigurationStore>, Mock<IPipelineConfigStore>) so a constructor parameter swap
-        // between the second and third store slots would be caught by test failures here too
-        // (acceptance criterion: parameter swap causes at least one test to fail).
         _service = new DispatchOrchestrationService(
             new DispatchOrchestrationServiceDependencies(
                 new DispatchInfrastructure(
                     mockTokenVending.Object, mockProviderFactory.Object,
                     _mockLabelService.Object, resolution),
-                runCreator,
-                _runService,
                 _mockWorkDistributor.Object,
                 mockConfigStore.Object,
                 mockConfigStore.Object,

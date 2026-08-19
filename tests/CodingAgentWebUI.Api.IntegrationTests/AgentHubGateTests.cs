@@ -397,6 +397,88 @@ public sealed class AgentHubGateTests
         }
     }
 
+    // ── Req 3.4a: SubscribeToRun pushes OutputRingBuffer backlog ────────────────
+
+    /// <summary>
+    /// Req 3.4a: SubscribeToRun must immediately push buffered output lines to the new
+    /// subscriber so a UI client navigating to a mid-run page sees existing output
+    /// without waiting for a subsequent ReportOutputLines call.
+    ///
+    /// Steps:
+    /// 1. Agent connects, registers, and calls ReportOutputLines to buffer lines.
+    /// 2. UI client connects and calls SubscribeToRun.
+    /// 3. Assert the UI client receives OnOutputLines with the buffered lines immediately
+    ///    — no further ReportOutputLines is sent after SubscribeToRun.
+    /// </summary>
+    [Fact]
+    public async Task SubscribeToRun_AfterAgentReportedOutput_UIClientReceivesBacklogImmediately()
+    {
+        using var client = _factory.CreateClient(); // triggers host start
+        var serverAddress = _factory.ServerAddress;
+
+        var agentId = $"backlog-agent-{Guid.NewGuid():N}";
+        var jobId = Guid.NewGuid().ToString("N");
+
+        // Step 1: Agent connects, registers, seeds run, and reports output lines
+        var agentConnection = BuildAgentConnection(serverAddress, agentId);
+        try
+        {
+            await agentConnection.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
+            agentConnection.State.Should().Be(HubConnectionState.Connected);
+
+            await agentConnection.InvokeAsync("RegisterAgent", new AgentRegistrationMessage
+            {
+                AgentId = new AgentId(agentId),
+                Hostname = "backlog-test-host",
+                Labels = ["dotnet"]
+            });
+
+            SeedRunAndBusyAgent(_factory, agentId, jobId);
+
+            // Report output lines BEFORE the UI client subscribes — these go into the ring buffer.
+            var bufferedLines = new List<string> { "buffered-line-1", "buffered-line-2", "buffered-line-3" };
+            await agentConnection.InvokeAsync("ReportOutputLines", new JobId(jobId), bufferedLines);
+
+            // Step 2: UI client connects and subscribes — no more ReportOutputLines after this point.
+            var uiConnection = BuildUiConnection(serverAddress);
+            var backlogReceived = new TaskCompletionSource<(string JobId, IReadOnlyList<string> Lines)>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+
+            uiConnection.On<string, IReadOnlyList<string>>(
+                HubMethodNames.OnOutputLines,
+                (jId, lines) => backlogReceived.TrySetResult((jId, lines)));
+
+            try
+            {
+                await uiConnection.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
+                uiConnection.State.Should().Be(HubConnectionState.Connected);
+
+                // Subscribe — backlog push must happen as part of SubscribeToRun (Req 3.4a).
+                await uiConnection.InvokeAsync("SubscribeToRun", jobId);
+
+                // Step 3: Assert UI client receives the buffered lines within 10 seconds.
+                // No further ReportOutputLines is sent — the push must come from the ring buffer.
+                var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                cts.Token.Register(() => backlogReceived.TrySetCanceled());
+
+                var result = await backlogReceived.Task;
+                result.JobId.Should().Be(jobId);
+                result.Lines.Should().Equal(bufferedLines,
+                    "SubscribeToRun must push the OutputRingBuffer backlog to the new subscriber (Req 3.4a)");
+            }
+            finally
+            {
+                await uiConnection.StopAsync();
+                await uiConnection.DisposeAsync();
+            }
+        }
+        finally
+        {
+            await agentConnection.StopAsync();
+            await agentConnection.DisposeAsync();
+        }
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────────
 
     /// <summary>

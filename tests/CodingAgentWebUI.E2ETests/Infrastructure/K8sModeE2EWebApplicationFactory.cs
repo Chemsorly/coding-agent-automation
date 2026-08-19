@@ -1,6 +1,9 @@
 using CodingAgentWebUI.E2ETests.Fakes;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
@@ -124,20 +127,20 @@ public sealed class K8sModeE2EWebApplicationFactory : WebApplicationFactory<Prog
             // (SignalR mode registers SignalRWorkDistributor — replace with K8s version)
             services.RemoveAll<IWorkDistributor>();
             services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
+                sp.GetRequiredService<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>(),
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
                 sp.GetRequiredService<CodingAgentWebUI.Infrastructure.Persistence.Services.WorkItemTransitionService>(),
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>()
                     .CreateLogger<KubernetesWorkDistributor>()));
 
-            // ── Replace IKubernetesJobClient with fake ────────────────────────
+            // ── Replace IKubernetesJobClient with fake ────────────────────
             services.RemoveAll<IKubernetesJobClient>();
             services.AddSingleton<IKubernetesJobClient>(FakeK8sClient);
 
             // ── Disable PipelineLoopService ───────────────────────────────────
             RemoveHostedService<PipelineLoopService>(services);
 
-            // ── Disable PendingWorkItemDrainService (K8s uses DispatchService instead) ──
-            RemoveHostedService<PendingWorkItemDrainService>(services);
+            // PendingWorkItemDrainService was deleted in Spec 041 — no-op
 
             // ── Reduce shutdown timeout ───────────────────────────────────────
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));

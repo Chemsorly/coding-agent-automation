@@ -6,23 +6,74 @@ modifying concurrency-related code in these services, read this document first.
 
 ## Overview
 
-<!-- TODO(Spec 045): Spec 042 introduced a second host process (CodingAgentWebUI.Api). The single-process premise below and the guarantees claimed for _queueLock / _selectionLock / SyncRoot need restating for a multi-process topology. Latent until Spec 044 wires agents to the API hub. Spec 045 resolves this with a full concurrency model rewrite for the final topology. -->
-The orchestrator runs as a single process with several singleton services that receive
-concurrent access from:
+After Spec 045 the system runs as **four distinct processes**, each with its own in-memory
+state. The locking invariants below apply within a single process — they do not span process
+boundaries.
 
-- **SignalR hub callbacks** — agent registration, heartbeats, job completion reports
-- **Dispatch timer** — periodic job dispatch loop (`DispatchLoopService`)
-- **Heartbeat monitor** — periodic health checks (`HeartbeatMonitorService`)
-- **API endpoints** — UI-triggered enqueue, cancel, and status queries
-- **Run lifecycle events** — job assignment and completion (`RunLifecycleManager`)
+### Process Map
 
-All services listed below are registered as singletons in DI and share mutable state
-through `ConcurrentDictionary` and `ConcurrentQueue` collections, with additional locks
-for compound operations.
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Orchestrator  (CodingAgentWebUI)                                           │
+│  ─────────────                                                              │
+│  Blazor Server UI                                                           │
+│  PipelineLoopService  — polls API for config, dispatches via               │
+│                         DispatchOrchestrationService                        │
+│  OrphanedLabelRecoveryService                                               │
+│  LeaderElection (Lease: caa-{release}-pipeline-loop-lock)                  │
+│                                                                             │
+│  No EF Core. No AgentHub. Connects to API via IPipelineApiConfigClient,    │
+│  IPipelineApiRunHistoryClient, IAgentHubConnection (scoped per circuit).   │
+└─────────────────────────────────────────────────────────────────────────────┘
+         │  REST calls (HTTP) + SignalR hub subscribe (IAgentHubConnection)
+         ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Pipeline API  (CodingAgentWebUI.Api)                                       │
+│  ──────────────                                                             │
+│  AgentHub  — real-time hub for agent pods and Blazor circuits               │
+│  AgentRegistryService  ─┐                                                  │
+│  OrchestratorRunService ├── singleton in-memory state (locking applies)    │
+│  JobDeduplicationGuardService ─┘                                           │
+│  PipelineDbContext (EF Core)  — authoritative Postgres access               │
+│  WorkItemEndpoints, ConfigEndpoints, PipelineRunEndpoints                  │
+│  DatabaseMaintenanceService, WorkItemMetricsBackgroundService              │
+│  ConsolidationWorkItemDispatchService                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+         │  POST /api/work-items (claim)   ▲ hub: ReportOutputLines etc.
+         ▼                                 │
+┌──────────────────────┐     ┌─────────────────────────────────────────────┐
+│  Job Controller      │     │  Agent Pod (CodingAgentWebUI.Agent)          │
+│  (CodingAgentWebUI.  │     │  ─────────────                              │
+│   JobController)     │     │  Ephemeral K8s Job  (caa-{workItemId[0:8]}) │
+│  ─────────────────── │     │  Connects to API hub as Bearer AGENT_API_KEY│
+│  K8s Job dispatch    │     │  GET /api/work-items/{id}/assignment         │
+│  Lease: caa-{rel}-   │     │  POST /api/work-items/{id}/status           │
+│    dispatch-lock     │     │  hub: ReportStepTransition, etc.            │
+└──────────────────────┘     └─────────────────────────────────────────────┘
+```
+
+### Where the Locking-Critical Singletons Live
+
+All services described in this document now run exclusively in the **Pipeline API** process
+(`CodingAgentWebUI.Api`). They are **not present** in the Orchestrator, Job Controller, or
+Agent pods. This is important: the guarantee that `_selectionLock`, `_queueLock`, and
+`AgentEntry.SyncRoot` prevent races holds only because all three are in the same process.
+
+If a future change splits any of these singletons across processes (e.g., separate API
+replicas), the in-process lock guarantees no longer apply — distributed coordination
+(e.g., Postgres advisory locks, Redis `SETNX`) would be required.
+
+> **api.replicas must remain 1.** The SignalR Redis backplane enables hub message delivery
+> across replicas but does NOT make multiple API replicas safe. `AgentRegistryService`,
+> `OrchestratorRunService`, and `JobDeduplicationGuardService` are in-memory singletons.
+> Do not scale the API beyond one replica without replacing these with distributed equivalents.
+
+---
 
 ## JobDeduplicationGuardService
 
 **File:** `src/CodingAgentWebUI.Orchestration/Dispatch/JobDeduplicationGuardService.cs`
+**Hosted in:** `CodingAgentWebUI.Api`
 
 ### Data structures
 
@@ -69,6 +120,7 @@ These use `ConcurrentQueue`/`ConcurrentDictionary` atomic APIs and do NOT acquir
 ## AgentRegistryService
 
 **File:** `src/CodingAgentWebUI.Orchestration/Registry/AgentRegistryService.cs`
+**Hosted in:** `CodingAgentWebUI.Api`
 
 ### Data structures
 
@@ -101,6 +153,9 @@ because multiple properties must change atomically (e.g., status + timestamp).
 The `AgentEntry.SyncRoot` lock is public and acquired by multiple services. This is an
 intentional design tradeoff — the alternative (routing all mutations through
 `AgentRegistryService`) would bloat its API with dozens of specialized mutation methods.
+
+All authorized consumers run in the **Pipeline API** process. The lock is meaningless
+across process boundaries.
 
 ### Authorized consumers
 
@@ -232,6 +287,22 @@ would allow it, but:
 
 Do **not** "optimize" this into a single lock scope.
 
+## Cross-Process Communication
+
+The four processes communicate strictly via defined interfaces:
+
+| From | To | Mechanism |
+|------|----|-----------|
+| Orchestrator | Pipeline API | REST (HTTP via `IPipelineApiConfigClient`, `IPipelineApiWorkItemClient`, `IPipelineApiRunHistoryClient`) |
+| Orchestrator | Pipeline API | SignalR hub subscribe (`IAgentHubConnection`, scoped per Blazor circuit) |
+| Job Controller | Pipeline API | REST — `POST /api/work-items` claim, workitem status updates |
+| Agent pod | Pipeline API | REST — `GET /api/work-items/{id}/assignment`, `POST /api/work-items/{id}/status` |
+| Agent pod | Pipeline API | SignalR hub — `ReportOutputLines`, `ReportStepTransition`, `ReportJobCompleted`, etc. |
+| Pipeline API | Agent pod | SignalR hub push — token vending, cancellation signals |
+
+There is no direct process-to-process communication between the Orchestrator and
+Job Controller, or between the Orchestrator and Agent pods.
+
 ## Anti-patterns — Don't Do This
 
 ### ❌ Don't replace `ConcurrentQueue` with `Queue<T>`
@@ -269,3 +340,10 @@ unnecessary coupling and extended lock hold times.
 If a new service needs to acquire `AgentEntry.SyncRoot`, add it to the "Authorized
 consumers" table above and verify it doesn't introduce lock nesting that violates the
 ordering rules.
+
+### ❌ Don't scale the API beyond one replica without replacing in-memory singletons
+
+`AgentRegistryService`, `OrchestratorRunService`, and `JobDeduplicationGuardService` are
+process-local singletons. A second API replica would have a separate, divergent copy of
+each. Horizontal scaling requires replacing these with distributed state (e.g., Postgres
+tables, Redis structures) and removing the in-process lock guarantees entirely.

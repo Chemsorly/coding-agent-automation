@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -16,20 +17,23 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// Spec 044: IOrchestratorRunService, IRunLifecycleManager, and IHubContext removed from the service.
 /// Cancel operations now route through IWorkDistributor only.
 /// </para>
+/// <para>
+/// Spec 045: IConfigurationStore replaced by IPipelineApiConfigClient;
+/// IPipelineRunHistoryService replaced by IPipelineApiRunHistoryClient.
+/// </para>
 /// </summary>
 public sealed class AgentMonitoringPageServiceTests
 {
     private static readonly string[] s_KiroLabels = new[] { "kiro" };
 
-    private readonly Mock<IActiveRunQueryService> _mockActiveRunQuery = new();
     private readonly AgentRegistryService _registry;
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly JobDeduplicationGuardService _dispatcher;
-    private readonly Mock<IConfigurationStore> _mockConfigStore = new();
+    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
     private readonly Mock<IConsolidationService> _mockConsolidationService = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWorkQuery = new();
     private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
-    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
+    private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistoryClient = new();
     private readonly AgentMonitoringPageService _sut;
 
     public AgentMonitoringPageServiceTests()
@@ -37,32 +41,29 @@ public sealed class AgentMonitoringPageServiceTests
         _registry = new AgentRegistryService(_mockLogger.Object);
         _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
 
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { MaxRetries = 5 });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
-        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
-        _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<ActiveRunSummary>());
         _mockPendingWorkQuery.Setup(s => s.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PendingJob>());
         _mockConsolidationService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ConsolidationRun>());
-        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+        _mockRunHistoryClient.Setup(h => h.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = Array.Empty<PipelineRunSummary>(), Page = 1, PageSize = 1000, HasMore = false });
 
         _sut = new AgentMonitoringPageService(new AgentMonitoringPageServiceDependencies(
-            _mockActiveRunQuery.Object,
             _registry,
             _dispatcher,
-            _mockConfigStore.Object,
+            _mockConfigClient.Object,
             _mockConsolidationService.Object,
             _mockPendingWorkQuery.Object,
             _mockWorkDistributor.Object,
-            _mockHistoryService.Object));
+            _mockRunHistoryClient.Object));
     }
 
     private static PipelineRun CreateRun(string runId, string agentId = "agent-1")
@@ -105,7 +106,7 @@ public sealed class AgentMonitoringPageServiceTests
     {
         await _sut.InitializeAsync();
 
-        _mockActiveRunQuery.Verify(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _mockRunHistoryClient.Verify(s => s.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
         _mockPendingWorkQuery.Verify(s => s.GetPendingJobsAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 

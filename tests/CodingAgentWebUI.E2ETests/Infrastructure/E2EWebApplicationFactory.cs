@@ -24,7 +24,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
     public const string TestApiKey = "e2e-test-key";
 
     // Shared fake instances — accessible by tests for seeding and assertions
-    public InMemoryConfigurationStore ConfigStore { get; } = new();
+    public CodingAgentWebUI.E2ETests.Fakes.InMemoryConfigurationStore ConfigStore { get; } = new();
     public FakeProviderFactory FakeProviders { get; } = new();
     public ConfigurableQualityGateValidator QualityGateValidator { get; } = new();
     public InMemoryPipelineRunHistoryService HistoryService { get; } = new();
@@ -51,6 +51,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
     {
         // Set the API key via environment variable before host builds
         Environment.SetEnvironmentVariable("AGENT_API_KEY", TestApiKey);
+        // Spec 045: PipelineApi:BaseUrl is required after Task 2 fast-fail was added.
+        // E2E tests will use TwoServiceWebApplicationFactory in Task 12; for now provide a stub.
+        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", "http://localhost:9999");
 
         // Set environment to Development so static web assets are resolved correctly.
         builder.UseEnvironment("Development");

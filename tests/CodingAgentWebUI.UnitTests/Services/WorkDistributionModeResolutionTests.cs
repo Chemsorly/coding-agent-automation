@@ -46,11 +46,12 @@ public class WorkDistributionModeResolutionTests
     }
 
     [Fact]
-    public void KubernetesMode_Registers_IPendingWorkQuery()
+    public void KubernetesMode_IPendingWorkQuery_WasRemoved()
     {
-        // Verifies that AddWorkDistribution registers IPendingWorkQuery (ObservableGaugeRegistrationExtensions
-        // calls GetRequiredService unconditionally — missing registration is a hard startup crash).
-        // DispatchStateBuilder was previously registered here but is now in the API (Spec 043 Task 9).
+        // Spec 045 Req 1.2 (M1 gauge audit): IPendingWorkQuery (DbPendingWorkQuery) was
+        // removed from AddWorkDistribution because dispatch.queue.depth gauge was backed by
+        // IDbContextFactory. No PrometheusRule alerts reference this metric, so removal is safe.
+        // ObservableGaugeRegistrationExtensions no longer registers dispatch.queue.depth.
         var configData = new Dictionary<string, string?>
         {
             ["Database:Host"] = "localhost",
@@ -66,8 +67,7 @@ public class WorkDistributionModeResolutionTests
         services.AddWorkDistribution(config);
 
         var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IPendingWorkQuery));
-        descriptor.Should().NotBeNull();
-        descriptor!.Lifetime.Should().Be(ServiceLifetime.Singleton);
+        descriptor.Should().BeNull("IPendingWorkQuery was removed in Spec 045 Req 1.2 (M1 gauge audit)");
     }
 
     // ── Order-independence (IPipelineRunHistoryService) ─────────────────

@@ -1,8 +1,8 @@
 using Bunit;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Moq;
 
@@ -16,10 +16,10 @@ public class SettingsTreeNavComponentTests : BunitContext
 {
     public SettingsTreeNavComponentTests()
     {
-        var mockProjectStore = new Mock<IProjectStore>();
-        mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
+        mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
-        Services.AddSingleton(mockProjectStore.Object);
+        Services.AddSingleton(mockConfigClient.Object);
     }
     [Fact]
     public void TreeNav_RendersAllGroups()

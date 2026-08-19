@@ -1,14 +1,6 @@
-@using System.Text.Json
-@using CodingAgentWebUI.Infrastructure.Persistence
-@using CodingAgentWebUI.Infrastructure.Persistence.Entities
-@using CodingAgentWebUI.Pipeline
-@using CodingAgentWebUI.Pipeline.Interfaces
-@using CodingAgentWebUI.Pipeline.Models
-@using CodingAgentWebUI.Services
+@using CodingAgentWebUI.Api.Client
 @using Microsoft.AspNetCore.Components.Forms
-@using Microsoft.EntityFrameworkCore
-@inject IDbContextFactory<PipelineDbContext> DbFactory
-@inject IConfigurationStore ConfigStore
+@inject IPipelineApiConfigClient ConfigClient
 @inject NavigationManager Nav
 @inject IJSRuntime JS
 
@@ -39,7 +31,7 @@
             <h3>Import Configuration</h3>
             <p>
                 Upload a previously exported JSON file to replace all configuration in the database.
-                This <strong>overwrites</strong> existing config.
+                This <strong>overwrites</strong> existing config. All previous configuration is permanently deleted before import.
             </p>
             <InputFile OnChange="OnFileSelected" accept=".json" />
             @if (_selectedFile is not null)
@@ -84,47 +76,11 @@
 
         try
         {
-            await using var db = await DbFactory.CreateDbContextAsync();
+            // TODO(Task 8b): GET /api/config/export server-side endpoint not yet implemented.
+            // This call will fail with a non-success status code until Task 8b is complete.
+            var bytes = await ConfigClient.ExportConfigAsync(CancellationToken.None);
 
-            var bundle = new ConfigBundle
-            {
-                PipelineConfig = await db.PipelineConfig.AsNoTracking()
-                    .Select(e => e.Configuration).FirstOrDefaultAsync(),
-                ProviderConfigs = await db.ProviderConfigs.AsNoTracking().Select(e => new ProviderConfigDto
-                {
-                    Id = e.Id, Kind = e.Kind, DisplayName = e.DisplayName,
-                    ProviderType = e.ProviderType, Enabled = e.Enabled, Configuration = e.Configuration
-                }).ToListAsync(),
-                AgentProfiles = await db.AgentProfiles.AsNoTracking().Select(e => new NamedConfigDto
-                {
-                    Id = e.Id, Name = e.Name, Configuration = e.Configuration
-                }).ToListAsync(),
-                QualityGateConfigs = await db.QualityGateConfigs.AsNoTracking().Select(e => new NamedConfigDto
-                {
-                    Id = e.Id, Name = e.Name, Configuration = e.Configuration
-                }).ToListAsync(),
-                ReviewerConfigs = await db.ReviewerConfigs.AsNoTracking().Select(e => new NamedConfigDto
-                {
-                    Id = e.Id, Name = e.Name, Configuration = e.Configuration
-                }).ToListAsync(),
-                Projects = await db.Projects.AsNoTracking().Select(e => new ProjectDto
-                {
-                    Id = e.Id, Name = e.Name, Enabled = e.Enabled,
-                    Description = e.Description, Settings = e.Settings, TemplateIds = e.TemplateIds
-                }).ToListAsync(),
-                JobTemplates = await db.PipelineJobTemplates.AsNoTracking().Select(e => new JobTemplateDto
-                {
-                    Id = e.Id, ProjectId = e.ProjectId, Name = e.Name, Configuration = e.Configuration
-                }).ToListAsync()
-            };
-
-            var json = JsonSerializer.SerializeToUtf8Bytes(bundle, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
-
-            using var stream = new MemoryStream(json);
+            using var stream = new MemoryStream(bytes);
             using var streamRef = new DotNetStreamReference(stream);
             await JS.InvokeVoidAsync("downloadFileFromStream", "pipeline-config-export.json", streamRef);
 
@@ -172,133 +128,19 @@
                 return;
             }
 
-            // Read the file content directly (Blazor Server — file streams from browser to server)
+            // Read the file content (Blazor Server — file streams from browser to server)
             using var stream = _selectedFile.OpenReadStream(maxAllowedSize: MaxImportFileSizeBytes);
 
-            var bundle = await JsonSerializer.DeserializeAsync<ConfigBundle>(stream, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-            });
-
-            if (bundle is null)
-            {
-                _resultMessage = "Empty or invalid bundle";
-                _resultSuccess = false;
-                await OnShowStatus.InvokeAsync((_resultMessage, true));
-                return;
-            }
-
-            // Import directly using DbFactory (server-side, no HTTP round-trip)
-            await using var db = await DbFactory.CreateDbContextAsync();
-
-            // Clear existing config
-            db.PipelineConfig.RemoveRange(db.PipelineConfig);
-            db.ProviderConfigs.RemoveRange(db.ProviderConfigs);
-            db.AgentProfiles.RemoveRange(db.AgentProfiles);
-            db.QualityGateConfigs.RemoveRange(db.QualityGateConfigs);
-            db.ReviewerConfigs.RemoveRange(db.ReviewerConfigs);
-            db.Projects.RemoveRange(db.Projects);
-            db.PipelineJobTemplates.RemoveRange(db.PipelineJobTemplates);
-            await db.SaveChangesAsync();
-
-            // Insert from bundle
-            if (bundle.PipelineConfig is not null)
-            {
-                db.PipelineConfig.Add(new PipelineConfigEntity
-                {
-                    Id = Guid.NewGuid(),
-                    Configuration = bundle.PipelineConfig
-                });
-            }
-
-            foreach (var p in bundle.ProviderConfigs ?? [])
-            {
-                db.ProviderConfigs.Add(new ProviderConfigEntity
-                {
-                    Id = p.Id,
-                    Kind = p.Kind,
-                    DisplayName = p.DisplayName,
-                    ProviderType = p.ProviderType,
-                    Enabled = p.Enabled,
-                    Configuration = p.Configuration
-                });
-            }
-
-            foreach (var a in bundle.AgentProfiles ?? [])
-            {
-                db.AgentProfiles.Add(new AgentProfileEntity
-                {
-                    Id = a.Id,
-                    Name = a.Name,
-                    Configuration = a.Configuration
-                });
-            }
-
-            foreach (var q in bundle.QualityGateConfigs ?? [])
-            {
-                db.QualityGateConfigs.Add(new QualityGateConfigEntity
-                {
-                    Id = q.Id,
-                    Name = q.Name,
-                    Configuration = q.Configuration
-                });
-            }
-
-            foreach (var r in bundle.ReviewerConfigs ?? [])
-            {
-                db.ReviewerConfigs.Add(new ReviewerConfigEntity
-                {
-                    Id = r.Id,
-                    Name = r.Name,
-                    Configuration = r.Configuration
-                });
-            }
-
-            foreach (var proj in bundle.Projects ?? [])
-            {
-                db.Projects.Add(new ProjectEntity
-                {
-                    Id = proj.Id,
-                    Name = proj.Name,
-                    Enabled = proj.Enabled,
-                    Description = proj.Description,
-                    Settings = proj.Settings,
-                    TemplateIds = proj.TemplateIds ?? []
-                });
-            }
-
-            foreach (var t in bundle.JobTemplates ?? [])
-            {
-                db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
-                {
-                    Id = t.Id,
-                    ProjectId = t.ProjectId,
-                    Name = t.Name,
-                    Configuration = t.Configuration
-                });
-            }
-
-            await db.SaveChangesAsync();
-
-            // Invalidate the singleton config store caches (bypassed by direct DB writes)
-            ConfigStore.InvalidateCaches();
+            // TODO(Task 8b): POST /api/config/import server-side endpoint not yet implemented.
+            // This call will fail with a non-success status code until Task 8b is complete.
+            // The endpoint takes multipart/form-data with a file field named "file".
+            // Import is DESTRUCTIVE: the server clears all existing config before importing.
+            await ConfigClient.ImportConfigAsync(stream, _selectedFile.Name, CancellationToken.None);
 
             _resultSuccess = true;
-            _resultMessage = $"Imported: {bundle.ProviderConfigs?.Count ?? 0} providers, " +
-                             $"{bundle.AgentProfiles?.Count ?? 0} profiles, " +
-                             $"{bundle.QualityGateConfigs?.Count ?? 0} quality gates, " +
-                             $"{bundle.ReviewerConfigs?.Count ?? 0} reviewers, " +
-                             $"{bundle.Projects?.Count ?? 0} projects, " +
-                             $"{bundle.JobTemplates?.Count ?? 0} templates";
+            _resultMessage = "Import completed successfully.";
             await OnShowStatus.InvokeAsync((_resultMessage, false));
             await OnImportCompleted.InvokeAsync();
-        }
-        catch (JsonException ex)
-        {
-            _resultSuccess = false;
-            _resultMessage = $"Invalid JSON: {ex.Message}";
-            await OnShowStatus.InvokeAsync((_resultMessage, true));
         }
         catch (Exception ex)
         {

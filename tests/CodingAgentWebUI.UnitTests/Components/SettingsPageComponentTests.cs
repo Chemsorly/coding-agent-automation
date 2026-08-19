@@ -1,5 +1,6 @@
 using Bunit;
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -19,16 +20,15 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class SettingsPageComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
 
     public SettingsPageComponentTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
+        _mockStore = new Mock<IPipelineApiConfigClient>();
         _mockProviderFactory = new Mock<IProviderFactory>();
         SetupDefaults();
         Services.AddSingleton(_mockStore.Object);
-        Services.AddSingleton<IProjectStore>(_mockStore.Object);
         Services.AddSingleton(new CodingAgentWebUI.Infrastructure.GitHub.GitHubValidationService());
         Services.AddSingleton(new CodingAgentWebUI.Infrastructure.GitLab.GitLabValidationService());
         Services.AddSingleton(_mockProviderFactory.Object);
@@ -45,19 +45,19 @@ public class SettingsPageComponentTests : BunitContext
 
     private void SetupDefaults()
     {
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
     }
 
@@ -98,7 +98,7 @@ public class SettingsPageComponentTests : BunitContext
     [Fact]
     public void Settings_DisplaysExistingProviders()
     {
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My GitHub" }
@@ -113,7 +113,7 @@ public class SettingsPageComponentTests : BunitContext
     [Fact]
     public void Settings_DisplaysEditAndDeleteButtons_ForExistingProvider()
     {
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test Provider" }
@@ -221,7 +221,7 @@ public class SettingsPageComponentTests : BunitContext
         {
             new() { Id = "del-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "To Delete" }
         };
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(providers);
         _mockStore.Setup(s => s.DeleteProviderConfigAsync("del-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .Callback(() => providers.Clear())
@@ -244,7 +244,7 @@ public class SettingsPageComponentTests : BunitContext
     [Fact]
     public void Settings_WhenStoreThrows_ShowsErrorStatus()
     {
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Store unavailable"));
 
         var component = Render<Settings>();
@@ -284,13 +284,13 @@ public class SettingsPageComponentTests : BunitContext
     {
         // Verify that existing providers for the same owner/repo are displayed in the provider list,
         // which is a prerequisite for the modal's existing-provider detection to work correctly.
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My Issues",
                     Settings = new() { [ProviderSettingKeys.Owner] = "acme", [ProviderSettingKeys.Repo] = "webapp" } }
             });
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "My Repo",
@@ -336,7 +336,7 @@ public class SettingsPageComponentTests : BunitContext
     [Fact]
     public void Settings_IssueProviderCard_DoesNotShowConfigureLabelsButton()
     {
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "issue-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "My Issues",

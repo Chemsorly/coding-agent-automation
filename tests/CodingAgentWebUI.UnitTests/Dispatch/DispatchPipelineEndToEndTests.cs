@@ -10,7 +10,6 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.TestUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -145,19 +144,12 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
     private DispatchOrchestrationService CreateOrchestrationService()
     {
-        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: _mockConfigStore.Object,
-            providerFactory: _mockProviderFactory.Object,
-            lifecycle: new PipelineRunLifecycleService(new Mock<IPipelineRunHistoryService>().Object, _runService, _mockLogger.Object));
-
         return new DispatchOrchestrationService(
             new DispatchOrchestrationServiceDependencies(
                 new DispatchInfrastructure(
                     _mockTokenVending.Object, _mockProviderFactory.Object,
                     _mockLabelService.Object,
                     new DispatchResolutionService(new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object, _mockLogger.Object)),
-                runCreator,
-                _runService,
                 new Mock<IWorkDistributor>().Object,
                 _mockConfigStore.Object,
                 _mockConfigStore.Object,
@@ -195,7 +187,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         var orchestration = CreateOrchestrationService();
         var distributor = CreateDistributor();
 
-        // Act: prepare (creates PipelineRun in OrchestratorRunService)
+        // Act: prepare (builds RunId for the dispatch request — run is NOT registered locally)
         var request = await orchestration.PrepareDistributionRequestAsync(
             new ImplementationDispatchOrchestrationRequest
             {
@@ -207,20 +199,20 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             },
             CancellationToken.None);
         request.Should().NotBeNull();
-        request!.RunId.Should().NotBeNullOrEmpty("orchestration must set RunId from PipelineRun.RunId");
+        request!.RunId.Should().NotBeNullOrEmpty("orchestration must set RunId for hub routing");
 
-        // Act: distribute (creates WorkItem in DB as Pending)
+        // Act: distribute (creates WorkItem in DB as Pending via API client mock)
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();
 
-        // Assert: WorkItem ID matches the PipelineRun RunId
+        // Assert: WorkItem ID matches the RunId from the dispatch request
         var runId = request.RunId!;
-        result.WorkItemId.Should().Be(runId, "WorkItem ID must match PipelineRun.RunId");
+        result.WorkItemId.Should().Be(runId, "WorkItem ID must match the dispatch RunId");
 
-        // Assert: hub can find the run by jobId
-        var foundRun = _runService.GetRun(runId);
-        foundRun.Should().NotBeNull("hub must find PipelineRun by the same jobId the agent uses");
-        foundRun!.IssueIdentifier.Value.Should().Be("org/repo#42");
+        // Run is owned by the API's OrchestratorRunService (Req 1a.1 Option A);
+        // the monolith's _runService is not authoritative.
+        _runService.GetRun(runId).Should().BeNull(
+            "monolith no longer registers runs locally; the API registers them via POST /api/work-items");
     }
 
     [Fact]
@@ -285,12 +277,13 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     public async Task FullDispatch_HeartbeatMonitor_DoesNotOrphanRunDuringDispatchWindow()
     {
         // This is the core race-condition test: HeartbeatMonitor fires DURING the dispatch
-        // window (after PrepareDistributionRequestAsync creates the run with AgentId=null,
-        // but BEFORE DistributeAsync assigns a real agent). The run must survive.
+        // window. After Req 1a.1 Option A, the run is owned by the API's OrchestratorRunService,
+        // not the monolith's. The monolith's _runService is empty, so there is nothing to orphan.
+        // This test verifies that the flow does not crash and distribution still succeeds.
         var orchestration = CreateOrchestrationService();
         var distributor = CreateDistributor();
 
-        // Step 1: Create the run (AgentId=null during dispatch window)
+        // Step 1: Prepare (builds RunId; no run in monolith's registry)
         var request = await orchestration.PrepareDistributionRequestAsync(
             new ImplementationDispatchOrchestrationRequest
             {
@@ -303,11 +296,11 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             CancellationToken.None);
         request.Should().NotBeNull();
 
-        var run = _runService.GetRun(request!.RunId!);
-        run.Should().NotBeNull();
-        run!.AgentId.Should().BeNull("run is in dispatch window — no agent assigned yet");
+        // Monolith's local registry is empty — no run to orphan
+        _runService.GetRun(request!.RunId!).Should().BeNull(
+            "monolith no longer registers runs locally (Req 1a.1 Option A)");
 
-        // Step 2: HeartbeatMonitor fires during the dispatch window
+        // Step 2: HeartbeatMonitor sweep — nothing to sweep in the empty local registry
         var registry = new AgentRegistryService(_mockLogger.Object);
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         var monitor = new HeartbeatMonitorService(new HeartbeatMonitorDependencies(
@@ -317,12 +310,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         await monitor.SweepAsync(CancellationToken.None);
 
-        // Step 3: Verify the run was NOT orphaned
-        var survivedRun = _runService.GetRun(request.RunId!);
-        survivedRun.Should().NotBeNull("Phase 3 must skip runs with null AgentId — they're in the dispatch window");
-        survivedRun!.CurrentStep.Should().NotBe(PipelineStep.Failed);
-
-        // Step 4: Distribution still works after the sweep
+        // Step 3: Distribution still works
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();
     }

@@ -93,37 +93,30 @@ spec:
                   name: {{ include "coding-agent-automation.secretName" . }}
                   key: otel-headers
                   optional: true
-            - name: Database__Host
-              value: {{ required "database.host is required" .Values.database.host | quote }}
-            - name: Database__Port
-              value: {{ .Values.database.port | default 5432 | quote }}
-            - name: Database__Name
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "database.auth.existingSecret is required" .Values.database.auth.existingSecret }}
-                  key: {{ .Values.database.auth.keys.database | default "POSTGRES_DB" }}
-            - name: Database__Username
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.database.auth.existingSecret }}
-                  key: {{ .Values.database.auth.keys.username | default "POSTGRES_USER" }}
-            - name: Database__Password
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.database.auth.existingSecret }}
-                  key: {{ .Values.database.auth.keys.password | default "POSTGRES_PASSWORD" }}
-            {{- if .Values.database.sslMode }}
-            - name: Database__SslMode
-              value: {{ .Values.database.sslMode | quote }}
-            {{- end }}
-            - name: Database__MigrateOnStartup
-              value: {{ .Values.database.migrateOnStartup | quote }}
+            # Spec 045 Req 6.1: DB env vars removed — orchestrator no longer has Postgres access.
+            # DB credentials remain on the API deployment only (api-deployment.yaml).
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}
             {{- end }}
+            # Pipeline API connection — required by IPipelineApiConfigClient and IAgentHubConnection.
+            # Spec 045 Req 6.4: orchestrator must know API base URL and hub URL.
+            - name: PipelineApi__BaseUrl
+              value: {{ if .Values.api.baseUrl -}}
+                {{- .Values.api.baseUrl | quote }}
+              {{- else -}}
+                {{- printf "http://%s-api.%s.svc.cluster.local:%d" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.api.service.port | int) | quote }}
+              {{- end }}
+            - name: PipelineApi__HubUrl
+              value: {{ if .Values.api.hubUrl -}}
+                {{- .Values.api.hubUrl | quote }}
+              {{- else if .Values.api.baseUrl -}}
+                {{- printf "%s/hubs/agent" .Values.api.baseUrl | quote }}
+              {{- else -}}
+                {{- printf "http://%s-api.%s.svc.cluster.local:%d/hubs/agent" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.api.service.port | int) | quote }}
+              {{- end }}
             # Leader election lease name — release-scoped to prevent collision when multiple
-            # Helm releases share a namespace (Req 6.3). Overridable via values.yaml.
+            # Helm releases share a namespace (Req 6.3/6.7). Overridable via values.yaml.
             - name: LeaderElection__PipelineLoopLeaseName
               value: {{ if .Values.orchestrator.leaderElection.pipelineLoopLeaseName -}}
                 {{- .Values.orchestrator.leaderElection.pipelineLoopLeaseName | quote }}
@@ -139,3 +132,4 @@ spec:
         - name: job-templates
           configMap:
             name: {{ include "coding-agent-automation.fullname" . }}-job-templates
+            optional: true

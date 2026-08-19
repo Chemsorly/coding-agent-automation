@@ -3,7 +3,6 @@ using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
 
 namespace CodingAgentWebUI;
 
@@ -16,7 +15,7 @@ internal static class EndpointRegistration
     /// Maps all application endpoints: health probes, API routes, static files, auth middleware,
     /// SignalR hub, work item endpoints (DB mode), and Razor components.
     /// </summary>
-    public static WebApplication MapApplicationEndpoints(this WebApplication app, string? dbConnectionString)
+    public static WebApplication MapApplicationEndpoints(this WebApplication app)
     {
         // Kubernetes-style health probes — anonymous, no auth required
         app.MapHealthEndpoints();
@@ -30,20 +29,32 @@ internal static class EndpointRegistration
         app.MapGet("/api/export/runs.json", async (IPipelineRunHistoryService history, bool? feedbackOnly, int? page, int? pageSize) =>
         {
             IEnumerable<PipelineRunSummary> runs;
+            var filterFeedback = feedbackOnly == true;
             if (page.HasValue || pageSize.HasValue)
             {
                 var p = page ?? 1;
                 var ps = pageSize ?? 50;
-                var pagedResult = await history.GetRunHistoryAsync(p, ps);
+                // Apply feedbackOnly filter DB-side before paging so the filter
+                // does not silently drop rows from paginated responses.
+                var pagedResult = filterFeedback
+                    ? await history.GetRunHistoryAsync(p, ps, feedbackOnly: true)
+                    : await history.GetRunHistoryAsync(p, ps);
                 runs = pagedResult.Items;
             }
             else
             {
-                runs = await history.GetRunHistoryAsync();
+                // Use DB-side filter for feedbackOnly even without explicit pagination
+                // so older feedback entries are not silently missed by an API response cap.
+                if (filterFeedback)
+                {
+                    var pagedResult = await history.GetRunHistoryAsync(1, 10_000, feedbackOnly: true);
+                    runs = pagedResult.Items;
+                }
+                else
+                {
+                    runs = await history.GetRunHistoryAsync();
+                }
             }
-
-            if (feedbackOnly == true)
-                runs = runs.Where(r => r.Feedback is not null);
 
             var json = System.Text.Json.JsonSerializer.Serialize(runs.ToList(), PipelineJsonOptions.Default);
             var bytes = System.Text.Encoding.UTF8.GetBytes(json);
@@ -65,12 +76,8 @@ internal static class EndpointRegistration
         // Note: the monolith IHubContext cannot reach agents connected to the API hub — it only
         // sends to connections this process hosts. AgentChat.razor's send path will be updated in Spec 045.
 
-        // Config import/export endpoints for Blazor UI backup (DB modes only)
-        // Work Item HTTP API was removed — agents now use CodingAgentWebUI.Api endpoints
-        if (!string.IsNullOrEmpty(dbConnectionString))
-        {
-            app.MapConfigImportExportEndpoints();
-        }
+        // Config import/export endpoints removed (Spec 045 Task 9 / Req 2.5):
+        // Both endpoints are now served by CodingAgentWebUI.Api (/api/config/export, /api/config/import).
 
         app.MapRazorComponents<App>()
             .AddInteractiveServerRenderMode()
