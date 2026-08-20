@@ -17,11 +17,11 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "K8sChatMode")]
-public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<K8sChatE2EFixture>
+public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
 {
     private readonly AgentRegistryService _registry;
 
-    public K8sChatIntegrationTests(K8sChatE2EFixture fixture) : base(fixture)
+    public K8sChatIntegrationTests(E2EFixture fixture) : base(fixture)
     {
         _registry = fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
     }

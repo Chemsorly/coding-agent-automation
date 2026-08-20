@@ -16,9 +16,9 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
-public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbModeE2EFixture>
+public sealed class DbModeHappyPathTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
 {
-    public DbModeHappyPathTests(DbModeE2EFixture fixture) : base(fixture) { }
+    public DbModeHappyPathTests(E2EFixture fixture) : base(fixture) { }
 
     /// <summary>
     /// Seeds a template + profile + issue required for dispatch tests.

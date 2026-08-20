@@ -21,9 +21,9 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
 [Trait("Feature", "RaceCondition")]
-public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<DbModeE2EFixture>
+public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
 {
-    public DbModeRaceConditionTests(DbModeE2EFixture fixture) : base(fixture) { }
+    public DbModeRaceConditionTests(E2EFixture fixture) : base(fixture) { }
 
     private async Task SeedIssueAndProfileAsync(string issueId, string title = "Race test issue")
     {

@@ -1,32 +1,39 @@
-using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using k8s.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.E2ETests.Infrastructure;
 
 /// <summary>
-/// Base class for DB-mode E2E tests. No Playwright — pure SignalR + DB assertions.
-/// Provides helpers for dispatching issues and waiting for WorkItem state transitions.
+/// Base class for E2E tests that assert on state rather than on pages — WorkItem rows, hub
+/// traffic, run history, and the Jobs the app would have created in a cluster. No Playwright, so
+/// these run anywhere; <see cref="E2ETestBase"/> is the browser-driving sibling and shares the
+/// same <see cref="E2EFixture"/>.
+///
+/// This merges what used to be three base classes — <c>DbModeE2ETestBase</c>,
+/// <c>K8sModeE2ETestBase</c> and <c>K8sChatE2ETestBase</c> — one per deployment mode. Spec 041
+/// left a single mode, so the split described nothing; the helpers were disjoint and are simply
+/// collected here.
 /// </summary>
-public abstract class DbModeE2ETestBase : IAsyncLifetime
+public abstract class HeadlessE2ETestBase : IAsyncLifetime
 {
-    protected DbModeE2EFixture Fixture { get; }
+    protected E2EFixture Fixture { get; }
 
     /// <summary>
     /// Where <c>FakeAgentClient</c> connects. This is the Pipeline API, not the Blazor app:
     /// Spec 044 removed <c>MapHub&lt;AgentHub&gt;</c> from the monolith, so connecting there
-    /// fails negotiate with 405. These tests drive agents and assert on state; none of them
-    /// navigate the UI, so this is the only address they need.
+    /// fails negotiate with 405.
     /// </summary>
     protected string BaseUrl => Fixture.AgentHubUrl;
 
     /// <summary>Alias for <see cref="BaseUrl"/>; both point at the Pipeline API hub here.</summary>
     protected string AgentHubUrl => Fixture.AgentHubUrl;
 
-    protected DbModeE2ETestBase(DbModeE2EFixture fixture)
+    protected HeadlessE2ETestBase(E2EFixture fixture)
     {
         Fixture = fixture;
     }
@@ -38,7 +45,7 @@ public abstract class DbModeE2ETestBase : IAsyncLifetime
 
         // Guard: verify DI replacement worked
         var factory = Fixture.Factory.Services.GetRequiredService<IProviderFactory>();
-        if (factory is not Fakes.FakeProviderFactory)
+        if (factory is not FakeProviderFactory)
             throw new InvalidOperationException(
                 $"DI replacement failed: IProviderFactory resolved as {factory.GetType().Name} instead of FakeProviderFactory");
 
@@ -50,7 +57,7 @@ public abstract class DbModeE2ETestBase : IAsyncLifetime
     // ── Dispatch Helpers ──────────────────────────────────────────────────
 
     /// <summary>
-    /// Dispatches an issue through the full DB-mode pipeline:
+    /// Dispatches an issue through the full pipeline:
     /// IDispatchOrchestrationService.PrepareDistributionRequestAsync → IWorkDistributor.DistributeAsync
     /// Returns the DistributionResult (contains WorkItem ID).
     /// </summary>
@@ -98,7 +105,7 @@ public abstract class DbModeE2ETestBase : IAsyncLifetime
                 RepoProviderId = repoProviderId,
                 BrainProviderId = brainProviderId,
                 PipelineProviderId = null,
-                InitiatedBy = "db-e2e-test",
+                InitiatedBy = "e2e-test",
                 Project = project
             },
             ct);
@@ -112,6 +119,142 @@ public abstract class DbModeE2ETestBase : IAsyncLifetime
 
         var distResult = await distributor.DistributeAsync(request, ct);
         return distResult;
+    }
+
+    /// <summary>
+    /// Distributes work through <c>IWorkDistributor</c> directly, skipping orchestration.
+    /// Use when the test is about the WorkItem row and not about issue resolution.
+    /// </summary>
+    protected async Task<DistributionResult> DistributeDirectlyAsync(
+        string issueIdentifier,
+        string agentSelector = "kiro,dotnet")
+    {
+        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = issueIdentifier,
+            IssueProviderConfigId = "issue-e2e",
+            RepoProviderConfigId = "repo-e2e",
+            AgentSelector = agentSelector,
+            TimeoutSeconds = 3600,
+            TaskType = WorkItemTaskType.Implementation,
+            ProjectId = WellKnownIds.DefaultProjectId,
+            InitiatedBy = "e2e-test"
+        };
+        return await distributor.DistributeAsync(request, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Inserts a Pending WorkItem straight into the database, bypassing both orchestration and
+    /// the distributor. Use when the test is about what the dispatch loop does with a row.
+    /// </summary>
+    protected async Task<Guid> InsertPendingWorkItemAsync(
+        string issueIdentifier,
+        string agentSelector = "kiro,dotnet",
+        int timeoutSeconds = 3600,
+        string? projectId = null)
+    {
+        var workItemId = Guid.NewGuid();
+        await using var db = Fixture.DbContextFactory.CreateDbContext();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = workItemId,
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = issueIdentifier,
+            IssueProviderConfigId = "issue-e2e",
+            Status = WorkItemStatus.Pending,
+            Payload = "{}",
+            AgentSelector = agentSelector,
+            CreatedAt = DateTimeOffset.UtcNow,
+            TimeoutSeconds = timeoutSeconds,
+            ProjectId = projectId ?? WellKnownIds.DefaultProjectId
+        });
+        await db.SaveChangesAsync();
+        return workItemId;
+    }
+
+    // ── Chat Helpers ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Dispatches a chat pod for <paramref name="agentSelector"/> and connects a
+    /// <see cref="FakeAgentClient"/> as a chat agent. Returns <c>(agentId, fakeAgent)</c>.
+    /// The caller is responsible for disposing the <see cref="FakeAgentClient"/>.
+    /// </summary>
+    protected async Task<(string agentId, FakeAgentClient fakeAgent)> DispatchChatPodAndConnectAsync(
+        string agentSelector,
+        string? model = null,
+        string? effort = null,
+        string? overrideAgentId = null)
+    {
+        var agentId = overrideAgentId ?? $"fake-chat-agent-{Guid.NewGuid().ToString("N")[..6]}";
+
+        // Start dispatch — this will poll for agent connection
+        var dispatchTask = Fixture.Factory.ChatDispatcher.DispatchChatPodAsync(
+            agentSelector, model, effort, CancellationToken.None);
+
+        // Wait for the job to be created (brief poll), then connect the fake agent
+        await WaitForChatJobCreatedAsync(agentSelector, timeout: TimeSpan.FromSeconds(10));
+
+        // Find the dispatch ID from the created job so we can connect with matching labels
+        var encodedSelector = agentSelector.Replace(',', '_').Replace(" ", "");
+        var job = Fixture.K8sClient.GetChatJobBySelector(encodedSelector)
+            ?? throw new InvalidOperationException(
+                $"Chat job not found for selector '{encodedSelector}' after waiting");
+
+        var labels = job.Metadata?.Labels;
+        string? dispatchId = null;
+        if (labels is not null)
+            labels.TryGetValue("caa/chat-session-id", out dispatchId);
+        if (dispatchId is null)
+            throw new InvalidOperationException("Chat job is missing caa/chat-session-id label");
+
+        // Connect the fake agent with chat labels (this satisfies the dispatcher's poll loop).
+        // The hub is on the API host since Spec 044, not on the Blazor app.
+        var fakeAgent = new FakeAgentClient(agentId, agentSelector.Split(',', StringSplitOptions.TrimEntries));
+        await fakeAgent.ConnectAsChatAgentAsync(AgentHubUrl, Fixture.ApiKey, dispatchId);
+
+        // Now wait for dispatch to complete
+        var returnedAgentId = await dispatchTask.WaitAsync(TimeSpan.FromSeconds(30));
+
+        return (returnedAgentId, fakeAgent);
+    }
+
+    /// <summary>
+    /// Asserts that <paramref name="job"/> has all required K8s chat labels and
+    /// container env vars.
+    /// </summary>
+    protected static void AssertChatJobLabels(V1Job job, string? dispatchId = null)
+    {
+        var labels = job.Metadata?.Labels
+            ?? throw new Xunit.Sdk.XunitException("Job has no metadata labels");
+
+        Assert.True(labels.ContainsKey("caa/chat-session-id"),
+            "Job missing label: caa/chat-session-id");
+        Assert.True(labels.ContainsKey("caa/chat-selector"),
+            "Job missing label: caa/chat-selector");
+
+        if (dispatchId is not null)
+            Assert.Equal(dispatchId, labels["caa/chat-session-id"]);
+
+        // Assert env vars on the first container
+        var container = job.Spec?.Template?.Spec?.Containers?.FirstOrDefault()
+            ?? throw new Xunit.Sdk.XunitException("Job has no containers");
+
+        var envNames = container.Env?.Select(e => e.Name).ToHashSet() ?? new HashSet<string>();
+        Assert.Contains("AGENT_CHAT_MODE", envNames);
+        Assert.Equal("true", container.Env!.First(e => e.Name == "AGENT_CHAT_MODE").Value);
+        Assert.Contains("AGENT_CHAT_SESSION_ID", envNames);
+    }
+
+    /// <summary>
+    /// No-op — PVC claiming is stateless; there is nothing to wait for.
+    /// Kept for source compatibility; callers can be updated to remove the call.
+    /// </summary>
+    protected static Task WaitForPvcReleasedAsync(
+        string pvcName,
+        TimeSpan? timeout = null)
+    {
+        return Task.CompletedTask;
     }
 
     // ── Wait Helpers ──────────────────────────────────────────────────────
@@ -166,6 +309,45 @@ public abstract class DbModeE2ETestBase : IAsyncLifetime
             $"WorkItem {workItemId} did not reach status {expectedStatus} within " +
             $"{(timeout ?? TimeSpan.FromSeconds(30)).TotalSeconds}s. " +
             $"Current status: {finalItem?.Status.ToString() ?? "NOT FOUND"}");
+    }
+
+    /// <summary>Polls until the fake K8s client has at least the expected number of created jobs.</summary>
+    protected async Task WaitForK8sJobCreatedAsync(int expectedCount = 1, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
+        while (DateTime.UtcNow < deadline)
+        {
+            if (Fixture.K8sClient.CreatedJobs.Count >= expectedCount)
+                return;
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
+        throw new TimeoutException(
+            $"Expected {expectedCount} K8s Job(s), got {Fixture.K8sClient.CreatedJobs.Count} within " +
+            $"{(timeout ?? TimeSpan.FromSeconds(30)).TotalSeconds}s");
+    }
+
+    /// <summary>
+    /// Polls <see cref="FakeKubernetesJobClient.ChatJobs"/> until a job with a
+    /// <c>caa/chat-selector</c> label matching <paramref name="agentSelector"/> appears.
+    /// </summary>
+    protected async Task WaitForChatJobCreatedAsync(
+        string agentSelector,
+        TimeSpan? timeout = null)
+    {
+        var encodedSelector = agentSelector.Replace(',', '_').Replace(" ", "");
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var job = Fixture.K8sClient.GetChatJobBySelector(encodedSelector);
+            if (job is not null) return;
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
+
+        throw new TimeoutException(
+            $"Chat job for selector '{agentSelector}' (encoded: '{encodedSelector}') " +
+            $"not created within {(timeout ?? TimeSpan.FromSeconds(30)).TotalSeconds}s. " +
+            $"ChatJobs: [{string.Join(", ", Fixture.K8sClient.ChatJobs.Keys)}]");
     }
 
     /// <summary>

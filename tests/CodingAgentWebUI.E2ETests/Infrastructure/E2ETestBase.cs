@@ -5,8 +5,11 @@ using Microsoft.Playwright;
 namespace CodingAgentWebUI.E2ETests.Infrastructure;
 
 /// <summary>
-/// Base class for E2E tests. Provides per-test browser context, page, and fake reset.
-/// Takes a screenshot on dispose (CI uploads on failure).
+/// Base class for E2E tests that drive the UI. Provides a per-test browser context, a page, and
+/// fake reset; takes a screenshot on dispose (CI uploads it on failure).
+///
+/// Tests that assert on database and hub state rather than on rendered pages derive from
+/// <see cref="HeadlessE2ETestBase"/> instead — same fixture, no browser.
 /// </summary>
 public abstract class E2ETestBase : IAsyncLifetime
 {
@@ -30,7 +33,8 @@ public abstract class E2ETestBase : IAsyncLifetime
         Fixture.Factory.ResetAll();
 
         // Fresh browser context per test (isolated cookies, storage)
-        _context = await Fixture.Browser.NewContextAsync();
+        var browser = await Fixture.GetBrowserAsync();
+        _context = await browser.NewContextAsync();
         Page = await _context.NewPageAsync();
 
         // Guard: verify DI replacement worked

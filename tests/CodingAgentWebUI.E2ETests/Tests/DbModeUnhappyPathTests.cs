@@ -19,9 +19,9 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
 [Trait("Feature", "UnhappyPath")]
-public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<DbModeE2EFixture>
+public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
 {
-    public DbModeUnhappyPathTests(DbModeE2EFixture fixture) : base(fixture) { }
+    public DbModeUnhappyPathTests(E2EFixture fixture) : base(fixture) { }
 
     private async Task SeedIssueAndProfileAsync(string issueId, string title = "Test issue")
     {

@@ -18,9 +18,9 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
-public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbModeE2EFixture>
+public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
 {
-    public DbModeEdgeCaseTests(DbModeE2EFixture fixture) : base(fixture) { }
+    public DbModeEdgeCaseTests(E2EFixture fixture) : base(fixture) { }
 
     private async Task SeedIssueAndProfileAsync(string issueId, string title = "Test issue")
     {
