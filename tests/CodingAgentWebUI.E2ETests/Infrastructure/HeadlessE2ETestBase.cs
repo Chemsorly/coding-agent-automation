@@ -2,6 +2,7 @@ using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Kubernetes;
 using k8s.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -41,7 +42,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
     public Task InitializeAsync()
     {
         // Reset all state between tests
-        Fixture.Factory.ResetAll();
+        Fixture.ResetAll();
 
         // Guard: verify DI replacement worked
         var factory = Fixture.Factory.Services.GetRequiredService<IProviderFactory>();
@@ -176,6 +177,18 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
     // ── Chat Helpers ──────────────────────────────────────────────────────
 
     /// <summary>
+    /// Encodes a selector the way <c>ChatJobDispatcher</c> does before writing it to the
+    /// <c>caa/chat-selector</c> label: normalize (which sorts the labels), then swap commas for
+    /// underscores.
+    ///
+    /// The sort is the part that matters. A test dispatching <c>"kiro,dotnet"</c> gets a job
+    /// labelled <c>dotnet_kiro</c>, so a helper that only replaced the comma looked for
+    /// <c>kiro_dotnet</c> and never found the job it had just watched being created.
+    /// </summary>
+    private static string EncodeSelector(string agentSelector) =>
+        JobTemplateStore.NormalizeLabels(agentSelector).Replace(',', '_');
+
+    /// <summary>
     /// Dispatches a chat pod for <paramref name="agentSelector"/> and connects a
     /// <see cref="FakeAgentClient"/> as a chat agent. Returns <c>(agentId, fakeAgent)</c>.
     /// The caller is responsible for disposing the <see cref="FakeAgentClient"/>.
@@ -192,11 +205,22 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         var dispatchTask = Fixture.Factory.ChatDispatcher.DispatchChatPodAsync(
             agentSelector, model, effort, CancellationToken.None);
 
-        // Wait for the job to be created (brief poll), then connect the fake agent
-        await WaitForChatJobCreatedAsync(agentSelector, timeout: TimeSpan.FromSeconds(10));
+        // Wait for the job to be created (brief poll), then connect the fake agent.
+        // DispatchChatPodAsync runs unawaited until the agent is connected, so a failure inside it
+        // would otherwise surface here as an unexplained "chat job not created" timeout. Rethrow
+        // the dispatch fault instead — it names the actual cause.
+        try
+        {
+            await WaitForChatJobCreatedAsync(agentSelector, timeout: TimeSpan.FromSeconds(10));
+        }
+        catch (TimeoutException) when (dispatchTask.IsFaulted)
+        {
+            await dispatchTask; // throws the dispatch exception
+            throw;
+        }
 
         // Find the dispatch ID from the created job so we can connect with matching labels
-        var encodedSelector = agentSelector.Replace(',', '_').Replace(" ", "");
+        var encodedSelector = EncodeSelector(agentSelector);
         var job = Fixture.K8sClient.GetChatJobBySelector(encodedSelector)
             ?? throw new InvalidOperationException(
                 $"Chat job not found for selector '{encodedSelector}' after waiting");
@@ -334,7 +358,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         string agentSelector,
         TimeSpan? timeout = null)
     {
-        var encodedSelector = agentSelector.Replace(',', '_').Replace(" ", "");
+        var encodedSelector = EncodeSelector(agentSelector);
         var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
 
         while (DateTime.UtcNow < deadline)

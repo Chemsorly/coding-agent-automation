@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;

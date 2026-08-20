@@ -131,9 +131,67 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         response.EnsureSuccessStatusCode();
     }
 
-    // Internal DTO for retry-count response
+    public async Task<string?> GetK8sJobNameAsync(Guid workItemId, CancellationToken ct = default)
+    {
+        var response = await _http.GetAsync($"/api/work-items/{workItemId}/k8s-job-name", ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return null;
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<K8sJobNameResponse>(PipelineJsonOptions.Default, ct);
+        return result?.JobName;
+    }
+
+    public async Task<WorkItemStatus?> GetStatusAsync(Guid workItemId, CancellationToken ct = default)
+    {
+        var response = await _http.GetAsync($"/api/work-items/{workItemId}/status", ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return null;
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<WorkItemStatusResponse>(PipelineJsonOptions.Default, ct);
+        return result?.Status;
+    }
+
+    public async Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId, CancellationToken ct = default)
+    {
+        var url = $"/api/work-items/is-distributed?issueIdentifier={Uri.EscapeDataString(issueIdentifier)}&issueProviderConfigId={Uri.EscapeDataString(issueProviderConfigId)}";
+        var result = await _http.GetFromJsonAsync<IsDistributedResponse>(url, PipelineJsonOptions.Default, ct);
+        return result?.IsDistributed ?? false;
+    }
+
+    public async Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIdentifiersAsync(CancellationToken ct = default)
+    {
+        var result = await _http.GetFromJsonAsync<List<ActiveIdentifierDto>>(
+            "/api/work-items/active-identifiers",
+            PipelineJsonOptions.Default,
+            ct);
+        if (result is null) return [];
+        return result.Select(r => (r.IssueIdentifier, r.IssueProviderConfigId)).ToList();
+    }
+
+    // Internal DTOs for response deserialization
     private sealed record RetryCountResponse
     {
         public int RetryCount { get; init; }
+    }
+
+    private sealed record K8sJobNameResponse
+    {
+        public string? JobName { get; init; }
+    }
+
+    private sealed record WorkItemStatusResponse
+    {
+        public WorkItemStatus Status { get; init; }
+    }
+
+    private sealed record IsDistributedResponse
+    {
+        public bool IsDistributed { get; init; }
+    }
+
+    private sealed record ActiveIdentifierDto
+    {
+        public string IssueIdentifier { get; init; } = "";
+        public string IssueProviderConfigId { get; init; } = "";
     }
 }

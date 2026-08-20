@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.LeaderElection;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Serilog;
 
 namespace CodingAgentWebUI.JobController.Dispatch;
@@ -50,6 +51,8 @@ public sealed class DispatchService : LeaderElectedPollingService
     protected override async Task OnPollCycleAsync(CancellationToken ct)
     {
         Log.Debug("DispatchService: starting poll cycle");
+        WorkDistributionTelemetry.RecordLastPollEpoch();
+        WorkDistributionTelemetry.UpdateCredentialPoolMetrics(_pvcPool.AvailableCount, _pvcPool.TotalCount - _pvcPool.AvailableCount);
         await _loop.RunOneCycleAsync(ct);
     }
 }

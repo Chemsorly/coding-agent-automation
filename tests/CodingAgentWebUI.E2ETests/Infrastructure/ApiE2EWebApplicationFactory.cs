@@ -63,6 +63,22 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
     /// <summary>In-memory run state — owned by the API since the hub moved.</summary>
     public IOrchestratorRunService RunService => Services.GetRequiredService<IOrchestratorRunService>();
 
+    /// <summary>
+    /// Clears the per-test state this host owns.
+    ///
+    /// Both of these live here rather than in the monolith because Spec 044 moved the hub, and
+    /// neither was being reset between tests: an agent connected by one test stayed Idle in the
+    /// registry for every test that followed. That is not merely stale data — <see
+    /// cref="FakeJobController"/> claims Pending work for any idle agent it finds, so a leftover
+    /// agent silently consumed work items belonging to tests that meant to drive dispatch
+    /// themselves, and those tests failed with "expected 1 job, got 0".
+    /// </summary>
+    public void ResetAll()
+    {
+        Services.GetRequiredService<AgentRegistryService>().Reset();
+        Services.GetRequiredService<OrchestratorRunService>().Reset();
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         E2ETestDefaults.ApplyDatabaseEnvironment();

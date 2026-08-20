@@ -1,6 +1,6 @@
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
-using CodingAgentWebUI.Orchestration.Telemetry;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s;
 using k8s.Autorest;

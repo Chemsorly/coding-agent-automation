@@ -30,10 +30,8 @@ The top-level coordinator. Handles cancellation and graceful shutdown. Construct
 
 | Dependency | Purpose |
 |-----------|---------|
-| `IPipelineConfigStore` | Load pipeline configuration |
 | `IConfigurationStore` | Load provider configurations |
 | `IProviderFactory` | Create typed providers (issue, repo, agent, brain, CI) |
-| `IssueDescriptionParser` | Parse issue body into structured sections |
 | `IPipelineCancellationFacade` | Delegate shutdown cancellation |
 | `PipelineRunLifecycleService` | Run state, transitions, events |
 | `ILabelService` | Swap issue labels during pipeline lifecycle |

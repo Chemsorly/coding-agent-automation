@@ -220,7 +220,7 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase, IClassFixtur
         try
         {
             // Assert: all 5 agents appear in the registry
-            var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+            var registry = Fixture.AgentRegistry;
             var allAgents = registry.GetAllAgents();
 
             for (var i = 0; i < 5; i++)
@@ -409,7 +409,7 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase, IClassFixtur
         }
 
         // Assert: agent is Idle after all cycles (no leaked Busy state)
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         await WaitUntilAsync(
             () => registry.GetByAgentId("race-rapid-agent")?.Status == AgentStatus.Idle,
             TimeSpan.FromSeconds(5));

@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline.Telemetry;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Reflection;
@@ -9,7 +10,6 @@ using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.LeaderElection;
-using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;

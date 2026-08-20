@@ -76,10 +76,12 @@ public interface IAgentHubUiClient
 
 /// <summary>
 /// Client-side SignalR methods invoked by the orchestrator on agents.
+/// Hub is hosted in <c>CodingAgentWebUI.Api</c>. The monolith retains a reference to
+/// <c>IHubContext&lt;AgentHub, IAgentHubClient&gt;</c> for <c>AgentChat.razor</c>; that context
+/// is disconnected (agents register on the API hub) and will be re-routed via a REST endpoint.
 /// </summary>
 public interface IAgentHubClient
 {
-    // Hub moved to CodingAgentWebUI.Hub (Spec 042) and API (Spec 044). Monolith retains IHubContext<AgentHub,IAgentHubClient> for AgentChat.razor until Spec 045.
     Task AssignJob(JobAssignmentMessage message);
     Task CancelJob(JobId jobId);
     Task AssignChatPrompt(ChatPromptMessage message);

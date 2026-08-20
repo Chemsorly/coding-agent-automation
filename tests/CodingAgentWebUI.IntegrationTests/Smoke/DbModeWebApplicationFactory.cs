@@ -59,7 +59,6 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             Environment.SetEnvironmentVariable("Database__SslMode", null);
             Environment.SetEnvironmentVariable("Database__MigrateOnStartup", null);
             Environment.SetEnvironmentVariable("Database__SkipStartupInit", null);
-            Environment.SetEnvironmentVariable("WorkDistribution__Mode", null);
             Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
             Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", null);
         }
@@ -79,7 +78,6 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Database__SslMode", "Disable");
         Environment.SetEnvironmentVariable("Database__MigrateOnStartup", "false");
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
-        Environment.SetEnvironmentVariable("WorkDistribution__Mode", "SignalR");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-api-key");
         // Spec 045: PipelineApi:BaseUrl is required after Task 2 fast-fail was added.
         // Integration tests do not start a real API; use a stub URL to satisfy the check.

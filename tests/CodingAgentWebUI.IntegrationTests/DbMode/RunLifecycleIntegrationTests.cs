@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
@@ -353,7 +354,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
                     NullLogger<WorkItemFallbackTransitionService>.Instance),
-                JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
+                JobCleanup: new KubernetesJobCleanup(MockApiClientForJobCleanup(runId, k8sJobName), mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
 
         // Act
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -423,7 +424,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
                     NullLogger<WorkItemFallbackTransitionService>.Instance),
-                JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
+                JobCleanup: new KubernetesJobCleanup(MockApiClientForJobCleanup(runId, null), mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
 
         // Act
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -497,7 +498,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
                     NullLogger<WorkItemFallbackTransitionService>.Instance),
-                JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
+                JobCleanup: new KubernetesJobCleanup(MockApiClientForJobCleanup(runId, k8sJobName), mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
         // Act — should not throw despite 404
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
 
@@ -574,7 +575,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
                     NullLogger<WorkItemFallbackTransitionService>.Instance),
-                JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
+                JobCleanup: new KubernetesJobCleanup(MockApiClientForJobCleanup(runId, k8sJobName), mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
         // Act — should not throw despite K8s API failure
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
 
@@ -1008,5 +1009,17 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
 
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
             => Task.FromResult(CreateDbContext());
+    }
+
+    /// <summary>
+    /// Creates a mock IPipelineApiWorkItemClient whose GetK8sJobNameAsync returns
+    /// the specified job name for the given work item ID.
+    /// </summary>
+    private static IPipelineApiWorkItemClient MockApiClientForJobCleanup(Guid workItemId, string? k8sJobName)
+    {
+        var mock = new Moq.Mock<IPipelineApiWorkItemClient>();
+        mock.Setup(c => c.GetK8sJobNameAsync(workItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(k8sJobName);
+        return mock.Object;
     }
 }

@@ -59,7 +59,7 @@ public class IsIssueDistributedConsistencyPropertyTests : IDisposable
 
         _distributor = new KubernetesWorkDistributor(
             mockApiClient.Object,
-            _dbFactory, transitionService, NullLogger<KubernetesWorkDistributor>.Instance);
+            NullLogger<KubernetesWorkDistributor>.Instance);
     }
 
     public void Dispose()

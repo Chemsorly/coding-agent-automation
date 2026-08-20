@@ -1,8 +1,9 @@
+using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.Orchestration.Telemetry;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
-using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;

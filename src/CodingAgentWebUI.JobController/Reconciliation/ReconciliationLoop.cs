@@ -2,6 +2,7 @@ using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
 using Serilog;
 
@@ -100,6 +101,11 @@ public sealed class ReconciliationLoop
                     FailureReason = "Timeout"
                 }, ct);
 
+                WorkDistributionTelemetry.LogTerminalStatus(
+                    item.Id, WorkItemStatus.Failed,
+                    duration: null, agentId: DispatchLoop.GenerateJobName(item.Id),
+                    failureReason: FailureReason.Timeout);
+
                 var jobName = DispatchLoop.GenerateJobName(item.Id);
                 await SafeDeleteJobAsync(jobName, ct);
             }
@@ -167,6 +173,11 @@ public sealed class ReconciliationLoop
                     ErrorMessage = $"No K8s Job created within {_options.ChatPodConnectTimeoutSeconds}s of dispatch",
                     FailureReason = "DispatchTimeout"
                 }, ct);
+
+                WorkDistributionTelemetry.LogTerminalStatus(
+                    item.Id, WorkItemStatus.Failed,
+                    duration: null, agentId: null,
+                    failureReason: FailureReason.Timeout);
             }
             catch (Exception ex)
             {
@@ -264,6 +275,19 @@ public sealed class ReconciliationLoop
             var pvcName = GetPvcFromJob(job);
             if (pvcName is not null)
                 _pvcPool.Release(pvcName);
+
+            // Record terminal metrics
+            var workItemStatus = status == "Succeeded" ? WorkItemStatus.Succeeded : WorkItemStatus.Failed;
+            var failureReasonEnum = failureReason == "AgentError" ? (FailureReason?)FailureReason.AgentError : null;
+            var dispatchedAt = job.Status?.StartTime is not null
+                ? new DateTimeOffset(job.Status.StartTime.Value, TimeSpan.Zero)
+                : (DateTimeOffset?)null;
+            var completedAt = job.Status?.CompletionTime is not null
+                ? new DateTimeOffset(job.Status.CompletionTime.Value, TimeSpan.Zero)
+                : DateTimeOffset.UtcNow;
+            var duration = dispatchedAt.HasValue ? completedAt - dispatchedAt.Value : (TimeSpan?)null;
+            var agentId = job.Metadata?.Name;
+            WorkDistributionTelemetry.LogTerminalStatus(workItemId, workItemStatus, duration, agentId, failureReasonEnum);
 
             Log.Information("WorkItem {Id} marked {Status} from K8s Job {Job}", workItemId, status, job.Metadata?.Name);
         }

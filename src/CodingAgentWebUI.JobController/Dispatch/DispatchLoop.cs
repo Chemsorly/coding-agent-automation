@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
 using Serilog;
 
@@ -283,6 +284,14 @@ public sealed class DispatchLoop
         {
             Log.Warning(ex, "Label swap failed for WorkItem {Id} after Job creation — swallowing", item.Id);
         }
+
+        // Record dispatch metrics after successful Job creation
+        WorkDistributionTelemetry.RecordDispatchLatency(
+            dispatchedAt: DateTimeOffset.UtcNow,
+            originalEnqueuedAt: null,
+            createdAt: item.CreatedAt,
+            agentSelector: item.AgentSelector);
+        WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
 
     private async Task SafeRequeueAsync(Guid workItemId, CancellationToken ct)

@@ -1,4 +1,4 @@
-using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Infrastructure;
 using Npgsql;
 
 namespace CodingAgentWebUI.UnitTests.Services;

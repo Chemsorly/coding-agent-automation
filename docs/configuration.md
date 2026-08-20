@@ -188,7 +188,7 @@ These environment variables are used by the Kubernetes deployment.
 | `Database__Password` | PostgreSQL password |
 | `Database__Name` | PostgreSQL database name (default: `coding_agent_automation`). |
 | `Database__SslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. The application normalizes `Prefer` to `Require` in production environments when no explicit value is set. Use `Disable` for local/in-cluster Postgres without TLS. |
-| `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`). Disable if running migrations externally. |
+| `Database__MigrateOnStartup` | **Has no effect — the Helm templates hardcode this to `false`.** EF Core migrations are applied automatically by the Pipeline API on startup. Set this only when running migrations manually via `kubectl exec` into the API pod. |
 
 ### Config Import/Export
 
@@ -214,6 +214,8 @@ For full request/response examples, authentication details, and query parameters
 | `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 90, range: 0–600). Prevents dispatching to agents mid-termination during rolling updates. |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
 | `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. |
+| `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8090`). **Required.** Used by `IPipelineApiConfigClient` to load pipeline configuration and by `IAgentHubConnection` as the fallback hub URL base. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
+| `PipelineApi__HubUrl` | Full URL of the Pipeline API SignalR hub (default: `{PipelineApi__BaseUrl}/hubs/agent`). The Orchestrator's `IAgentHubConnection` subscribes to this hub for live run streaming. Override via `api.hubUrl` in `values.yaml` only when the hub path differs from the default. |
 
 ### SignalR Backplane (multi-replica)
 
@@ -223,16 +225,18 @@ For full request/response examples, authentication details, and query parameters
 
 ### Database Maintenance
 
-A background `DatabaseMaintenanceService` periodically deletes terminal records to prevent unbounded table growth. Configuration is in the `WorkDistribution:Reconciliation` section:
+A background `DatabaseMaintenanceService` periodically deletes terminal records to prevent unbounded table growth. Configuration is via `PipelineConfiguration` properties (set in the pipeline config JSON in the database, not as environment variables):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `WorkDistribution:Reconciliation:PipelineRunRetentionDays` | 90 | Days to retain `PipelineRuns` after completion before deletion |
-| `WorkDistribution:Reconciliation:ConsolidationRunRetentionDays` | 90 | Days to retain `ConsolidationRuns` after completion before deletion |
-| `WorkDistribution:Reconciliation:StaleRetentionDays` | 7 | Days to retain terminal `WorkItems` (`Succeeded`, `Failed`, `Cancelled`) before deletion |
-| `WorkDistribution:Reconciliation:MaintenanceIntervalHours` | 6 | Hours between maintenance cycles |
+| `PipelineRunRetentionCount` | `-1` (disabled) | Max `PipelineRuns` rows to retain per project. `-1` disables count-based retention. |
+| `WorkItemRetentionCount` | `-1` (disabled) | Max terminal `WorkItems` rows to retain per project. `-1` disables count-based retention. |
+| `DbRetentionSweepInterval` | `24h` | Interval between maintenance cycles. Minimum 1 minute. |
+| `WorkDistribution:Reconciliation:StaleRetentionDays` | `7` | Days to retain terminal `WorkItems` (`Succeeded`, `Failed`, `Cancelled`) before deletion. Set via env var. |
 
-The maintenance service runs immediately on startup and then on the configured interval. In multi-replica deployments it gates behind leader election so only one replica runs cleanup at a time.
+> **Note:** The `WorkDistribution:Reconciliation:PipelineRunRetentionDays`, `ConsolidationRunRetentionDays`, and `MaintenanceIntervalHours` config keys no longer exist. They were replaced by `PipelineRunRetentionCount`, `WorkItemRetentionCount`, and `DbRetentionSweepInterval` in `PipelineConfiguration`.
+
+The maintenance service runs on first startup and then on the configured interval. In multi-replica deployments it gates behind leader election so only one replica runs cleanup at a time.
 
 ### OpenTelemetry
 
@@ -241,7 +245,7 @@ The maintenance service runs immediately on startup and then on the configured i
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
-| `OTEL_SERVICE_NAME` | Service name for telemetry (set per container in docker-compose) |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-orchestrator`, `coding-agent-api`, `coding-agent-jobcontroller`) |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
 
 ### Agent Containers

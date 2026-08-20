@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.JobController;
 using CodingAgentWebUI.Pipeline.LeaderElection;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -88,7 +89,14 @@ builder.Services.AddOpenTelemetry()
     {
         m.AddAspNetCoreInstrumentation()
          .AddHttpClientInstrumentation()
-         .AddOtlpExporter();
+         // The Job Controller owns the dispatch loop — RecordLastPollEpoch, UpdateCredentialPoolMetrics,
+         // RecordDispatchLatency and LogTerminalStatus are all called from DispatchLoop/ReconciliationLoop.
+         // Without this AddMeter, those measurements are taken but never exported.
+         .AddMeter(WorkDistributionTelemetry.MeterName)
+         // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
+         // histograms and counters, which Grafana Cloud silently drops.
+         .AddOtlpExporter((_, readerOptions) =>
+             readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative);
     });
 
 // ── ASPNETCORE_URLS defaults to port 8091 ────────────────────────────────────

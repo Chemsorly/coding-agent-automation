@@ -23,18 +23,8 @@ public class KubernetesWorkDistributorApiTests
     public KubernetesWorkDistributorApiTests()
     {
         _mockClient = new Mock<IPipelineApiWorkItemClient>();
-
-        // Provide InMemory EF for the base-class methods (Cancel, GetStatus, dedup, etc.)
-        var dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase($"ApiTests_{Guid.NewGuid()}")
-            .Options;
-        var dbFactory = new SimpleDbContextFactory(dbOptions);
-        var transitionService = new WorkItemTransitionService(dbFactory, Mock.Of<ILogger<WorkItemTransitionService>>());
-
         _sut = new KubernetesWorkDistributor(
             _mockClient.Object,
-            dbFactory,
-            transitionService,
             Mock.Of<ILogger<KubernetesWorkDistributor>>());
     }
 

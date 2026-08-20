@@ -202,7 +202,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             return false;
 
         // Accept Idle (Legacy drain — agent not yet reserved) or Busy with no active job
-        // (DB drain — agent pre-reserved by PendingWorkItemDrainService via ResolveAgent).
+        // (agent was pre-reserved by the since-deleted SignalR-mode drain service via ResolveAgent).
         if (agent.Status != AgentStatus.Idle &&
             !(agent.Status == AgentStatus.Busy && agent.ActiveJobId is null))
             return false;

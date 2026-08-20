@@ -247,7 +247,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase, IClassFixture<
         Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
 
         // Assert: agent is removed or marked Disconnected in registry
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var agentEntry = registry.GetByAgentId("unhappy-disconnect-agent");
         Assert.True(
             agentEntry is null || agentEntry.Status == AgentStatus.Disconnected,
@@ -365,7 +365,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase, IClassFixture<
         await Task.Delay(TimeSpan.FromSeconds(8));
 
         // Verify agent is marked Disconnected (not yet removed — within grace period)
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var entry = registry.GetByAgentId("unhappy-orphan-agent");
         // Entry might be Disconnected or already have ActiveJobId preserved
         Assert.True(entry is not null, "Agent entry should still exist within grace period");

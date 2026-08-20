@@ -25,12 +25,6 @@ public sealed class AgentChatPage
         await _page.WaitForTimeoutAsync(3000);
     }
 
-    /// <summary>Selects an agent from the dropdown by agent ID value.</summary>
-    public async Task SelectAgentAsync(string agentId)
-    {
-        await _page.SelectOptionAsync("#agent-select", agentId);
-    }
-
     /// <summary>Clicks the Start Chat button.</summary>
     public async Task StartChatAsync()
     {
@@ -73,15 +67,6 @@ public sealed class AgentChatPage
         await _page.ClickAsync(".btn-end-chat");
     }
 
-    /// <summary>Checks if the "No idle agents" warning is visible.</summary>
-    public async Task<bool> IsNoIdleAgentsWarningVisibleAsync()
-    {
-        var warning = await _page.QuerySelectorAsync(".agent-detail-warning");
-        if (warning is null) return false;
-        var text = await warning.TextContentAsync();
-        return text?.Contains("No idle agents") == true;
-    }
-
     /// <summary>Checks if the Start Chat button is disabled.</summary>
     public async Task<bool> IsStartButtonDisabledAsync()
     {
@@ -89,15 +74,4 @@ public sealed class AgentChatPage
             "() => document.querySelector('.btn-start-chat')?.disabled === true");
     }
 
-    /// <summary>Checks if a specific agent appears in the dropdown options.</summary>
-    public async Task<bool> IsAgentInDropdownAsync(string agentId)
-    {
-        return await _page.EvaluateAsync<bool>(@"(id) => {
-            const options = document.querySelectorAll('#agent-select option');
-            for (const opt of options) {
-                if (opt.value === id) return true;
-            }
-            return false;
-        }", agentId);
-    }
 }

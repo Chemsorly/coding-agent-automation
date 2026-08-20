@@ -44,7 +44,7 @@ boundaries.
 ┌──────────────────────┐     ┌─────────────────────────────────────────────┐
 │  Job Controller      │     │  Agent Pod (CodingAgentWebUI.Agent)          │
 │  (CodingAgentWebUI.  │     │  ─────────────                              │
-│   JobController)     │     │  Ephemeral K8s Job  (caa-{workItemId[0:8]}) │
+│   JobController)     │     │  Ephemeral K8s Job  (caa-agent-{11 hex})    │
 │  ─────────────────── │     │  Connects to API hub as Bearer AGENT_API_KEY│
 │  K8s Job dispatch    │     │  GET /api/work-items/{id}/assignment         │
 │  Lease: caa-{rel}-   │     │  POST /api/work-items/{id}/status           │
@@ -163,9 +163,8 @@ across process boundaries.
 |---------|------|-------|
 | `AgentRegistryService` | `Orchestration/Registry/AgentRegistryService.cs` | `Register()`, `UpdateHeartbeat()`, `TransitionStatus()` |
 | `JobDeduplicationGuardService` | `Orchestration/Dispatch/JobDeduplicationGuardService.cs` | `SelectAgent()` — nested inside `_selectionLock` |
-| `HeartbeatMonitorService` | `Orchestration/Registry/HeartbeatMonitorService.cs` | Status transitions, orphan detection and cleanup |
+| `HeartbeatMonitorService` | `Orchestration/Registry/HeartbeatMonitorService.cs` | Delegates status transitions and orphan cleanup to `IRunLifecycleManager` sweep phases, which acquire `SyncRoot` internally |
 | `RunLifecycleManager` | `Orchestration/RunLifecycleManager.cs` | `ActiveJobId` mutation on job assignment/completion |
-| `SignalRWorkDistributorAgentResolver` | `Orchestration/Dispatch/SignalRWorkDistributorAgentResolver.cs` | `AssignJob()`, `ReleaseAgent()` |
 
 ### Key invariant
 
@@ -191,7 +190,7 @@ code path that holds two locks simultaneously. The code comment at the nesting s
 - `_selectionLock` is only acquired in `SelectAgent()`
 - Inside `_selectionLock`, the code acquires `entry.SyncRoot` (inner lock)
 - No other code path acquires `_selectionLock` while holding `entry.SyncRoot`
-- `HeartbeatMonitorService`, `RunLifecycleManager`, and `SignalRWorkDistributorAgentResolver`
+- `HeartbeatMonitorService` and `RunLifecycleManager`
   all acquire `entry.SyncRoot` in isolation — they never hold `_selectionLock`
 - Therefore, no circular wait is possible
 

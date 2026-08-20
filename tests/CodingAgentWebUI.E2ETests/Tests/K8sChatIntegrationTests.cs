@@ -23,7 +23,7 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase, IClassFixture
 
     public K8sChatIntegrationTests(E2EFixture fixture) : base(fixture)
     {
-        _registry = fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        _registry = fixture.AgentRegistry;
     }
 
     // ── Happy path ────────────────────────────────────────────────────────
@@ -243,7 +243,7 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase, IClassFixture
             ChatTerminationGracePeriodSeconds = 10
         };
 
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var hubContext = Fixture.Factory.Services.GetRequiredService<
             Microsoft.AspNetCore.SignalR.IHubContext<
                 CodingAgentWebUI.Hub.AgentHub,

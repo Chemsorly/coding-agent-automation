@@ -11,15 +11,15 @@ The first three workflows share the same dispatch mechanism, label lifecycle, an
 
 ## Dispatch Mode
 
-The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService` prepares each request (creates PipelineRun, resolves providers, vends tokens), then `KubernetesWorkDistributor` creates a `WorkItem` row and a K8s Job (`caa-{workItemId[:8]}`). The Job runs an ephemeral agent pod that picks up the assignment via `GET /api/work-items/{id}/assignment` and reports terminal status via `POST /api/work-items/{id}/status`.
+The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService` prepares each request (resolves providers, vends tokens), then `KubernetesWorkDistributor` creates a `WorkItem` row. The Job Controller polls for pending WorkItems, claims each one, and creates a K8s Job named `caa-agent-{11 hex chars}` (e.g. `caa-agent-7f3a9b2e1c4`) — the first 21 characters of `"caa-agent-" + workItemId.ToString("N")`. The PipelineRun is created by the Pipeline API's `POST /api/work-items` handler. The resulting ephemeral agent pod picks up the full assignment via `GET /api/work-items/{id}/assignment` and reports terminal status via `POST /api/work-items/{id}/status`.
 
 A single ID flows end-to-end:
 
 ```
-PipelineRun.RunId = WorkItem.Id = K8s Job name suffix = hub GetRun(jobId)
+PipelineRun.RunId = WorkItem.Id = hub GetRun(jobId)
 ```
 
-This ID alignment is critical — hub methods (`RequestTokenRefresh`, `ReportStepTransition`, `ReportJobCompleted`) look up the PipelineRun by the agent's `jobId`. If these don't match, the hub returns "No active run found".
+The K8s Job name is a **truncated derivative** of the WorkItem ID (not the full GUID) and also serves as the agent's `AGENT_ID`. Hub methods (`RequestTokenRefresh`, `ReportStepTransition`, `ReportJobCompleted`) look up the PipelineRun by the agent's `jobId` (= WorkItem ID). If these don't match, the hub returns "No active run found".
 
 See also: [Configuration](configuration.md) for all pipeline settings, and [Issue Workflows](github-issue-workflows.md) for how users interact with the pipeline via labels.
 

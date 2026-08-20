@@ -159,13 +159,12 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
     private KubernetesWorkDistributor CreateDistributor()
     {
-        var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
         mockApiClient
             .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((JobDistributionRequest req, CancellationToken _) =>
             {
-                // Simulate the API honoring request.RunId (consistent with ResolveWorkItemId in base class)
+                // Simulate the API honoring request.RunId
                 // This is required for the hub routing invariant: WorkItem.Id must match PipelineRun.RunId
                 if (!string.IsNullOrEmpty(req.RunId) && Guid.TryParse(req.RunId, out var runId))
                     return runId;
@@ -173,7 +172,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             });
         return new KubernetesWorkDistributor(
             mockApiClient.Object,
-            _dbFactory, transitionService, NullLogger<KubernetesWorkDistributor>.Instance);
+            NullLogger<KubernetesWorkDistributor>.Instance);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

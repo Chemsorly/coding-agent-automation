@@ -1,6 +1,9 @@
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.Telemetry;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -58,10 +61,33 @@ internal static class ApiStartupExtensions
             Results.Ok(new { status = "ok" })).AllowAnonymous();
 
         // Readiness: Can this pod serve traffic?
-        // TODO(Spec 043): Wire up a real DB probe when DatabaseHealthState is accessible from the API
-        endpoints.MapGet("/readyz", () =>
-            Results.Ok(new { status = "ready" })).AllowAnonymous();
+        // Returns 503 when the database connectivity monitor detects DB is unreachable.
+        endpoints.MapGet("/readyz", (DatabaseHealthState dbHealth) =>
+            dbHealth.IsDatabaseHealthy
+                ? Results.Ok(new { status = "ready" })
+                : Results.Json(new { status = "unhealthy", reason = "database_unreachable" },
+                    statusCode: StatusCodes.Status503ServiceUnavailable))
+            .AllowAnonymous();
 
         return endpoints;
+    }
+
+    /// <summary>
+    /// Registers observable gauges for agent metrics against the <see cref="PipelineTelemetry.Meter"/>.
+    /// Agents register on the API hub, so this is the correct process to own these gauges.
+    /// The monolith's registry is permanently empty after Spec 044.
+    /// </summary>
+    public static WebApplication RegisterApiObservableGauges(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+
+        var agentRegistry = app.Services.GetRequiredService<IAgentRegistryService>();
+
+        _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",
+            () => agentRegistry.GetBusyAgentCount(), "{job}", "Currently executing agent jobs");
+        _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
+            () => agentRegistry.GetAllAgents().Count, "{connection}", "Total registered agents");
+
+        return app;
     }
 }

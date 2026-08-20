@@ -9,6 +9,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
@@ -120,6 +121,8 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         // read would make tests depend on wall-clock timing.
         Environment.SetEnvironmentVariable("PipelineLoop__ConfigCacheTtlSeconds", "0");
 
+        E2ETestDefaults.ApplyDispatchEnvironment();
+
         E2ETestDefaults.ResetSerilogBootstrapLogger();
 
         // Set environment to Development so static web assets are resolved correctly.
@@ -155,13 +158,39 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
 
             // JobTemplateStore loads /app/config/job-templates.yaml, which only exists in-cluster
             // (mounted from the job-templates ConfigMap). ChatJobDispatcher depends on it.
+            // The selectors below are the ones the tests dispatch against; maxConcurrent is high
+            // enough that a test asserting on concurrency limits sets its own.
             services.RemoveAll<JobTemplateStore>();
             services.AddSingleton(JobTemplateStore.LoadFromYaml("""
                 - labels: "kiro,dotnet"
                   image: "chemsorly/coding-agent:kiro-dotnet10-latest"
+                  imagePullPolicy: "Always"
                   providerType: "kiro"
-                  maxConcurrent: 1
+                  maxConcurrent: 5
+                - labels: "kiro,python"
+                  image: "chemsorly/coding-agent:kiro-python-latest"
+                  imagePullPolicy: "Always"
+                  providerType: "kiro"
+                  maxConcurrent: 5
+                - labels: "kiro,node"
+                  image: "chemsorly/coding-agent:kiro-node-latest"
+                  imagePullPolicy: "Always"
+                  providerType: "kiro"
+                  maxConcurrent: 5
+                - labels: "opencode,dotnet"
+                  image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+                  imagePullPolicy: "Always"
+                  providerType: "opencode"
+                  maxConcurrent: 5
                 """));
+
+            // Leadership is a cluster lease the harness has no way to win, and both
+            // ChatJobDispatcher and DatabaseMaintenanceService gate their work on it — without
+            // this the chat dispatcher accepts a request and then silently creates no Job.
+            // This is the production always-leader implementation, not a test double: a single
+            // test process is exactly the case it exists for.
+            services.RemoveAll<ILeaderElectionService>();
+            services.AddSingleton<ILeaderElectionService>(new AlwaysLeaderElectionService());
             ReplaceService<IProviderFactory>(services, FakeProviders);
             ReplaceService<IQualityGateValidator>(services, QualityGateValidator);
             ReplaceService<IPipelineRunHistoryService>(services, HistoryService);

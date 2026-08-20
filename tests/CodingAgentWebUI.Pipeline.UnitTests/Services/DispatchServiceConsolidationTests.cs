@@ -617,7 +617,6 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         var distributor = new KubernetesWorkDistributor(
             mockApiClient.Object,
-            _dbFactory, _transitionService,
             NullLogger<KubernetesWorkDistributor>.Instance);
 
         var runId = Guid.NewGuid().ToString();

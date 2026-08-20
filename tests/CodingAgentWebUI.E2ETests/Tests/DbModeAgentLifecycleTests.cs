@@ -75,7 +75,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase, IClassFixtu
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Assert
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var entry = registry.GetByAgentId("lifecycle-reg-1");
 
         Assert.NotNull(entry);
@@ -98,7 +98,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase, IClassFixtu
         await a3.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Assert
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var all = registry.GetAllAgents();
 
         Assert.Contains(all, a => a.AgentId.Value == "lifecycle-multi-1");
@@ -283,7 +283,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase, IClassFixtu
         await enabledAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Disable the first agent via registry
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var entry = registry.GetByAgentId("lifecycle-disabled");
         Assert.NotNull(entry);
         entry.Disabled = true;
@@ -319,7 +319,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase, IClassFixtu
         await using var agent = new FakeAgentClient("lifecycle-heartbeat", "disabled-test");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
 
         // Act: send heartbeats faster than the timeout, wait through multiple sweep cycles
         for (var i = 0; i < 4; i++)
@@ -396,7 +396,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase, IClassFixtu
         await agent.AcceptJobAsync(job1.JobId);
 
         // Agent is now Busy — verify
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         await WaitUntilAsync(
             () => registry.GetByAgentId("lifecycle-busy")?.Status == AgentStatus.Busy,
             TimeSpan.FromSeconds(5));
@@ -432,7 +432,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase, IClassFixtu
         Assert.True(firstAgent.IsConnected);
 
         // Verify first agent is registered
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var entry1 = registry.GetByAgentId("lifecycle-dup-id");
         Assert.NotNull(entry1);
 
@@ -476,7 +476,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase, IClassFixtu
         var agent = new FakeAgentClient("lifecycle-disconnect-pool", "pool-test");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         Assert.Contains(registry.GetIdleAgents(), a => a.AgentId.Value == "lifecycle-disconnect-pool");
 
         // Act: disconnect

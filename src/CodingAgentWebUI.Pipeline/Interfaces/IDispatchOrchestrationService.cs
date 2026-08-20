@@ -5,12 +5,11 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// <summary>
 /// Abstraction over dispatch orchestration logic (issue fetch, label swap, profile/QG resolution,
 /// run creation, provider config preparation). Consumed by <see cref="Services.PipelineLoopService"/>
-/// in DB modes (SignalR/Kubernetes) to build a full <see cref="JobDistributionRequest"/> before
-/// calling <see cref="IWorkDistributor.DistributeAsync"/>.
+/// to build a full <see cref="JobDistributionRequest"/> before calling
+/// <see cref="IWorkDistributor.DistributeAsync"/>.
 /// <para>
-/// NOT registered in Legacy mode (null). <c>PipelineLoopService</c> checks for null before calling.
-/// In Legacy mode, <c>LegacyWorkDistributor</c> handles all orchestration internally via
-/// <c>AgentJobDispatcher</c>, so this service is not needed.
+/// Always registered since Spec 041. It used to be absent in the no-DB deployment mode, whose
+/// distributor did this work internally, so callers guarded against null; those guards are gone.
 /// </para>
 /// </summary>
 public interface IDispatchOrchestrationService

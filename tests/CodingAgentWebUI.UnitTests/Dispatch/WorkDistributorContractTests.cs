@@ -105,27 +105,17 @@ public abstract class WorkDistributorContractTests : IDisposable
 /// </summary>
 public class KubernetesWorkDistributorContractTests : WorkDistributorContractTests
 {
-    private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly KubernetesWorkDistributor _sut;
 
     public KubernetesWorkDistributorContractTests()
     {
-        _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase($"K8sContract_{Guid.NewGuid()}")
-            .Options;
-        var factory = new ContractTestSimpleDbContextFactory(_dbOptions);
-        var transitionService = new WorkItemTransitionService(factory, Mock.Of<ILogger<WorkItemTransitionService>>());
-
         // API client mock: returns a new Guid for each CreateAsync call
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
         mockApiClient
             .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => Guid.NewGuid());
-
         _sut = new KubernetesWorkDistributor(
             mockApiClient.Object,
-            factory,
-            transitionService,
             Mock.Of<ILogger<KubernetesWorkDistributor>>());
     }
 
@@ -323,7 +313,7 @@ public class WorkDistributorAdditionalTests
     [Fact]
     public void KubernetesWorkDistributor_RequiresConnectedAgents_ReturnsFalse()
     {
-        var sut = CreateKubernetes();
+        IWorkDistributor sut = CreateKubernetes();
         sut.RequiresConnectedAgents.Should().BeFalse();
     }
 
@@ -331,21 +321,12 @@ public class WorkDistributorAdditionalTests
 
     private static KubernetesWorkDistributor CreateKubernetes()
     {
-        var options = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase($"AdditionalTests_{Guid.NewGuid()}")
-            .Options;
-        var factory = new ContractTestSimpleDbContextFactory(options);
-        var transitionService = new WorkItemTransitionService(factory, Mock.Of<ILogger<WorkItemTransitionService>>());
-
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
         mockApiClient
             .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => Guid.NewGuid());
-
         return new KubernetesWorkDistributor(
             mockApiClient.Object,
-            factory,
-            transitionService,
             Mock.Of<ILogger<KubernetesWorkDistributor>>());
     }
 

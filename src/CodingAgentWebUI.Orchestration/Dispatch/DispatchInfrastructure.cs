@@ -8,14 +8,14 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Aggregate that bundles shared dispatch-path dependencies used by both
-/// <see cref="AgentJobDispatcher"/> and <see cref="DispatchOrchestrationService"/>.
+/// <c>AgentJobDispatcher</c> and <see cref="DispatchOrchestrationService"/>.
 /// Reduces constructor parameter count by grouping services that always travel together:
 /// provider config building, profile resolution, token vending, and label operations.
 /// <para>
 /// Also hosts <see cref="PrepareDispatchCoreAsync"/> — the single consolidated method
 /// for the shared dispatch preparation sequence (QG/reviewer resolution, issue context,
 /// provider config preparation, pipeline config resolution, and staleness detection).
-/// Both <see cref="AgentJobDispatcher"/> and <see cref="DispatchOrchestrationService"/>
+/// Both <c>AgentJobDispatcher</c> and <see cref="DispatchOrchestrationService"/>
 /// delegate to this method, eliminating drift between the Legacy and DB paths.
 /// </para>
 /// <para>
@@ -110,7 +110,7 @@ public sealed class DispatchInfrastructure
     /// </summary>
     /// <remarks>
     /// The superset signature supports optional <paramref name="additionalRepoProviderIds"/> for
-    /// cross-repo decomposition (used by <see cref="AgentJobDispatcher"/>). Callers that don't
+    /// cross-repo decomposition (used by <c>AgentJobDispatcher</c>). Callers that don't
     /// need cross-repo support simply omit the parameter.
     /// </remarks>
     internal async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
@@ -311,7 +311,7 @@ public sealed class DispatchInfrastructure
     // ── Consolidated Dispatch Preparation ─────────────────────────────────────────
 
     /// <summary>
-    /// Consolidated dispatch preparation logic shared by both <see cref="AgentJobDispatcher"/>
+    /// Consolidated dispatch preparation logic shared by both <c>AgentJobDispatcher</c>
     /// (Legacy/SignalR path) and <see cref="DispatchOrchestrationService"/> (DB path).
     /// <para>
     /// Performs the full shared sequence: resolve quality gates → resolve reviewers →

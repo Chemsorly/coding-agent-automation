@@ -111,6 +111,42 @@ public sealed class E2EFixture : IAsyncLifetime
     }
 
     /// <summary>
+    /// Clears per-test state across <em>both</em> hosts and the fake job controller.
+    ///
+    /// Tests must call this rather than <c>Fixture.Factory.ResetAll()</c>, which only knows about
+    /// the monolith. The agent registry and run state moved to the API host in Spec 044, so
+    /// resetting the monolith alone leaves the state that actually matters untouched.
+    /// </summary>
+    public void ResetAll()
+    {
+        Factory.ResetAll();
+        _apiFactory?.ResetAll();
+        _jobController?.ForgetAllInFlight();
+    }
+
+    /// <summary>
+    /// An operator-authenticated client for the Pipeline API.
+    ///
+    /// <c>/api/work-items/*</c> moved to the API host in Spec 042 and the monolith stopped
+    /// mapping those routes, so a client built from <see cref="Factory"/> answers 405. Tests that
+    /// exercise the endpoints an agent pod calls must go through this one.
+    /// </summary>
+    /// <param name="authenticated">
+    /// Pass <c>false</c> for the tests that assert the endpoints reject anonymous callers.
+    /// Without it they get an authenticated client and see 404 for a nonexistent work item
+    /// rather than the 401 they are checking for.
+    /// </param>
+    public HttpClient CreateApiClient(bool authenticated = true)
+    {
+        var client = (_apiFactory ?? throw new InvalidOperationException("API host not started"))
+            .CreateClient();
+        if (authenticated)
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ApiKey);
+        return client;
+    }
+
+    /// <summary>
     /// Returns the shared Playwright browser, launching it on first use.
     ///
     /// Launching costs about a second and requires the Chromium bundle to be installed, so it is

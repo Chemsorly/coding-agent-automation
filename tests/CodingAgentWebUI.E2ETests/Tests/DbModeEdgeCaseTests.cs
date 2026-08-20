@@ -284,7 +284,7 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase, IClassFixture<E2E
         Assert.NotNull(history);
 
         // Assert: agent returned to Idle
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         await WaitUntilAsync(
             () => registry.GetByAgentId("edge-agent-lifecycle")?.Status == AgentStatus.Idle,
             TimeSpan.FromSeconds(5));

@@ -93,16 +93,11 @@ spec:
                   name: {{ include "coding-agent-automation.secretName" . }}
                   key: otel-headers
                   optional: true
-            # Spec 045 Req 6.1 asked for these to be removed, on the premise that Req 1.2 would
-            # strip every EF registration from the monolith. That did not fully happen:
-            # KubernetesWorkDistributor (via DbWorkDistributorBase) and KubernetesJobCleanup still
-            # take IDbContextFactory<PipelineDbContext>, so WorkDistributionRegistration still
-            # calls AddPooledDbContextFactory and AddWorkDistribution throws
-            # "Database__Host is not configured" before the host is built. Without these the
-            # orchestrator crash-loops on every deploy.
-            #
-            # Restore them only until TODO(Spec 046) migrates those two types to
-            # IPipelineApiWorkItemClient; then this block goes and the API is the sole DB client.
+            # KubernetesWorkDistributor and KubernetesJobCleanup have been migrated to
+            # IPipelineApiWorkItemClient. IDbContextFactory is still registered in the monolith
+            # for: IPipelineRunHistoryService, IConsolidationRunStore, IHarnessSuggestionStore,
+            # and WorkItemTransitionService (consolidation services). These env vars are required
+            # until those remaining consumers are migrated to API calls.
             # Note Database__MigrateOnStartup=false: the API owns schema migrations (Req 9.5a).
             - name: Database__Host
               value: {{ required "database.host is required" .Values.database.host | quote }}

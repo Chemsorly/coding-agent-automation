@@ -16,12 +16,10 @@ namespace CodingAgentWebUI;
 
 /// <summary>
 /// Registers work distribution services for Kubernetes deployment.
-/// Spec 045 Req 1.2/1.3: High-level DB-backed config/history stores removed.
-/// Remaining DB registrations (IDbContextFactory, WorkItemTransitionService,
-/// IPipelineRunHistoryService, IConsolidationRunStore, IHarnessSuggestionStore):
-/// still required by KubernetesWorkDistributor, KubernetesJobCleanup, consolidation
-/// services, and PipelineRunLifecycleService. A follow-up spec migrates those to
-/// API calls and removes the last IDbContextFactory usage from the monolith.
+/// KubernetesWorkDistributor and KubernetesJobCleanup are now fully API-backed
+/// (no direct DB access). Remaining IDbContextFactory consumers:
+/// IPipelineRunHistoryService, IConsolidationRunStore, IHarnessSuggestionStore,
+/// and WorkItemTransitionService (used by consolidation services).
 /// </summary>
 public static partial class WorkDistributionRegistration
 {
@@ -46,15 +44,16 @@ public static partial class WorkDistributionRegistration
             Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
             "Development",
             StringComparison.OrdinalIgnoreCase);
-        var normalizedConnectionString = Services.DatabaseReadinessMonitor.NormalizeConnectionString(
+        var normalizedConnectionString = CodingAgentWebUI.Infrastructure.DatabaseReadinessMonitor.NormalizeConnectionString(
             connectionString, isProduction);
 
         // ── EF Core DbContext Factory + scoped accessor ─────────────────────
-        // Still required by: KubernetesWorkDistributor (DbWorkDistributorBase), KubernetesJobCleanup,
-        // IPipelineRunHistoryService (PostgresPipelineRunHistoryService),
-        // IConsolidationRunStore (PostgresConsolidationRunStore),
-        // IHarnessSuggestionStore (PostgresHarnessSuggestionStore).
-        // TODO(Spec 046): migrate those to API calls to complete DB removal.
+        // Still required by:
+        // - IPipelineRunHistoryService (PostgresPipelineRunHistoryService)
+        // - IConsolidationRunStore (PostgresConsolidationRunStore)
+        // - IHarnessSuggestionStore (PostgresHarnessSuggestionStore)
+        // KubernetesWorkDistributor and KubernetesJobCleanup have been migrated to
+        // IPipelineApiWorkItemClient and no longer require IDbContextFactory.
         services.AddPooledDbContextFactory<PipelineDbContext>(opts =>
             opts.UseNpgsql(normalizedConnectionString));
         services.AddScoped(sp =>
@@ -63,7 +62,8 @@ public static partial class WorkDistributionRegistration
         // ── Distributed lock provider (Postgres advisory locks) ─────────────
         services.AddDistributedLockProvider(connectionString);
 
-        // ── WorkItemTransitionService — still needed by KubernetesWorkDistributor ────
+        // ── WorkItemTransitionService — used by consolidation services via IWorkItemFallbackTransitionService ──
+        // No longer consumed by KubernetesWorkDistributor (fully API-backed).
         services.AddSingleton<WorkItemTransitionService>(sp => new WorkItemTransitionService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemTransitionService>(),

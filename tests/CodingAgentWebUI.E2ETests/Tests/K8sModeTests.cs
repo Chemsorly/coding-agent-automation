@@ -512,7 +512,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
             w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
 
         // Act: call the assignment endpoint (same as WorkItemHttpClient.GetAssignmentAsync)
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -530,7 +530,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         Assert.Equal(workItemId.ToString(), root.GetProperty("jobId").GetString());
         Assert.Equal("k8s-fetch-assign-900", root.GetProperty("issueIdentifier").GetString());
         Assert.Equal("repo-e2e", root.GetProperty("repoProviderConfigId").GetString());
-        Assert.Equal("k8s-e2e-test", root.GetProperty("initiatedBy").GetString());
+        Assert.Equal("e2e-test", root.GetProperty("initiatedBy").GetString());
     }
 
     [Fact]
@@ -555,7 +555,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         await db.SaveChangesAsync();
 
         // Act
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -583,7 +583,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
             w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
 
         // Act: agent POSTs Running status (as WorkItemAgentService does)
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -612,7 +612,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         // WorkItem is Pending — Running is not a valid transition from Pending
 
         // Act
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -645,7 +645,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
 
         // Act: agent POSTs Failed status (as WorkItemAgentService does on pipeline failure)
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -727,14 +727,14 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         // Act: connect as a K8s agent with ActiveJobState (mimicking WorkItemAgentService)
         await using var agent = new FakeAgentClient("caa-k8s-token-agent", "kiro", "dotnet");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
+            AgentHubUrl,
             E2EWebApplicationFactory.TestApiKey,
             workItemId.ToString(),
             "k8s-token-refresh-1100",
             "repo-k8s-token-test");
 
         // Assert: agent is registered and busy
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var entry = registry.GetByAgentId("caa-k8s-token-agent");
         Assert.NotNull(entry);
         Assert.Equal(AgentStatus.Busy, entry.Status);
@@ -853,7 +853,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
 
         // Act: agent POSTs Succeeded with a result payload (completion data)
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -902,7 +902,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
             ct: CancellationToken.None);
 
         // Act: agent crashes and restarts, tries to POST Failed again
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -927,7 +927,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         var fakeId = Guid.NewGuid();
 
         // Act
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -964,7 +964,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         await db.SaveChangesAsync();
 
         // Act
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -978,7 +978,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
     public async Task K8sMode_AgentFetchesAssignment_NonexistentId_Returns404()
     {
         // Act: request assignment for a work item that doesn't exist
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -1029,7 +1029,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
 
         await using var agent = new FakeAgentClient("caa-k8s-multi-refresh", "kiro");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
+            AgentHubUrl,
             E2EWebApplicationFactory.TestApiKey,
             workItemId.ToString(),
             "k8s-multi-refresh-1400",
@@ -1094,7 +1094,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
 
         await using var agent = new FakeAgentClient("caa-k8s-brain-agent", "kiro");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
+            AgentHubUrl,
             E2EWebApplicationFactory.TestApiKey,
             workItemId.ToString(),
             "k8s-brain-token-1401",
@@ -1134,7 +1134,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
 
         await using var agent = new FakeAgentClient("caa-k8s-wrongjob", "kiro");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
+            AgentHubUrl,
             E2EWebApplicationFactory.TestApiKey,
             realJobId.ToString(),
             "k8s-wrong-job-1402",
@@ -1176,14 +1176,14 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         // Act: agent registers with a RunId that's already in history (stale pod restart)
         await using var agent = new FakeAgentClient("caa-k8s-stale-agent", "kiro");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
+            AgentHubUrl,
             E2EWebApplicationFactory.TestApiKey,
             completedRunId,
             "completed-issue",
             "repo-e2e");
 
         // Assert: agent is registered but NOT busy (stale job ignored)
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var entry = registry.GetByAgentId("caa-k8s-stale-agent");
         Assert.NotNull(entry);
         // The RegisterAgent handler ignores ActiveJob when RunId is in history
@@ -1350,7 +1350,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
     public async Task K8sMode_AgentEndpoints_NoAuth_Returns401()
     {
         // Act: call work-items API without auth header
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient(authenticated: false);
         // Deliberately NO Authorization header
 
         var response = await httpClient.GetAsync($"/api/work-items/{Guid.NewGuid()}/assignment");
@@ -1363,7 +1363,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
     public async Task K8sMode_AgentEndpoints_WrongApiKey_Returns401()
     {
         // Act: call with an invalid API key
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "wrong-key-12345");
 
@@ -1437,7 +1437,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         Assert.True(dispatched, "Pending → Dispatched transition should succeed");
 
         // ── Step 3: Agent fetches assignment (HTTP — as WorkItemHttpClient does) ──
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
@@ -1467,14 +1467,14 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         // ── Step 5: Agent connects to SignalR and registers with ActiveJob ──
         await using var agent = new FakeAgentClient("caa-lifecycle-pod", "kiro", "dotnet");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
+            AgentHubUrl,
             E2EWebApplicationFactory.TestApiKey,
             workItemId.ToString(),
             "k8s-lifecycle-e2e-9999",
             "repo-lifecycle-e2e");
 
         // Verify: agent is Busy in registry with correct ActiveJobId
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var agentEntry = registry.GetByAgentId("caa-lifecycle-pod");
         Assert.NotNull(agentEntry);
         Assert.Equal(AgentStatus.Busy, agentEntry.Status);

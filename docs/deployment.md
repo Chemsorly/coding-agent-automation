@@ -84,7 +84,7 @@ The chart deploys:
 | `database.host` | PostgreSQL hostname (required) |
 | `database.port` | PostgreSQL port (default: `5432`) |
 | `database.auth.existingSecret` | K8s Secret containing database credentials (keys: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) |
-| `database.migrateOnStartup` | Apply EF Core migrations on orchestrator startup (default: `true`). Safe for single-replica; keep one orchestrator replica during rolling upgrades to avoid concurrent migration races (EF Core #13569). Set `false` only if running migrations externally via `kubectl exec` — startup aborts if pending migrations are detected. |
+| `database.migrateOnStartup` | **Has no effect — the Helm templates hardcode `Database__MigrateOnStartup=false` on both the Orchestrator and the Pipeline API.** EF Core migrations are applied automatically by the Pipeline API on startup via `RunApiMigrationsAsync`. If pending migrations are detected on the API, it throws and restarts until the schema is current; the Orchestrator does the same fast-fail check and will not start against an unmigrated schema. Run migrations manually only via `kubectl exec` into the API pod (not the Orchestrator). |
 | `database.sslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. Defaults to `Require` in production if not set. Use `Disable` for in-cluster Postgres without TLS. |
 | `workDistribution.dispatch.intervalSeconds` | Seconds between dispatch cycles (default: `10`) |
 | `workDistribution.dispatch.rateLimitPerSecond` | Max dispatches per second (default: `10`) |
@@ -92,7 +92,7 @@ The chart deploys:
 | `workDistribution.reconciliation.timeoutEnforcementEnabled` | Whether to enforce agent timeouts via reconciliation (default: `true`) |
 | `workDistribution.reconciliation.staleRetentionDays` | Days to retain stale work items before cleanup (default: `7`) |
 | `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. `DispatchService` claims one PVC per Job at dispatch time. |
-| `signalr.redis.enabled` | Enable Redis backplane for multi-replica orchestrator SignalR (default: `false`) |
+| `signalr.redis.enabled` | Documents intent to enable Redis backplane (default: `false`). Note: the Helm templates only check `signalr.redis.connectionString` — setting `enabled: true` without a non-empty `connectionString` has no effect. To activate the backplane, set `signalr.redis.connectionString` to a non-empty value. |
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
 
@@ -133,12 +133,12 @@ jobTemplates:
 
 The chart supports zero-downtime rolling updates:
 - Orchestrator uses `readinessDrainDelaySeconds` (default: 15s) to stop accepting traffic before terminating
-- `pipelineLoopStartupDelaySeconds` (Helm default: 30s, application default: 90s) prevents dispatching to agents that are mid-termination — must be greater than agent `terminationGracePeriodSeconds`
+- `pipelineLoopStartupDelaySeconds` (Helm default: **0**, application default: 90s) delays `PipelineLoopService` startup after the process is ready — set to 0 because the API now owns `IOrchestratorRunService` and rehydrates on its own startup; the Orchestrator no longer dispatches directly (Spec 044)
 - Let in-flight agent Jobs finish before upgrading — no drain hook exists
 
 ### Leader Election
 
-In multi-replica deployments, the orchestrator uses Kubernetes Lease-based leader election to ensure only one replica runs leader-dependent services. This prevents duplicate dispatches and conflicting reconciliation actions.
+Dispatch and reconciliation are leader-elected across the system. Each process has its own `LeaderElectionService` instance with a distinct Kubernetes Lease, preventing duplicate dispatches and conflicting reconciliation across replicas.
 
 #### How It Works
 
@@ -149,10 +149,21 @@ In multi-replica deployments, the orchestrator uses Kubernetes Lease-based leade
 
 #### Leader-Dependent Services
 
+Two independent leases are used — one per process:
+
+**Job Controller** (`caa-{release}-dispatch-lock` lease):
+
 | Service | Behavior When Leader | Behavior When Non-Leader |
 |---------|---------------------|--------------------------|
 | `DispatchService` | Polls for pending WorkItems and dispatches K8s Jobs | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 | `ReconciliationService` | Runs startup reconciliation, watches K8s Jobs, enforces timeouts | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
+
+**Pipeline API** (`caa-{release}-pipeline-loop-lock` lease):
+
+| Service | Behavior When Leader | Behavior When Non-Leader |
+|---------|---------------------|--------------------------|
+| `ConsolidationWorkItemDispatchService` | Dispatches consolidation K8s Jobs | Waits |
+| `DatabaseMaintenanceService` | Runs retention sweep | Waits |
 
 #### Configuration
 
@@ -160,7 +171,7 @@ Bound from the `LeaderElection` configuration section:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `LeaseName` | `caa-leader` | Name of the Kubernetes Lease resource |
+| `LeaseName` | `caa-leader` | Base name of the Kubernetes Lease resource. Overridden per-process by Helm (see above) |
 | `Namespace` | *(auto-detected)* | Namespace for the Lease. Auto-reads from `POD_NAMESPACE` env var or mounted service account namespace file |
 | `LeaseDuration` | 15s | Duration non-leaders wait before attempting acquisition |
 | `RenewDeadline` | 10s | Deadline for the leader to renew before the lease expires. Must be less than `LeaseDuration` |
@@ -168,9 +179,13 @@ Bound from the `LeaderElection` configuration section:
 | `Identity` | *(auto-detected)* | Pod identity. Auto-reads from `POD_NAME` → `HOSTNAME` → `MachineName` |
 | `FailOnNonKubernetesEnvironment` | false | If true, startup fails outside K8s. If false, logs a warning and remains non-leader (graceful degradation for local dev) |
 
+Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller) and `orchestrator.leaderElection.pipelineLoopLeaseName` (Orchestrator / API) — both default to a release-scoped name to prevent collisions in shared namespaces.
+
 #### RBAC Requirements
 
-The orchestrator ServiceAccount requires Lease permissions plus Job creation rights. The Helm chart creates these automatically:
+The Helm chart creates ServiceAccounts and ClusterRoleBindings (or RoleBindings) automatically for each process.
+
+**Orchestrator** (`CodingAgentWebUI`) ServiceAccount:
 
 ```yaml
 rules:
@@ -180,6 +195,44 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+```
+
+> **Note:** The Orchestrator retains `batch/jobs` for `ChatJobDispatcher` (chat pods dispatched by the Orchestrator). Work-item dispatch was moved to the Job Controller.
+
+**Pipeline API** (`CodingAgentWebUI.Api`) ServiceAccount:
+
+```yaml
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+  - apiGroups: [""]
+    resources: ["pods", "configmaps"]
+    verbs: ["get", "list"]
+```
+
+**Job Controller** (`CodingAgentWebUI.JobController`) ServiceAccount:
+
+```yaml
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]   # per-Job derived-key Secrets (GC'd via ownerReference)
 ```
 
 ### Credential Pool Initialization
@@ -260,10 +313,19 @@ dotnet run --project src/CodingAgentWebUI/
 
 > `Database__Host` must be set — the orchestrator requires PostgreSQL on startup.
 
-For the agent project:
+For the agent project (work-item mode, connecting to the Pipeline API hub on port 8090):
 ```bash
-dotnet run --project src/CodingAgentWebUI.Agent/ -- --orchestrator-url http://localhost:8080 --agent-id local-agent-1
+ORCHESTRATOR_URL=http://localhost:8090 AGENT_ID=local-agent-1 AGENT_API_KEY=<key> \
+  dotnet run --project src/CodingAgentWebUI.Agent/ -- --mode=workitem --work-item-id=<guid>
 ```
+
+For chat mode (no `--work-item-id`):
+```bash
+ORCHESTRATOR_URL=http://localhost:8090 AGENT_ID=local-chat-1 AGENT_API_KEY=<key> \
+  dotnet run --project src/CodingAgentWebUI.Agent/ -- --mode=chat
+```
+
+`ORCHESTRATOR_URL`, `AGENT_ID`, and `AGENT_API_KEY` are environment variables, not CLI arguments. `--mode` (workitem or chat) is required.
 
 ---
 

@@ -119,4 +119,4 @@ The sidebar shows a "Consolidation" nav item with a badge count (new issues + su
 
 ### Retention
 
-In DB mode, consolidation run history is automatically pruned by `DatabaseMaintenanceService`. The default retention period is **90 days** after completion. Configure via `WorkDistribution:Reconciliation:ConsolidationRunRetentionDays`. See [Configuration — Database Maintenance](configuration.md#database-maintenance-db-mode) for details.
+In DB mode, consolidation run history is automatically pruned by `DatabaseMaintenanceService`. Configure the retention count via `ConsolidationRunRetentionCount` in `PipelineConfiguration` (default: `-1`, disabled). See [Configuration — Database Maintenance](configuration.md#database-maintenance) for details.

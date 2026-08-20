@@ -7,6 +7,9 @@ metadata:
     app.kubernetes.io/component: orchestrator
 data:
   job-templates.yaml: |
+    {{- if not .Values.jobTemplates }}
+    []
+    {{- end }}
     {{- range .Values.jobTemplates }}
     - labels: {{ .labels | quote }}
       image: {{ .image | quote }}

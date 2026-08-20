@@ -8,7 +8,7 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Extracts shared orchestration logic from <see cref="AgentJobDispatcher"/>
+/// Extracts shared orchestration logic from <c>AgentJobDispatcher</c>
 /// for consumption by DB-backed <see cref="IWorkDistributor"/> implementations.
 /// Performs: issue fetching, label swapping, profile/QG resolution, and provider config preparation.
 /// </summary>

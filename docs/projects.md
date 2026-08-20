@@ -26,7 +26,7 @@ flowchart LR
 **Rules:**
 - A `null` project setting means "inherit from global defaults"
 - A non-null project setting completely replaces the global value
-- Nested objects (e.g., `CodeReview`) use **replace semantics** — the entire object is replaced, not deep-merged
+- Nested objects (e.g., `CodeReview`) use **deep-merge semantics** — only non-null sub-fields from the project override replace the corresponding global sub-fields; null sub-fields inherit the global value
 - Per-repository blacklist overrides (from ProviderConfig) still take precedence over project-level blacklist settings
 - Settings are resolved at dispatch time — changes take effect on the next dispatched job without restarting
 
@@ -40,7 +40,7 @@ Templates do NOT carry behavioral overrides. They define provider bindings only 
 
 ## Project Storage
 
-Projects are persisted in PostgreSQL (the `Projects` table). Configuration is managed via the web UI (Settings → Projects) or the import/export HTTP API. There is no file-based storage — all project data is backed by the database.
+Projects are persisted in PostgreSQL (the `Projects` table). Configuration is managed via the web UI (Settings → Projects) or the import/export HTTP API. The runtime store is always PostgreSQL — JSON files are only used for first-boot migration (`DatabaseStartupService.ImportJsonConfigIfNeededAsync` reads from `/app/config/pipeline/` on an empty database). In normal operation there is no file-based runtime storage.
 
 The JSON bundle produced by `GET /api/config/export` includes a `projects` array with the same shape documented below. This bundle can be used to migrate project configuration between instances (see [Bootstrap](bootstrap.md)).
 
@@ -117,7 +117,7 @@ All settings below are nullable on the project. When `null`, the global default 
 | Setting | Type | Description |
 |---------|------|-------------|
 | `AnalysisReviewEnabled` | bool? | Enable analysis review step |
-| `CodeReview` | CodeReviewConfiguration? | Code review config (REPLACE semantics) |
+| `CodeReview` | CodeReviewConfiguration? | Code review config (deep-merge: non-null sub-fields override global) |
 | `RefactoringReviewEnabled` | bool? | Enable refactoring review |
 | `BrainConsolidationReviewEnabled` | bool? | Enable brain consolidation review |
 | `HarnessSuggestionsReviewEnabled` | bool? | Enable harness suggestions review |

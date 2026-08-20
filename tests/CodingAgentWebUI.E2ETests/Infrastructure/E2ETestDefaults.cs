@@ -43,8 +43,30 @@ internal static class E2ETestDefaults
     }
 
     /// <summary>
-    /// Clears the database settings on teardown so a factory cannot leak configuration into the
-    /// next fixture in the same test process.
+    /// Applies the pod-dispatch settings <c>DispatchServiceOptionsFactory</c> reads.
+    ///
+    /// These are supplied as configuration rather than by hand-registering
+    /// <c>ChatJobDispatcher</c> with a literal options object, so the harness exercises the same
+    /// factory and the same <c>ValidateAndClamp</c> pass the real process does. The credential
+    /// pool is the load-bearing one: chat dispatch claims a PVC from it and an empty pool means
+    /// no pod is ever created.
+    /// </summary>
+    public static void ApplyDispatchEnvironment()
+    {
+        Environment.SetEnvironmentVariable("WorkDistribution__Namespace", "test");
+        Environment.SetEnvironmentVariable("WorkDistribution__OrchestratorUrl", "http://test-orchestrator");
+        Environment.SetEnvironmentVariable("WorkDistribution__AgentApiKeySecretName", "agent-api-key");
+        Environment.SetEnvironmentVariable("WorkDistribution__AgentServiceAccountName", "agent-sa");
+        Environment.SetEnvironmentVariable("WorkDistribution__CredentialPools__Kiro__0", "fake-pvc-0");
+        Environment.SetEnvironmentVariable("WorkDistribution__CredentialPools__Kiro__1", "fake-pvc-1");
+        Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds", "7200");
+        Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds", "30");
+        Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds", "10");
+    }
+
+    /// <summary>
+    /// Clears the settings applied above on teardown so a factory cannot leak configuration into
+    /// the next fixture in the same test process.
     /// </summary>
     public static void ClearDatabaseEnvironment()
     {
@@ -52,8 +74,14 @@ internal static class E2ETestDefaults
                  {
                      "Database__Host", "Database__Port", "Database__Username", "Database__Password",
                      "Database__Name", "Database__SslMode", "Database__MigrateOnStartup",
-                     "Database__SkipStartupInit", "WorkDistribution__Mode", "AGENT_API_KEY",
-                     "PipelineApi__BaseUrl", "PipelineApi__HubUrl", "PipelineLoop__ConfigCacheTtlSeconds"
+                     "Database__SkipStartupInit", "AGENT_API_KEY",
+                     "PipelineApi__BaseUrl", "PipelineApi__HubUrl", "PipelineLoop__ConfigCacheTtlSeconds",
+                     "WorkDistribution__Namespace", "WorkDistribution__OrchestratorUrl",
+                     "WorkDistribution__AgentApiKeySecretName", "WorkDistribution__AgentServiceAccountName",
+                     "WorkDistribution__CredentialPools__Kiro__0", "WorkDistribution__CredentialPools__Kiro__1",
+                     "WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds",
+                     "WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds",
+                     "WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds"
                  })
         {
             Environment.SetEnvironmentVariable(key, null);

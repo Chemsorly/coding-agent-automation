@@ -17,20 +17,15 @@ namespace CodingAgentWebUI;
 public static partial class WorkDistributionRegistration
 {
     /// <summary>
-    /// Registers services that survive the deletion of WorkDistributionRegistration.Kubernetes.cs:
+    /// Registers services for Kubernetes work distribution:
     /// - K8s infrastructure (IKubernetes, IKubernetesJobClient, IJobCleanupStrategy)
     /// - Leader election (ILeaderElectionService)
-    /// - IWorkDistributor (KubernetesWorkDistributor)
+    /// - IWorkDistributor (KubernetesWorkDistributor — fully API-backed, no EF)
     /// - JobTemplateStore
-    /// - IPendingWorkQuery — removed (Spec 045 Req 1.2, M1): dispatch.queue.depth gauge moved to API.
-    ///   No PrometheusRule alerts reference dispatch.queue.depth, so removal is safe.
     /// - Pipeline API client
     ///
-    /// NOTE: IJobCleanupStrategy (KubernetesJobCleanup) and IWorkDistributor (KubernetesWorkDistributor)
-    /// still use IDbContextFactory and WorkItemTransitionService for cancel/status/dedup queries.
-    /// These are registered in WorkDistributionRegistration.cs (the main AddWorkDistribution call).
-    /// A future spec should migrate those to API calls (IPipelineApiWorkItemClient) and
-    /// remove the remaining IDbContextFactory usage from the monolith.
+    /// Both KubernetesWorkDistributor and KubernetesJobCleanup are API-backed.
+    /// Remaining IDbContextFactory consumers are in WorkDistributionRegistration.cs.
     /// </summary>
     private static void RegisterConsolidationServices(IServiceCollection services, IConfiguration configuration)
     {
@@ -93,11 +88,10 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<IKubernetesJobClient>(sp => new KubernetesJobClient(sp.GetRequiredService<IKubernetes>()));
 
         // ── IJobCleanupStrategy ──────────────────────────────────────────────
-        // TODO(Spec 046): KubernetesJobCleanup still uses IDbContextFactory<PipelineDbContext> to
-        // look up K8s Job names from WorkItems. Migrate to IPipelineApiWorkItemClient to complete
-        // DB removal from the monolith. Tracked as a follow-up after Task 10.
+        // KubernetesJobCleanup now uses IPipelineApiWorkItemClient.GetK8sJobNameAsync
+        // instead of IDbContextFactory — DB dependency removed.
         services.AddSingleton<IJobCleanupStrategy>(sp => new KubernetesJobCleanup(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<IPipelineApiWorkItemClient>(),
             sp.GetRequiredService<IKubernetesJobClient>(),
             configuration.GetValue<string>("WorkDistribution:Namespace")
                 ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
@@ -105,23 +99,19 @@ public static partial class WorkDistributionRegistration
             Log.Logger));
 
         // ── IWorkDistributor (KubernetesWorkDistributor) ─────────────────────
-        // Uses GetService (nullable) for IPipelineApiWorkItemClient since it may not be
-        // registered in test environments where PipelineApi:BaseUrl is not configured.
-        // TODO(Spec 046): DbWorkDistributorBase (base class) uses IDbContextFactory for
-        // cancel/status/dedup queries. Migrate to IPipelineApiWorkItemClient to complete
-        // DB removal from the monolith.
+        // KubernetesWorkDistributor is now fully API-backed — no IDbContextFactory,
+        // no WorkItemTransitionService. Distribute, cancel, status, and dedup all
+        // route through IPipelineApiWorkItemClient.
         services.AddSingleton<IWorkDistributor>(sp =>
         {
             var apiClient = sp.GetService<IPipelineApiWorkItemClient>();
             if (apiClient is null)
             {
-                Log.Warning("WorkDistribution: IPipelineApiWorkItemClient not registered — KubernetesWorkDistributor will throw NullReferenceException on CreateAsync. " +
+                Log.Warning("WorkDistribution: IPipelineApiWorkItemClient not registered — KubernetesWorkDistributor cannot function. " +
                             "This is expected in test environments without PipelineApi configured.");
             }
             return new KubernetesWorkDistributor(
                 apiClient!,
-                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-                sp.GetRequiredService<WorkItemTransitionService>(),
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<KubernetesWorkDistributor>>());
         });
 
@@ -133,21 +123,14 @@ public static partial class WorkDistributionRegistration
         // dispatch.queue.depth was backed by DbPendingWorkQuery (IDbContextFactory).
         // No PrometheusRule alert references this metric name — removal is safe.
         // The gauge is removed from ObservableGaugeRegistrationExtensions.cs.
-        // TODO(Spec 046): if dispatch queue depth monitoring is needed, implement via
-        // GET /api/work-items/pending-count on IPipelineApiWorkItemClient.
+        // Restore via GET /api/work-items/pending-count on IPipelineApiWorkItemClient
+        // when queue depth monitoring is needed.
 
         // ── ChatJobDispatcher — on-demand ephemeral chat pod dispatch ────────────
-        // Spec 043 deleted WorkDistributionRegistration.Kubernetes.cs, which held this
-        // registration, on the assumption that Spec 044 Task 6 would re-home it in the API.
-        // That move never happened: ChatJobDispatcher still lives in CodingAgentWebUI.Hub and
-        // is registered nowhere else, so AgentChat.razor's `@inject IChatJobDispatcher` threw
-        // on first render. Restored here, matching the pre-043 wiring — the monolith retains
-        // every dependency it needs (Req 044 keeps the Hub project reference and
-        // AddSignalRServices() alive precisely for this).
-        //
-        // TODO(Spec 046): moving this to the API is still the intended end state, together with
-        // the REST endpoint that fixes AgentChat's disconnected IHubContext<AgentHub> —
-        // AssignChatPrompt cannot reach agents registered on the API hub from this process.
+        // ChatJobDispatcher is registered in the monolith because it still injects
+        // IHubContext<AgentHub, IAgentHubClient>. The disconnected IHubContext path
+        // (AssignChatPrompt targeting agents on the API hub) will be fixed by adding
+        // a REST endpoint on the API — see AgentChat.razor for the call site.
         services.AddSingleton<ChatJobDispatcher>(sp =>
         {
             var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());

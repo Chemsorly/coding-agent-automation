@@ -87,10 +87,10 @@ spec:
             - name: Database__SslMode
               value: {{ .Values.database.sslMode | quote }}
             {{- end }}
-            # API never applies migrations (Req 9.5a).
-            # HandleMigrationsAsync with false VERIFIES schema and throws on pending migrations.
+            # API applies migrations when Database.migrateOnStartup is true (default).
+            # Set to false only when running migrations externally (blue/green deployments).
             - name: Database__MigrateOnStartup
-              value: "false"
+              value: {{ .Values.database.migrateOnStartup | toString | quote }}
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}

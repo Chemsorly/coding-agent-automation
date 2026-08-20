@@ -160,15 +160,36 @@ public sealed class FakeJobController : IAsyncDisposable
     /// <summary>Stops tracking a work item, so a completed job is not reconciled as a dead pod.</summary>
     internal void ForgetInFlight(Guid workItemId) => _inFlight.TryRemove(workItemId, out _);
 
+    /// <summary>Drops all in-flight tracking. Called between tests so a work item from a
+    /// previous test cannot be reconciled into a failure during the next one.</summary>
+    internal void ForgetAllInFlight() => _inFlight.Clear();
+
     /// <summary>
     /// Picks an idle agent whose labels satisfy the selector. The real controller matches a
     /// selector to a job template and starts a pod; the harness has its pods already connected,
     /// so it matches against their labels instead. An empty selector matches any idle agent,
     /// mirroring how an unlabelled template is dispatchable anywhere.
+    ///
+    /// Two things the registry does not do for us:
+    ///
+    /// <c>GetIdleAgents</c> filters on <c>Status == Idle</c> only, so an agent an operator has
+    /// disabled is still in the list. Selecting one would dispatch work to an agent that is
+    /// meant to be drained, so it is excluded here.
+    ///
+    /// The same call returns <c>ConcurrentDictionary.Values</c>, whose order is unspecified.
+    /// Picking the first would make selection depend on hash order — a coin flip that is stable
+    /// within a run and different across runs, which is the worst kind of flake. Longest-idle
+    /// first is deterministic and is the policy the lifecycle tests describe. Production has no
+    /// equivalent choice to make: it starts one pod per work item rather than choosing among a
+    /// standing pool.
     /// </summary>
     private AgentEntry? FindIdleAgentFor(string selector)
     {
-        var idle = _registry.GetIdleAgents();
+        var idle = _registry.GetIdleAgents()
+            .Where(a => !a.Disabled)
+            .OrderBy(a => a.LastJobCompletedAt ?? a.RegisteredAt)
+            .ToList();
+
         if (idle.Count == 0) return null;
 
         if (string.IsNullOrWhiteSpace(selector))

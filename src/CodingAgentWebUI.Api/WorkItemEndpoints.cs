@@ -5,7 +5,7 @@ using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Telemetry;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -74,6 +74,10 @@ public static class WorkItemEndpoints
         group.MapGet("/staleness", GetStaleness).RequireAuthorization("OperatorApiKey");
         group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization("OperatorApiKey");
         group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization("OperatorApiKey");
+        group.MapGet("/{id:guid}/k8s-job-name", GetK8sJobName).RequireAuthorization("OperatorApiKey");
+        group.MapGet("/{id:guid}/status", GetWorkItemStatus).RequireAuthorization("OperatorApiKey");
+        group.MapGet("/is-distributed", GetIsDistributed).RequireAuthorization("OperatorApiKey");
+        group.MapGet("/active-identifiers", GetActiveIdentifiers).RequireAuthorization("OperatorApiKey");
     }
 
     // ── Agent → work item binding ─────────────────────────────────────────
@@ -569,7 +573,142 @@ public static class WorkItemEndpoints
         return TypedResults.Ok();
     }
 
-    // ── Private helpers ────────────────────────────────────────────────────
+    // ── GET /{id}/k8s-job-name ────────────────────────────────────────────
+
+    /// <summary>
+    /// GET /api/work-items/{id}/k8s-job-name
+    /// Returns the K8s Job name associated with a WorkItem.
+    /// Used by KubernetesJobCleanup to cancel the K8s Job when an issue is cancelled.
+    /// 200 with { jobName: string } or 404 if not found / no job name set.
+    /// </summary>
+    internal static async Task<IResult> GetK8sJobName(
+        Guid id,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var jobName = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => w.Id == id)
+            .Select(w => w.K8sJobName)
+            .FirstOrDefaultAsync(ct);
+
+        if (string.IsNullOrEmpty(jobName))
+            return TypedResults.NotFound();
+
+        return TypedResults.Ok(new { jobName });
+    }
+
+    // ── GET /{id}/status ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// GET /api/work-items/{id}/status
+    /// Returns the current <see cref="WorkItemStatus"/> of a WorkItem.
+    /// Used by KubernetesWorkDistributor.GetJobStatusAsync to check run status.
+    /// 200 with { status: string }, 404 if not found.
+    /// </summary>
+    internal static async Task<IResult> GetWorkItemStatus(
+        Guid id,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var status = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => w.Id == id)
+            .Select(w => (WorkItemStatus?)w.Status)
+            .FirstOrDefaultAsync(ct);
+
+        if (status is null)
+            return TypedResults.NotFound();
+
+        return TypedResults.Ok(new { status });
+    }
+
+    // ── GET /is-distributed ───────────────────────────────────────────────
+
+    /// <summary>
+    /// GET /api/work-items/is-distributed?issueIdentifier=...&amp;issueProviderConfigId=...
+    /// Returns true when a non-terminal WorkItem exists for this issue, OR when a WorkItem
+    /// was recently terminated (within <see cref="PipelineConstants.DefaultRestartDedupCooldown"/>).
+    /// Used by KubernetesWorkDistributor.IsIssueDistributedAsync for dispatch deduplication.
+    /// 200 with { isDistributed: bool }.
+    /// </summary>
+    internal static async Task<IResult> GetIsDistributed(
+        string issueIdentifier,
+        string issueProviderConfigId,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        var activeStatuses = new[] { WorkItemStatus.Pending, WorkItemStatus.Dispatched, WorkItemStatus.Running };
+
+        var hasActive = await db.WorkItems
+            .AsNoTracking()
+            .AnyAsync(w =>
+                w.IssueIdentifier == issueIdentifier &&
+                w.IssueProviderConfigId == issueProviderConfigId &&
+                activeStatuses.Contains(w.Status), ct);
+
+        if (hasActive)
+            return TypedResults.Ok(new { isDistributed = true });
+
+        var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
+        var hasRecentTerminal = await db.WorkItems
+            .AsNoTracking()
+            .AnyAsync(w =>
+                w.IssueIdentifier == issueIdentifier &&
+                w.IssueProviderConfigId == issueProviderConfigId &&
+                !activeStatuses.Contains(w.Status) &&
+                w.CompletedAt != null &&
+                w.CompletedAt >= recentTerminalCutoff, ct);
+
+        return TypedResults.Ok(new { isDistributed = hasRecentTerminal });
+    }
+
+    // ── GET /active-identifiers ───────────────────────────────────────────
+
+    /// <summary>
+    /// GET /api/work-items/active-identifiers
+    /// Returns the set of (IssueIdentifier, IssueProviderConfigId) pairs that have active
+    /// (non-terminal) WorkItems OR were recently terminated.
+    /// Used by KubernetesWorkDistributor.GetActiveIssueIdentifiersAsync for dispatch deduplication.
+    /// 200 with array of { issueIdentifier, issueProviderConfigId }.
+    /// </summary>
+    internal static async Task<IResult> GetActiveIdentifiers(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        var activeStatuses = new[] { WorkItemStatus.Pending, WorkItemStatus.Dispatched, WorkItemStatus.Running };
+        var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
+
+        var activePairs = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => activeStatuses.Contains(w.Status))
+            .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
+            .ToListAsync(ct);
+
+        var recentTerminalPairs = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => !activeStatuses.Contains(w.Status) &&
+                        w.CompletedAt != null &&
+                        w.CompletedAt >= recentTerminalCutoff)
+            .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
+            .ToListAsync(ct);
+
+        var result = activePairs
+            .Concat(recentTerminalPairs)
+            .Distinct()
+            .Select(p => new { issueIdentifier = p.IssueIdentifier, issueProviderConfigId = p.IssueProviderConfigId })
+            .ToList();
+
+        return TypedResults.Ok((IReadOnlyList<object>)result);
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────
 
     private static void ApplyStatusMutation(WorkItemEntity entity, WorkItemStatusRequest request)
     {

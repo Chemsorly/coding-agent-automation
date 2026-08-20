@@ -1,7 +1,6 @@
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure;
-using CodingAgentWebUI.Infrastructure.Locking;
-using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Locking;using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Infrastructure.Persistence.Stores;
 using CodingAgentWebUI.Kubernetes;
@@ -10,6 +9,7 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Orchestration.Telemetry;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
@@ -114,6 +114,21 @@ public static class ApiServiceCollectionExtensions
 
         // ── IDatabaseProbe (no-op — real DB connectivity is handled by DatabaseStartupService) ─
         services.AddSingleton<IDatabaseProbe, NoOpDatabaseProbe>();
+
+        // ── DatabaseHealthState + DatabaseReadinessMonitor ──────────────────
+        // Registers the singleton health state that /readyz reads, and the background monitor
+        // that probes DB every 5s and updates it. Connection string resolved from configuration.
+        services.AddSingleton<DatabaseHealthState>();
+        services.AddSingleton<DatabaseReadinessMonitor>(sp =>
+        {
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            var connStr = DatabaseConnectionResolver.Resolve(cfg) ?? "";
+            return new DatabaseReadinessMonitor(
+                sp.GetRequiredService<DatabaseHealthState>(),
+                connStr,
+                Log.Logger);
+        });
+        services.AddHostedService(sp => sp.GetRequiredService<DatabaseReadinessMonitor>());
 
         // ── TimeProvider ────────────────────────────────────────────────────
         services.AddSingleton(TimeProvider.System);
@@ -270,6 +285,11 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
         services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
 
+        // ── IKubernetesJobClient ─────────────────────────────────────────────
+        // Required by DispatchLifecycleService and ModelFetchJobService.
+        // IKubernetes is already registered above; only the job client wrapper is missing.
+        services.AddSingleton<IKubernetesJobClient, KubernetesJobClient>();
+
         // ── DatabaseMaintenanceService (Spec 045 Task 8a.1, Req 1.3a/1.3b) ────────────────────
         // Spec 042 Req 5.6a originally prohibited hosted services in the API due to ungated sweep
         // risk. Spec 045 Task 8a.3 amends that prohibition: ILeaderElectionService is now
@@ -292,7 +312,7 @@ public static class ApiServiceCollectionExtensions
         // so two concurrent instances produce duplicate series at worst — acceptable during the
         // brief RollingUpdate overlap window. Leader-gating would require leader acquisition
         // before the first tick, delaying the metric rather than eliminating the brief duplicate.
-        services.AddHostedService<WorkItemMetricsBackgroundService>();
+        services.AddHostedService<CodingAgentWebUI.Orchestration.Telemetry.WorkItemMetricsBackgroundService>();
 
         // ── DispatchLifecycleService (API copy, EF-coupled) ─────────────────────────────
         // Used by ConsolidationWorkItemDispatchService and ModelFetchJobService.

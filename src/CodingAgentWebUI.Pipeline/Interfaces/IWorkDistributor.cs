@@ -3,22 +3,19 @@ using CodingAgentWebUI.Pipeline.Models;
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
-/// Abstraction for distributing pipeline work across deployment modes.
+/// Abstraction for distributing pipeline work.
 /// Primary dispatch abstraction consumed by <see cref="Services.PipelineLoopService"/>.
 /// <para>
-/// Implementations:
-/// <list type="bullet">
-///   <item><description>LegacyWorkDistributor — no-DB mode, wraps existing AgentJobDispatcher</description></item>
-///   <item><description>SignalRWorkDistributor — DB + SignalR mode, inserts WorkItem row + pushes via SignalR</description></item>
-///   <item><description>KubernetesWorkDistributor — DB + K8s mode, inserts WorkItem row (DispatchService spawns Jobs)</description></item>
-/// </list>
+/// The only implementation is <c>KubernetesWorkDistributor</c>, which inserts a WorkItem row that
+/// the Job Controller's dispatch loop turns into a Job. The interface predates Spec 041, when it
+/// also covered a no-DB in-memory distributor and a DB+SignalR one; both were deleted with the
+/// deployment modes they served.
 /// </para>
 /// </summary>
 public interface IWorkDistributor
 {
     /// <summary>
-    /// Distributes a job for processing. In DB modes, inserts a WorkItem row.
-    /// In Legacy mode, delegates to existing AgentJobDispatcher.
+    /// Distributes a job for processing by inserting a WorkItem row.
     /// </summary>
     /// <param name="request">The full job distribution request containing issue context and configuration.</param>
     /// <param name="ct">Cancellation token.</param>
@@ -56,8 +53,7 @@ public interface IWorkDistributor
     /// Returns all currently active (non-terminal) issue identifiers as a set.
     /// Used by PipelineLoopService to batch-load dedup state at cycle start,
     /// avoiding N+1 DB queries in the per-issue dispatch loop.
-    /// In Legacy mode: delegates to in-memory OrchestratorRunService + JobDeduplicationGuardService.
-    /// In DB mode: single SQL query loading all non-terminal (IssueIdentifier, IssueProviderConfigId) pairs.
+    /// A single SQL query loading all non-terminal (IssueIdentifier, IssueProviderConfigId) pairs.
     /// </summary>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>A set of (IssueIdentifier, IssueProviderConfigId) tuples for all active work items.</returns>
@@ -65,16 +61,24 @@ public interface IWorkDistributor
 
     /// <summary>
     /// Whether this distributor requires at least one connected agent before dispatch can proceed.
-    /// True for in-memory distributors (Legacy), false for DB-backed distributors.
+    /// <para>
+    /// Always <c>false</c> since Spec 041: it existed for the in-memory distributor, which pushed
+    /// straight to a connected agent. Work is now queued as a row and a pod is started for it, so
+    /// there is nothing to be connected in advance. The three call sites that still test it
+    /// (<c>EpicDrawerService</c>, <c>IssueDrawerService</c>, <c>PrReviewDrawerService</c>) are
+    /// consequently dead branches. TODO(Spec 046): remove the member and those branches.
+    /// </para>
     /// </summary>
     bool RequiresConnectedAgents => false;
 
     /// <summary>
     /// Detects and transitions work items stuck in non-terminal states beyond expected thresholds.
-    /// In SignalR mode: items stuck in Dispatched > 5 minutes are transitioned to Failed.
-    /// In Kubernetes mode: handled by ReconciliationService instead (no-op here).
-    /// In Legacy mode: no-op.
     /// Called once per dispatch cycle before issue polling.
+    /// <para>
+    /// A no-op in the Kubernetes topology, where the Job Controller's <c>ReconciliationService</c>
+    /// owns stuck-item detection: it can see Job state, which this side cannot. The default
+    /// implementation returning zero is therefore the effective one.
+    /// </para>
     /// </summary>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Number of stuck items detected and remediated.</returns>

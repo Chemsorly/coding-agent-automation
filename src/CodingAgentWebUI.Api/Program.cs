@@ -1,7 +1,7 @@
 using CodingAgentWebUI.Api;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure;
-using CodingAgentWebUI.Orchestration.Telemetry;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -104,6 +104,7 @@ var app = builder.Build();
 await app.RunApiMigrationsAsync(builder.Configuration);
 
 app.MapApiHealthEndpoints();
+app.RegisterApiObservableGauges();
 app.UseAuthentication();
 app.UseAuthorization();
 

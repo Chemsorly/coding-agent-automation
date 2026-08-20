@@ -2,6 +2,7 @@ using Bunit;
 using CodingAgentWebUI.Components.Layout;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

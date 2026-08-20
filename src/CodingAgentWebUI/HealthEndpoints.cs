@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -31,7 +32,7 @@ public static class HealthEndpoints
         endpoints.MapGet("/readyz", (HttpContext httpContext) =>
         {
             var readiness = httpContext.RequestServices.GetRequiredService<ReadinessState>();
-            var dbHealth = httpContext.RequestServices.GetService<DatabaseHealthState>();
+            var dbHealth = httpContext.RequestServices.GetService<CodingAgentWebUI.Infrastructure.DatabaseHealthState>();
 
             if (!readiness.IsReady)
                 return Results.Json(new { status = "draining", timestamp = DateTime.UtcNow }, statusCode: 503);

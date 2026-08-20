@@ -1,7 +1,7 @@
+using CodingAgentWebUI.Pipeline.Telemetry;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
-using CodingAgentWebUI.Orchestration.Telemetry;
 
 namespace CodingAgentWebUI.UnitTests.Telemetry;
 

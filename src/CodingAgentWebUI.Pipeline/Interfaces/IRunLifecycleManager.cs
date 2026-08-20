@@ -65,9 +65,8 @@ public interface IRunLifecycleManager
     /// 2. Sets ActiveJobId on the agent registry entry and transitions to Busy
     /// 3. Swaps label to agent:in-progress (best-effort)
     ///
-    /// Called by ALL distribution paths (SignalRWorkDistributor, DrainService, Legacy dispatcher)
-    /// to ensure label swap timing is consistent across modes: labels only change when
-    /// an agent actually starts working on the issue.
+    /// Called on every path that hands a run to an agent, so that label swap timing stays
+    /// consistent: labels only change when an agent actually starts working on the issue.
     /// </summary>
     Task AgentAcceptedRunAsync(RunId runId, AgentId agentId, IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderConfigId, ProviderConfigId repoProviderConfigId,
