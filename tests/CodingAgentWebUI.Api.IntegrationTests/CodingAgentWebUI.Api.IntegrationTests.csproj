@@ -8,6 +8,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="FsCheck" />
+    <PackageReference Include="FsCheck.Xunit" />
     <PackageReference Include="coverlet.collector">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

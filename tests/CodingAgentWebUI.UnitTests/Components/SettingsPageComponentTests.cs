@@ -45,6 +45,13 @@ public class SettingsPageComponentTests : BunitContext
 
     private void SetupDefaults()
     {
+        // Settings.razor loads provider configs through GetProviderConfigsWithSecretsAsync — it is the
+        // config editor and must round-trip live Settings/Secrets values, not the "****" masked form.
+        // Forward the with-secrets accessor to the masked one so every per-test GetProviderConfigsAsync
+        // setup below (including ThrowsAsync) applies to both without being duplicated.
+        _mockStore.Setup(s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.GetProviderConfigsAsync(kind, ct));
+
         _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))

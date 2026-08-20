@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Infrastructure.Persistence.Stores;
@@ -6,6 +7,7 @@ using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Polly.Registry;
@@ -80,13 +82,16 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             Log.Logger));
 
-        // ── Consolidation run persistence (DB-backed) — still needed by consolidation services ────
+        // ── Consolidation run persistence — API-backed ──────────────────────────────────────────
+        // The API is the sole owner of the ConsolidationRuns table. The orchestrator must not
+        // write to it directly — that caused dual-write race conditions where the API's status
+        // updates were overwritten by the orchestrator's CleanupOrphanedRunsAsync on restart.
         services.AddSingleton<IConsolidationRunStore>(sp =>
-            new PostgresConsolidationRunStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
+            new ApiBackedConsolidationRunStore(sp.GetRequiredService<IPipelineApiConsolidationRunClient>()));
 
-        // ── Harness suggestions persistence (DB-backed) — still needed by ConsolidationService ────
+        // ── Harness suggestions persistence — API-backed ────────────────────────────────────────
         services.AddSingleton<IHarnessSuggestionStore>(sp =>
-            new PostgresHarnessSuggestionStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
+            new ApiBackedHarnessSuggestionStore(sp.GetRequiredService<IPipelineApiHarnessSuggestionClient>()));
 
         // The following services were removed — registrations live in CodingAgentWebUI.Api:
         //   IActiveRunQueryService → IPipelineApiRunHistoryClient
@@ -106,8 +111,8 @@ public static partial class WorkDistributionRegistration
         // ── SignalR Redis backplane (optional) ────────────────────────────────
         ConfigureSignalRRedisBackplane(services, configuration);
 
-        Log.Information("WorkDistribution: Kubernetes mode — high-level config stores removed (API-backed); " +
-                        "IDbContextFactory retained for KubernetesWorkDistributor and consolidation services");
+        Log.Information("WorkDistribution: Kubernetes mode — all config stores and consolidation stores are API-backed; " +
+                        "IDbContextFactory retained for WorkItemTransitionService and IPipelineRunHistoryService");
 
         return services;
     }

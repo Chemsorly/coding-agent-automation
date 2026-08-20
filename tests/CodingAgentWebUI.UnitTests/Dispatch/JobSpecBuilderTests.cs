@@ -411,10 +411,10 @@ public class JobSpecBuilderTests
 
     #endregion
 
-    #region AGENT_ID Env Var (Downward API)
+    #region AGENT_ID Env Var
 
     [Fact]
-    public void Build_SetsAgentIdFromDownwardApi_PodName()
+    public void Build_SetsAgentIdToJobName()
     {
         var template = CreateTemplate();
         var ctx = CreateContext();
@@ -424,10 +424,12 @@ public class JobSpecBuilderTests
         var container = job.Spec.Template.Spec.Containers[0];
         var agentIdEnv = container.Env.FirstOrDefault(e => e.Name == "AGENT_ID");
         agentIdEnv.Should().NotBeNull("AGENT_ID must be set for SignalR hub authentication");
-        agentIdEnv!.ValueFrom.Should().NotBeNull("AGENT_ID should use valueFrom (Downward API)");
-        agentIdEnv.ValueFrom.FieldRef.Should().NotBeNull();
-        agentIdEnv.ValueFrom.FieldRef.FieldPath.Should().Be("metadata.name",
-            "AGENT_ID must reference pod name via Downward API");
+        agentIdEnv!.Value.Should().Be(ctx.JobName,
+            "the agent derives its API key as HMAC(masterKey, AGENT_ID) and DispatchLoop claims the " +
+            "WorkItem with AssignedAgentId = job name, so the two must be the same string");
+        agentIdEnv.ValueFrom.Should().BeNull(
+            "the Downward API would supply metadata.name — the pod name, which carries a random " +
+            "suffix and would never match the claimed AssignedAgentId");
     }
 
     #endregion

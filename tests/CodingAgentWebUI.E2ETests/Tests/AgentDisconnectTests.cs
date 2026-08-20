@@ -70,7 +70,7 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for the run to be active with expected step
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "60" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Simulate agent disconnect by disposing the connection
@@ -133,7 +133,7 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for the run to be active with expected step
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "61" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring page and click Cancel on the active run

@@ -156,7 +156,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
                 }, CancellationToken.None),
             parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
             "Could not dispatch — epic is already being processed or queued, or no agents are available.",
-            $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — waiting for an idle agent",
+            $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — the job controller will start an agent pod for it",
             $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}");
     }
 

@@ -90,7 +90,7 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
             });
 
         // Wait briefly for the hub to process the step transitions
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() =>
         {
             var run = runService.GetActiveRuns().FirstOrDefault(r => r.IssueIdentifier == "42");

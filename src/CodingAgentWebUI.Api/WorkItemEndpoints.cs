@@ -165,7 +165,7 @@ public static class WorkItemEndpoints
         if (request is null)
             return TypedResults.NotFound();
 
-        var message = DbWorkDistributorBase.BuildJobAssignmentMessage(id, request);
+        var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
 
         // Inject project secrets at delivery time (not serialized in payload for security)
         if (!string.IsNullOrEmpty(request.ProjectId))
@@ -642,7 +642,7 @@ public static class WorkItemEndpoints
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
-        var activeStatuses = new[] { WorkItemStatus.Pending, WorkItemStatus.Dispatched, WorkItemStatus.Running };
+        var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
 
         var hasActive = await db.WorkItems
             .AsNoTracking()
@@ -682,7 +682,7 @@ public static class WorkItemEndpoints
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
-        var activeStatuses = new[] { WorkItemStatus.Pending, WorkItemStatus.Dispatched, WorkItemStatus.Running };
+        var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
         var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
 
         var activePairs = await db.WorkItems

@@ -24,6 +24,10 @@ rules:
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
   # Per-job derived-key Secrets (created before agent pod starts, owner-referenced to job)
+  # Namespace isolation required: this grants create/delete on ALL secrets in the namespace.
+  # K8s Role resourceNames cannot use wildcards for dynamic job secret names (caa-agent-key-*).
+  # This is safe only when the coding-agent namespace is dedicated — do not deploy into a shared
+  # namespace without additional network policies to prevent lateral movement.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "delete"]

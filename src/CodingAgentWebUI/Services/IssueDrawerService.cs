@@ -207,7 +207,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
                 }, CancellationToken.None),
             parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
             "Could not dispatch — distribution failed.",
-            $"⏳ Queued #{issue.Identifier} — waiting for an idle agent",
+            $"⏳ Queued #{issue.Identifier} — the job controller will start an agent pod for it",
             $"✅ Dispatched #{issue.Identifier}");
     }
 

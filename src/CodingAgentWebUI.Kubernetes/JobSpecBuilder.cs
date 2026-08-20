@@ -244,6 +244,31 @@ public static class JobSpecBuilder
         if (!string.IsNullOrEmpty(template.Labels))
             envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvAgentLabels, Value = template.Labels });
 
+        // OpenCode agents: inject OPENCODE_CONFIG_CONTENT from the secret so entrypoint.sh
+        // writes it to opencode.json at startup. Using an env var (not a directory volume mount)
+        // so the entrypoint can write to /home/ubuntu/.config/opencode/opencode.json normally.
+        // Security note: env var values are visible in `kubectl describe pod` and etcd.
+        // A directory volume mount is not usable here because mounting the secret dir replaces
+        // /home/ubuntu/.config/opencode/ entirely, preventing entrypoint.sh from writing the
+        // correctly-named opencode.json file. Accepted tradeoff: port 4096 is container-internal
+        // only and the secret is already in the K8s Secret object (same etcd exposure level).
+        if (IsOpencodeAgent(template.ProviderType) && !string.IsNullOrEmpty(ctx.OpencodeConfigSecretName))
+        {
+            envVars.Add(new V1EnvVar
+            {
+                Name = "OPENCODE_CONFIG_CONTENT",
+                ValueFrom = new V1EnvVarSource
+                {
+                    SecretKeyRef = new V1SecretKeySelector
+                    {
+                        Name = ctx.OpencodeConfigSecretName,
+                        Key = "opencode-config-content",
+                        Optional = true
+                    }
+                }
+            });
+        }
+
         return envVars;
     }
 
@@ -298,23 +323,8 @@ public static class JobSpecBuilder
             });
         }
 
-        if (isOpencodeAgent && !string.IsNullOrEmpty(ctx.OpencodeConfigSecretName))
-        {
-            volumeMounts.Add(new V1VolumeMount
-            {
-                Name = "opencode-config",
-                MountPath = "/home/ubuntu/.config/opencode",
-                ReadOnlyProperty = true
-            });
-            volumes.Add(new V1Volume
-            {
-                Name = "opencode-config",
-                Secret = new V1SecretVolumeSource
-                {
-                    SecretName = ctx.OpencodeConfigSecretName
-                }
-            });
-        }
+        // OpenCode config is now injected via OPENCODE_CONFIG_CONTENT env var (see BuildEnvVars).
+        // No directory volume mount needed — entrypoint.sh writes the file at startup.
 
         if (ctx.WorkItemId.HasValue && ctx.ProjectSecrets is not null && ctx.ProjectSecrets.Count > 0)
         {

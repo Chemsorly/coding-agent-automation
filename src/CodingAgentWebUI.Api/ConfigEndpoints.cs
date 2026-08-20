@@ -330,7 +330,16 @@ public static class ConfigEndpoints
         CancellationToken ct)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var hasAny = await db.PipelineJobTemplates.AsNoTracking().AnyAsync(ct);
+        // Join to Projects and filter Enabled=true so templates in disabled projects don't count.
+        // This is used as a dispatch-readiness gate; a template in a disabled project should
+        // not signal "ready to dispatch".
+        var hasAny = await db.PipelineJobTemplates
+            .AsNoTracking()
+            .Join(db.Projects.AsNoTracking().Where(p => p.Enabled),
+                t => t.ProjectId,
+                p => p.Id,
+                (t, p) => t)
+            .AnyAsync(ct);
         return TypedResults.Ok(hasAny);
     }
 
@@ -713,13 +722,6 @@ public static class ConfigEndpoints
 
 /// <summary>
 /// Response shape for GET /api/config/projects — project plus its templates.
-/// Required by Req 6.3a: returning projects without templates is a bug.
-/// </summary>
-public sealed class ProjectWithTemplates
-{
-    public required PipelineProject Project { get; init; }
-    public required List<PipelineJobTemplate> Templates { get; init; }
-}
 
 /// <summary>Request body for PUT /api/config/key-value/{key}.</summary>
 public sealed class KeyValueSetRequest

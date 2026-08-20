@@ -11,10 +11,10 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 /// Pins the partial unique index that is the <em>only</em> thing preventing duplicate dispatch of
 /// the same issue.
 ///
-/// <c>DbWorkDistributorBase.InsertWorkItemAsync</c> performs no pre-check —
-/// <c>IsIssueDistributedAsync</c> exists but is used solely by the UI to disable a button. The
-/// insert simply runs, and a duplicate is rejected by Postgres with 23505, which
-/// <c>WorkItemEndpoints.CreateWorkItem</c> maps to 409 Conflict. That is the correct design: a
+/// <c>WorkItemEndpoints.CreateWorkItem</c> performs no pre-check — the <c>is-distributed</c>
+/// endpoint exists but is used solely by the UI to disable a button. The insert simply runs, and a
+/// duplicate is rejected by Postgres with 23505, which that same handler maps to 409 Conflict.
+/// That is the correct design: a
 /// read-then-write guard would leave a TOCTOU window between the check and the insert, and
 /// concurrent dispatch is exactly the case that matters.
 ///

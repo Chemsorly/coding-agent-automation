@@ -166,11 +166,22 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IPipelineApiConfigClient>();
             services.AddSingleton(configClientMock.Object);
 
+            // KubernetesWorkDistributor is now a pure Pipeline API client — its dedup and status
+            // reads go through IPipelineApiWorkItemClient, which would otherwise dial the
+            // localhost:9999 stub URL. Mock it for the same reason as the config client above.
+            var workItemClientMock = new Mock<IPipelineApiWorkItemClient>();
+            workItemClientMock.Setup(s => s.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<(string IssueIdentifier, string IssueProviderConfigId)>());
+            workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+            services.RemoveAll<IPipelineApiWorkItemClient>();
+            services.AddSingleton(workItemClientMock.Object);
+
             // Replace IConsolidationService — Program.cs calls CleanupOrphanedRunsAsync
             // and RehydrateQueuedRunsAsync during startup, which hit the database directly
             // (not via a hosted service), so RemoveAll<IHostedService> doesn't prevent it.
             var consolidationMock = new Mock<IConsolidationService>();
-            consolidationMock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<CancellationToken>()))
+            consolidationMock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
             consolidationMock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<ConsolidationRun>());

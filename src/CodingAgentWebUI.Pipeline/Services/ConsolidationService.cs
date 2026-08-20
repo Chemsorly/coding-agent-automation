@@ -20,7 +20,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private readonly ConsolidationTemplateResolver _templateResolver;
 
     private readonly ConcurrentDictionary<(ConsolidationRunType, string?), ConsolidationRun> _runningRuns = new();
-    private IReadOnlyList<ConsolidationRun>? _runHistoryCache;
 
     /// <inheritdoc />
     public event Action? OnChange;
@@ -56,18 +55,33 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     }
 
     /// <inheritdoc />
-    public async Task CleanupOrphanedRunsAsync(CancellationToken ct)
+    public async Task CleanupOrphanedRunsAsync(IReadOnlyCollection<string> activeAgentJobIds, CancellationToken ct)
     {
         var allRuns = await _runStore.LoadAllRunsAsync(ct);
+        // Only consider runs that are in Running state — already-terminal runs (Succeeded, Failed,
+        // Cancelled) must never be overwritten, even if they happened to be Running at the last
+        // shutdown. The API may have updated them to a terminal state after the orchestrator went down.
         foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Running))
         {
+            // Skip runs where an agent is still actively working — the agent connects to
+            // the API hub which survives orchestrator restarts, so the run is not orphaned.
+            if (activeAgentJobIds.Contains(run.RunId))
+            {
+                _logger.Information("Consolidation run {RunId} ({Type}) has active agent — skipping orphan cleanup", run.RunId, run.Type);
+                // Restore to _runningRuns so TriggerAsync dedup guard works correctly and
+                // prevents a duplicate dispatch for the same (type, templateId) key.
+                var key = (run.Type, run.TemplateId);
+                _runningRuns.TryAdd(key, run);
+                continue;
+            }
+
             run.Status = ConsolidationRunStatus.Failed;
             run.Summary = "Orphaned: application restarted before completion";
             run.CompletedAtUtc = DateTimeOffset.UtcNow;
             await _runStore.SaveRunAsync(run, ct);
             _logger.Information("Marked orphaned consolidation run {RunId} ({Type}) as Failed", run.RunId, run.Type);
         }
-        _runHistoryCache = null;
+        
     }
 
     /// <inheritdoc />
@@ -209,13 +223,12 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     /// <inheritdoc />
     public async Task<IReadOnlyList<ConsolidationRun>> GetRunHistoryAsync(CancellationToken ct)
     {
-        if (_runHistoryCache is not null)
-            return _runHistoryCache;
-
+        // Always read from store — the store is the authoritative source.
+        // In the multi-process architecture (Spec 041+), the API updates ConsolidationRun
+        // status directly in the DB. An in-memory cache here would lag behind those updates
+        // and cause the monitoring page to show stale Queued status after dispatch.
         var runs = await _runStore.LoadAllRunsAsync(ct);
-        var result = runs.OrderByDescending(r => r.StartedAtUtc).ToList();
-        _runHistoryCache = result;
-        return result;
+        return runs.OrderByDescending(r => r.StartedAtUtc).ToList();
     }
 
     /// <inheritdoc />
@@ -393,7 +406,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private async Task PersistRunAsync(ConsolidationRun run, CancellationToken ct)
     {
         await _runStore.SaveRunAsync(run, ct);
-        _runHistoryCache = null;
+        
     }
 
     /// <inheritdoc />
@@ -402,7 +415,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             await _runStore.DeleteRunAsync(runId, ct);
-            _runHistoryCache = null;
+            
         }
         catch (Exception ex)
         {
@@ -417,7 +430,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             await _runStore.DeleteRunAsync(runId, CancellationToken.None);
-            _runHistoryCache = null;
+            
         }
         catch (Exception ex)
         {

@@ -127,11 +127,11 @@ public class AgentCodingPageServiceTests
         // initialization. A regression in PropagateProviderContext (wrong list, missing call) would not
         // be detected here. Dedicated integration-style tests using concrete drawer service instances
         // would be needed to validate end-to-end provider context propagation.
-        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { MakeProvider("ip-1") });
-        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { MakeProvider("rp-1", ProviderKind.Repository) });
-        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { MaxRetries = 5 });
@@ -158,7 +158,7 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task InitializeAsync_ReturnsError_WhenExceptionThrown()
     {
-        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("connection failed"));
 
         var error = await _service.InitializeAsync();
@@ -557,7 +557,7 @@ public class AgentCodingPageServiceTests
         IReadOnlyList<PipelineProject>? projects = null,
         IReadOnlyList<PipelineJobTemplate>? templates = null)
     {
-        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());

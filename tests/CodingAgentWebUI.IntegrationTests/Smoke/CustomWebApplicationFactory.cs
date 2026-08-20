@@ -131,7 +131,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             // and RehydrateQueuedRunsAsync during startup, which hit the database directly
             // (not via a hosted service), so RemoveAll<IHostedService> doesn't prevent it.
             var consolidationMock = new Mock<IConsolidationService>();
-            consolidationMock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<CancellationToken>()))
+            consolidationMock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
             consolidationMock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<ConsolidationRun>());

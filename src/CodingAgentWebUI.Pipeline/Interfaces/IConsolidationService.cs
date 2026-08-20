@@ -62,7 +62,12 @@ public interface IConsolidationService
     /// Scans persisted consolidation runs and marks any with Status == Running as Failed.
     /// Called at application startup to clean up orphaned runs from previous sessions.
     /// </summary>
-    Task CleanupOrphanedRunsAsync(CancellationToken ct);
+    /// <summary>
+    /// Cleans up orphaned consolidation runs from previous sessions.
+    /// Only marks runs as Failed if their RunId is not in <paramref name="activeAgentJobIds"/>
+    /// — i.e., no agent is currently working on them.
+    /// </summary>
+    Task CleanupOrphanedRunsAsync(IReadOnlyCollection<string> activeAgentJobIds, CancellationToken ct);
 
     /// <summary>
     /// Cancels a queued consolidation run. Removes it from the queue and concurrency tracker,

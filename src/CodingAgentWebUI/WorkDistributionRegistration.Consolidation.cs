@@ -4,6 +4,7 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Services;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
@@ -124,9 +125,10 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<JobTemplateStore>(sp =>
             DispatchService.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
 
-        // ── IPendingWorkQuery — not registered
-        // dispatch.queue.depth gauge backed by DbPendingWorkQuery was removed.
-        // TODO(Spec 046): restore via GET /api/work-items/pending-count on IPipelineApiWorkItemClient.
+        // ── IPendingWorkQuery — API-backed for Agent Monitoring Job Queue widget ─────────────────
+        // Calls GET /api/work-items/pending and maps DTOs to PendingJob for UI display.
+        services.AddSingleton<IPendingWorkQuery>(sp =>
+            new ApiBackedPendingWorkQuery(sp.GetRequiredService<IPipelineApiWorkItemClient>()));
 
         // ── ChatJobDispatcher — on-demand ephemeral chat pod dispatch ────────────
         // Registered in the monolith because it still injects IHubContext<AgentHub, IAgentHubClient>.

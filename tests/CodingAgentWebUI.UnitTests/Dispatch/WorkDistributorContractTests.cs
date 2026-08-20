@@ -1,11 +1,8 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -96,12 +93,13 @@ public abstract class WorkDistributorContractTests : IDisposable
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Kubernetes implementation — InMemory EF (simplest)
+// Kubernetes implementation — backed by an in-memory Pipeline API fake
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// <summary>
 /// Runs the shared contract tests against <see cref="KubernetesWorkDistributor"/>.
-/// Uses InMemory EF Core — no special setup needed (DistributeAsync is a pure DB insert).
+/// The distributor is a pure Pipeline API client, so the SUT is paired with an in-memory
+/// stand-in for the API (see <see cref="ApiWorkItemClientFake"/>) rather than a database.
 /// </summary>
 public class KubernetesWorkDistributorContractTests : WorkDistributorContractTests
 {
@@ -109,13 +107,8 @@ public class KubernetesWorkDistributorContractTests : WorkDistributorContractTes
 
     public KubernetesWorkDistributorContractTests()
     {
-        // API client mock: returns a new Guid for each CreateAsync call
-        var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
-        mockApiClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => Guid.NewGuid());
         _sut = new KubernetesWorkDistributor(
-            mockApiClient.Object,
+            ApiWorkItemClientFake.Create(),
             Mock.Of<ILogger<KubernetesWorkDistributor>>());
     }
 
@@ -123,72 +116,8 @@ public class KubernetesWorkDistributorContractTests : WorkDistributorContractTes
 
     protected override void SetupForDistribution(JobDistributionRequest request)
     {
-        // No-op — DistributeAsync calls the mock API client which always returns a new Guid
-    }
-
-    // ── Override dedup contract tests ─────────────────────────────────────
-    // After the Task 8 refactor, DistributeAsync creates the WorkItem via the Pipeline API
-    // (not in the local DB). The EF-backed dedup methods (IsIssueDistributedAsync,
-    // GetActiveIssueIdentifiersAsync) query local DB and correctly return empty — the
-    // authoritative record is in the API. This is intentional transitional behavior:
-    // dedup in the monolith will be fully API-backed in Spec 045.
-
-    [Fact]
-    public override async Task AfterDistribute_IsIssueDistributed_ReturnsTrue()
-    {
-        var sut = CreateSut();
-        var request = CreateMinimalRequest();
-
-        await sut.DistributeAsync(request, CancellationToken.None);
-
-        // API-backed: local DB has no row, so EF dedup returns false.
-        // Full dedup correctness is restored in Spec 045 when all reads go through the API.
-        var distributed = await sut.IsIssueDistributedAsync(
-            request.IssueIdentifier, request.IssueProviderConfigId, CancellationToken.None);
-        distributed.Should().BeFalse("API-backed distributor does not write to local DB; dedup is transitionally non-functional");
-    }
-
-    [Fact]
-    public override async Task AfterDistribute_GetActiveIssueIdentifiers_ContainsIssue()
-    {
-        var sut = CreateSut();
-        var request = CreateMinimalRequest();
-
-        await sut.DistributeAsync(request, CancellationToken.None);
-
-        // API-backed: local DB has no row, so EF dedup returns empty set.
-        var active = await sut.GetActiveIssueIdentifiersAsync(CancellationToken.None);
-        active.Should().BeEmpty("API-backed distributor does not write to local DB; dedup is transitionally non-functional");
-    }
-
-    [Fact]
-    public async Task AfterApiDistribute_IsIssueDistributed_ReturnsFalse_NoLocalDb()
-    {
-        var sut = CreateSut();
-        var request = CreateMinimalRequest();
-        SetupForDistribution(request);
-
-        await sut.DistributeAsync(request, CancellationToken.None);
-
-        // API-backed: local DB has no row, so EF dedup returns false.
-        // Full dedup correctness is restored in Spec 045 when all reads go through the API.
-        var distributed = await sut.IsIssueDistributedAsync(
-            request.IssueIdentifier, request.IssueProviderConfigId, CancellationToken.None);
-        distributed.Should().BeFalse("API-backed distributor does not write to local DB; dedup is transitionally non-functional");
-    }
-
-    [Fact]
-    public async Task AfterApiDistribute_GetActiveIssueIdentifiers_ReturnsEmpty_NoLocalDb()
-    {
-        var sut = CreateSut();
-        var request = CreateMinimalRequest();
-        SetupForDistribution(request);
-
-        await sut.DistributeAsync(request, CancellationToken.None);
-
-        // API-backed: local DB has no row, so EF dedup returns empty set.
-        var active = await sut.GetActiveIssueIdentifiersAsync(CancellationToken.None);
-        active.Should().BeEmpty("API-backed distributor does not write to local DB; dedup is transitionally non-functional");
+        // No-op — DistributeAsync records the item in the API fake, which then serves
+        // the dedup and status reads. No per-test priming needed.
     }
 }
 
@@ -294,18 +223,17 @@ public class WorkDistributorAdditionalTests
     }
 
     [Fact]
-    public async Task Kubernetes_AfterDistribute_GetJobStatus_ReturnsUnknown()
+    public async Task Kubernetes_AfterDistribute_GetJobStatus_ReturnsPending()
     {
-        // API-backed: DistributeAsync creates the item via API (not in local DB).
-        // GetJobStatusAsync queries local DB → Unknown. Full status read is Spec 045 scope.
+        // DistributeAsync creates the WorkItem via the API in Pending state; the Job Controller's
+        // dispatch loop is what later moves it to Dispatched/Running.
         var sut = CreateKubernetes();
         var request = CreateMinimalRequest();
 
         var result = await sut.DistributeAsync(request, CancellationToken.None);
 
         var status = await sut.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
-        status.Should().Be(JobDistributionStatus.Unknown,
-            "API-backed distributor does not write to local DB; status queries are transitionally non-functional");
+        status.Should().Be(JobDistributionStatus.Pending);
     }
 
     // ── RequiresConnectedAgents — Property Value Verification ───────────
@@ -320,15 +248,7 @@ public class WorkDistributorAdditionalTests
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static KubernetesWorkDistributor CreateKubernetes()
-    {
-        var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
-        mockApiClient
-            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => Guid.NewGuid());
-        return new KubernetesWorkDistributor(
-            mockApiClient.Object,
-            Mock.Of<ILogger<KubernetesWorkDistributor>>());
-    }
+        => new(ApiWorkItemClientFake.Create(), Mock.Of<ILogger<KubernetesWorkDistributor>>());
 
     private static JobDistributionRequest CreateMinimalRequest() => new()
     {
@@ -347,14 +267,43 @@ public class WorkDistributorAdditionalTests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// <summary>
-/// Simple IDbContextFactory for Kubernetes contract tests — uses plain <see cref="PipelineDbContext"/>.
+/// In-memory stand-in for the Pipeline API's work-item endpoints, covering the four operations
+/// <see cref="KubernetesWorkDistributor"/> uses. Created work items are remembered so that the
+/// dedup and status reads answer from them — the same round trip a live API performs, and the
+/// only way the distributor's post-distribute contract can be exercised now that it holds no
+/// database of its own.
 /// </summary>
-file sealed class ContractTestSimpleDbContextFactory : IDbContextFactory<PipelineDbContext>
+file static class ApiWorkItemClientFake
 {
-    private readonly DbContextOptions<PipelineDbContext> _options;
+    public static IPipelineApiWorkItemClient Create()
+    {
+        var created = new List<(Guid Id, JobDistributionRequest Request)>();
+        var mock = new Mock<IPipelineApiWorkItemClient>();
 
-    public ContractTestSimpleDbContextFactory(DbContextOptions<PipelineDbContext> options)
-        => _options = options;
+        mock.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDistributionRequest request, CancellationToken _) =>
+            {
+                var id = Guid.NewGuid();
+                created.Add((id, request));
+                return id;
+            });
 
-    public PipelineDbContext CreateDbContext() => new(_options);
+        // POST /api/work-items creates the item in Pending; nothing here dispatches it further.
+        mock.Setup(c => c.GetStatusAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                created.Any(w => w.Id == id) ? WorkItemStatus.Pending : null);
+
+        mock.Setup(c => c.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string issueIdentifier, string providerConfigId, CancellationToken _) =>
+                created.Any(w => w.Request.IssueIdentifier == issueIdentifier &&
+                                 w.Request.IssueProviderConfigId == providerConfigId));
+
+        mock.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => (IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>)created
+                .Select(w => (w.Request.IssueIdentifier.Value, w.Request.IssueProviderConfigId))
+                .Distinct()
+                .ToList());
+
+        return mock.Object;
+    }
 }

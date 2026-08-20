@@ -175,7 +175,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Both providers configured
         _mockConfigClient
-            .Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "provider-1", Kind = ProviderKind.Issue, DisplayName = "Provider 1", ProviderType = "GitHub", Settings = new Dictionary<string, string>() },
@@ -233,7 +233,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Assert: no provider scans attempted
         _mockConfigClient.Verify(
-            s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()),
+            s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         _cts.Cancel();
@@ -253,9 +253,11 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
-        // Both providers in one GetProviderConfigsAsync call (method returns full list)
+        // Both providers in one GetProviderConfigsWithSecretsAsync call (method returns full list).
+        // The recovery service calls the provider APIs directly, so it needs live tokens — the
+        // masked GetProviderConfigsAsync form would hand it "****" instead of a usable credential.
         _mockConfigClient
-            .Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new() { Id = "provider-1", Kind = ProviderKind.Issue, DisplayName = "Provider 1", ProviderType = "GitHub", Settings = new Dictionary<string, string>() },
@@ -406,7 +408,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Assert: provider config was only loaded once (deduplicated)
         _mockConfigClient.Verify(
-            s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()),
+            s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
 
         _cts.Cancel();
@@ -666,7 +668,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     private void SetupProviderConfig(string providerId)
     {
         _mockConfigClient
-            .Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
                 new()

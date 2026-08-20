@@ -11,7 +11,10 @@ namespace CodingAgentWebUI;
 ///
 /// - agent.jobs.active and agent.connections.total: moved to CodingAgentWebUI.Api
 ///   (<see cref="ApiStartupExtensions.RegisterApiObservableGauges"/>).
-///   Agents register on the API hub; the monolith's IAgentRegistryService is always empty.
+///   Agents register on the API hub, so the API is the only process holding first-hand agent state.
+///   The monolith now sees agents through <c>ApiAgentRegistryService</c>, a polled snapshot of
+///   GET /api/agents — fine for rendering presence, but a second-hand and slightly delayed source.
+///   The gauges stay on the API side so the metrics are emitted by the owner of the data.
 internal static class ObservableGaugeRegistrationExtensions
 {
     /// <summary>

@@ -21,8 +21,11 @@ internal static class AgentK8SModeRegistration
         services.AddHttpClient<WorkItemHttpClient>(client =>
         {
             client.BaseAddress = new Uri(config.OrchestratorUrl.TrimEnd('/'));
+            // Derive per-agent key: HMAC(masterKey, agentId).
+            // Must match what AgentApiKeyAuthHandler re-derives from ?agentId= on each request.
+            var derivedKey = CodingAgentWebUI.Agent.HubConnectionManager.DeriveKey(config.AgentApiKey, config.AgentId.Value);
             client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", config.AgentApiKey);
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", derivedKey);
             // DO NOT set client.Timeout — resilience handler manages timeouts
         })
         .AddStandardResilienceHandler(options =>

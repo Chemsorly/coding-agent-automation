@@ -66,7 +66,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for the run to reflect the step in server state
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "70" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring page
@@ -130,7 +130,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for the run to reflect the step in server state
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "71" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring and click the active run row
@@ -200,7 +200,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for the run to reflect the step in server state
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "72" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Navigate to monitoring and open modal
@@ -269,7 +269,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for the run to reflect the step in server state
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "73" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring
@@ -361,7 +361,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for server state to reflect
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r =>
             r.IssueIdentifier == "80" && r.AgentId == "late-agent-1"));
 

@@ -159,10 +159,10 @@ public sealed class HubAndDiTests
             "TouchLastProgressAsync requires it to persist heartbeat progress to the DB");
     }
 
-    // ── Client: AddPipelineApiClient resolves all four interfaces ──────────────────
+    // ── Client: AddPipelineApiClient resolves every typed client ──────────────────
 
     [Fact]
-    public void AddPipelineApiClient_ResolvesAllFourInterfaces()
+    public void AddPipelineApiClient_ResolvesEveryTypedClient()
     {
         var services = new ServiceCollection();
         services.AddHttpClient();
@@ -177,6 +177,9 @@ public sealed class HubAndDiTests
         provider.GetRequiredService<IPipelineApiRunHistoryClient>().Should().NotBeNull();
         provider.GetRequiredService<IPipelineApiConfigClient>().Should().NotBeNull();
         provider.GetRequiredService<IPipelineApiHealthClient>().Should().NotBeNull();
+        // Without this one the monolith cannot resolve ApiAgentRegistryService and the host fails
+        // to start, so it belongs in the same guard as the rest.
+        provider.GetRequiredService<IPipelineApiAgentClient>().Should().NotBeNull();
     }
 
     // ── Startup: missing env vars cause fast-fail ─────────────────────────────────

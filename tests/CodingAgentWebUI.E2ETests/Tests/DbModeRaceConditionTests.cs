@@ -398,7 +398,7 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase, IClassFixtur
         Assert.All(history, h => Assert.Equal(PipelineStep.Completed, h.FinalStep));
 
         // Assert: no orphaned in-memory runs
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         var activeRuns = runService.GetActiveRuns();
         var leakedRuns = activeRuns.Where(r => r.IssueIdentifier.Value.StartsWith("2100-")).ToList();
         Assert.Empty(leakedRuns);

@@ -300,7 +300,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
                 _harnessStore,
                 WorkspaceManager: new ConsolidationWorkspaceManager(
                     new LoggerConfiguration().CreateLogger(), _config)));
-        await sut2.CleanupOrphanedRunsAsync(CancellationToken.None);
+        await sut2.CleanupOrphanedRunsAsync([], CancellationToken.None);
 
         // Assert
         var persisted = await _store.GetByIdAsync(run!.RunId, CancellationToken.None);

@@ -182,14 +182,12 @@ public sealed class DispatchLoop
             }
         }
 
-        // Derive per-agent key (Spec 043 Req 8a.1).
-        // The agent ID for a work-item pod equals the K8s Job name (set as AGENT_ID via
-        // metadata.name field ref in the pod spec). We must derive using the Job name so the
-        // key matches what AgentApiKeyAuthHandler re-derives when the agent authenticates.
-        var derivedKey = DeriveAgentKey(_options.AgentMasterApiKey, jobName);
-        var derivedSecretName = GenerateDerivedKeySecretName(item.Id);
-
         // Build and create K8s Job
+        // Do NOT set DerivedKeySecretName — work-item pods use the master key file mount.
+        // Key derivation happens inside the agent at runtime: HubConnectionManager and
+        // WorkItemHttpClient both call HMAC(AGENT_API_KEY, AGENT_ID) internally.
+        // Setting DerivedKeySecretName would cause double-derivation: the pod would
+        // receive an already-derived key and the agent would derive it again.
         var buildContext = new JobSpecBuilder.BuildContext
         {
             WorkItemId = item.Id,
@@ -201,8 +199,7 @@ public sealed class DispatchLoop
             AgentApiKeySecretName = _options.AgentApiKeySecretName,
             AgentServiceAccountName = _options.AgentServiceAccountName,
             Namespace = _options.Namespace,
-            OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
-            DerivedKeySecretName = derivedSecretName
+            OpencodeConfigSecretName = _options.OpencodeConfigSecretName
         };
 
         var job = JobSpecBuilder.Build(template, buildContext);
@@ -219,8 +216,6 @@ public sealed class DispatchLoop
             await SafeRequeueAsync(item.Id, ct);
             return;
         }
-
-        await TryCreateDerivedKeySecretAsync(jobName, derivedSecretName, derivedKey, item.Id, ct);
 
         activeConcurrency[selector] = (activeConcurrency.TryGetValue(selector, out var curr) ? curr : 0) + 1;
 

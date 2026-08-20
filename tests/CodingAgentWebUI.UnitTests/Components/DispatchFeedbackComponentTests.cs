@@ -80,6 +80,10 @@ public class DispatchFeedbackComponentTests : BunitContext
         var mockConfigClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient>();
         mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
+        // AgentCodingPageService feeds the dispatch path, so it reads the with-secrets form
+        // (live tokens/base URLs) rather than the "****" masked one. Same backing store.
+        mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
         mockConfigClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .Returns<CancellationToken>(ct => _mockStore.Object.LoadPipelineConfigAsync(ct));
         mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))

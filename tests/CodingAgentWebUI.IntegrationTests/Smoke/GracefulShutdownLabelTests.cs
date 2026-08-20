@@ -497,7 +497,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
     private static void MockConsolidationService(IServiceCollection services)
     {
         var mock = new Mock<IConsolidationService>();
-        mock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<CancellationToken>()))
+        mock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         mock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ConsolidationRun>());

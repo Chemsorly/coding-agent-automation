@@ -136,7 +136,7 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
             },
             parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
             $"PR #{pr.Identifier} is already being processed or queued.",
-            $"⏳ Queued PR #{pr.Identifier} for review — waiting for an idle agent",
+            $"⏳ Queued PR #{pr.Identifier} for review — the job controller will start an agent pod for it",
             $"PR #{pr.Identifier} dispatched for review.");
     }
 

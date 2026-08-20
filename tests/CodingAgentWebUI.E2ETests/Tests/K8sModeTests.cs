@@ -349,11 +349,13 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         Assert.Equal("chemsorly/coding-agent:kiro-dotnet10-latest", container.Image);
         Assert.Equal("Always", container.ImagePullPolicy);
 
-        // ── THE KEY ASSERTION: AGENT_ID from Downward API ──
+        // ── THE KEY ASSERTION: AGENT_ID is the static job name (not pod name via Downward API) ──
+        // JobSpecBuilder sets AGENT_ID = ctx.JobName (static value) so HMAC key derivation matches.
+        // Using metadata.name (pod name) would give caa-xxx-<random> which diverges from the job name.
         var agentIdEnv = container.Env.FirstOrDefault(e => e.Name == "AGENT_ID");
         Assert.NotNull(agentIdEnv);
-        Assert.NotNull(agentIdEnv.ValueFrom?.FieldRef);
-        Assert.Equal("metadata.name", agentIdEnv.ValueFrom.FieldRef.FieldPath);
+        Assert.Null(agentIdEnv.ValueFrom);  // static value, not a field ref
+        Assert.Equal(jobName, agentIdEnv.Value);
 
         // Assert: other critical env vars present
         Assert.Contains(container.Env, e => e.Name == "ORCHESTRATOR_URL" && e.Value == "http://orchestrator:8080");
