@@ -114,7 +114,7 @@ app.MapWorkItemEndpoints();
 app.MapPipelineRunEndpoints();
 app.MapConfigEndpoints();
 
-app.Run();
+await app.RunAsync();
 
 // Make Program accessible for WebApplicationFactory in integration tests
 public partial class Program { }

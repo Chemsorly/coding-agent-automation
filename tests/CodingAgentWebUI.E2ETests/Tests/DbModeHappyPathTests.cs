@@ -375,7 +375,7 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch issue
-        var result = await DispatchIssueAsync("50");
+        var result = await DispatchIssueAsync("50", templateId: "template-db-token-e2e");
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
 
         // Wait for agent to receive the job
@@ -456,7 +456,7 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch
-        var result = await DispatchIssueAsync("51");
+        var result = await DispatchIssueAsync("51", templateId: "template-db-brain-e2e");
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
 
         var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));

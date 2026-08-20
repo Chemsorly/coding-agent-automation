@@ -106,7 +106,7 @@ app.MapGet("/readyz", (ILeaderElectionService leaderElection) =>
         ? Results.Ok(new { status = "ready" })
         : Results.StatusCode(503));
 
-app.Run();
+await app.RunAsync();
 
 // Make Program accessible for WebApplicationFactory in integration tests
 public partial class Program { }

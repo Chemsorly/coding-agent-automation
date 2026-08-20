@@ -4,8 +4,32 @@
   xmlns:xsd="http://www.w3.org/2001/XMLSchema"
   xmlns="http://www.sonarsource.com/msbuild/integration/2015/1">
 
-  <!-- Exclude from all analysis: EF migrations (generated DDL) and test utilities (not production code) -->
-  <Property Name="sonar.exclusions">**/Migrations/**,tests/CodingAgentWebUI.TestUtilities/**</Property>
+  <!-- Exclude from all analysis: EF migrations (generated DDL) and test utilities (not production code).
+
+       CodingAgentWebUI.E2ETests is excluded for a structural reason, not to hide issues. The
+       scanner classifies a project as test code from its IsTestProject property, and that project
+       must keep IsTestProject=false so ci.yml's solution-wide `dotnet test` does not fail on it
+       matching zero tests (see the csproj for the full note). Without this exclusion the scanner
+       therefore measures E2E harness code as production code — its fixtures and factories count
+       against new-code coverage, and the four deliberately parallel WebApplicationFactory classes
+       count as duplication. -->
+  <Property Name="sonar.exclusions">**/Migrations/**,tests/CodingAgentWebUI.TestUtilities/**,tests/CodingAgentWebUI.E2ETests/**</Property>
+
+  <!-- Rule-level suppressions that cannot be expressed inline. -->
+  <Property Name="sonar.issue.ignore.multicriteria">e2ecopy,inclusterhttp</Property>
+
+  <!-- docker:S6470 — `COPY . .` in the E2E image. The inline `# NOSONAR` this previously relied on
+       had to move off the instruction line: BuildKit does not strip trailing comments and parsed
+       the `#` as another source path, failing every build with `lstat /#: no such file or
+       directory`. The copy itself is required (the image builds the whole solution) and
+       .dockerignore excludes .env, .git, .kiro, config/ and *credentials*. -->
+  <Property Name="sonar.issue.ignore.multicriteria.e2ecopy.ruleKey">docker:S6470</Property>
+  <Property Name="sonar.issue.ignore.multicriteria.e2ecopy.resourceKey">dockerfiles/e2e-tests.Dockerfile</Property>
+
+  <!-- csharpsquid:S5332 — `UseUrls("http://+:PORT")` binds the in-cluster listener. TLS terminates
+       at the ingress; these ports are never exposed outside the cluster network. -->
+  <Property Name="sonar.issue.ignore.multicriteria.inclusterhttp.ruleKey">csharpsquid:S5332</Property>
+  <Property Name="sonar.issue.ignore.multicriteria.inclusterhttp.resourceKey">**/Program.cs</Property>
 
   <!-- Exclude from coverage only: entry points, Blazor markup, ReconciliationService files
        (service-host methods: K8s watch loops, job deletion, PVC management — require integration env),

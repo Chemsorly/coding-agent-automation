@@ -261,7 +261,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         await agent.AcceptJobAsync(assignment.JobId);
 
         // Act: directly invoke FailRunAsync via the lifecycle manager (simulating infrastructure failure)
-        var lifecycleManager = Fixture.Factory.Services.GetRequiredService<IRunLifecycleManager>();
+        var lifecycleManager = Fixture.RunLifecycleManager;
         var failedRun = await lifecycleManager.FailRunAsync(
             assignment.JobId,
             "Simulated infrastructure failure",
@@ -305,7 +305,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         await agent.AcceptJobAsync(assignment.JobId);
 
         // Act: call FailRunAsync twice for the same runId
-        var lifecycleManager = Fixture.Factory.Services.GetRequiredService<IRunLifecycleManager>();
+        var lifecycleManager = Fixture.RunLifecycleManager;
         var first = await lifecycleManager.FailRunAsync(assignment.JobId, "First failure", CancellationToken.None);
         var second = await lifecycleManager.FailRunAsync(assignment.JobId, "Second failure", CancellationToken.None);
 

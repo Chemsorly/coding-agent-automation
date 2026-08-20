@@ -254,7 +254,7 @@ public partial class AgentMonitoring : IAsyncDisposable
     /// All async work and StateHasChanged run inside InvokeAsync so exceptions stay on the
     /// Blazor synchronization context rather than propagating to the thread pool.
     /// </summary>
-    private async void OpenRunDetail(string runId)
+    private async Task OpenRunDetail(string runId)
     {
         await InvokeAsync(async () =>
         {
@@ -311,7 +311,7 @@ public partial class AgentMonitoring : IAsyncDisposable
     /// All async work and StateHasChanged run inside InvokeAsync so exceptions stay on the
     /// Blazor synchronization context rather than propagating to the thread pool.
     /// </summary>
-    private async void DismissRunDetailModal()
+    private async Task DismissRunDetailModal()
     {
         await InvokeAsync(async () =>
         {
@@ -359,10 +359,10 @@ public partial class AgentMonitoring : IAsyncDisposable
         _selectedHistoryRun = null;
     }
 
-    private void HandleModalKeyDown(KeyboardEventArgs e)
+    private async Task HandleModalKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Escape")
-            DismissRunDetailModal();
+            await DismissRunDetailModal();
     }
 
     private async Task CancelAgentRunById(string runId)
@@ -389,13 +389,13 @@ public partial class AgentMonitoring : IAsyncDisposable
         StateHasChanged();
     }
 
-    private void SelectAgent(string agentId)
+    private async Task SelectAgent(string agentId)
     {
         // Find the active run for this agent and open the run detail modal
         var run = _activeRuns.FirstOrDefault(r => r.AgentId?.Value == agentId);
         if (run != null)
         {
-            OpenRunDetail(run.RunId);
+            await OpenRunDetail(run.RunId);
         }
     }
 
@@ -409,7 +409,7 @@ public partial class AgentMonitoring : IAsyncDisposable
     {
         await PageService.ForceDisconnectAsync(agent);
         _showDisconnectConfirm = false;
-        DismissRunDetailModal();
+        await DismissRunDetailModal();
     }
 
     // ── Resolvers (delegate to PageService) ──

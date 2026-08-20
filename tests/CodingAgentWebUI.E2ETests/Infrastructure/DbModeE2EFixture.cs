@@ -1,8 +1,10 @@
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Orchestration.Registry;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.E2ETests.Infrastructure;
 
@@ -54,6 +56,23 @@ public sealed class DbModeE2EFixture : IAsyncLifetime
     public IOrchestratorRunService RunService => _apiFactory?.RunService
         ?? throw new InvalidOperationException("API host not started");
 
+    /// <summary>
+    /// Run lifecycle manager. Spec 045 removed it from the monolith's DI and re-homed it in the
+    /// API alongside the run state it mutates, so tests must resolve it from that host.
+    /// </summary>
+    public IRunLifecycleManager RunLifecycleManager => _apiFactory?.Services
+        .GetRequiredService<IRunLifecycleManager>()
+        ?? throw new InvalidOperationException("API host not started");
+
+    private FakeJobController? _jobController;
+
+    /// <summary>
+    /// Stands in for the Job Controller process. Nothing else moves a WorkItem out of
+    /// <c>Pending</c> since Spec 043 moved the dispatch loop out of the monolith.
+    /// </summary>
+    public FakeJobController JobController => _jobController
+        ?? throw new InvalidOperationException("Job controller not started");
+
     public Task InitializeAsync()
     {
         _apiFactory = new ApiE2EWebApplicationFactory(
@@ -68,11 +87,20 @@ public sealed class DbModeE2EFixture : IAsyncLifetime
         Factory.ApiBaseUrl = _apiFactory.ServerAddress;
         using var appClient = Factory.CreateClient();
 
+        // The work-item client is registered in the monolith by AddPipelineApiClient and points at
+        // PipelineApi:BaseUrl — the API host started above — so the controller claims over HTTP
+        // exactly as the real one does.
+        _jobController = new FakeJobController(
+            Factory.Services.GetRequiredService<IPipelineApiWorkItemClient>(),
+            _apiFactory.AgentRegistry);
+
         return Task.CompletedTask;
     }
 
     public async Task DisposeAsync()
     {
+        if (_jobController is not null)
+            await _jobController.DisposeAsync();
         await Factory.DisposeAsync();
         if (_apiFactory is not null)
             await _apiFactory.DisposeAsync();

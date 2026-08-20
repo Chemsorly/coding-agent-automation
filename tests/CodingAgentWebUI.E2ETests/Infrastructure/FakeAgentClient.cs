@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using CodingAgentWebUI.Pipeline;
@@ -49,8 +50,26 @@ public sealed class FakeAgentClient : IAsyncDisposable
     /// Registration is synchronous — by the time this method returns, the agent is
     /// in the registry with Idle status. No additional delay is needed before dispatch.
     /// </summary>
+    /// <summary>
+    /// Agents that are currently connected, keyed by agent id.
+    ///
+    /// <see cref="FakeJobController"/> needs to reach the object behind a registry entry so it can
+    /// bootstrap it the way a pod bootstraps. Tests construct these directly, so there is no DI
+    /// container to look them up in.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, FakeAgentClient> Connected = new(StringComparer.Ordinal);
+
+    internal static bool TryGetConnected(string agentId, out FakeAgentClient agent)
+        => Connected.TryGetValue(agentId, out agent!);
+
+    /// <summary>The API base address this agent connected to, for its HTTP assignment fetch.</summary>
+    private string? _serverAddress;
+    private string? _apiKey;
+
     public async Task ConnectAsync(string serverAddress, string apiKey)
     {
+        _serverAddress = serverAddress;
+        _apiKey = apiKey;
         await BuildAndStartConnectionAsync(serverAddress, apiKey);
 
         // Register with the hub — InvokeAsync is request-response, so when this returns
@@ -61,7 +80,73 @@ public sealed class FakeAgentClient : IAsyncDisposable
             Hostname = "fake-agent-host",
             Labels = Labels
         });
+
+        Connected[AgentId] = this;
     }
+
+    /// <summary>
+    /// Bootstraps this agent onto a work item the way a Kubernetes work-item pod does:
+    /// fetch the assignment over HTTP, then re-register on the hub declaring the active job.
+    ///
+    /// There is no <c>AssignJob</c> push in Kubernetes mode — Spec 041 removed the dispatch mode
+    /// that sent one. Completing <see cref="JobAssigned"/> here keeps the existing tests' shape
+    /// (dispatch, then the agent has its job) while routing through the real pull-based path.
+    ///
+    /// The re-registration is what sets <c>ActiveJobId</c> in the registry. Without it the
+    /// <c>AgentAuthorizationFilter</c> rejects every <c>[RequiresActiveJob]</c> call that follows.
+    /// </summary>
+    internal async Task StartAssignedWorkItemAsync(Guid workItemId, CancellationToken ct = default)
+    {
+        if (_connection is null || _serverAddress is null) return;
+
+        using var http = new HttpClient { BaseAddress = new Uri(_serverAddress) };
+        http.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", DeriveKey(_apiKey!, AgentId));
+
+        var response = await http.GetAsync(
+            $"/api/work-items/{workItemId}/assignment?agentId={Uri.EscapeDataString(AgentId)}", ct);
+        if (!response.IsSuccessStatusCode) return;
+
+        var assignment = await response.Content.ReadFromJsonAsync<JobAssignmentMessage>(
+            CodingAgentWebUI.Pipeline.PipelineJsonOptions.Default, ct);
+        if (assignment is null) return;
+
+        await _connection.InvokeAsync("RegisterAgent", new AgentRegistrationMessage
+        {
+            AgentId = AgentId,
+            Hostname = "fake-k8s-pod",
+            Labels = Labels,
+            ActiveJob = new ActiveJobState
+            {
+                RunId = assignment.JobId,
+                IssueIdentifier = assignment.IssueIdentifier,
+                IssueTitle = assignment.IssueDetail.Title,
+                // Not carried on the assignment message; the pod knows it from its own env.
+                IssueProviderConfigId = "issue-e2e",
+                RepoProviderConfigId = assignment.RepoProviderConfigId,
+                AgentProviderConfigId = assignment.AgentProviderConfigId,
+                BrainProviderConfigId = assignment.BrainProviderConfigId,
+                PipelineProviderConfigId = assignment.PipelineProviderConfigId,
+                ResolvedProfileId = assignment.ResolvedProfileId,
+                InitiatedBy = assignment.InitiatedBy,
+                CurrentStep = PipelineStep.Created,
+                StartedAt = DateTimeOffset.UtcNow,
+                RunType = assignment.RunType
+            }
+        }, ct);
+
+        ReceivedJobIds.Add(assignment.JobId);
+        JobAssigned.TrySetResult(assignment);
+    }
+
+    /// <summary>
+    /// HMAC-SHA256(master, agentId) — the per-agent key the Job Controller vends and
+    /// <c>AgentApiKeyAuthHandler</c> re-derives. Matches <c>DispatchLoop.DeriveAgentKey</c>.
+    /// </summary>
+    private static string DeriveKey(string masterKey, string agentId)
+        => Convert.ToHexString(
+            HMACSHA256.HashData(Encoding.UTF8.GetBytes(masterKey), Encoding.UTF8.GetBytes(agentId)))
+            .ToLowerInvariant();
 
     /// <summary>
     /// Connects to the SignalR hub and registers as a chat-mode agent.
@@ -405,6 +490,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        Connected.TryRemove(AgentId, out _);
         if (_connection is not null)
             await _connection.DisposeAsync();
     }

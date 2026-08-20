@@ -169,7 +169,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         await agent.AcceptJobAsync(assignment.JobId);
 
         // Act: race FailRunAsync against CompleteRunAsync from two threads
-        var lifecycleManager = Fixture.Factory.Services.GetRequiredService<IRunLifecycleManager>();
+        var lifecycleManager = Fixture.RunLifecycleManager;
 
         var failTask = Task.Run(() => lifecycleManager.FailRunAsync(
             assignment.JobId, "Heartbeat timeout", CancellationToken.None));
@@ -345,7 +345,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         await agent.AcceptJobAsync(assignment.JobId);
 
         // Force-fail the run via lifecycle manager (simulating heartbeat sweep racing)
-        var lifecycleManager = Fixture.Factory.Services.GetRequiredService<IRunLifecycleManager>();
+        var lifecycleManager = Fixture.RunLifecycleManager;
         var failedRun = await lifecycleManager.FailRunAsync(
             assignment.JobId, "Forced failure by test", CancellationToken.None);
         Assert.NotNull(failedRun);

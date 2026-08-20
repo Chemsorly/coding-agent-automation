@@ -67,15 +67,36 @@ public abstract class DbModeE2ETestBase : IAsyncLifetime
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(projectId, ct)
             ?? throw new InvalidOperationException($"Project '{projectId}' not found in ConfigStore");
 
+        // templateId used to be accepted and then ignored, so every dispatch ran against the
+        // default providers no matter which template a test seeded. Tests that seed a template
+        // specifically to select a different repository provider (token vending, brain sync) could
+        // not work at all. Resolve from the template when one is named, and fall back to the
+        // defaults otherwise so existing callers are unaffected.
+        var issueProviderId = "issue-e2e";
+        var repoProviderId = "repo-e2e";
+        string? brainProviderId = null;
+
+        if (!string.IsNullOrEmpty(templateId))
+        {
+            var templates = await Fixture.ConfigStore.LoadTemplatesForProjectAsync(projectId, ct);
+            var template = templates.FirstOrDefault(t => t.Id == templateId)
+                ?? throw new InvalidOperationException(
+                    $"Template '{templateId}' not found in project '{projectId}'");
+
+            issueProviderId = template.IssueProviderId;
+            repoProviderId = template.RepoProviderId;
+            brainProviderId = template.BrainProviderId;
+        }
+
         // PrepareDistributionRequestAsync performs full orchestration:
         // issue fetch, label swap, profile/QG resolution, run creation, provider config preparation
         var request = await orchService.PrepareDistributionRequestAsync(
             new ImplementationDispatchOrchestrationRequest
             {
                 IssueIdentifier = issueIdentifier,
-                IssueProviderId = "issue-e2e",
-                RepoProviderId = "repo-e2e",
-                BrainProviderId = null,
+                IssueProviderId = issueProviderId,
+                RepoProviderId = repoProviderId,
+                BrainProviderId = brainProviderId,
                 PipelineProviderId = null,
                 InitiatedBy = "db-e2e-test",
                 Project = project
