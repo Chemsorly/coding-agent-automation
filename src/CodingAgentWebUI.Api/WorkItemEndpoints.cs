@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
@@ -11,13 +12,17 @@ using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Serilog;
 
 namespace CodingAgentWebUI.Api;
 
 /// <summary>
 /// Minimal API endpoints for the Work Item HTTP API.
 /// A superset of the monolith's WorkItemEndpoints, adding claim, requeue, retry-count, pending, and staleness.
-/// All endpoints require the AgentApiKey authorization policy.
+///
+/// Two tiers: <c>/{id}/assignment</c> and <c>/{id}/status</c> accept agent-derived keys but bind
+/// the caller to the work item it was dispatched for; every other route is control plane and
+/// requires the operator key.
 /// </summary>
 public static class WorkItemEndpoints
 {
@@ -29,28 +34,98 @@ public static class WorkItemEndpoints
         var group = app.MapGroup("/api/work-items")
             .RequireAuthorization("AgentApiKey");
 
-        // ── Monolith-mirror endpoints ──────────────────────────────────────
-        group.MapGet("/{id:guid}/assignment", GetAssignment);
+        // ── Agent-facing endpoints ─────────────────────────────────────────
+        // These are the only two an agent pod calls (WorkItemHttpClient), and the only two
+        // that accept an agent-derived key. Both bind the caller to the work item: an agent
+        // may only read the assignment for, and report status on, the item it was dispatched
+        // for. The assignment payload carries repository tokens and project secrets, so an
+        // unbound agent key would be a cross-tenant read of every credential in the system.
+        group.MapGet("/{id:guid}/assignment",
+            async (Guid id,
+                   [FromServices] IDbContextFactory<PipelineDbContext> dbFactory,
+                   [FromServices] IProjectStore projectStore,
+                   HttpContext httpContext,
+                   CancellationToken ct) =>
+                await AuthorizeAgentForWorkItemAsync(httpContext, id, dbFactory, ct)
+                    ?? await GetAssignment(id, dbFactory, projectStore));
 
         group.MapPost("/{id:guid}/status",
             async (Guid id, [FromBody] WorkItemStatusRequest request,
                    [FromServices] WorkItemTransitionService transitionService,
                    [FromServices] IOrchestratorRunService runService,
-                   HttpContext httpContext) =>
-                await PostStatus(id, request, transitionService, runService,
-                    httpContext.RequestServices.GetService<IDbContextFactory<PipelineDbContext>>()))
+                   [FromServices] IDbContextFactory<PipelineDbContext> dbFactory,
+                   HttpContext httpContext,
+                   CancellationToken ct) =>
+                await AuthorizeAgentForWorkItemAsync(httpContext, id, dbFactory, ct)
+                    ?? await PostStatus(id, request, transitionService, runService, dbFactory))
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(1_048_576)); // 1 MB limit
 
-        // ── New endpoints ──────────────────────────────────────────────────
-        group.MapPost("/", CreateWorkItem);
-        group.MapGet("/pending", GetPendingWorkItems);
-        group.MapGet("/active", GetActiveWorkItems);
-        group.MapPost("/{id:guid}/claim", ClaimWorkItem);
-        group.MapPost("/{id:guid}/requeue", RequeueWorkItem);
-        group.MapGet("/{id:guid}/retry-count", GetRetryCount);
-        group.MapGet("/staleness", GetStaleness);
-        group.MapPost("/{id:guid}/label-swap", PostLabelSwap);
-        group.MapPost("/{id:guid}/last-progress", PostLastProgress);
+        // ── Control-plane endpoints ────────────────────────────────────────
+        // Called by the Job Controller and the monolith, which authenticate with the master
+        // key (operator tier). No agent pod calls these, so agent-derived keys are refused
+        // outright — otherwise a single compromised pod could claim, requeue or enumerate
+        // every work item in the cluster.
+        group.MapPost("/", CreateWorkItem).RequireAuthorization("OperatorApiKey");
+        group.MapGet("/pending", GetPendingWorkItems).RequireAuthorization("OperatorApiKey");
+        group.MapGet("/active", GetActiveWorkItems).RequireAuthorization("OperatorApiKey");
+        group.MapPost("/{id:guid}/claim", ClaimWorkItem).RequireAuthorization("OperatorApiKey");
+        group.MapPost("/{id:guid}/requeue", RequeueWorkItem).RequireAuthorization("OperatorApiKey");
+        group.MapGet("/{id:guid}/retry-count", GetRetryCount).RequireAuthorization("OperatorApiKey");
+        group.MapGet("/staleness", GetStaleness).RequireAuthorization("OperatorApiKey");
+        group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization("OperatorApiKey");
+        group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization("OperatorApiKey");
+    }
+
+    // ── Agent → work item binding ─────────────────────────────────────────
+
+    /// <summary>
+    /// Confirms that an agent-authenticated caller owns the work item it is addressing.
+    ///
+    /// Operator-authenticated callers (master key, no <c>agentId</c> query parameter) are the
+    /// control plane and pass through untouched. For an agent, the caller's identity — the
+    /// <see cref="ClaimTypes.NameIdentifier"/> claim, which <c>AgentApiKeyAuthHandler</c> sets to
+    /// the <c>agentId</c> the derived key was issued for — must match the work item's
+    /// <c>AssignedAgentId</c> (set at claim time by the Job Controller) or its
+    /// <c>K8sJobName</c> (set by <c>DispatchLifecycleService</c>). Both hold the K8s Job name,
+    /// which is what the pod reports as its <c>AGENT_ID</c>.
+    ///
+    /// Fail-closed: an agent addressing a work item with neither field set is refused. A
+    /// missing work item returns <see langword="null"/> so the handler produces its own 404
+    /// rather than leaking existence through the status code.
+    /// </summary>
+    /// <returns><see langword="null"/> when authorized; otherwise the response to return.</returns>
+    private static async Task<IResult?> AuthorizeAgentForWorkItemAsync(
+        HttpContext httpContext,
+        Guid id,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        var user = httpContext.User;
+        if (!string.Equals(user.FindFirst("auth_kind")?.Value, "agent", StringComparison.Ordinal))
+            return null; // operator — control plane, full access
+
+        var callerAgentId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(callerAgentId))
+            return TypedResults.StatusCode(StatusCodes.Status403Forbidden);
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var owner = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => w.Id == id)
+            .Select(w => new { w.AssignedAgentId, w.K8sJobName })
+            .FirstOrDefaultAsync(ct);
+
+        if (owner is null)
+            return null; // let the handler return 404
+
+        if (string.Equals(owner.AssignedAgentId, callerAgentId, StringComparison.Ordinal) ||
+            string.Equals(owner.K8sJobName, callerAgentId, StringComparison.Ordinal))
+            return null;
+
+        Log.Warning(
+            "Agent {AgentId} denied access to WorkItem {WorkItemId} (assigned to {AssignedAgentId})",
+            callerAgentId, id, owner.AssignedAgentId ?? owner.K8sJobName ?? "nobody");
+        return TypedResults.StatusCode(StatusCodes.Status403Forbidden);
     }
 
     // ── GET /{id}/assignment — mirror of monolith ─────────────────────────

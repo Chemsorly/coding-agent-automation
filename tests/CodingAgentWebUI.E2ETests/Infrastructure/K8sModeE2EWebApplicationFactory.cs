@@ -31,7 +31,7 @@ namespace CodingAgentWebUI.E2ETests.Infrastructure;
 /// - NO SignalR agents (K8s mode uses pod-based agents, not SignalR)
 /// - NO HeartbeatMonitorService (K8s mode uses ReconciliationService)
 /// </summary>
-public sealed class K8sModeE2EWebApplicationFactory : WebApplicationFactory<Program>
+public sealed class K8sModeE2EWebApplicationFactory : WebApplicationFactory<WebUiHostMarker>
 {
     public const string TestApiKey = "k8s-e2e-test-key";
 
@@ -40,6 +40,10 @@ public sealed class K8sModeE2EWebApplicationFactory : WebApplicationFactory<Prog
     // Shared fake instances for seeding and assertions
     public InMemoryConfigurationStore ConfigStore { get; } = new();
     public FakeProviderFactory FakeProviders { get; } = new();
+
+    /// <summary>Pipeline API config client backed by <see cref="ConfigStore"/>.</summary>
+    public InMemoryPipelineApiConfigClient ApiConfigClient => _apiConfigClient ??= new InMemoryPipelineApiConfigClient(ConfigStore);
+    private InMemoryPipelineApiConfigClient? _apiConfigClient;
     public ConfigurableQualityGateValidator QualityGateValidator { get; } = new();
     public InMemoryPipelineRunHistoryService HistoryService { get; } = new();
     public FakeKubernetesJobClient FakeK8sClient { get; } = new();
@@ -88,6 +92,10 @@ public sealed class K8sModeE2EWebApplicationFactory : WebApplicationFactory<Prog
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("WorkDistribution__Mode", "SignalR");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", TestApiKey);
+        // Spec 045: the monolith fast-fails at startup without a Pipeline API base URL.
+        // Nothing in these tests reaches the API — config and run history are replaced by fakes —
+        // so an unroutable address is sufficient to get the host built.
+        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", E2ETestDefaults.UnreachableApiBaseUrl);
 
         builder.UseEnvironment("Development");
 
@@ -103,6 +111,11 @@ public sealed class K8sModeE2EWebApplicationFactory : WebApplicationFactory<Prog
             ReplaceService<IQualityGateConfigStore>(services, ConfigStore);
             ReplaceService<IReviewerConfigStore>(services, ConfigStore);
             ReplaceService<IProjectStore>(services, ConfigStore);
+
+            // Spec 045: the UI reads and writes config through the Pipeline API client, not the
+            // store. Back the client with the same in-memory store so seeding still reaches the UI
+            // (and so startup does not retry against an unreachable API for ten minutes).
+            ReplaceService<IPipelineApiConfigClient>(services, ApiConfigClient);
             ReplaceService<IProviderFactory>(services, FakeProviders);
             ReplaceService<IQualityGateValidator>(services, QualityGateValidator);
             ReplaceService<IPipelineRunHistoryService>(services, HistoryService);

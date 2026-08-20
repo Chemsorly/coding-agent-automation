@@ -40,10 +40,19 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
         await SavePipelineConfigAsync(updated, ct);
     }
 
-    public async Task<IReadOnlyList<ProviderConfig>> GetProviderConfigsAsync(ProviderKind kind, CancellationToken ct = default)
+    public Task<IReadOnlyList<ProviderConfig>> GetProviderConfigsAsync(
+        ProviderKind kind, CancellationToken ct = default)
+        => FetchProviderConfigsAsync(kind, includeSecrets: false, ct);
+
+    public Task<IReadOnlyList<ProviderConfig>> GetProviderConfigsWithSecretsAsync(
+        ProviderKind kind, CancellationToken ct = default)
+        => FetchProviderConfigsAsync(kind, includeSecrets: true, ct);
+
+    private async Task<IReadOnlyList<ProviderConfig>> FetchProviderConfigsAsync(
+        ProviderKind kind, bool includeSecrets, CancellationToken ct)
     {
         var result = await _http.GetFromJsonAsync<List<ProviderConfig>>(
-            $"/api/config/provider-configs?kind={kind}",
+            $"/api/config/provider-configs?kind={kind}&includeSecrets={includeSecrets}",
             PipelineJsonOptions.Default,
             ct);
         return result ?? [];

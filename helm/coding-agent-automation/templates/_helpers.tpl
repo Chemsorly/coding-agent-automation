@@ -79,3 +79,38 @@ Secret name — either existing or chart-managed
 {{- include "coding-agent-automation.fullname" . }}
 {{- end }}
 {{- end }}
+
+{{/*
+URL that agent pods use to reach the Pipeline API (injected as ORCHESTRATOR_URL).
+
+Every process that builds an agent Job spec must resolve this identically:
+  - the Job Controller (work-item pods, via DispatchLoop)
+  - the Pipeline API (consolidation and model-fetch pods, via DispatchLifecycleService)
+  - the orchestrator/monolith (chat pods, via ChatJobDispatcher)
+
+The API is the sole host of /hubs/agent and /api/work-items/* from Spec 044 onward, so this
+must never resolve to the orchestrator Service — agent pods pointed there fail to connect to
+the hub and cannot fetch their assignment.
+*/}}
+{{- define "coding-agent-automation.agentOrchestratorUrl" -}}
+{{- if .Values.api.serviceUrl -}}
+{{- .Values.api.serviceUrl -}}
+{{- else if .Values.api.baseUrl -}}
+{{- .Values.api.baseUrl -}}
+{{- else -}}
+{{- printf "http://%s-api.%s.svc.cluster.local:%d" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.api.service.port | int) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Base URL that in-cluster components (orchestrator, Job Controller) use to reach the
+Pipeline API over HTTP. Honours api.baseUrl so an externally deployed API
+(api.enabled=false) is reachable, and otherwise derives the in-cluster Service URL.
+*/}}
+{{- define "coding-agent-automation.apiBaseUrl" -}}
+{{- if .Values.api.baseUrl -}}
+{{- .Values.api.baseUrl -}}
+{{- else -}}
+{{- printf "http://%s-api.%s.svc.cluster.local:%d" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.api.service.port | int) -}}
+{{- end -}}
+{{- end }}

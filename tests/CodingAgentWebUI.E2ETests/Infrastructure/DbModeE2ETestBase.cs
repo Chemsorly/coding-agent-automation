@@ -14,7 +14,14 @@ namespace CodingAgentWebUI.E2ETests.Infrastructure;
 public abstract class DbModeE2ETestBase : IAsyncLifetime
 {
     protected DbModeE2EFixture Fixture { get; }
-    protected string BaseUrl => Fixture.ServerAddress;
+
+    /// <summary>
+    /// Where <c>FakeAgentClient</c> connects. This is the Pipeline API, not the Blazor app:
+    /// Spec 044 removed <c>MapHub&lt;AgentHub&gt;</c> from the monolith, so connecting there
+    /// fails negotiate with 405. These tests drive agents and assert on state; none of them
+    /// navigate the UI, so this is the only address they need.
+    /// </summary>
+    protected string BaseUrl => Fixture.AgentHubUrl;
 
     protected DbModeE2ETestBase(DbModeE2EFixture fixture)
     {

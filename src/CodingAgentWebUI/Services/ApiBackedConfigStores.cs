@@ -66,47 +66,13 @@ public sealed class ApiProviderConfigStore : IProviderConfigStore
 {
     private readonly IPipelineApiConfigClient _client;
     private readonly Lock _cacheLock = new();
-    private IReadOnlyList<ProviderConfig>? _cachedIssue;
-    private DateTime _issueExpiry = DateTime.MinValue;
-    private IReadOnlyList<ProviderConfig>? _cachedRepo;
-    private DateTime _repoExpiry = DateTime.MinValue;
+    private readonly ProviderConfigCache _providerCache = new();
     public int CacheTtlSeconds { get; set; } = 60;
 
     public ApiProviderConfigStore(IPipelineApiConfigClient client) => _client = client;
 
-    public async Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
-    {
-        if (kind == ProviderKind.Issue)
-        {
-            lock (_cacheLock)
-            {
-                if (_cachedIssue is not null && DateTime.UtcNow <= _issueExpiry)
-                    return _cachedIssue;
-            }
-            var fresh = await _client.GetProviderConfigsAsync(ProviderKind.Issue, ct);
-            lock (_cacheLock)
-            {
-                _cachedIssue = fresh;
-                _issueExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-            }
-            return fresh;
-        }
-        else
-        {
-            lock (_cacheLock)
-            {
-                if (_cachedRepo is not null && DateTime.UtcNow <= _repoExpiry)
-                    return _cachedRepo;
-            }
-            var fresh = await _client.GetProviderConfigsAsync(kind, ct);
-            lock (_cacheLock)
-            {
-                _cachedRepo = fresh;
-                _repoExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-            }
-            return fresh;
-        }
-    }
+    public Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
+        => _providerCache.GetOrFetchAsync(_cacheLock, kind, CacheTtlSeconds, _client, ct);
 
     public async Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct)
     {
@@ -117,21 +83,76 @@ public sealed class ApiProviderConfigStore : IProviderConfigStore
     public async Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
     {
         await _client.SaveProviderConfigAsync(config, ct);
-        lock (_cacheLock)
-        {
-            _cachedIssue = null;
-            _cachedRepo = null;
-        }
+        lock (_cacheLock) _providerCache.Clear();
     }
 
     public async Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct)
     {
         await _client.DeleteProviderConfigAsync(id, kind, ct);
-        lock (_cacheLock)
+        lock (_cacheLock) _providerCache.Clear();
+    }
+}
+
+/// <summary>
+/// TTL cache for provider configs keyed by <see cref="ProviderKind"/>.
+///
+/// Keyed per kind deliberately: <see cref="ProviderKind"/> has five members
+/// (Issue, Repository, Agent, Pipeline, Brain). An earlier two-slot design bucketed every
+/// non-Issue kind together, so a Repository load followed by an Agent load within the TTL
+/// returned the Repository list for Agent — which silently mis-resolves dispatch, since
+/// <c>DispatchInfrastructure</c> loads Repository, Agent and Pipeline back to back.
+///
+/// Callers hold the shared cache lock around <see cref="TryGet"/> / <see cref="Set"/> /
+/// <see cref="Clear"/>; the lock is released across the awaited API call.
+/// </summary>
+internal sealed class ProviderConfigCache
+{
+    private readonly Dictionary<ProviderKind, (IReadOnlyList<ProviderConfig> Configs, DateTime Expiry)> _byKind = [];
+
+    public bool TryGet(ProviderKind kind, out IReadOnlyList<ProviderConfig> configs)
+    {
+        if (_byKind.TryGetValue(kind, out var entry) && DateTime.UtcNow <= entry.Expiry)
         {
-            _cachedIssue = null;
-            _cachedRepo = null;
+            configs = entry.Configs;
+            return true;
         }
+        configs = [];
+        return false;
+    }
+
+    public void Set(ProviderKind kind, IReadOnlyList<ProviderConfig> configs, int ttlSeconds)
+        => _byKind[kind] = (configs, DateTime.UtcNow.AddSeconds(ttlSeconds));
+
+    public void Clear() => _byKind.Clear();
+
+    /// <summary>
+    /// Returns the cached list for <paramref name="kind"/>, or fetches it from the API and
+    /// caches it under that kind. The lock is not held across the API call.
+    /// </summary>
+    public async Task<IReadOnlyList<ProviderConfig>> GetOrFetchAsync(
+        Lock cacheLock,
+        ProviderKind kind,
+        int ttlSeconds,
+        IPipelineApiConfigClient client,
+        CancellationToken ct)
+    {
+        lock (cacheLock)
+        {
+            if (TryGet(kind, out var cached))
+                return cached;
+        }
+
+        // WithSecrets: these adapters back IConfigurationStore / IProviderConfigStore, which the
+        // dispatch path reads to build the job payload an agent executes with. The redacted form
+        // would ship "****" as every repository token, agent key and base URL. Components that
+        // render configs in the UI call IPipelineApiConfigClient directly and get the safe form.
+        var fresh = await client.GetProviderConfigsWithSecretsAsync(kind, ct);
+
+        lock (cacheLock)
+        {
+            Set(kind, fresh, ttlSeconds);
+        }
+        return fresh;
     }
 }
 
@@ -259,8 +280,8 @@ public sealed class ApiConfigurationStore : IConfigurationStore
     private PipelineConfiguration? _cachedPipeline;
     private DateTime _pipelineExpiry = DateTime.MinValue;
 
-    private IReadOnlyList<ProviderConfig>? _cachedIssue, _cachedRepo;
-    private DateTime _issueExpiry = DateTime.MinValue, _repoExpiry = DateTime.MinValue;
+    // Keyed per ProviderKind — see ProviderConfigCache for why a two-slot cache is wrong.
+    private readonly ProviderConfigCache _providerCache = new();
 
     private IReadOnlyList<AgentProfile>? _cachedProfiles;
     private DateTime _profilesExpiry = DateTime.MinValue;
@@ -284,8 +305,7 @@ public sealed class ApiConfigurationStore : IConfigurationStore
         lock (_cacheLock)
         {
             _cachedPipeline = null; _pipelineExpiry = DateTime.MinValue;
-            _cachedIssue = null; _issueExpiry = DateTime.MinValue;
-            _cachedRepo = null; _repoExpiry = DateTime.MinValue;
+            _providerCache.Clear();
             _cachedProfiles = null; _profilesExpiry = DateTime.MinValue;
             _cachedQG = null; _qgExpiry = DateTime.MinValue;
             _cachedReviewers = null; _reviewersExpiry = DateTime.MinValue;
@@ -331,39 +351,8 @@ public sealed class ApiConfigurationStore : IConfigurationStore
     }
 
     // ── IProviderConfigStore ─────────────────────────────────────────────
-    public async Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
-    {
-        if (kind == ProviderKind.Issue)
-        {
-            lock (_cacheLock)
-            {
-                if (_cachedIssue is not null && DateTime.UtcNow <= _issueExpiry)
-                    return _cachedIssue;
-            }
-            var fresh = await _client.GetProviderConfigsAsync(ProviderKind.Issue, ct);
-            lock (_cacheLock)
-            {
-                _cachedIssue = fresh;
-                _issueExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-            }
-            return fresh;
-        }
-        else
-        {
-            lock (_cacheLock)
-            {
-                if (_cachedRepo is not null && DateTime.UtcNow <= _repoExpiry)
-                    return _cachedRepo;
-            }
-            var fresh = await _client.GetProviderConfigsAsync(kind, ct);
-            lock (_cacheLock)
-            {
-                _cachedRepo = fresh;
-                _repoExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-            }
-            return fresh;
-        }
-    }
+    public Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
+        => _providerCache.GetOrFetchAsync(_cacheLock, kind, CacheTtlSeconds, _client, ct);
 
     public async Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct)
     {
@@ -374,21 +363,13 @@ public sealed class ApiConfigurationStore : IConfigurationStore
     public async Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
     {
         await _client.SaveProviderConfigAsync(config, ct);
-        lock (_cacheLock)
-        {
-            _cachedIssue = null;
-            _cachedRepo = null;
-        }
+        lock (_cacheLock) _providerCache.Clear();
     }
 
     public async Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct)
     {
         await _client.DeleteProviderConfigAsync(id, kind, ct);
-        lock (_cacheLock)
-        {
-            _cachedIssue = null;
-            _cachedRepo = null;
-        }
+        lock (_cacheLock) _providerCache.Clear();
     }
 
     // ── IAgentProfileStore ───────────────────────────────────────────────

@@ -28,6 +28,10 @@ internal static class ApiSignalRRegistration
         var signalR = services.AddSignalR(options =>
             {
                 options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
+                // AddFilter is the ONLY way to activate a hub filter. Registering
+                // AgentAuthorizationFilter as IHubFilter in DI does not install it — the
+                // dispatcher reads HubOptions.HubFilters, which only AddFilter populates.
+                options.AddFilter<AgentAuthorizationFilter>();
             })
             .AddMessagePackProtocol(options =>
             {
@@ -37,8 +41,9 @@ internal static class ApiSignalRRegistration
                         new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
             });
 
-        // Hub filter for agent authorization
-        services.AddSingleton<IHubFilter>(sp => new AgentAuthorizationFilter(
+        // Hub filter for agent authorization — resolved by AddFilter<AgentAuthorizationFilter>()
+        // above, so it must be registered under its concrete type.
+        services.AddSingleton(sp => new AgentAuthorizationFilter(
             sp.GetRequiredService<IAgentRegistryService>(),
             Log.Logger));
 

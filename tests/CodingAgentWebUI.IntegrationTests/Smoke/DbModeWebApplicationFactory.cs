@@ -2,6 +2,7 @@ using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -170,6 +171,18 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
                 .ReturnsAsync(Array.Empty<ConsolidationRun>());
             services.RemoveAll<IConsolidationService>();
             services.AddSingleton(consolidationMock.Object);
+
+            // JobTemplateStore loads /app/config/job-templates.yaml, which only exists in-cluster
+            // (mounted from the job-templates ConfigMap). ChatJobDispatcher takes it as a
+            // dependency, so without an in-memory substitute resolving IChatJobDispatcher throws
+            // FileNotFoundException here rather than exercising the registration.
+            services.RemoveAll<JobTemplateStore>();
+            services.AddSingleton(JobTemplateStore.LoadFromYaml("""
+                - labels: "kiro,dotnet"
+                  image: "chemsorly/coding-agent:kiro-dotnet10-latest"
+                  providerType: "kiro"
+                  maxConcurrent: 1
+                """));
         });
     }
 

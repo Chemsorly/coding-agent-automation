@@ -19,7 +19,26 @@ public interface IPipelineApiConfigClient
     Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct = default);
 
     // Provider configs
+    /// <summary>
+    /// Provider configs with Settings and Secrets values masked as "****". The safe default —
+    /// use this for anything that renders configs in the UI.
+    /// </summary>
     Task<IReadOnlyList<ProviderConfig>> GetProviderConfigsAsync(ProviderKind kind, CancellationToken ct = default);
+
+    /// <summary>
+    /// Provider configs with live Settings and Secrets values.
+    ///
+    /// Only the config-store adapters feeding the dispatch path need this: the configs they load
+    /// are embedded in the job payload an agent executes with, where
+    /// <c>RunEnvironmentSetupStep</c> writes Secrets into the run environment and the provider
+    /// resolvers read tokens and base URLs out of Settings. Serving that path the redacted form
+    /// ships every job with "****" in place of its credentials.
+    ///
+    /// Kept as a separate method rather than a flag on <see cref="GetProviderConfigsAsync"/> so
+    /// that reaching for live credentials is visible at the call site and greppable. Both forms
+    /// require the operator key.
+    /// </summary>
+    Task<IReadOnlyList<ProviderConfig>> GetProviderConfigsWithSecretsAsync(ProviderKind kind, CancellationToken ct = default);
     Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct = default);
     Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct = default);
 

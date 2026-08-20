@@ -12,6 +12,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -476,6 +477,127 @@ public sealed class AgentHubGateTests
         {
             await agentConnection.StopAsync();
             await agentConnection.DisposeAsync();
+        }
+    }
+
+    // ── AgentAuthorizationFilter installation ───────────────────────────────────
+    //
+    // These three tests fail if AgentAuthorizationFilter is registered in DI as IHubFilter
+    // but never installed via HubOptions.AddFilter<T>(). Registering an IHubFilter in the
+    // service collection does NOT activate it — the dispatcher reads HubOptions.HubFilters,
+    // which only AddFilter populates. Without them the filter can silently go dark and every
+    // [RequiresActiveJob] check on the hub stops being enforced.
+
+    /// <summary>
+    /// An agent-authenticated connection that never called RegisterAgent must not be able to
+    /// invoke agent methods. Proves the filter's registration gate is active.
+    /// </summary>
+    [Fact]
+    public async Task UnregisteredAgentConnection_InvokingAgentMethod_IsRejected()
+    {
+        using var client = _factory.CreateClient();
+        var serverAddress = _factory.ServerAddress;
+
+        var agentId = $"unregistered-{Guid.NewGuid():N}";
+        var jobId = Guid.NewGuid().ToString("N");
+
+        var connection = BuildAgentConnection(serverAddress, agentId);
+        try
+        {
+            await connection.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
+
+            // Deliberately skip RegisterAgent.
+            Func<Task> act = () => connection.InvokeAsync(
+                "ReportOutputLines", new JobId(jobId), new List<string> { "line" });
+
+            (await act.Should().ThrowAsync<HubException>(
+                    "AgentAuthorizationFilter must reject hub calls from connections that have not registered"))
+                .WithMessage("*not registered*");
+        }
+        finally
+        {
+            await connection.StopAsync();
+            await connection.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// An operator/UI connection may subscribe to run groups but must not be able to drive the
+    /// agent-facing surface (reporting output, completing jobs).
+    /// </summary>
+    [Fact]
+    public async Task OperatorConnection_InvokingAgentMethod_IsRejected()
+    {
+        using var client = _factory.CreateClient();
+        var serverAddress = _factory.ServerAddress;
+
+        var jobId = Guid.NewGuid().ToString("N");
+
+        var uiConnection = BuildUiConnection(serverAddress);
+        try
+        {
+            await uiConnection.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
+
+            // SubscribeToRun is allowed for operators — this is the UI's live-streaming path.
+            await uiConnection.InvokeAsync("SubscribeToRun", jobId);
+
+            // ReportOutputLines is not.
+            Func<Task> act = () => uiConnection.InvokeAsync(
+                "ReportOutputLines", new JobId(jobId), new List<string> { "line" });
+
+            (await act.Should().ThrowAsync<HubException>(
+                    "operator connections must not be able to report agent output"))
+                .WithMessage("*not available to operator connections*");
+        }
+        finally
+        {
+            await uiConnection.StopAsync();
+            await uiConnection.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// A registered agent must not be able to report against a job it does not own.
+    /// Proves the [RequiresActiveJob] branch of the filter is reached.
+    /// </summary>
+    [Fact]
+    public async Task RegisteredAgent_ReportingForForeignJob_IsRejected()
+    {
+        using var client = _factory.CreateClient();
+        var serverAddress = _factory.ServerAddress;
+
+        var agentId = $"owner-{Guid.NewGuid():N}";
+        var ownJobId = Guid.NewGuid().ToString("N");
+        var foreignJobId = Guid.NewGuid().ToString("N");
+
+        var connection = BuildAgentConnection(serverAddress, agentId);
+        try
+        {
+            await connection.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
+            await connection.InvokeAsync("RegisterAgent", new AgentRegistrationMessage
+            {
+                AgentId = new AgentId(agentId),
+                Hostname = "owner-host",
+                Labels = []
+            });
+
+            SeedRunAndBusyAgent(_factory, agentId, ownJobId);
+
+            // Reporting for its own job is fine.
+            await connection.InvokeAsync("ReportOutputLines", new JobId(ownJobId), new List<string> { "mine" });
+
+            // Reporting for someone else's job is not.
+            Func<Task> act = () => connection.InvokeAsync(
+                "ReportOutputLines", new JobId(foreignJobId), new List<string> { "theirs" });
+
+            (await act.Should().ThrowAsync<HubException>(
+                    "[RequiresActiveJob] must reject jobs not assigned to the calling agent"))
+                .WithMessage("*is not assigned to agent*");
+        }
+        finally
+        {
+            await connection.StopAsync();
+            await connection.DisposeAsync();
         }
     }
 

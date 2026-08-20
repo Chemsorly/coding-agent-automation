@@ -24,6 +24,11 @@ internal static class SignalRRegistration
             {
                 // Agents may send output chunks or large payloads; default 32KB is too restrictive.
                 options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
+                // AddFilter is the ONLY way to activate a hub filter. Registering
+                // AgentAuthorizationFilter as IHubFilter in DI does not install it.
+                // The filter short-circuits for non-AgentHub hubs, so Blazor's ComponentHub
+                // is unaffected.
+                options.AddFilter<AgentAuthorizationFilter>();
             })
             .AddMessagePackProtocol(options =>
             {
@@ -33,8 +38,9 @@ internal static class SignalRRegistration
                         new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
             });
 
-        // Hub filter for agent authorization
-        services.AddSingleton<IHubFilter>(sp => new AgentAuthorizationFilter(
+        // Hub filter for agent authorization — resolved by AddFilter<AgentAuthorizationFilter>()
+        // above, so it must be registered under its concrete type.
+        services.AddSingleton(sp => new AgentAuthorizationFilter(
             sp.GetRequiredService<IAgentRegistryService>(),
             Log.Logger));
 

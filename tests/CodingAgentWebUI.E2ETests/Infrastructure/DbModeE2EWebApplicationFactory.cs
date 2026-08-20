@@ -1,4 +1,6 @@
 using CodingAgentWebUI.E2ETests.Fakes;
+using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
@@ -28,15 +30,32 @@ namespace CodingAgentWebUI.E2ETests.Infrastructure;
 /// - Fake external providers (IProviderFactory, IConfigurationStore, IQualityGateValidator)
 /// - Real Kestrel on a random port for FakeAgentClient SignalR connections
 /// </summary>
-public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Program>
+public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<WebUiHostMarker>
 {
     public const string TestApiKey = "db-e2e-test-key";
 
     private readonly string _dbName = $"DbModeE2E-{Guid.NewGuid()}";
 
+    /// <summary>
+    /// EF InMemory database name. The API host in the two-service harness joins the same
+    /// database so both processes see one set of WorkItems.
+    /// </summary>
+    public string DbName => _dbName;
+
+    /// <summary>
+    /// Base URL of the Pipeline API host, set by the fixture before this host builds.
+    /// Left null when the harness runs the Blazor app alone, in which case an unroutable
+    /// address is used instead — see <see cref="E2ETestDefaults.UnreachableApiBaseUrl"/>.
+    /// </summary>
+    public string? ApiBaseUrl { get; set; }
+
     // Shared fake instances for seeding and assertions
     public InMemoryConfigurationStore ConfigStore { get; } = new();
     public FakeProviderFactory FakeProviders { get; } = new();
+
+    /// <summary>Pipeline API config client backed by <see cref="ConfigStore"/>.</summary>
+    public InMemoryPipelineApiConfigClient ApiConfigClient => _apiConfigClient ??= new InMemoryPipelineApiConfigClient(ConfigStore);
+    private InMemoryPipelineApiConfigClient? _apiConfigClient;
     public ConfigurableQualityGateValidator QualityGateValidator { get; } = new();
     public InMemoryPipelineRunHistoryService HistoryService { get; } = new();
 
@@ -89,6 +108,13 @@ public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Progr
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("WorkDistribution__Mode", "SignalR");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", TestApiKey);
+        // Spec 045: the monolith fast-fails at startup without a Pipeline API base URL.
+        Environment.SetEnvironmentVariable(
+            "PipelineApi__BaseUrl", ApiBaseUrl ?? E2ETestDefaults.UnreachableApiBaseUrl);
+        // No config caching: the harness seeds through the store between assertions and a stale
+        // read would make tests depend on wall-clock timing.
+        Environment.SetEnvironmentVariable("PipelineLoop__ConfigCacheTtlSeconds", "0");
+        E2ETestDefaults.ResetSerilogBootstrapLogger();
 
         builder.UseEnvironment("Development");
 
@@ -105,6 +131,21 @@ public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Progr
             ReplaceService<IQualityGateConfigStore>(services, ConfigStore);
             ReplaceService<IReviewerConfigStore>(services, ConfigStore);
             ReplaceService<IProjectStore>(services, ConfigStore);
+
+            // Spec 045: the UI reads and writes config through the Pipeline API client, not the
+            // store. Back the client with the same in-memory store so seeding still reaches the UI
+            // (and so startup does not retry against an unreachable API for ten minutes).
+            ReplaceService<IPipelineApiConfigClient>(services, ApiConfigClient);
+
+            // JobTemplateStore loads /app/config/job-templates.yaml, which only exists in-cluster
+            // (mounted from the job-templates ConfigMap). ChatJobDispatcher depends on it.
+            services.RemoveAll<JobTemplateStore>();
+            services.AddSingleton(JobTemplateStore.LoadFromYaml("""
+                - labels: "kiro,dotnet"
+                  image: "chemsorly/coding-agent:kiro-dotnet10-latest"
+                  providerType: "kiro"
+                  maxConcurrent: 1
+                """));
             ReplaceService<IProviderFactory>(services, FakeProviders);
             ReplaceService<IQualityGateValidator>(services, QualityGateValidator);
             ReplaceService<IPipelineRunHistoryService>(services, HistoryService);

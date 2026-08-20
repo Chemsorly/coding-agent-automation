@@ -164,33 +164,218 @@ public sealed class ConfigEndpointTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    [Fact]
-    public async Task WorkItemEndpoint_AllowsAgentDerivedKey()
+    /// <summary>
+    /// Builds an HttpClient authenticated as <paramref name="agentId"/> with the key the Job
+    /// Controller would derive for it — HMAC-SHA256(master, agentId), matching
+    /// <c>AgentApiKeyAuthHandler</c>.
+    /// </summary>
+    private HttpClient CreateAgentClient(string agentId)
     {
-        // /api/work-items uses AgentApiKey policy — accepts both operator and agent keys
-        var agentId = "work-item-agent-456";
-        var hmac = new System.Security.Cryptography.HMACSHA256(
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
             System.Text.Encoding.UTF8.GetBytes(ApiWebApplicationFactory.ApiKey));
         var derivedKey = Convert.ToHexString(
             hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(agentId))).ToLowerInvariant();
 
-        using var agentClient = _factory.CreateClient();
-        agentClient.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", derivedKey);
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", derivedKey);
+        return client;
+    }
 
-        var response = await agentClient.GetAsync($"/api/work-items/pending?agentId={agentId}");
-        // Should succeed (200) because AgentApiKey accepts auth_kind=agent
+    /// <summary>
+    /// An agent-derived key reaches the assignment for the work item it was dispatched for.
+    /// </summary>
+    [Fact]
+    public async Task WorkItemAssignment_AllowsAgentDerivedKey_ForItsOwnWorkItem()
+    {
+        var agentId = "work-item-agent-456";
+        var workItemId = SeedWorkItemAssignedTo(agentId);
+
+        using var agentClient = CreateAgentClient(agentId);
+
+        var response = await agentClient.GetAsync(
+            $"/api/work-items/{workItemId}/assignment?agentId={agentId}");
+
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// The same key must not reach another work item's assignment. The payload carries repository
+    /// tokens and project secrets, so an unbound agent key would expose every credential in the
+    /// system to any single compromised pod.
+    /// </summary>
+    [Fact]
+    public async Task WorkItemAssignment_RejectsAgentDerivedKey_ForAnotherAgentsWorkItem()
+    {
+        var callerAgentId = "nosy-agent-1";
+        var otherAgentId = "victim-agent-2";
+        SeedWorkItemAssignedTo(callerAgentId);
+        var foreignWorkItemId = SeedWorkItemAssignedTo(otherAgentId);
+
+        using var agentClient = CreateAgentClient(callerAgentId);
+
+        var response = await agentClient.GetAsync(
+            $"/api/work-items/{foreignWorkItemId}/assignment?agentId={callerAgentId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "an agent key must only reach the work item it was dispatched for");
+    }
+
+    /// <summary>
+    /// Control-plane routes are operator-only. An agent that could claim, requeue or enumerate
+    /// work items could starve or hijack the whole queue.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/work-items/pending")]
+    [InlineData("/api/work-items/active")]
+    [InlineData("/api/work-items/staleness")]
+    public async Task WorkItemControlPlaneEndpoints_RejectAgentDerivedKey(string path)
+    {
+        var agentId = "control-plane-agent-789";
+        using var agentClient = CreateAgentClient(agentId);
+
+        var response = await agentClient.GetAsync($"{path}?agentId={agentId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            $"{path} is control plane and must require the operator key");
+    }
+
+    [Fact]
+    public async Task WorkItemControlPlaneEndpoints_AllowOperatorKey()
+    {
+        var response = await _client.GetAsync("/api/work-items/pending");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Seeds a Dispatched work item owned by <paramref name="agentId"/>, mirroring what the Job
+    /// Controller records when it claims an item (AssignedAgentId = the K8s Job name, which the
+    /// pod reports as its AGENT_ID).
+    /// </summary>
+    private Guid SeedWorkItemAssignedTo(string agentId)
+    {
+        var id = Guid.NewGuid();
+        using var db = _factory.CreateDbContext();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = id,
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = $"issue-{id:N}",
+            IssueProviderConfigId = "prov-1",
+            Status = WorkItemStatus.Dispatched,
+            AgentSelector = "",
+            CreatedAt = DateTimeOffset.UtcNow,
+            DispatchedAt = DateTimeOffset.UtcNow,
+            AssignedAgentId = agentId,
+            TimeoutSeconds = 3600,
+            Payload = JsonSerializer.Serialize(new JobDistributionRequest
+            {
+                IssueIdentifier = new IssueIdentifier($"issue-{id:N}"),
+                IssueProviderConfigId = "prov-1",
+                RepoProviderConfigId = "repo-1",
+                InitiatedBy = "test",
+                TaskType = WorkItemTaskType.Implementation,
+                AgentSelector = "",
+                TimeoutSeconds = 3600
+            }, PipelineJsonOptions.Default)
+        });
+        db.SaveChanges();
+        return id;
+    }
+
+    // ── Provider config redaction ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// The default read is redacted — this is what the Blazor settings pages receive.
+    /// </summary>
+    [Fact]
+    public async Task GetProviderConfigs_RedactsByDefault()
+    {
+        SeedProviderConfig(ProviderKind.Repository, "redact-default", "tok-live-value");
+
+        var configs = await _client.GetFromJsonAsync<List<ProviderConfig>>(
+            $"/api/config/provider-configs?kind={ProviderKind.Repository}", PipelineJsonOptions.Default);
+
+        var config = configs!.Single(c => c.Id == "redact-default");
+        config.Secrets!["token"].Should().Be("****", "the UI must never receive live credentials");
+        config.Settings!["baseUrl"].Should().Be("****");
+    }
+
+    /// <summary>
+    /// includeSecrets=true returns live values — what
+    /// <c>IPipelineApiConfigClient.GetProviderConfigsWithSecretsAsync</c> requests. The monolith's
+    /// config-store adapters use that form because the configs they load are embedded verbatim in
+    /// the job payload an agent executes with: RunEnvironmentSetupStep writes Secrets into the run
+    /// environment and the provider resolvers read tokens and base URLs from Settings. Serving the
+    /// dispatch path redacted ships every job with "****" in place of its credentials.
+    /// </summary>
+    [Fact]
+    public async Task GetProviderConfigs_WithIncludeSecrets_ReturnsLiveValues()
+    {
+        SeedProviderConfig(ProviderKind.Agent, "redact-optin", "tok-live-value");
+
+        var configs = await _client.GetFromJsonAsync<List<ProviderConfig>>(
+            $"/api/config/provider-configs?kind={ProviderKind.Agent}&includeSecrets=true",
+            PipelineJsonOptions.Default);
+
+        var config = configs!.Single(c => c.Id == "redact-optin");
+        config.Secrets!["token"].Should().Be("tok-live-value",
+            "the dispatch path cannot build a working job payload from masked credentials");
+        config.Settings!["baseUrl"].Should().Be("https://live.example");
+    }
+
+    /// <summary>
+    /// The unredacted form stays behind the operator key, like the rest of /api/config.
+    /// </summary>
+    [Fact]
+    public async Task GetProviderConfigs_WithIncludeSecrets_RejectsAgentDerivedKey()
+    {
+        var agentId = "secret-peeker-1";
+        using var agentClient = CreateAgentClient(agentId);
+
+        var response = await agentClient.GetAsync(
+            $"/api/config/provider-configs?kind={ProviderKind.Repository}&includeSecrets=true&agentId={agentId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    private void SeedProviderConfig(ProviderKind kind, string id, string secretValue)
+    {
+        var config = new ProviderConfig
+        {
+            Id = id,
+            Kind = kind,
+            DisplayName = id,
+            ProviderType = "github",
+            Settings = new Dictionary<string, string> { ["baseUrl"] = "https://live.example" },
+            Secrets = new Dictionary<string, string> { ["token"] = secretValue }
+        };
+
+        using var db = _factory.CreateDbContext();
+        db.ProviderConfigs.Add(new ProviderConfigEntity
+        {
+            Id = Guid.NewGuid(),
+            Kind = kind,
+            DisplayName = config.DisplayName,
+            ProviderType = config.ProviderType,
+            Enabled = true,
+            Configuration = JsonSerializer.Serialize(config, PipelineJsonOptions.Default)
+        });
+        db.SaveChanges();
     }
 
     // ── Config export ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// GET /api/config/export must redact Settings and Secrets values ("****") in the
-    /// ProviderConfig.Configuration blob while preserving key names (Req 6.4a).
+    /// GET /api/config/export must emit provider Settings and Secrets unredacted so that
+    /// export → import restores a working configuration.
+    ///
+    /// POST /api/config/import writes the bundle verbatim, so redacting the export would make
+    /// the documented backup/restore path silently replace every credential with a mask string.
+    /// Redaction belongs on the read endpoints (<c>GET /api/config/providers*</c>), which are
+    /// covered separately; export is operator-tier and is treated as a secret artefact.
     /// </summary>
     [Fact]
-    public async Task ConfigExport_RedactsProviderConfigSecretsAndSettings()
+    public async Task ConfigExport_EmitsProviderSecretsAndSettingsUnredacted()
     {
         var providerId = Guid.NewGuid();
         var providerConfig = new ProviderConfig
@@ -234,12 +419,6 @@ public sealed class ConfigEndpointTests
 
         var json = await response.Content.ReadAsStringAsync();
 
-        // Real secret values must NOT appear anywhere in the export
-        json.Should().NotContain("my-secret-value",
-            "Settings values must be redacted in export (Req 6.4a)");
-        json.Should().NotContain("real-key",
-            "Secrets values must be redacted in export (Req 6.4a)");
-
         // Deserialize the bundle and inspect the ProviderConfig blob
         var bundle = JsonSerializer.Deserialize<ConfigBundle>(json,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
@@ -254,16 +433,94 @@ public sealed class ConfigEndpointTests
             PipelineJsonOptions.Default);
         parsedConfig.Should().NotBeNull();
 
-        // Key names preserved, values redacted to "****"
-        parsedConfig!.Settings.Should().ContainKey("token",
-            "Settings key names must be preserved in the export");
-        parsedConfig.Settings!["token"].Should().Be("****",
-            "Settings values must be replaced with '****' in the export");
+        parsedConfig!.Settings.Should().ContainKey("token");
+        parsedConfig.Settings!["token"].Should().Be("my-secret-value",
+            "an export that masks Settings values cannot be imported back into a working system");
 
-        parsedConfig.Secrets.Should().ContainKey("apiKey",
-            "Secrets key names must be preserved in the export");
-        parsedConfig.Secrets!["apiKey"].Should().Be("****",
-            "Secrets values must be replaced with '****' in the export");
+        parsedConfig.Secrets.Should().ContainKey("apiKey");
+        parsedConfig.Secrets!["apiKey"].Should().Be("real-key",
+            "an export that masks Secrets values cannot be imported back into a working system");
+
+        parsedConfig.Settings["token"].Should().NotBe("****");
+        parsedConfig.Secrets["apiKey"].Should().NotBe("****");
+    }
+
+    /// <summary>
+    /// The full backup/restore path: export the config, wipe a provider's credentials, import the
+    /// exported bundle, and confirm the original values are back. This is the behaviour the
+    /// redacted export silently broke — the round-trip completed "successfully" while replacing
+    /// every credential with a mask string.
+    /// </summary>
+    [Fact]
+    public async Task ConfigExportThenImport_RestoresProviderCredentials()
+    {
+        var providerId = Guid.NewGuid();
+        var original = new ProviderConfig
+        {
+            Id = providerId.ToString(),
+            Kind = ProviderKind.Repository,
+            DisplayName = "Round Trip Provider",
+            ProviderType = "github",
+            Settings = new Dictionary<string, string> { ["baseUrl"] = "https://ghe.internal" },
+            Secrets = new Dictionary<string, string> { ["pat"] = "ghp_roundtrip_value" }
+        };
+
+        using (var db = _factory.CreateDbContext())
+        {
+            db.ProviderConfigs.Add(new ProviderConfigEntity
+            {
+                Id = providerId,
+                Kind = original.Kind,
+                DisplayName = original.DisplayName,
+                ProviderType = original.ProviderType,
+                Enabled = true,
+                Configuration = JsonSerializer.Serialize(original, PipelineJsonOptions.Default)
+            });
+            db.SaveChanges();
+        }
+
+        var exportResponse = await _client.GetAsync("/api/config/export");
+        exportResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var exportedBytes = await exportResponse.Content.ReadAsByteArrayAsync();
+
+        // Simulate a restore into a cluster whose credentials have been lost.
+        using (var db = _factory.CreateDbContext())
+        {
+            var entity = db.ProviderConfigs.Single(p => p.Id == providerId);
+            entity.Configuration = JsonSerializer.Serialize(
+                new ProviderConfig
+                {
+                    Id = original.Id,
+                    Kind = original.Kind,
+                    DisplayName = original.DisplayName,
+                    ProviderType = original.ProviderType,
+                    Settings = new Dictionary<string, string> { ["baseUrl"] = "wiped" },
+                    Secrets = new Dictionary<string, string> { ["pat"] = "wiped" }
+                },
+                PipelineJsonOptions.Default);
+            db.SaveChanges();
+        }
+
+        using var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(exportedBytes);
+        fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        content.Add(fileContent, "file", "pipeline-config-export.json");
+
+        var importResponse = await _client.PostAsync("/api/config/import", content);
+        importResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using (var db = _factory.CreateDbContext())
+        {
+            var restored = JsonSerializer.Deserialize<ProviderConfig>(
+                db.ProviderConfigs.Single(p => p.Id == providerId).Configuration!,
+                PipelineJsonOptions.Default);
+
+            restored.Should().NotBeNull();
+            restored!.Settings!["baseUrl"].Should().Be("https://ghe.internal",
+                "import must restore the exported Settings values");
+            restored.Secrets!["pat"].Should().Be("ghp_roundtrip_value",
+                "import must restore the exported Secrets values");
+        }
     }
 
     [Fact]

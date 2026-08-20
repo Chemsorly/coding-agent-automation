@@ -20,19 +20,34 @@ public class WorkDistributionSmokeTests : IClassFixture<DbModeWebApplicationFact
     }
 
     /// <summary>
-    /// Verifies that IDispatchOrchestrationService is NOT registered after Spec 045 Task 8 removal.
-    /// The service was removed from monolith DI; IssueDrawerService and related services get a mock
-    /// in test environments, but the production DI no longer has the real implementation.
+    /// IDispatchOrchestrationService must resolve — the drawer services constructor-inject it.
+    ///
+    /// The previous version of this test was named <c>..._IsNotRegistered_AfterSpec045Task8</c>
+    /// and asserted <c>NotNull</c>, which contradicted its own name and could not fail: the test
+    /// factory substitutes a mock, so the assertion said nothing about production wiring. The
+    /// production container does register it (ServiceCollectionExtensions.PipelineBackgroundServices).
     /// </summary>
     [Fact]
-    public void IDispatchOrchestrationService_IsNotRegistered_AfterSpec045Task8()
+    public void IDispatchOrchestrationService_Resolves()
     {
-        // The real DispatchOrchestrationService was removed from monolith DI in Spec 045 Task 8.
-        // A mock is registered by DbModeWebApplicationFactory to satisfy DI validation.
-        // The mock object should not be null (DI resolves the mock), but this confirms the
-        // registration is test-only and not a real implementation.
         var service = _factory.Services.GetService<IDispatchOrchestrationService>();
-        Assert.NotNull(service); // mock is registered by the test factory
+        Assert.NotNull(service);
+    }
+
+    /// <summary>
+    /// IChatJobDispatcher must resolve — <c>AgentChat.razor</c> declares
+    /// <c>@inject IChatJobDispatcher</c>, and a Razor injection is not covered by
+    /// <c>ValidateOnBuild</c>, so a missing registration only surfaces when a user opens the page.
+    ///
+    /// Spec 043 deleted WorkDistributionRegistration.Kubernetes.cs — which held this registration —
+    /// expecting Spec 044 to re-home it in the API. That move never happened, leaving the
+    /// interface registered nowhere and the chat page throwing on first render.
+    /// </summary>
+    [Fact]
+    public void IChatJobDispatcher_Resolves()
+    {
+        var service = _factory.Services.GetService<IChatJobDispatcher>();
+        Assert.NotNull(service);
     }
 
     /// <summary>

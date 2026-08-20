@@ -93,8 +93,42 @@ spec:
                   name: {{ include "coding-agent-automation.secretName" . }}
                   key: otel-headers
                   optional: true
-            # Spec 045 Req 6.1: DB env vars removed — orchestrator no longer has Postgres access.
-            # DB credentials remain on the API deployment only (api-deployment.yaml).
+            # Spec 045 Req 6.1 asked for these to be removed, on the premise that Req 1.2 would
+            # strip every EF registration from the monolith. That did not fully happen:
+            # KubernetesWorkDistributor (via DbWorkDistributorBase) and KubernetesJobCleanup still
+            # take IDbContextFactory<PipelineDbContext>, so WorkDistributionRegistration still
+            # calls AddPooledDbContextFactory and AddWorkDistribution throws
+            # "Database__Host is not configured" before the host is built. Without these the
+            # orchestrator crash-loops on every deploy.
+            #
+            # Restore them only until TODO(Spec 046) migrates those two types to
+            # IPipelineApiWorkItemClient; then this block goes and the API is the sole DB client.
+            # Note Database__MigrateOnStartup=false: the API owns schema migrations (Req 9.5a).
+            - name: Database__Host
+              value: {{ required "database.host is required" .Values.database.host | quote }}
+            - name: Database__Port
+              value: {{ .Values.database.port | default 5432 | quote }}
+            - name: Database__Name
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.auth.existingSecret is required" .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.database | default "POSTGRES_DB" }}
+            - name: Database__Username
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.username | default "POSTGRES_USER" }}
+            - name: Database__Password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.password | default "POSTGRES_PASSWORD" }}
+            {{- if .Values.database.sslMode }}
+            - name: Database__SslMode
+              value: {{ .Values.database.sslMode | quote }}
+            {{- end }}
+            - name: Database__MigrateOnStartup
+              value: "false"
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}
@@ -102,18 +136,12 @@ spec:
             # Pipeline API connection — required by IPipelineApiConfigClient and IAgentHubConnection.
             # Spec 045 Req 6.4: orchestrator must know API base URL and hub URL.
             - name: PipelineApi__BaseUrl
-              value: {{ if .Values.api.baseUrl -}}
-                {{- .Values.api.baseUrl | quote }}
-              {{- else -}}
-                {{- printf "http://%s-api.%s.svc.cluster.local:%d" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.api.service.port | int) | quote }}
-              {{- end }}
+              value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
             - name: PipelineApi__HubUrl
               value: {{ if .Values.api.hubUrl -}}
                 {{- .Values.api.hubUrl | quote }}
-              {{- else if .Values.api.baseUrl -}}
-                {{- printf "%s/hubs/agent" .Values.api.baseUrl | quote }}
               {{- else -}}
-                {{- printf "http://%s-api.%s.svc.cluster.local:%d/hubs/agent" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.api.service.port | int) | quote }}
+                {{- printf "%s/hubs/agent" (include "coding-agent-automation.apiBaseUrl" .) | quote }}
               {{- end }}
             # Leader election lease name — release-scoped to prevent collision when multiple
             # Helm releases share a namespace (Req 6.3/6.7). Overridable via values.yaml.

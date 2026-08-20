@@ -5,9 +5,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <!-- E2E tests require Playwright; excluded from solution-level 'dotnet test'.
-         Run via CI workflow or target the built DLL directly. -->
-    <IsTestProject>false</IsTestProject>
+    <!-- Must stay true. With IsTestProject=false the VSTest target is a no-op, so
+         `dotnet test tests/CodingAgentWebUI.E2ETests/` (exactly what .github/workflows/e2e-tests.yml
+         runs) exits 0 having discovered zero tests, and the job reports green with no coverage.
+         Every test here carries [Trait("Category", "E2E")], and ci.yml's solution-level run filters
+         on `Category!=E2E`, so these stay out of the unit-test job without needing this flag.
+         Playwright browsers come from the container image in the E2E workflow; a local
+         solution-wide `dotnet test` should apply the same filter to skip them. -->
+    <IsTestProject>true</IsTestProject>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +27,10 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="Moq" />
+    <!-- CreateBootstrapLogger: the harness builds two hosts in one process and must hand
+         Serilog's global logger over twice. See E2ETestDefaults.ResetSerilogBootstrapLogger. -->
+    <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -40,6 +49,9 @@
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Kubernetes\CodingAgentWebUI.Kubernetes.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Api.Client\CodingAgentWebUI.Api.Client.csproj" />
+    <!-- The harness runs the Pipeline API alongside the Blazor app: the API is the sole host of
+         /hubs/agent and /api/work-items/* from Spec 044 onward, so fake agents connect there. -->
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.Api\CodingAgentWebUI.Api.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.TestUtilities\CodingAgentWebUI.TestUtilities.csproj" />
   </ItemGroup>
 

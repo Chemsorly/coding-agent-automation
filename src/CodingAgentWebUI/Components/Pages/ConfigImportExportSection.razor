@@ -18,6 +18,10 @@
             <p>
                 Download the current database configuration as a single JSON file.
             </p>
+            <p>
+                The file contains <strong>provider credentials in plain text</strong> so that
+                importing it restores a working system. Store it as a secret.
+            </p>
             <button class="btn btn-secondary" @onclick="ExportAsync" disabled="@_exporting">
                 @if (_exporting)
                 {
@@ -76,8 +80,8 @@
 
         try
         {
-            // TODO(Task 8b): GET /api/config/export server-side endpoint not yet implemented.
-            // This call will fail with a non-success status code until Task 8b is complete.
+            // GET /api/config/export on the Pipeline API. Operator-tier only; the payload
+            // carries unredacted provider credentials so it can be imported back.
             var bytes = await ConfigClient.ExportConfigAsync(CancellationToken.None);
 
             using var stream = new MemoryStream(bytes);
@@ -131,9 +135,7 @@
             // Read the file content (Blazor Server — file streams from browser to server)
             using var stream = _selectedFile.OpenReadStream(maxAllowedSize: MaxImportFileSizeBytes);
 
-            // TODO(Task 8b): POST /api/config/import server-side endpoint not yet implemented.
-            // This call will fail with a non-success status code until Task 8b is complete.
-            // The endpoint takes multipart/form-data with a file field named "file".
+            // POST /api/config/import on the Pipeline API — multipart/form-data, file field "file".
             // Import is DESTRUCTIVE: the server clears all existing config before importing.
             await ConfigClient.ImportConfigAsync(stream, _selectedFile.Name, CancellationToken.None);
 

@@ -29,8 +29,11 @@ public sealed partial class AgentHub
             // Caller is an agent connection — enforce per-run ownership (Req 5.3a).
             var run = _facade.GetRun(new Pipeline.Models.JobId(jobId));
 
-            // Reject if: the run exists AND the run is not assigned to this agent.
-            if (run is not null && !string.Equals(run.AgentId, callerAgentId, StringComparison.Ordinal))
+            // Fail closed. An unknown jobId means the run is not registered on this hub, so
+            // nothing establishes that this agent owns it — admitting the subscription would
+            // let an agent camp on an arbitrary run id and receive the full output stream
+            // (which carries tokens and repository content) once that run starts.
+            if (run is null || !string.Equals(run.AgentId, callerAgentId, StringComparison.Ordinal))
             {
                 _logger.Warning(
                     "SubscribeToRun rejected — agent {AgentId} is not assigned to run {JobId}",

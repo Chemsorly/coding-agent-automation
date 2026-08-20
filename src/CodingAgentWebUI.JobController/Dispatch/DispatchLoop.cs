@@ -149,10 +149,16 @@ public sealed class DispatchLoop
             return;
         }
 
+        // The K8s Job name is deterministic from the WorkItem id and doubles as the pod's
+        // AGENT_ID (metadata.name field ref). Compute it before claiming so the claim records
+        // which agent identity owns this item — the API binds the agent's derived key to the
+        // WorkItem through AssignedAgentId when serving /assignment and /status.
+        var jobName = GenerateJobName(item.Id);
+
         // Claim the item (atomic — 409 if already claimed)
         var claimed = await _workItemClient.ClaimAsync(
             item.Id,
-            new ClaimWorkItemRequest { DispatchedAt = DateTimeOffset.UtcNow },
+            new ClaimWorkItemRequest { AssignedAgentId = jobName, DispatchedAt = DateTimeOffset.UtcNow },
             ct);
 
         if (claimed is null)
@@ -179,7 +185,6 @@ public sealed class DispatchLoop
         // The agent ID for a work-item pod equals the K8s Job name (set as AGENT_ID via
         // metadata.name field ref in the pod spec). We must derive using the Job name so the
         // key matches what AgentApiKeyAuthHandler re-derives when the agent authenticates.
-        var jobName = GenerateJobName(item.Id);
         var derivedKey = DeriveAgentKey(_options.AgentMasterApiKey, jobName);
         var derivedSecretName = GenerateDerivedKeySecretName(item.Id);
 

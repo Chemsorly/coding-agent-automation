@@ -16,13 +16,9 @@ data:
   WorkDistribution__Dispatch__RateLimitPerSecond: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
   WorkDistribution__Reconciliation__IntervalSeconds: {{ .Values.workDistribution.reconciliation.intervalSeconds | quote }}
   WorkDistribution__Reconciliation__StaleRetentionDays: {{ .Values.workDistribution.reconciliation.staleRetentionDays | quote }}
-  WorkDistribution__OrchestratorUrl: {{ if .Values.api.serviceUrl -}}
-    {{- .Values.api.serviceUrl | quote }}
-  {{- else if .Values.api.enabled -}}
-    {{- printf "http://%s-api.%s.svc.cluster.local:%d" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.api.service.port | int) | quote }}
-  {{- else -}}
-    {{- printf "http://%s-orchestrator.%s.svc.cluster.local:%d" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.orchestrator.service.port | int) | quote }}
-  {{- end }}
+  # ORCHESTRATOR_URL handed to chat agent pods dispatched by ChatJobDispatcher.
+  # Resolved through the shared helper so all three dispatching processes agree.
+  WorkDistribution__OrchestratorUrl: {{ include "coding-agent-automation.agentOrchestratorUrl" . | quote }}
   WorkDistribution__AgentApiKeySecretName: {{ include "coding-agent-automation.secretName" . | quote }}
   WorkDistribution__AgentServiceAccountName: "{{ include "coding-agent-automation.fullname" . }}-agent"
   WorkDistribution__Namespace: {{ .Release.Namespace | quote }}

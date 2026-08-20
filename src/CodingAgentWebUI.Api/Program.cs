@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Api;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -82,7 +83,17 @@ builder.Services.AddOpenTelemetry()
     {
         m.AddAspNetCoreInstrumentation()
          .AddHttpClientInstrumentation()
-         .AddOtlpExporter();
+         // The API owns the work-distribution instruments from Spec 045 onward:
+         // WorkItemMetricsBackgroundService feeds the workitems-by-status gauges here, and
+         // WorkItemEndpoints/DispatchStateBuilder record terminal statuses and dispatch
+         // latency. Without this AddMeter the measurements are taken but never exported, and
+         // the WorkItemsPendingTooLong / WorkItemFailureRateHigh / CredentialPoolExhausted
+         // alerts have no series to evaluate.
+         .AddMeter(WorkDistributionTelemetry.MeterName)
+         // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
+         // histograms and counters, which Grafana Cloud silently drops. Matches the monolith.
+         .AddOtlpExporter((_, readerOptions) =>
+             readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative);
     });
 
 var app = builder.Build();

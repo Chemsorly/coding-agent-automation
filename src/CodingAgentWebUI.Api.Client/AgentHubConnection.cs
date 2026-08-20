@@ -24,13 +24,18 @@ internal sealed class InfiniteRetryPolicy : IRetryPolicy
 /// Configured with automatic reconnect using <see cref="InfiniteRetryPolicy"/>,
 /// matching <c>HubConnectionManager</c> on the agent side.
 ///
-/// Note: MessagePack protocol is intentionally omitted here. The API.Client project
-/// is a plain Microsoft.NET.Sdk library; adding MessagePack from the ASP.NET Core
-/// shared framework requires FrameworkReference which conflicts with the library's
-/// portability requirements. Spec 045 (which wires the UI circuit to the API hub)
-/// can add MessagePack via the Blazor Server host project, which already has the
-/// ASP.NET Core framework available. Until then, the JSON protocol is used as the
-/// fallback.
+/// Protocol: JSON, not MessagePack. The API.Client project is a plain Microsoft.NET.Sdk
+/// library and pulling MessagePack in from the ASP.NET Core shared framework would need a
+/// FrameworkReference the library deliberately avoids. This is safe rather than a gap:
+/// <c>AddMessagePackProtocol()</c> on the API hub *adds* MessagePack alongside the default
+/// JSON protocol, so the server speaks both and each client negotiates its own. The custom
+/// MessagePack formatters (JobIdFormatter, AgentIdFormatter) only matter for the agent-facing
+/// methods, which take strongly-typed <c>JobId</c> / <c>AgentId</c> arguments; every method on
+/// the UI surface (IAgentHubUiClient plus SubscribeToRun / UnsubscribeFromRun) uses primitives
+/// and plain records that System.Text.Json handles directly.
+///
+/// If a strongly-typed id is ever added to the UI surface, this connection needs a matching
+/// JSON converter — or the whole client needs to move to MessagePack.
 /// </summary>
 public sealed class AgentHubConnection : IAgentHubConnection
 {

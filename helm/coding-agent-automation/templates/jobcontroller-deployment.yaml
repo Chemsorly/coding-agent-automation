@@ -50,7 +50,7 @@ spec:
             - name: ASPNETCORE_URLS
               value: "http://+:{{ .Values.jobController.service.port }}"
             - name: PipelineApi__BaseUrl
-              value: "http://{{ include "coding-agent-automation.fullname" . }}-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.api.service.port }}"
+              value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
             - name: AGENT_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -87,8 +87,10 @@ spec:
                   fieldPath: metadata.namespace
             - name: WorkDistribution__JobTemplatesPath
               value: "/app/config/job-templates.yaml"
+            # ORCHESTRATOR_URL handed to every work-item agent pod this controller dispatches.
+            # Must be the Pipeline API — it is the sole host of /hubs/agent and /api/work-items/*.
             - name: WorkDistribution__OrchestratorUrl
-              value: "http://{{ include "coding-agent-automation.fullname" . }}-orchestrator.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.orchestrator.service.port }}"
+              value: {{ include "coding-agent-automation.agentOrchestratorUrl" . | quote }}
             - name: WorkDistribution__AgentApiKeySecretName
               value: {{ include "coding-agent-automation.secretName" . | quote }}
             - name: WorkDistribution__AgentServiceAccountName

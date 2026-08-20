@@ -123,34 +123,51 @@ public static class ConfigEndpoints
     // ── Provider configs ───────────────────────────────────────────────────
 
     /// <summary>
-    /// GET /api/config/provider-configs?kind={kind}
-    /// Returns all configs of the given kind with Settings values redacted.
+    /// GET /api/config/provider-configs?kind={kind}&amp;includeSecrets={bool}
+    /// Returns all configs of the given kind. Settings and Secrets values are redacted unless
+    /// <paramref name="includeSecrets"/> is explicitly requested.
+    ///
+    /// The opt-in exists because two very different callers share this endpoint. The Blazor
+    /// settings pages render these configs and must never receive live credentials — they use
+    /// the redacted default. The monolith's dispatch path reads the same configs through
+    /// <c>ApiConfigurationStore</c> and embeds them in the job payload the agent receives;
+    /// <c>RunEnvironmentSetupStep</c> writes <c>Secrets</c> straight into the run environment and
+    /// the provider resolvers read tokens and base URLs out of <c>Settings</c>. Serving that path
+    /// redacted ships every job with "****" in place of its credentials.
+    ///
+    /// The whole /api/config group already requires the operator key, so this is defence in depth
+    /// for the UI rather than a trust boundary — an agent-derived key cannot reach either form.
     /// </summary>
     internal static async Task<IResult> GetProviderConfigs(
         ProviderKind kind,
         IProviderConfigStore store,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool includeSecrets = false)
     {
         var configs = await store.LoadProviderConfigsAsync(kind, ct);
-        var redacted = configs.Select(RedactProviderConfig).ToList();
-        return TypedResults.Ok(redacted);
+        if (includeSecrets)
+            return TypedResults.Ok(configs.ToList());
+
+        return TypedResults.Ok(configs.Select(RedactProviderConfig).ToList());
     }
 
     /// <summary>
-    /// GET /api/config/provider-configs/{id}?kind={kind}
-    /// Returns a single config by ID with Settings values redacted.
+    /// GET /api/config/provider-configs/{id}?kind={kind}&amp;includeSecrets={bool}
+    /// Returns a single config by ID. See <see cref="GetProviderConfigs"/> for why the
+    /// unredacted form is opt-in rather than the default.
     /// </summary>
     internal static async Task<IResult> GetProviderConfigById(
         string id,
         ProviderKind kind,
         IProviderConfigStore store,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool includeSecrets = false)
     {
         var config = await store.GetProviderConfigByIdAsync(id, kind, ct);
         if (config is null)
             return TypedResults.NotFound();
 
-        return TypedResults.Ok(RedactProviderConfig(config));
+        return TypedResults.Ok(includeSecrets ? config : RedactProviderConfig(config));
     }
 
     /// <summary>
@@ -431,9 +448,18 @@ public static class ConfigEndpoints
 
     /// <summary>
     /// GET /api/config/export
-    /// Returns a JSON file download containing all config (providers, profiles, gate configs, etc.)
-    /// with provider Settings and Secrets values redacted (042 Req 6.4).
+    /// Returns a JSON file download containing all config (providers, profiles, gate configs, etc.).
     /// Requires OperatorApiKey policy (042 Req 6.5, Tier 2) — agent-derived keys receive 403.
+    ///
+    /// Provider Settings and Secrets are exported UNREDACTED, matching the monolith endpoint this
+    /// replaced. Export/import is a backup-and-restore path: <see cref="ImportConfigAsync"/> writes
+    /// the bundle verbatim, so a redacted export would restore every credential as a mask string and
+    /// silently break every provider. The 042 Req 6.4 redaction applies to the read endpoints
+    /// (<c>GET /api/config/providers*</c>), which is where secrets must never surface — see
+    /// <see cref="RedactProviderConfig"/>.
+    ///
+    /// The response therefore contains live credentials. It is guarded by the operator tier and the
+    /// UI warns before download; treat the downloaded file as a secret.
     /// </summary>
     internal static async Task<IResult> ExportConfigAsync(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -451,8 +477,6 @@ public static class ConfigEndpoints
                 DisplayName = e.DisplayName,
                 ProviderType = e.ProviderType,
                 Enabled = e.Enabled,
-                // Redact the raw Configuration JSON blob so provider credentials are never
-                // exposed in exports (042 Req 6.4). Deserialize → redact → re-serialize.
                 Configuration = e.Configuration
             }).ToListAsync(ct),
             AgentProfiles = await db.AgentProfiles.AsNoTracking().Select(e => new NamedConfigDto
@@ -490,28 +514,6 @@ public static class ConfigEndpoints
                 Configuration = e.Configuration
             }).ToListAsync(ct)
         };
-
-        // Redact Settings and Secrets values in each ProviderConfig blob (042 Req 6.4).
-        // The Configuration field is a serialized ProviderConfig JSON string; deserialize,
-        // apply redaction, then re-serialize back into the DTO.
-        if (bundle.ProviderConfigs is not null)
-        {
-            for (var i = 0; i < bundle.ProviderConfigs.Count; i++)
-            {
-                var dto = bundle.ProviderConfigs[i];
-                if (dto.Configuration is null) continue;
-
-                var parsed = JsonSerializer.Deserialize<ProviderConfig>(
-                    dto.Configuration, _redactDeserializeOptions);
-                if (parsed is null) continue;
-
-                var redacted = RedactProviderConfig(parsed);
-                bundle.ProviderConfigs[i] = dto with
-                {
-                    Configuration = JsonSerializer.Serialize(redacted, PipelineJsonOptions.Default)
-                };
-            }
-        }
 
         var json = JsonSerializer.Serialize(bundle, ExportOptions);
         return Results.File(

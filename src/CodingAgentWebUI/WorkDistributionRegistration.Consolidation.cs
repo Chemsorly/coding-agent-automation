@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Kubernetes;
@@ -7,6 +8,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using k8s;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -134,8 +136,33 @@ public static partial class WorkDistributionRegistration
         // TODO(Spec 046): if dispatch queue depth monitoring is needed, implement via
         // GET /api/work-items/pending-count on IPipelineApiWorkItemClient.
 
-        // ChatJobDispatcher moved to CodingAgentWebUI.Api in Spec 044 Task 6 (Req 2.7).
-        // Registration removed here after API registration confirmed.
+        // ── ChatJobDispatcher — on-demand ephemeral chat pod dispatch ────────────
+        // Spec 043 deleted WorkDistributionRegistration.Kubernetes.cs, which held this
+        // registration, on the assumption that Spec 044 Task 6 would re-home it in the API.
+        // That move never happened: ChatJobDispatcher still lives in CodingAgentWebUI.Hub and
+        // is registered nowhere else, so AgentChat.razor's `@inject IChatJobDispatcher` threw
+        // on first render. Restored here, matching the pre-043 wiring — the monolith retains
+        // every dependency it needs (Req 044 keeps the Hub project reference and
+        // AddSignalRServices() alive precisely for this).
+        //
+        // TODO(Spec 046): moving this to the API is still the intended end state, together with
+        // the REST endpoint that fixes AgentChat's disconnected IHubContext<AgentHub> —
+        // AssignChatPrompt cannot reach agents registered on the API hub from this process.
+        services.AddSingleton<ChatJobDispatcher>(sp =>
+        {
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            options.ValidateAndClamp(Log.Logger);
+            return new ChatJobDispatcher(
+                sp.GetRequiredService<IKubernetesJobClient>(),
+                sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
+                sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<AgentRegistryService>(),
+                options,
+                sp.GetRequiredService<ILeaderElectionService>(),
+                Log.Logger);
+        });
+        services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());
+        services.AddSingleton<IChatJobDispatcher>(sp => sp.GetRequiredService<ChatJobDispatcher>());
 
         Log.Information("WorkDistribution: Kubernetes infrastructure registered (LeaderElection, K8s client)");
     }

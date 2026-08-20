@@ -233,8 +233,11 @@ monitoring:
 # ── Pipeline API ─────────────────────────────────────────────────────────────
 
 api:
-  # api.enabled must be false by default — the API is dark until Spec 044 re-points agents.
-  enabled: false
+  # The Pipeline API is required. It is the sole owner of the database and the only host of
+  # /hubs/agent and /api/work-items/*, so agent pods, the Job Controller and the orchestrator
+  # all depend on it. Set this to false only when an API is deployed out of band, in which case
+  # api.baseUrl must point at it (the chart fails at render time otherwise).
+  enabled: true
   image:
     repository: chemsorly/coding-agent
     tag: coding-agent-api
@@ -274,9 +277,10 @@ api:
 # ── Job Controller ────────────────────────────────────────────────────────────
 
 jobController:
-  # Enable the Job Controller. Set to true only in the same helm upgrade that deploys
-  # the updated monolith image (without DispatchService). See NOTES.txt for cutover notes.
-  enabled: false
+  # The Job Controller owns the dispatch and reconciliation loops. Nothing else runs them —
+  # the orchestrator's copies were removed — so with this off no work item is ever dispatched
+  # and the queue silently grows. Disable only when running the controller out of band.
+  enabled: true
   image:
     repository: chemsorly/coding-agent
     tag: coding-agent-jobcontroller

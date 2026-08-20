@@ -23,11 +23,27 @@ public sealed class RequiresActiveJobAttribute : Attribute;
 ///         (ConnectionId → agentId lookup in the registry).</item>
 ///   <item>Methods decorated with <see cref="RequiresActiveJobAttribute"/> additionally validate
 ///         that the <c>jobId</c> (first parameter) matches the agent's <c>ActiveJobId</c>.</item>
+///   <item>Operator-authenticated callers (the Blazor UI circuit — master key, no <c>agentId</c>
+///         query parameter) are not agents and never call <c>RegisterAgent</c>. They are allowed
+///         to invoke the UI subscription methods only.</item>
 /// </list>
 /// Mismatched calls throw <see cref="HubException"/> and are logged.
+///
+/// Must be installed via <c>HubOptions.AddFilter&lt;AgentAuthorizationFilter&gt;()</c> —
+/// registering it in DI as <see cref="IHubFilter"/> alone does NOT activate it.
 /// </summary>
 public sealed class AgentAuthorizationFilter : IHubFilter
 {
+    /// <summary>
+    /// Hub methods an operator-authenticated (non-agent) connection may invoke.
+    /// The Blazor UI subscribes to <c>run-{jobId}</c> groups through these.
+    /// </summary>
+    private static readonly HashSet<string> OperatorAllowedMethods = new(StringComparer.Ordinal)
+    {
+        nameof(AgentHub.SubscribeToRun),
+        nameof(AgentHub.UnsubscribeFromRun)
+    };
+
     private readonly IAgentRegistryService _registry;
     private readonly ILogger _logger;
 
@@ -51,6 +67,27 @@ public sealed class AgentAuthorizationFilter : IHubFilter
 
         var connectionId = invocationContext.Context.ConnectionId;
         var methodName = invocationContext.HubMethodName;
+
+        // Operator connections (AgentApiKeyAuthHandler sets auth_kind=operator when no agentId
+        // query parameter is present) are UI circuits, not agents. They may subscribe to run
+        // groups but must not drive the agent-facing surface.
+        var isOperator = string.Equals(
+            invocationContext.Context.User?.FindFirst("auth_kind")?.Value,
+            "operator",
+            StringComparison.Ordinal);
+
+        if (isOperator)
+        {
+            if (!OperatorAllowedMethods.Contains(methodName))
+            {
+                _logger.Warning(
+                    "Hub method {Method} rejected — operator connection {ConnectionId} may only invoke UI subscription methods",
+                    methodName, connectionId);
+                throw new HubException($"Method {methodName} is not available to operator connections");
+            }
+
+            return await next(invocationContext);
+        }
 
         // RegisterAgent is the only method that doesn't require a registered agent
         if (!string.Equals(methodName, nameof(AgentHub.RegisterAgent), StringComparison.Ordinal))

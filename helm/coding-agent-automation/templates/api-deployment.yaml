@@ -99,8 +99,10 @@ spec:
             # consumed by ModelFetchJobService and ConsolidationWorkItemDispatchService (Req 9.3c).
             # Without these the factory returns empty OrchestratorUrl / ServiceAccount, and
             # JobSpecBuilder emits a Job spec the K8s admission webhook rejects.
+            # ORCHESTRATOR_URL handed to the consolidation and model-fetch agent pods dispatched
+            # from this process. Must be the Pipeline API, not the orchestrator.
             - name: WorkDistribution__OrchestratorUrl
-              value: "http://{{ include "coding-agent-automation.fullname" . }}-orchestrator.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.orchestrator.service.port }}"
+              value: {{ include "coding-agent-automation.agentOrchestratorUrl" . | quote }}
             - name: WorkDistribution__AgentApiKeySecretName
               value: {{ include "coding-agent-automation.secretName" . | quote }}
             - name: WorkDistribution__AgentServiceAccountName

@@ -1,4 +1,7 @@
 using CodingAgentWebUI.E2ETests.Fakes;
+using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Kubernetes;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -19,13 +22,19 @@ namespace CodingAgentWebUI.E2ETests.Infrastructure;
 /// with all external providers replaced by in-memory fakes.
 /// Uses the .NET 10 first-class UseKestrel() API — no CreateHost override needed.
 /// </summary>
-public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
+public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMarker>
 {
     public const string TestApiKey = "e2e-test-key";
+
+    private readonly string _dbName = $"E2E-{Guid.NewGuid()}";
 
     // Shared fake instances — accessible by tests for seeding and assertions
     public CodingAgentWebUI.E2ETests.Fakes.InMemoryConfigurationStore ConfigStore { get; } = new();
     public FakeProviderFactory FakeProviders { get; } = new();
+
+    /// <summary>Pipeline API config client backed by <see cref="ConfigStore"/>.</summary>
+    public InMemoryPipelineApiConfigClient ApiConfigClient => _apiConfigClient ??= new InMemoryPipelineApiConfigClient(ConfigStore);
+    private InMemoryPipelineApiConfigClient? _apiConfigClient;
     public ConfigurableQualityGateValidator QualityGateValidator { get; } = new();
     public InMemoryPipelineRunHistoryService HistoryService { get; } = new();
 
@@ -51,9 +60,24 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
     {
         // Set the API key via environment variable before host builds
         Environment.SetEnvironmentVariable("AGENT_API_KEY", TestApiKey);
-        // Spec 045: PipelineApi:BaseUrl is required after Task 2 fast-fail was added.
-        // E2E tests will use TwoServiceWebApplicationFactory in Task 12; for now provide a stub.
-        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", "http://localhost:9999");
+
+        // Spec 041 made PostgreSQL mandatory: AddWorkDistribution throws
+        // "Database__Host is not configured" before the host is built. Spec 045 removed most of
+        // the monolith's DB usage but AddPooledDbContextFactory survives for
+        // KubernetesWorkDistributor / KubernetesJobCleanup, so the settings are still required.
+        // No connection is opened — every store these tests touch is replaced by a fake below,
+        // and Database__SkipStartupInit suppresses the startup probe and migrations.
+        Environment.SetEnvironmentVariable("Database__Host", "localhost");
+        Environment.SetEnvironmentVariable("Database__Port", "5432");
+        Environment.SetEnvironmentVariable("Database__Username", "test");
+        Environment.SetEnvironmentVariable("Database__Password", "test");
+        Environment.SetEnvironmentVariable("Database__Name", "test_db");
+        Environment.SetEnvironmentVariable("Database__SslMode", "Disable");
+        Environment.SetEnvironmentVariable("Database__MigrateOnStartup", "false");
+        Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
+
+        // Spec 045: the monolith fast-fails at startup without a Pipeline API base URL.
+        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", E2ETestDefaults.UnreachableApiBaseUrl);
 
         // Set environment to Development so static web assets are resolved correctly.
         builder.UseEnvironment("Development");
@@ -63,6 +87,11 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
             // Seed default test data
             ConfigStore.SeedDefaults();
 
+            // Replace the Npgsql context with EF InMemory. The stores below are all faked, but
+            // the monolith still resolves IDbContextFactory<PipelineDbContext> at startup for
+            // KubernetesWorkDistributor / KubernetesJobCleanup and would open a real connection.
+            E2EInMemoryDatabase.Install(services, _dbName);
+
             // Replace external provider interfaces with fakes
             ReplaceService<IConfigurationStore>(services, ConfigStore);
             ReplaceService<IPipelineConfigStore>(services, ConfigStore);
@@ -71,6 +100,21 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
             ReplaceService<IQualityGateConfigStore>(services, ConfigStore);
             ReplaceService<IReviewerConfigStore>(services, ConfigStore);
             ReplaceService<IProjectStore>(services, ConfigStore);
+
+            // Spec 045: the UI reads and writes config through the Pipeline API client, not the
+            // store. Back the client with the same in-memory store so seeding still reaches the UI
+            // (and so startup does not retry against an unreachable API for ten minutes).
+            ReplaceService<IPipelineApiConfigClient>(services, ApiConfigClient);
+
+            // JobTemplateStore loads /app/config/job-templates.yaml, which only exists in-cluster
+            // (mounted from the job-templates ConfigMap). ChatJobDispatcher depends on it.
+            services.RemoveAll<JobTemplateStore>();
+            services.AddSingleton(JobTemplateStore.LoadFromYaml("""
+                - labels: "kiro,dotnet"
+                  image: "chemsorly/coding-agent:kiro-dotnet10-latest"
+                  providerType: "kiro"
+                  maxConcurrent: 1
+                """));
             ReplaceService<IProviderFactory>(services, FakeProviders);
             ReplaceService<IQualityGateValidator>(services, QualityGateValidator);
             ReplaceService<IPipelineRunHistoryService>(services, HistoryService);

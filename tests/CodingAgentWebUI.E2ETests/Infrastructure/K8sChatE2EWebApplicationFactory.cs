@@ -29,7 +29,7 @@ namespace CodingAgentWebUI.E2ETests.Infrastructure;
 /// Combines K8s-mode wiring with real <see cref="ChatJobDispatcher"/> backed by
 /// <see cref="FakeKubernetesJobClient"/>.
 /// </summary>
-public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<Program>
+public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<WebUiHostMarker>
 {
     public const string TestApiKey = "k8s-chat-e2e-test-key";
 
@@ -38,6 +38,10 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<Prog
     // Shared fakes
     public InMemoryConfigurationStore ConfigStore { get; } = new();
     public FakeProviderFactory FakeProviders { get; } = new();
+
+    /// <summary>Pipeline API config client backed by <see cref="ConfigStore"/>.</summary>
+    public InMemoryPipelineApiConfigClient ApiConfigClient => _apiConfigClient ??= new InMemoryPipelineApiConfigClient(ConfigStore);
+    private InMemoryPipelineApiConfigClient? _apiConfigClient;
     public FakeKubernetesJobClient FakeK8sClient { get; } = new();
 
     /// <summary>The real <see cref="ChatJobDispatcher"/> instance. Access after InitializeAsync.</summary>
@@ -84,6 +88,8 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<Prog
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("WorkDistribution__Mode", "SignalR");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", TestApiKey);
+        // Spec 045: the monolith fast-fails at startup without a Pipeline API base URL.
+        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", E2ETestDefaults.UnreachableApiBaseUrl);
 
         builder.UseEnvironment("Development");
 
@@ -99,6 +105,11 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<Prog
             ReplaceService<IQualityGateConfigStore>(services, ConfigStore);
             ReplaceService<IReviewerConfigStore>(services, ConfigStore);
             ReplaceService<IProjectStore>(services, ConfigStore);
+
+            // Spec 045: the UI reads and writes config through the Pipeline API client, not the
+            // store. Back the client with the same in-memory store so seeding still reaches the UI
+            // (and so startup does not retry against an unreachable API for ten minutes).
+            ReplaceService<IPipelineApiConfigClient>(services, ApiConfigClient);
             ReplaceService<IProviderFactory>(services, FakeProviders);
 
             // ── InMemory DB ────────────────────────────────────────────────
