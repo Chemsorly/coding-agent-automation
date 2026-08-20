@@ -56,7 +56,9 @@ public static class PipelineRunFactory
                 ReviewPrTargetBranch = request.ReviewPrTargetBranch ?? string.Empty,
                 ReviewPrUrl = request.LinkedPullRequest?.Url,
                 ReviewPrDescription = request.ReviewPrDescription,
-                ReviewPrAuthor = request.ReviewPrAuthor
+                ReviewPrAuthor = request.ReviewPrAuthor,
+                AgentProviderConfigId = request.AgentProviderConfigId,
+                BrainProviderConfigId = request.BrainProviderConfigId
             }),
             PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
             {
@@ -68,7 +70,9 @@ public static class PipelineRunFactory
                 RunType = request.RunType,
                 InitiatedBy = request.InitiatedBy ?? "rehydrated",
                 AgentId = agentId,
-                StartedAt = startedAt
+                StartedAt = startedAt,
+                AgentProviderConfigId = request.AgentProviderConfigId,
+                BrainProviderConfigId = request.BrainProviderConfigId
             }),
             _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
             {
@@ -81,7 +85,9 @@ public static class PipelineRunFactory
                 // label for all callers, or whether each dispatch path should pass its own fallback.
                 InitiatedBy = request.InitiatedBy ?? "rehydrated",
                 AgentId = agentId,
-                StartedAt = startedAt
+                StartedAt = startedAt,
+                AgentProviderConfigId = request.AgentProviderConfigId,
+                BrainProviderConfigId = request.BrainProviderConfigId
             })
         };
 

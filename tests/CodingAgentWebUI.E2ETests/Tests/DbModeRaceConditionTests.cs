@@ -318,9 +318,20 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase, IClassFixtur
         // Verify WorkItem is already Failed
         await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(5));
 
-        // Act: agent (unaware of the failure) tries to report completion
-        // This should NOT crash the server — it should be a no-op or graceful rejection
-        await agent.AcceptAndCompleteJobAsync(assignment.JobId);
+        // Act: agent (unaware of the failure) tries to report completion.
+        // A HubException here is the graceful rejection, not a failure of the test: FailRunAsync
+        // clears the agent's ActiveJobId, so AgentAuthorizationFilter correctly refuses a call for
+        // a job the agent no longer owns. What must not happen is the hub dying — asserted below
+        // by connecting a second agent. Letting the exception escape would make this test fail on
+        // the authorization gate working.
+        try
+        {
+            await agent.AcceptAndCompleteJobAsync(assignment.JobId);
+        }
+        catch (Microsoft.AspNetCore.SignalR.HubException)
+        {
+            // Expected: the job is no longer assigned to this agent.
+        }
 
         // Assert: no crash — server is still responsive
         // Verify by connecting another agent (proves hub is alive)

@@ -283,6 +283,17 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
         services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
 
+        // ── IConsolidationJobPreparationService ────────────────────────────
+        // Required by ConsolidationWorkItemDispatchService to resolve provider configs
+        // and build the consolidation job payload.
+        services.AddSingleton<IConsolidationJobPreparationService>(sp =>
+            new ConsolidationJobPreparationService(
+                sp.GetRequiredService<IProviderConfigStore>(),
+                sp.GetRequiredService<IProjectStore>(),
+                sp.GetRequiredService<ITokenVendingService>(),
+                Log.Logger,
+                sp.GetRequiredService<IAgentProfileStore>()));
+
         // ── IKubernetesJobClient ─────────────────────────────────────────────
         // Required by DispatchLifecycleService and ModelFetchJobService.
         // IKubernetes is already registered above; only the job client wrapper is missing.

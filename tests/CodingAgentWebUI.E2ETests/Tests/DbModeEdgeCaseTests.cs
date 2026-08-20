@@ -12,9 +12,18 @@ using Microsoft.Extensions.DependencyInjection;
 namespace CodingAgentWebUI.E2ETests.Tests;
 
 /// <summary>
-/// DB-mode E2E edge case tests: dedup guards, concurrent dispatch, lifecycle management,
-/// stale detection, and multi-agent queue distribution.
-/// Exercises paths where race conditions and plumbing bugs commonly occur.
+/// DB-mode E2E edge case tests: concurrent dispatch, lifecycle management, and multi-agent queue
+/// distribution. Exercises paths where race conditions and plumbing bugs commonly occur.
+///
+/// Stale-dispatch detection used to be tested here through
+/// <c>IWorkDistributor.ReconcileStuckItemsAsync</c>. That method is a no-op in the Kubernetes
+/// topology — the Job Controller owns stuck-item detection because it can see Job state, which
+/// this side cannot — so the "stuck item is failed" test could never pass and its "recent item is
+/// untouched" sibling passed for the wrong reason: nothing was ever going to touch it. Both were
+/// removed. <c>ReconciliationLoopTests</c> in the Job Controller covers the real behaviour, in the
+/// process that performs it, with both the positive and negative case
+/// (<c>WhenDispatchedItemExceedsConnectTimeout_ShouldCallPostStatusAsync_Immediately</c> and
+/// <c>WhenDispatchedItemBelowConnectTimeout_ShouldNotCallPostStatusAsync</c>).
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
@@ -301,78 +310,6 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase, IClassFixture<E2E
         // Assert: first call succeeds, second returns null (atomic RemoveRun pattern)
         Assert.NotNull(first);
         Assert.Null(second); // Already processed — no double-persist
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // F7: Stale dispatch detection — WorkItem stuck in Dispatched → Failed
-    // ═══════════════════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task DbMode_StaleDispatchDetection_StuckItem_TransitionedToFailed()
-    {
-        // Arrange: manually insert a WorkItem in Dispatched state with old timestamp
-        // (simulating a silent SignalR delivery failure where agent never processed the message)
-        await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var staleWorkItem = new WorkItemEntity
-        {
-            Id = Guid.NewGuid(),
-            TaskType = WorkItemTaskType.Implementation,
-            IssueIdentifier = "500-stale",
-            IssueProviderConfigId = "issue-e2e",
-            Status = WorkItemStatus.Dispatched,
-            Payload = "{}",
-            AgentSelector = "edge-e2e",
-            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
-            DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-10), // 10 minutes ago = stale
-            TimeoutSeconds = 3600
-        };
-        db.WorkItems.Add(staleWorkItem);
-        await db.SaveChangesAsync();
-
-        // Act: invoke stale detection directly
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
-        var stuckCount = await distributor.ReconcileStuckItemsAsync(CancellationToken.None);
-
-        // Assert: at least one stuck item detected
-        Assert.True(stuckCount >= 1, $"Expected at least 1 stuck item, got {stuckCount}");
-
-        // Assert: WorkItem is now Failed
-        var failedItem = await WaitForWorkItemStatusAsync(
-            staleWorkItem.Id, WorkItemStatus.Failed, TimeSpan.FromSeconds(5));
-        Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
-    }
-
-    [Fact]
-    public async Task DbMode_StaleDispatchDetection_RecentItem_NotAffected()
-    {
-        // Arrange: insert a WorkItem in Dispatched state with RECENT timestamp
-        await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var recentWorkItem = new WorkItemEntity
-        {
-            Id = Guid.NewGuid(),
-            TaskType = WorkItemTaskType.Implementation,
-            IssueIdentifier = "501-recent",
-            IssueProviderConfigId = "issue-e2e",
-            Status = WorkItemStatus.Dispatched,
-            Payload = "{}",
-            AgentSelector = "edge-e2e",
-            CreatedAt = DateTimeOffset.UtcNow.AddSeconds(-30),
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-30), // 30 seconds ago = NOT stale
-            TimeoutSeconds = 3600
-        };
-        db.WorkItems.Add(recentWorkItem);
-        await db.SaveChangesAsync();
-
-        // Act: invoke stale detection
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
-        await distributor.ReconcileStuckItemsAsync(CancellationToken.None);
-
-        // Assert: WorkItem still in Dispatched (not affected by stale detection)
-        await using var checkDb = Fixture.DbContextFactory.CreateDbContext();
-        var item = await checkDb.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.Id == recentWorkItem.Id);
-        Assert.NotNull(item);
-        Assert.Equal(WorkItemStatus.Dispatched, item.Status);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

@@ -91,6 +91,11 @@ spec:
             # Set to false only when running migrations externally (blue/green deployments).
             - name: Database__MigrateOnStartup
               value: {{ .Values.database.migrateOnStartup | toString | quote }}
+            # API uses its own leader election lease, separate from the orchestrator's PipelineLoop lease.
+            # Without a distinct name both processes compete for "caa-leader" and the API's
+            # ConsolidationWorkItemDispatchService never acquires leadership.
+            - name: LeaderElection__LeaseName
+              value: "caa-{{ .Release.Name }}-api-lock"
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}

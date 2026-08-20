@@ -113,7 +113,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // Build the run locally for metadata propagation — NOT registered in any in-memory
         // registry. The API's POST /api/work-items handler calls PipelineRunFactory.CreateFromWorkItem
         // and registers it in the API's IOrchestratorRunService (Req 1a.1 Option A).
-        var run = BuildLocalRun(request);
+        var run = BuildLocalRun(request, agentProviderId);
 
         if (run is null)
         {
@@ -180,7 +180,22 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// Constructs a <see cref="PipelineRun"/> for metadata propagation only — it is NOT registered
     /// in any in-memory run registry. The API registers the run when the WorkItem is persisted.
     /// </summary>
-    private static PipelineRun? BuildLocalRun(OrchestratorPreparationRequest request)
+    /// <summary>
+    /// Builds the run whose metadata is serialised into the WorkItem payload.
+    ///
+    /// <paramref name="agentProviderId"/> comes from the resolved profile rather than the request,
+    /// which is why it is a separate parameter.
+    ///
+    /// <c>BrainProviderConfigId</c> is load-bearing, not decorative: <c>AgentHubFacade</c> reads it
+    /// back out of the payload to answer <c>RequestTokenRefresh(ProviderKind.Brain)</c>, and throws
+    /// <c>HubException</c> when it is absent. Omitting it here — as this method did when it
+    /// replaced <c>DispatchRunCreationService.ResolveAndCreateRunAsync</c>, which did set it —
+    /// left brain sync unable to obtain a token on any dispatch, even though the brain provider's
+    /// config (token included) was resolved and embedded in the same payload.
+    /// </summary>
+    private static PipelineRun? BuildLocalRun(
+        OrchestratorPreparationRequest request,
+        string? agentProviderId)
     {
         var runId = Guid.NewGuid().ToString();
         try
@@ -195,7 +210,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                     IssueProviderConfigId = request.IssueProviderId.Value,
                     RepoProviderConfigId = request.RepoProviderId.Value,
                     RunType = PipelineRunType.Review,
-                    InitiatedBy = request.InitiatedBy
+                    InitiatedBy = request.InitiatedBy,
+                    AgentProviderConfigId = agentProviderId,
+                    BrainProviderConfigId = request.BrainProviderId
                 }),
                 PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition =>
                     PipelineRun.CreateDecomposition(new PipelineRunCreationParams
@@ -206,7 +223,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                         IssueProviderConfigId = request.IssueProviderId.Value,
                         RepoProviderConfigId = request.RepoProviderId.Value,
                         RunType = request.RunType,
-                        InitiatedBy = request.InitiatedBy
+                        InitiatedBy = request.InitiatedBy,
+                        AgentProviderConfigId = agentProviderId,
+                        BrainProviderConfigId = request.BrainProviderId
                     }),
                 _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
                 {
@@ -215,7 +234,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                     IssueTitle = string.Empty,
                     IssueProviderConfigId = request.IssueProviderId.Value,
                     RepoProviderConfigId = request.RepoProviderId.Value,
-                    InitiatedBy = request.InitiatedBy
+                    InitiatedBy = request.InitiatedBy,
+                    AgentProviderConfigId = agentProviderId,
+                    BrainProviderConfigId = request.BrainProviderId
                 })
             };
         }

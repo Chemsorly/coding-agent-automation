@@ -23,6 +23,10 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
+  # Per-job derived-key Secrets (created before agent pod starts, owner-referenced to job)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]
   # Pod status checks (startup failure detection for dispatched agent pods)
   - apiGroups: [""]
     resources: ["pods"]

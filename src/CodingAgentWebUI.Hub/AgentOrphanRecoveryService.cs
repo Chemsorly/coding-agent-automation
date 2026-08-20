@@ -217,6 +217,16 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             if (existingRun.AgentId is null)
                 existingRun.AgentId = agentId.Value;
 
+            // Adopt the metadata only the pod can compute. The model name is resolved agent-side
+            // from the agent provider config delivered with the assignment, and registration is
+            // the sole channel that carries it back — JobCompletionPayload has no ModelName field.
+            // RestorePipelineRun (the path taken when no run exists yet) already does this; this
+            // path did not, and this is the ordinary Kubernetes path, so every run that dispatched
+            // normally reached history with a null ModelName.
+            // ??= so a re-registration cannot blank a value already recorded.
+            existingRun.ModelName ??= activeJob.ModelName;
+            existingRun.RepositoryName ??= activeJob.RepositoryName;
+
             var trackedEntry = _facade.GetByAgentId(agentId);
             if (trackedEntry is not null)
             {

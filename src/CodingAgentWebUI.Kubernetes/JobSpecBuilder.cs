@@ -198,11 +198,11 @@ public static class JobSpecBuilder
 
         envVars.Add(new V1EnvVar
         {
+            // Set AGENT_ID to the Job name (not the pod name, which has a random suffix).
+            // Key derivation uses the job name: HMAC(masterKey, jobName).
+            // Using metadata.name (pod name) would give caa-xxx-<random> which won't match.
             Name = "AGENT_ID",
-            ValueFrom = new V1EnvVarSource
-            {
-                FieldRef = new V1ObjectFieldSelector { FieldPath = "metadata.name" }
-            }
+            Value = ctx.JobName
         });
 
         var otelEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");

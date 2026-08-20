@@ -131,7 +131,15 @@ public sealed class FakeAgentClient : IAsyncDisposable
                 InitiatedBy = assignment.InitiatedBy,
                 CurrentStep = PipelineStep.Created,
                 StartedAt = DateTimeOffset.UtcNow,
-                RunType = assignment.RunType
+                RunType = assignment.RunType,
+                // Mirrors ActiveJobStateFactory.ResolveModelName. The model is not a field on the
+                // assignment — the agent derives it by finding its own provider config among the
+                // ones delivered with the job. Registration is the only channel that carries it
+                // back: JobCompletionPayload has no ModelName, so a run whose agent never reported
+                // it here has a null ModelName in history for good.
+                ModelName = assignment.ProviderConfigs
+                    .FirstOrDefault(c => c.Id == assignment.AgentProviderConfigId)?
+                    .Settings.GetValueOrDefault(ProviderSettingKeys.Model)
             }
         }, ct);
 

@@ -320,6 +320,17 @@ internal sealed class DispatchLifecycleService : IDisposable
         string LogPrefix,
         Func<Guid, string, Task>? OnFailure);
 
+    private static string DeriveAgentKey(string masterKey, string agentId)
+    {
+        var keyBytes = System.Text.Encoding.UTF8.GetBytes(masterKey);
+        var dataBytes = System.Text.Encoding.UTF8.GetBytes(agentId);
+        var hash = System.Security.Cryptography.HMACSHA256.HashData(keyBytes, dataBytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string GenerateDerivedKeySecretName(Guid workItemId)
+        => $"caa-agent-key-{workItemId:N}"[..32];
+
     /// <summary>
     /// Creates a K8s Job via JobSpecBuilder. Handles 409 Conflict (idempotent) and general failures
     /// (releases PVC, fails WorkItem). Returns true if job creation succeeded (or 409), false if the
@@ -332,6 +343,32 @@ internal sealed class DispatchLifecycleService : IDisposable
     {
         try
         {
+            // Derive per-job agent key (HMAC of master key keyed on job name) so the
+            // agent authenticates with a scoped token rather than the master key.
+            // Must use job name as agentId — this is what the pod reports via AGENT_ID
+            // and what AgentApiKeyAuthHandler re-derives on each request.
+            var derivedKey = DeriveAgentKey(_options.AgentMasterApiKey, ctx.JobName);
+            var derivedSecretName = GenerateDerivedKeySecretName(ctx.Item.Id);
+
+            // Create the derived key secret before creating the job so it exists when
+            // the pod starts and reads AGENT_API_KEY from it.
+            // No owner reference yet — we'll add it after the job is created.
+            // If secret already exists (409), that's fine — idempotent.
+            var preSecret = new V1Secret
+            {
+                Metadata = new V1ObjectMeta
+                {
+                    Name = derivedSecretName,
+                    NamespaceProperty = _options.Namespace,
+                },
+                StringData = new Dictionary<string, string>
+                {
+                    ["agent-api-key"] = derivedKey
+                }
+            };
+            try { await _kubeClient.CreateSecretAsync(preSecret, _options.Namespace, ct); }
+            catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.Conflict) { }
+            catch (Exception ex) { Log.Warning(ex, "DispatchLifecycleService: failed to pre-create derived-key Secret {SecretName}", derivedSecretName); }
             var buildCtx = new JobSpecBuilder.BuildContext
             {
                 WorkItemId = ctx.Item.Id,
@@ -339,6 +376,7 @@ internal sealed class DispatchLifecycleService : IDisposable
                 TimeoutSeconds = ctx.Item.TimeoutSeconds,
                 JobName = ctx.JobName,
                 ClaimedPvc = ctx.ClaimedPvc,
+                DerivedKeySecretName = derivedSecretName,
                 OrchestratorUrl = _options.OrchestratorUrl,
                 AgentApiKeySecretName = _options.AgentApiKeySecretName,
                 AgentServiceAccountName = _options.AgentServiceAccountName,
