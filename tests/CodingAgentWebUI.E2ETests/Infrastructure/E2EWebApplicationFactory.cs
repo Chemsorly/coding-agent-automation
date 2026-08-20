@@ -106,6 +106,10 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // (and so startup does not retry against an unreachable API for ten minutes).
             ReplaceService<IPipelineApiConfigClient>(services, ApiConfigClient);
 
+            // LeaderElectionService is a hosted service taking IKubernetes; without a stub the host
+            // dies at startup wherever no kubeconfig exists.
+            E2ETestDefaults.InstallKubernetesStub(services);
+
             // JobTemplateStore loads /app/config/job-templates.yaml, which only exists in-cluster
             // (mounted from the job-templates ConfigMap). ChatJobDispatcher depends on it.
             services.RemoveAll<JobTemplateStore>();

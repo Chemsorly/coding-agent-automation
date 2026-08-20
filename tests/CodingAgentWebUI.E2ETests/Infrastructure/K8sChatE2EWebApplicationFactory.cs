@@ -110,6 +110,10 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<WebU
             // store. Back the client with the same in-memory store so seeding still reaches the UI
             // (and so startup does not retry against an unreachable API for ten minutes).
             ReplaceService<IPipelineApiConfigClient>(services, ApiConfigClient);
+
+            // LeaderElectionService is a hosted service taking IKubernetes; without a stub the host
+            // dies at startup wherever no kubeconfig exists.
+            E2ETestDefaults.InstallKubernetesStub(services);
             ReplaceService<IProviderFactory>(services, FakeProviders);
 
             // ── InMemory DB ────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+using k8s;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
@@ -109,6 +110,12 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             // Register InMemory EF Core factory
             services.AddSingleton<IDbContextFactory<PipelineDbContext>>(
                 new InMemoryDbContextFactory(_dbName));
+            // IKubernetes is built from in-cluster config or ~/.kube/config and throws "No usable
+            // Kubernetes configuration" when neither resolves. LeaderElectionService is a hosted service
+            // that takes it, so without this stub these tests only pass on a machine that happens to have
+            // a kubeconfig — they fail in every CI container.
+            services.RemoveAll<IKubernetes>();
+            services.AddSingleton(new Mock<IKubernetes>().Object);
 
             // Replace the distributed lock provider with InProcess (real one uses Postgres advisory locks)
             services.RemoveAll<IDistributedLockProvider>();

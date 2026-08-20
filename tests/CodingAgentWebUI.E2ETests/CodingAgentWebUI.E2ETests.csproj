@@ -5,14 +5,18 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <!-- Must stay true. With IsTestProject=false the VSTest target is a no-op, so
-         `dotnet test tests/CodingAgentWebUI.E2ETests/` (exactly what .github/workflows/e2e-tests.yml
-         runs) exits 0 having discovered zero tests, and the job reports green with no coverage.
-         Every test here carries [Trait("Category", "E2E")], and ci.yml's solution-level run filters
-         on `Category!=E2E`, so these stay out of the unit-test job without needing this flag.
-         Playwright browsers come from the container image in the E2E workflow; a local
-         solution-wide `dotnet test` should apply the same filter to skip them. -->
-    <IsTestProject>true</IsTestProject>
+    <!-- Deliberately false, and the E2E job must NOT use `dotnet test` on this project.
+         Two constraints pull against each other:
+           - true  ⇒ ci.yml's solution-wide `dotnet test`, which filters on `Category!=E2E`,
+                     includes this project, matches zero tests here, and fails the whole run
+                     (exit 1) even though every other project passes.
+           - false ⇒ the VSTest target is a no-op, so `dotnet test` on this project alone exits 0
+                     having discovered nothing — which is how the E2E job reported green while
+                     running no tests at all.
+         The resolution is to keep this false and drive the suite through `dotnet vstest` against
+         the built DLL, after building with -p:IsTestProject=true so the test host and adapters
+         are copied. Both e2e-tests.yml and dockerfiles/e2e-tests.Dockerfile do exactly that. -->
+    <IsTestProject>false</IsTestProject>
   </PropertyGroup>
 
   <ItemGroup>

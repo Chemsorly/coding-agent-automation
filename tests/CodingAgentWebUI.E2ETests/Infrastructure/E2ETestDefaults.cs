@@ -1,3 +1,8 @@
+using k8s;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Moq;
+
 namespace CodingAgentWebUI.E2ETests.Infrastructure;
 
 /// <summary>
@@ -53,6 +58,22 @@ internal static class E2ETestDefaults
         {
             Environment.SetEnvironmentVariable(key, null);
         }
+    }
+
+    /// <summary>
+    /// Replaces the real Kubernetes client with a stub.
+    ///
+    /// <c>RegisterConsolidationServices</c> builds a <c>k8s.Kubernetes</c> from in-cluster config
+    /// or <c>~/.kube/config</c> and throws "No usable Kubernetes configuration" when neither
+    /// resolves. <c>LeaderElectionService</c> is a hosted service that takes it, so the monolith
+    /// resolves it during startup and the whole harness dies wherever no kubeconfig exists —
+    /// which is every CI container, and is why this only shows up outside a developer machine
+    /// with Docker Desktop installed.
+    /// </summary>
+    public static void InstallKubernetesStub(IServiceCollection services)
+    {
+        services.RemoveAll<IKubernetes>();
+        services.AddSingleton(new Mock<IKubernetes>().Object);
     }
 
     /// <summary>

@@ -12,6 +12,12 @@
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.400 AS build
 WORKDIR /src
 
+# Restore into a world-readable location instead of the build user's ~/.nuget. The generated
+# staticwebassets.runtime.json records absolute package paths, and the tests run as a non-root
+# user further down — with the default cache the Blazor host dies on every test with
+# DirectoryNotFoundException: /root/.nuget/packages/…/_framework/.
+ENV NUGET_PACKAGES=/nuget
+
 # Copy solution and project files for restore layer caching
 COPY CodingAgentAutomation.sln ./
 COPY Directory.Build.props ./
@@ -39,8 +45,15 @@ RUN dotnet restore tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csp
 # NOTE: Do NOT use --no-restore here. The prior restore step doesn't fully resolve
 # Blazor framework static web assets (blazor.web.js). Letting build do its own restore
 # ensures the staticwebassets.runtime.json manifest includes the NuGet _framework/ path.
-COPY . . # NOSONAR - COPY . is required to build the full solution; .dockerignore explicitly excludes sensitive files (.env, .git, .kiro, config/, *credentials*)
-RUN dotnet build tests/CodingAgentWebUI.E2ETests/ -c Debug
+# The comment must sit on its own line. BuildKit does not strip a trailing comment from an
+# instruction — `COPY . . # NOSONAR …` parses the `#` and every word after it as further source
+# paths and fails with `lstat /#: no such file or directory`. That broke `docker build` for this
+# file, which is the documented way to run the E2E suite, so the image stopped being rebuilt.
+# NOSONAR - COPY . is required to build the full solution; .dockerignore explicitly excludes sensitive files (.env, .git, .kiro, config/, *credentials*)
+COPY . .
+# -p:IsTestProject=true so the test host and adapters land in the output; the csproj keeps it
+# false to stay out of ci.yml's solution-wide `dotnet test`. See the csproj for why.
+RUN dotnet build tests/CodingAgentWebUI.E2ETests/ -c Debug -p:IsTestProject=true
 
 # Ensure the test host runs in Development mode so static web assets
 # (including _framework/blazor.web.js from NuGet packages) are resolved correctly.
@@ -65,11 +78,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends libvips42 wget 
 # then create a non-root user for running tests.
 # TestResults directory is mounted as a volume; ensure the non-root user can write to it.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# groupadd/useradd rather than addgroup/adduser: the latter are Debian wrapper scripts from the
+# `adduser` package, which the .NET 10 SDK image no longer ships. groupadd and useradd come from
+# `passwd` and are always present.
+#
+# --create-home is not optional. `adduser --system` made a home directory implicitly; useradd does
+# not, and the .NET CLI refuses to start without one ("The user's home directory could not be
+# determined"). USER does not set $HOME either, so it is set explicitly below.
 RUN pwsh tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium \
-    && addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
+    && groupadd --system appgroup \
+    && useradd --system --gid appgroup --create-home --home-dir /home/appuser appuser \
     && mkdir -p /src/TestResults && chown -R appuser:appgroup /src/TestResults \
-    && chown -R appuser:appgroup /ms-playwright
+    && chown -R appuser:appgroup /ms-playwright \
+    && chmod -R a+rX /nuget
 USER appuser
+ENV HOME=/home/appuser
+ENV DOTNET_CLI_HOME=/home/appuser
 
 # Run E2E tests (use --ipc=host when running the container for Chromium stability).
 # 'dotnet vstest' against the built DLL, so the run never re-enters MSBuild inside the container.

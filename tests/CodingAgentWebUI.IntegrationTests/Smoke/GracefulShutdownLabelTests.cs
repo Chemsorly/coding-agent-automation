@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using k8s;
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
@@ -112,6 +113,12 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                     new InMemoryDbContextFactory($"GracefulShutdown-1-{Guid.NewGuid()}"));
 
                 // Replace distributed lock and database health
+            // IKubernetes is built from in-cluster config or ~/.kube/config and throws "No usable
+                // Kubernetes configuration" when neither resolves. LeaderElectionService is a hosted service
+                // that takes it, so without this stub these tests only pass on a machine that happens to have
+                // a kubeconfig — they fail in every CI container.
+                services.RemoveAll<IKubernetes>();
+                services.AddSingleton(new Mock<IKubernetes>().Object);
                 services.RemoveAll<IDistributedLockProvider>();
                 services.AddDistributedLockProvider(null);
                 services.RemoveAll<DatabaseHealthState>();
@@ -234,6 +241,12 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                     new InMemoryDbContextFactory($"GracefulShutdown-2-{Guid.NewGuid()}"));
 
                 // Replace distributed lock and database health
+            // IKubernetes is built from in-cluster config or ~/.kube/config and throws "No usable
+                // Kubernetes configuration" when neither resolves. LeaderElectionService is a hosted service
+                // that takes it, so without this stub these tests only pass on a machine that happens to have
+                // a kubeconfig — they fail in every CI container.
+                services.RemoveAll<IKubernetes>();
+                services.AddSingleton(new Mock<IKubernetes>().Object);
                 services.RemoveAll<IDistributedLockProvider>();
                 services.AddDistributedLockProvider(null);
                 services.RemoveAll<DatabaseHealthState>();
@@ -311,6 +324,12 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                     new InMemoryDbContextFactory($"GracefulShutdown-3-{Guid.NewGuid()}"));
 
                 // Replace distributed lock and database health
+            // IKubernetes is built from in-cluster config or ~/.kube/config and throws "No usable
+                // Kubernetes configuration" when neither resolves. LeaderElectionService is a hosted service
+                // that takes it, so without this stub these tests only pass on a machine that happens to have
+                // a kubeconfig — they fail in every CI container.
+                services.RemoveAll<IKubernetes>();
+                services.AddSingleton(new Mock<IKubernetes>().Object);
                 services.RemoveAll<IDistributedLockProvider>();
                 services.AddDistributedLockProvider(null);
                 services.RemoveAll<DatabaseHealthState>();
@@ -412,6 +431,12 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                     new InMemoryDbContextFactory($"GracefulShutdown-4-{Guid.NewGuid()}"));
 
                 // Replace distributed lock and database health
+            // IKubernetes is built from in-cluster config or ~/.kube/config and throws "No usable
+                // Kubernetes configuration" when neither resolves. LeaderElectionService is a hosted service
+                // that takes it, so without this stub these tests only pass on a machine that happens to have
+                // a kubeconfig — they fail in every CI container.
+                services.RemoveAll<IKubernetes>();
+                services.AddSingleton(new Mock<IKubernetes>().Object);
                 services.RemoveAll<IDistributedLockProvider>();
                 services.AddDistributedLockProvider(null);
                 services.RemoveAll<DatabaseHealthState>();
