@@ -58,7 +58,7 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
         // Arrange
         await SeedTestDataAsync();
         await using var agent = new FakeAgentClient("db-agent-1", "db-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch issue through the full orchestration path
         var result = await DispatchIssueAsync("42");
@@ -100,7 +100,7 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
         // Arrange
         await SeedTestDataAsync("43", "Failing issue");
         await using var agent = new FakeAgentClient("db-agent-fail", "db-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch
         var result = await DispatchIssueAsync("43");
@@ -138,7 +138,7 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
 
         // NOW connect a FakeAgentClient
         await using var agent = new FakeAgentClient("db-agent-drain", "db-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Wait for PendingWorkItemDrainService to pick up the pending item
         // (drain interval is 5 seconds by default, but also wakes on agent signal)
@@ -170,7 +170,7 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
 
         // Connect agent and dispatch
         var agent = new FakeAgentClient("db-agent-disconnect", "db-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("45");
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
@@ -236,7 +236,7 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
         }, CancellationToken.None);
 
         await using var agent = new FakeAgentClient("db-agent-secrets", "db-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch with the secrets project
         var result = await DispatchIssueAsync("46", projectId: "project-secrets-e2e");
@@ -289,8 +289,8 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
         // Connect two agents
         await using var agent1 = new FakeAgentClient("db-multi-1", "db-e2e");
         await using var agent2 = new FakeAgentClient("db-multi-2", "db-e2e");
-        await agent1.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await agent2.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent1.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await agent2.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch both issues
         var result1 = await DispatchIssueAsync("47");
@@ -372,7 +372,7 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
 
         // Connect agent
         await using var agent = new FakeAgentClient("db-agent-token", "db-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch issue
         var result = await DispatchIssueAsync("50");
@@ -453,7 +453,7 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
         }, CancellationToken.None);
 
         await using var agent = new FakeAgentClient("db-agent-brain", "db-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch
         var result = await DispatchIssueAsync("51");

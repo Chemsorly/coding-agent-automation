@@ -72,7 +72,7 @@ public sealed class CrossModeParityTests : DbModeE2ETestBase, IClassFixture<DbMo
         // Arrange (same seeding as Legacy happy path)
         await SeedStandardTestDataAsync("P100", "Cross-mode happy path");
         await using var agent = new FakeAgentClient("parity-agent-1", "parity");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch
         var result = await DispatchIssueAsync("P100");
@@ -107,7 +107,7 @@ public sealed class CrossModeParityTests : DbModeE2ETestBase, IClassFixture<DbMo
     {
         await SeedStandardTestDataAsync("P101");
         await using var agent = new FakeAgentClient("parity-dedup-agent", "parity");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // First dispatch succeeds
         var r1 = await DispatchIssueAsync("P101");
@@ -128,7 +128,7 @@ public sealed class CrossModeParityTests : DbModeE2ETestBase, IClassFixture<DbMo
     {
         await SeedStandardTestDataAsync("P102");
         await using var agent = new FakeAgentClient("parity-cancel-agent", "parity");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("P102");
         Assert.True(result.Success);
@@ -164,7 +164,7 @@ public sealed class CrossModeParityTests : DbModeE2ETestBase, IClassFixture<DbMo
     {
         await SeedStandardTestDataAsync("P103");
         await using var agent = new FakeAgentClient("parity-fail-agent", "parity");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("P103");
         Assert.True(result.Success);
@@ -203,7 +203,7 @@ public sealed class CrossModeParityTests : DbModeE2ETestBase, IClassFixture<DbMo
     {
         await SeedStandardTestDataAsync("P104", "Field completeness check");
         await using var agent = new FakeAgentClient("parity-fields-agent", "parity");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("P104");
         Assert.True(result.Success);
@@ -233,7 +233,7 @@ public sealed class CrossModeParityTests : DbModeE2ETestBase, IClassFixture<DbMo
     {
         await SeedStandardTestDataAsync("P105");
         await using var agent = new FakeAgentClient("parity-state-agent", "parity");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var registry = Fixture.Factory.Services.GetRequiredService<Orchestration.Registry.AgentRegistryService>();
 
@@ -272,7 +272,7 @@ public sealed class CrossModeParityTests : DbModeE2ETestBase, IClassFixture<DbMo
         // (unlike K8s mode where it always starts as Pending)
         await SeedStandardTestDataAsync("P106");
         await using var agent = new FakeAgentClient("parity-signalr-agent", "parity");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("P106");
         Assert.True(result.Success);

@@ -60,7 +60,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
 
         const string agentId = "integrity-agent-1";
         await using var agent = new FakeAgentClient(agentId, "integrity-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch and complete
         // TODO: [WARNING] CancellationToken not propagated to DispatchIssueAsync. If the server
@@ -194,7 +194,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
 
         const string agentId = "integrity-failed-agent-1";
         await using var agent = new FakeAgentClient(agentId, "integrity-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch and complete with Failed step
         var result = await DispatchIssueAsync("43");

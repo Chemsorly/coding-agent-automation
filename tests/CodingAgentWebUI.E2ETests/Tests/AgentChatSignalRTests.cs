@@ -41,7 +41,7 @@ public sealed class AgentChatSignalRTests : E2ETestBase, IClassFixture<E2EFixtur
     public async Task AgentChat_IdleAgentConnects_AppearsInDropdown()
     {
         await using var fakeAgent = new FakeAgentClient("chat-ui-agent-1", "kiro");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var chatPage = new AgentChatPage(Page, BaseUrl);
         await chatPage.NavigateAsync();

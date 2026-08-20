@@ -54,7 +54,7 @@ public sealed class AgentMonitoringUiTests : E2ETestBase, IClassFixture<E2EFixtu
     {
         // Connect a fake agent
         await using var agent = new FakeAgentClient("ui-monitor-agent-1", "ui-test");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Navigate to monitoring page
         await Page.GotoAsync($"{BaseUrl}/agent-monitoring");
@@ -76,7 +76,7 @@ public sealed class AgentMonitoringUiTests : E2ETestBase, IClassFixture<E2EFixtu
         // Arrange
         await SeedAndConnectAsync("UI-200", "ui-progress-agent", new[] { "ui-test" });
         await using var agent = new FakeAgentClient("ui-progress-agent", "ui-test");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Navigate to coding page to trigger dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -127,7 +127,7 @@ public sealed class AgentMonitoringUiTests : E2ETestBase, IClassFixture<E2EFixtu
         // Arrange: seed and dispatch
         await SeedAndConnectAsync("UI-300", "ui-history-agent", new[] { "ui-test" });
         await using var agent = new FakeAgentClient("ui-history-agent", "ui-test");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -175,7 +175,7 @@ public sealed class AgentMonitoringUiTests : E2ETestBase, IClassFixture<E2EFixtu
         // Arrange
         await SeedAndConnectAsync("UI-400", "ui-toast-agent", new[] { "ui-test" });
         await using var agent = new FakeAgentClient("ui-toast-agent", "ui-test");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();

@@ -52,7 +52,7 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("decomp-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act
         var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
@@ -139,7 +139,7 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("decomp-agent-2", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act
         var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
@@ -240,7 +240,7 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("decomp-agent-3", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act
         var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();

@@ -122,7 +122,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("consol-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and trigger harness suggestions
         var page = new ConsolidationPage(Page, BaseUrl);
@@ -178,7 +178,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("consol-agent-2", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and trigger harness suggestions
         var page = new ConsolidationPage(Page, BaseUrl);
@@ -418,7 +418,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         await SeedFullTemplateAndProfileAsync("template-refactor-1", "Refactoring Dispatch Template", "profile-refactor-1");
 
         await using var fakeAgent = new FakeAgentClient("consol-agent-refactor-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and trigger refactoring scan
         var page = new ConsolidationPage(Page, BaseUrl);
@@ -457,7 +457,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         await SeedFullTemplateAndProfileAsync("template-refactor-2", "Refactoring Configs Template", "profile-refactor-2");
 
         await using var fakeAgent = new FakeAgentClient("consol-agent-refactor-2", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and trigger refactoring scan
         var page = new ConsolidationPage(Page, BaseUrl);
@@ -499,7 +499,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         await SeedFullTemplateAndProfileAsync("template-harness-configs", "Harness Configs Template", "profile-harness-configs");
 
         await using var fakeAgent = new FakeAgentClient("consol-agent-harness-configs", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and trigger harness suggestions
         var page = new ConsolidationPage(Page, BaseUrl);
@@ -545,7 +545,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         await SeedFullTemplateAndProfileAsync("template-brain-configs", "Brain Configs Template", "profile-brain-configs");
 
         await using var fakeAgent = new FakeAgentClient("consol-agent-brain-configs", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and trigger brain consolidation
         var page = new ConsolidationPage(Page, BaseUrl);

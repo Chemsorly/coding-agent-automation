@@ -28,6 +28,20 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
 
     private readonly string _dbName = $"E2E-{Guid.NewGuid()}";
 
+
+
+    /// <summary>EF InMemory database name, shared with the API host in the two-service harness.</summary>
+
+
+    public string DbName => _dbName;
+
+
+
+    /// <summary>Base URL of the Pipeline API host, set by the fixture before this host builds.</summary>
+
+
+    public string? ApiBaseUrl { get; set; }
+
     // Shared fake instances — accessible by tests for seeding and assertions
     public CodingAgentWebUI.E2ETests.Fakes.InMemoryConfigurationStore ConfigStore { get; } = new();
     public FakeProviderFactory FakeProviders { get; } = new();
@@ -77,7 +91,8 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
 
         // Spec 045: the monolith fast-fails at startup without a Pipeline API base URL.
-        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", E2ETestDefaults.UnreachableApiBaseUrl);
+        Environment.SetEnvironmentVariable(
+            "PipelineApi__BaseUrl", ApiBaseUrl ?? E2ETestDefaults.UnreachableApiBaseUrl);
 
         // Set environment to Development so static web assets are resolved correctly.
         builder.UseEnvironment("Development");

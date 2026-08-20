@@ -16,6 +16,16 @@ public sealed class E2EFixture : IAsyncLifetime
     public string ServerAddress => Factory.ServerAddress;
     public string ApiKey => E2EWebApplicationFactory.TestApiKey;
 
+    private ApiE2EWebApplicationFactory? _apiFactory;
+
+    /// <summary>
+    /// Pipeline API host. Spec 044 made it the sole host of <c>/hubs/agent</c>, so fake agents
+    /// connect here; the Blazor app at <see cref="ServerAddress"/> no longer maps the hub and
+    /// answers negotiate with 405. Browser navigation still uses <see cref="ServerAddress"/>.
+    /// </summary>
+    public string AgentHubUrl => _apiFactory?.ServerAddress
+        ?? throw new InvalidOperationException("API host not started");
+
     // Convenience accessors for fakes
     public InMemoryConfigurationStore ConfigStore => Factory.ConfigStore;
     public FakeProviderFactory FakeProviders => Factory.FakeProviders;
@@ -26,6 +36,13 @@ public sealed class E2EFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        // The API must be listening before the Blazor host builds: the monolith reads
+        // PipelineApi:BaseUrl during configuration and fast-fails without it.
+        _apiFactory = new ApiE2EWebApplicationFactory(
+            Factory.DbName, Factory.ConfigStore, Factory.HistoryService, ApiKey);
+        using (var apiClient = _apiFactory.CreateClient()) { }
+        Factory.ApiBaseUrl = _apiFactory.ServerAddress;
+
         // Start the server (UseKestrel was called in the factory constructor)
         // Creating a client triggers the host to start
         using var _ = Factory.CreateClient();
@@ -44,5 +61,7 @@ public sealed class E2EFixture : IAsyncLifetime
             await Browser.DisposeAsync();
         _playwright?.Dispose();
         await Factory.DisposeAsync();
+        if (_apiFactory is not null)
+            await _apiFactory.DisposeAsync();
     }
 }

@@ -50,7 +50,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         });
 
         await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -114,7 +114,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         });
 
         await using var fakeAgent = new FakeAgentClient("modal-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch and get the run active
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -185,7 +185,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         });
 
         await using var fakeAgent = new FakeAgentClient("escape-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -253,7 +253,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         });
 
         await using var fakeAgent = new FakeAgentClient("status-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch and accept job
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -353,7 +353,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         // Now connect an agent and verify the job moves to Active Runs
         await using var fakeAgent = new FakeAgentClient("late-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Wait for the agent to receive and accept the job
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));

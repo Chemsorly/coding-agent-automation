@@ -754,7 +754,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         // Arrange: connect but do NOT register (old buggy behavior)
         // This test documents the failure mode that was happening in production
         await using var agent = new FakeAgentClient("caa-k8s-noreg-agent", "kiro");
-        await agent.ConnectAsync(Fixture.ServerAddress, K8sModeE2EWebApplicationFactory.TestApiKey);
+        await agent.ConnectAsync(Fixture.AgentHubUrl, K8sModeE2EWebApplicationFactory.TestApiKey);
 
         // Act & Assert: RequestTokenRefresh should fail because agent has no ActiveJobId
         // The [RequiresActiveJob] filter rejects because ActiveJobId (null) != jobId

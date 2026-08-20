@@ -46,7 +46,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -139,7 +139,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-2", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -228,7 +228,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-3", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -281,7 +281,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-4", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch and complete with feedback
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -402,7 +402,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("feedback-agent-5", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch and complete with comprehensive feedback
         var codingPage = new AgentCodingPage(Page, BaseUrl);

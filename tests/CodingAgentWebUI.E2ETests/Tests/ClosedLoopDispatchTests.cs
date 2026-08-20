@@ -53,7 +53,7 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase, IClassFixture<E2EFixt
 
         // Connect fake agent
         await using var fakeAgent = new FakeAgentClient("loop-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: resolve PipelineLoopService and start it manually
         var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();

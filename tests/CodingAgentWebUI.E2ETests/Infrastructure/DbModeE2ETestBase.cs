@@ -23,6 +23,9 @@ public abstract class DbModeE2ETestBase : IAsyncLifetime
     /// </summary>
     protected string BaseUrl => Fixture.AgentHubUrl;
 
+    /// <summary>Alias for <see cref="BaseUrl"/>; both point at the Pipeline API hub here.</summary>
+    protected string AgentHubUrl => Fixture.AgentHubUrl;
+
     protected DbModeE2ETestBase(DbModeE2EFixture fixture)
     {
         Fixture = fixture;

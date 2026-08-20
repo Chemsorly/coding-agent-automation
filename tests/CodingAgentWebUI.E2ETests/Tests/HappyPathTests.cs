@@ -49,7 +49,7 @@ public sealed class HappyPathTests : E2ETestBase, IClassFixture<E2EFixture>
 
         // Connect a fake agent (must be done before dispatch so it's available)
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and start pipeline
         var codingPage = new AgentCodingPage(Page, BaseUrl);

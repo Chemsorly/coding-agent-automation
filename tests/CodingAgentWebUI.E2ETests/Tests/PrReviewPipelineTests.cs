@@ -51,7 +51,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase, IClassFixture<E2EFixtur
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate, open PR drawer, select PR, dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -149,7 +149,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase, IClassFixture<E2EFixtur
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch PR (first time)
         var codingPage = new AgentCodingPage(Page, BaseUrl);

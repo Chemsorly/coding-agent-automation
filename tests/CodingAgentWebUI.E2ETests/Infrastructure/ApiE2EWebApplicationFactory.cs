@@ -105,6 +105,21 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
             ReplaceSingleton(services, new Mock<IQualityGateValidator>().Object);
             services.RemoveAll<IKubernetesJobClient>();
             services.AddSingleton<IKubernetesJobClient>(new FakeKubernetesJobClient());
+            E2ETestDefaults.InstallKubernetesStub(services);
+
+            // Spec 043 moved JobTemplateStore into the API too. It loads
+            // /app/config/job-templates.yaml, which exists only in-cluster from the ConfigMap.
+            services.RemoveAll<JobTemplateStore>();
+            services.AddSingleton(JobTemplateStore.LoadFromYaml("""
+                - labels: "kiro,dotnet"
+                  image: "chemsorly/coding-agent:kiro-dotnet10-latest"
+                  providerType: "kiro"
+                  maxConcurrent: 5
+                - labels: "kiro,python"
+                  image: "chemsorly/coding-agent:kiro-python-latest"
+                  providerType: "kiro"
+                  maxConcurrent: 5
+                """));
         });
     }
 

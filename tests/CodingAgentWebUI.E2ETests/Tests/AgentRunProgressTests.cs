@@ -51,7 +51,7 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
 
         // Connect a fake agent
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -193,7 +193,7 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
 
         // Connect a fake agent
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);

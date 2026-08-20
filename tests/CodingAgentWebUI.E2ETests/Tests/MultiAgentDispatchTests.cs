@@ -22,7 +22,7 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
     {
         // Arrange: connect a fake agent
         await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate to the monitoring page
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
@@ -80,8 +80,8 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         // Connect two fake agents with the same labels
         await using var agent1 = new FakeAgentClient("multi-agent-1", "e2e");
         await using var agent2 = new FakeAgentClient("multi-agent-2", "e2e");
-        await agent1.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await agent2.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent1.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await agent2.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch first issue from the UI
         var codingPage = new AgentCodingPage(Page, BaseUrl);

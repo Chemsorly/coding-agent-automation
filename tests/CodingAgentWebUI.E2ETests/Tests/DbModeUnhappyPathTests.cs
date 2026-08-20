@@ -80,7 +80,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
 
         // Connect agent and dispatch
         var agent = new FakeAgentClient("unhappy-crash-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1000");
         Assert.True(result.Success, $"Dispatch failed: {result.ErrorMessage}");
@@ -118,7 +118,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1001", "Failing agent issue");
         await using var agent = new FakeAgentClient("unhappy-fail-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1001");
         Assert.True(result.Success);
@@ -166,7 +166,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1002", "QG failure issue");
         await using var agent = new FakeAgentClient("unhappy-qg-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1002");
         Assert.True(result.Success);
@@ -227,7 +227,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
 
         // Connect agent
         var agent = new FakeAgentClient("unhappy-disconnect-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch issue — agent receives assignment
         var result = await DispatchIssueAsync("1003");
@@ -264,7 +264,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1004", "Concurrent dedup issue");
         await using var agent = new FakeAgentClient("unhappy-concurrent-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch the same issue from two concurrent tasks
         var task1 = DispatchIssueAsync("1004");
@@ -302,7 +302,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1005", "Shutdown blocked issue");
         await using var agent = new FakeAgentClient("unhappy-shutdown-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Trigger the shutdown signal (cooperative flag)
         var shutdownSignal = Fixture.Factory.Services.GetRequiredService<IShutdownSignal>();
@@ -348,7 +348,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
 
         // Connect agent and accept job
         var agent = new FakeAgentClient("unhappy-orphan-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1006");
         Assert.True(result.Success);
@@ -372,7 +372,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
 
         // Reconnect with same AgentId (simulating container restart)
         await using var reconnectedAgent = new FakeAgentClient("unhappy-orphan-agent", "unhappy-e2e");
-        await reconnectedAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await reconnectedAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // After reconnection, the agent should be in Busy state with the orphaned job
         // The OrphanRestoredAt flag is set by the hub on re-registration
@@ -410,7 +410,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
 
         // Connect agent and accept job
         var agent = new FakeAgentClient("unhappy-orphan-expire", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1007");
         Assert.True(result.Success);
@@ -444,7 +444,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1008", "No diff issue");
         await using var agent = new FakeAgentClient("unhappy-nodiff-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1008");
         Assert.True(result.Success);
@@ -488,7 +488,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1009", "Cancelled run issue");
         await using var agent = new FakeAgentClient("unhappy-cancel-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1009");
         Assert.True(result.Success);

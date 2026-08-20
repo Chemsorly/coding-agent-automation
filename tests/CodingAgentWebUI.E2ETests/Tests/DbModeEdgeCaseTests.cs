@@ -70,7 +70,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Arrange
         await SeedIssueAndProfileAsync("100");
         await using var agent = new FakeAgentClient("edge-agent-dedup", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: first dispatch succeeds
         var result1 = await DispatchIssueAsync("100");
@@ -90,7 +90,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Arrange
         await SeedIssueAndProfileAsync("101");
         await using var agent = new FakeAgentClient("edge-agent-dedup2", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // First dispatch + complete
         var result1 = await DispatchIssueAsync("101");
@@ -139,7 +139,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
 
         // Now connect agent — this triggers drain service
         await using var agent = new FakeAgentClient("edge-agent-concurrent", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Wait for drain to deliver the pending item
         var assignment1 = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
@@ -183,7 +183,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Arrange
         await SeedIssueAndProfileAsync("300", "Orchestration test issue");
         await using var agent = new FakeAgentClient("edge-agent-orch", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch and capture the full assignment
         var result = await DispatchIssueAsync("300");
@@ -250,7 +250,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Arrange
         await SeedIssueAndProfileAsync("400");
         await using var agent = new FakeAgentClient("edge-agent-lifecycle", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("400");
         Assert.True(result.Success);
@@ -296,7 +296,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Arrange
         await SeedIssueAndProfileAsync("401");
         await using var agent = new FakeAgentClient("edge-agent-double-fail", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("401");
         Assert.True(result.Success);
@@ -410,8 +410,8 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Connect 2 agents — drain service should distribute 2 jobs
         await using var agent1 = new FakeAgentClient("edge-multi-1", "edge-e2e");
         await using var agent2 = new FakeAgentClient("edge-multi-2", "edge-e2e");
-        await agent1.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await agent2.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent1.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await agent2.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Wait for both agents to receive jobs
         var job1 = await agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
@@ -492,8 +492,8 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Connect agents: one with matching label, one without
         await using var matchingAgent = new FakeAgentClient("edge-matching", "special-label");
         await using var nonMatchingAgent = new FakeAgentClient("edge-non-matching", "other-label");
-        await matchingAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await nonMatchingAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await matchingAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await nonMatchingAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch the special-label issue
         var orchService = Fixture.Factory.Services.GetRequiredService<IDispatchOrchestrationService>();

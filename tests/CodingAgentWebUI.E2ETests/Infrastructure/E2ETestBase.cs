@@ -16,6 +16,9 @@ public abstract class E2ETestBase : IAsyncLifetime
     protected IPage Page { get; private set; } = null!;
     protected string BaseUrl => Fixture.ServerAddress;
 
+    /// <summary>Where FakeAgentClient connects: the Pipeline API, which hosts /hubs/agent.</summary>
+    protected string AgentHubUrl => Fixture.AgentHubUrl;
+
     protected E2ETestBase(E2EFixture fixture)
     {
         Fixture = fixture;

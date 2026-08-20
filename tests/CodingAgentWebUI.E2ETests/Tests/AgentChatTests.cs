@@ -19,7 +19,7 @@ public sealed class AgentChatTests : E2ETestBase, IClassFixture<E2EFixture>
     {
         // Arrange: connect a fake agent
         await using var fakeAgent = new FakeAgentClient("chat-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate, select agent, start chat, send prompt
         var chatPage = new AgentChatPage(Page, BaseUrl);
@@ -57,7 +57,7 @@ public sealed class AgentChatTests : E2ETestBase, IClassFixture<E2EFixture>
     {
         // Arrange: connect a fake agent and start a chat
         await using var fakeAgent = new FakeAgentClient("chat-agent-2", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var chatPage = new AgentChatPage(Page, BaseUrl);
         await chatPage.NavigateAsync();

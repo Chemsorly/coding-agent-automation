@@ -72,7 +72,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         // Arrange: seed issue + connect agent so dispatch path is fully exercised
         await SeedIssueAndProfileAsync("2000", "Concurrent dispatch race");
         await using var agent = new FakeAgentClient("race-agent-c1", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: fire 5 concurrent dispatches for the same issue
         var tasks = Enumerable.Range(0, 5)
@@ -116,7 +116,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
 
         await SeedIssueAndProfileAsync("2001", "Completion vs timeout race");
         await using var agent = new FakeAgentClient("race-agent-c4", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("2001");
         Assert.True(result.Success);
@@ -159,7 +159,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         // Arrange
         await SeedIssueAndProfileAsync("2002", "Double finalize race");
         await using var agent = new FakeAgentClient("race-agent-c8", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("2002");
         Assert.True(result.Success);
@@ -212,7 +212,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         {
             var agent = new FakeAgentClient($"race-concurrent-{i}", "race-e2e");
             agents.Add(agent);
-            connectTasks.Add(agent.ConnectAsync(BaseUrl, Fixture.ApiKey));
+            connectTasks.Add(agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey));
         }
 
         await Task.WhenAll(connectTasks);
@@ -266,8 +266,8 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         // Connect 2 agents simultaneously — drain service distributes
         await using var agent1 = new FakeAgentClient("race-fifo-1", "race-e2e");
         await using var agent2 = new FakeAgentClient("race-fifo-2", "race-e2e");
-        await agent1.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await agent2.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent1.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await agent2.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Wait for both to receive jobs
         var job1 = await agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
@@ -299,7 +299,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         await SeedIssueAndProfileAsync("2021", "Drain pickup second");
 
         await using var agent = new FakeAgentClient("race-drain-idle", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch first job — agent receives it immediately
         var r1 = await DispatchIssueAsync("2020");
@@ -335,7 +335,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         // Arrange: dispatch and immediately fail via lifecycle manager (simulating heartbeat timeout)
         await SeedIssueAndProfileAsync("2030", "Already failed issue");
         await using var agent = new FakeAgentClient("race-terminal-agent", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("2030");
         Assert.True(result.Success);
@@ -360,7 +360,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         // Assert: no crash — server is still responsive
         // Verify by connecting another agent (proves hub is alive)
         await using var probeAgent = new FakeAgentClient("race-probe-agent", "race-e2e");
-        await probeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await probeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
         Assert.True(probeAgent.IsConnected);
 
         // Assert: WorkItem remains Failed (not overwritten to Succeeded)
@@ -386,7 +386,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
     {
         // Arrange: run 5 dispatch→complete cycles rapidly on the same agent
         await using var agent = new FakeAgentClient("race-rapid-agent", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         for (var i = 0; i < 5; i++)
         {

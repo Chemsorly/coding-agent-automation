@@ -53,7 +53,7 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
         });
 
         var fakeAgent = new FakeAgentClient("disconnect-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -117,7 +117,7 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
         });
 
         await using var fakeAgent = new FakeAgentClient("cancel-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -161,7 +161,7 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
     {
         // Arrange: connect an agent
         await using var fakeAgent = new FakeAgentClient("force-dc-agent", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Verify agent is registered
         var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();

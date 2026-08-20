@@ -35,6 +35,20 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<WebU
 
     private readonly string _dbName = $"K8sChatE2E-{Guid.NewGuid()}";
 
+
+
+    /// <summary>EF InMemory database name, shared with the API host in the two-service harness.</summary>
+
+
+    public string DbName => _dbName;
+
+
+
+    /// <summary>Base URL of the Pipeline API host, set by the fixture before this host builds.</summary>
+
+
+    public string? ApiBaseUrl { get; set; }
+
     // Shared fakes
     public InMemoryConfigurationStore ConfigStore { get; } = new();
     public FakeProviderFactory FakeProviders { get; } = new();
@@ -89,7 +103,8 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<WebU
         Environment.SetEnvironmentVariable("WorkDistribution__Mode", "SignalR");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", TestApiKey);
         // Spec 045: the monolith fast-fails at startup without a Pipeline API base URL.
-        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", E2ETestDefaults.UnreachableApiBaseUrl);
+        Environment.SetEnvironmentVariable(
+            "PipelineApi__BaseUrl", ApiBaseUrl ?? E2ETestDefaults.UnreachableApiBaseUrl);
 
         builder.UseEnvironment("Development");
 
