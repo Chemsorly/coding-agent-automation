@@ -7,10 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// run creation, provider config preparation). Consumed by <see cref="Services.PipelineLoopService"/>
 /// to build a full <see cref="JobDistributionRequest"/> before calling
 /// <see cref="IWorkDistributor.DistributeAsync"/>.
-/// <para>
-/// Always registered since Spec 041. It used to be absent in the no-DB deployment mode, whose
-/// distributor did this work internally, so callers guarded against null; those guards are gone.
-/// </para>
+/// Always registered. Callers that previously guarded against null can remove those guards.
 /// </summary>
 public interface IDispatchOrchestrationService
 {

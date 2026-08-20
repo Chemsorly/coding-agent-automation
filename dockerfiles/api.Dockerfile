@@ -27,19 +27,23 @@ RUN dotnet restore src/CodingAgentWebUI.Api/CodingAgentWebUI.Api.csproj -a $TARG
 
 # Copy everything else and publish
 COPY . .
-RUN dotnet publish src/CodingAgentWebUI.Api/CodingAgentWebUI.Api.csproj -c Release -a $TARGETARCH --self-contained false -o /app/publish
+RUN dotnet publish src/CodingAgentWebUI.Api/CodingAgentWebUI.Api.csproj \
+    -c Release \
+    -a $TARGETARCH \
+    --self-contained false \
+    -o /app/publish
 
 # Stage 2: Runtime (ASP.NET only — no SDK, no Kiro CLI, no Node.js)
 # The API only serves REST endpoints and WebSocket connections.
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 
-# Install curl for docker-compose/Kubernetes healthcheck
+# Install curl for the docker-compose/Kubernetes healthcheck, and pre-create the app directory
+# with the right ownership before the USER switch. Kept as one layer — these are a single setup
+# step, and two RUN instructions cost two layers for it.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
-    rm -rf /var/lib/apt/lists/*
-
-# Pre-create app directory with correct ownership (before USER switch)
-RUN mkdir -p /app && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /app && \
     chown -R ubuntu:ubuntu /app
 
 USER ubuntu

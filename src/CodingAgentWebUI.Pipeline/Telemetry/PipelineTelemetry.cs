@@ -95,7 +95,7 @@ public static class PipelineTelemetry
     public static readonly Counter<long> LoopCircuitBreakerTrips = Meter.CreateCounter<long>(
         "pipeline.loop.circuit_breaker_trips", "{trip}", "Circuit breaker trip events");
 
-    // Housekeeping metrics (spec 040)
+    // Housekeeping metrics
     public static readonly Counter<long> HousekeepingTriggered = Meter.CreateCounter<long>(
         "pipeline.housekeeping.triggered", "{update}", "Server-side branch updates triggered");
     public static readonly Counter<long> HousekeepingSucceeded = Meter.CreateCounter<long>(

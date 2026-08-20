@@ -12,10 +12,9 @@ namespace CodingAgentWebUI.Api;
 
 /// <summary>
 /// Minimal API endpoints for config CRUD operations.
-/// All endpoints require the OperatorApiKey authorization policy (Req 6.5b).
-/// Secret redaction is applied on all GET endpoints returning ProviderConfig (Req 6.4a).
-/// GET /api/config/export and POST /api/config/import are implemented here per Spec 045
-/// Req 2.4a — guarded by OperatorApiKey (Tier 2, not AgentApiKey, per 042 Req 6.5).
+/// All endpoints require the OperatorApiKey authorization policy.
+/// Secret redaction is applied on all GET endpoints returning ProviderConfig.
+/// GET /api/config/export and POST /api/config/import are guarded by OperatorApiKey (Tier 2).
 /// </summary>
 public static class ConfigEndpoints
 {
@@ -32,13 +31,6 @@ public static class ConfigEndpoints
         Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
     };
 
-    // Used when deserializing ProviderConfig blobs for redaction — case-insensitive so
-    // blobs serialized with any casing policy have Settings/Secrets properly populated.
-    private static readonly JsonSerializerOptions _redactDeserializeOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-    };
 
     /// <summary>
     /// Maps all config endpoints onto the application endpoint route builder.
@@ -46,16 +38,14 @@ public static class ConfigEndpoints
     public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/config")
-            .RequireAuthorization("OperatorApiKey");
+            .RequireAuthorization(ApiAuthPolicies.Operator);
 
-        // ── Config import/export (Spec 045 Req 2.4a — OperatorApiKey Tier 2) ──────
-        // NOTE: POST /api/config/import is destructive — clears all config before import.
-        // Guarded by OperatorApiKey (not AgentApiKey) so agent pods cannot overwrite config.
+        // ── Config import/export — OperatorApiKey Tier 2 (agent pods cannot overwrite config)
         group.MapGet("/export", ExportConfigAsync);
         group.MapPost("/import", ImportConfigAsync)
             .DisableAntiforgery();
 
-        // ── Model fetch (Spec 045 Req 7a.1 — passthrough to ModelFetchJobService) ──
+        // ── Model fetch — passthrough to ModelFetchJobService
         group.MapGet("/models", GetModels);
 
         // ── Pipeline config ─────────────────────────────────────────────
@@ -91,6 +81,9 @@ public static class ConfigEndpoints
         group.MapDelete("/projects/{id}", DeleteProject);
 
         // ── Templates ───────────────────────────────────────────────────
+        group.MapGet("/templates", GetAllTemplates);
+        group.MapPost("/templates/move", MoveTemplateFlat);
+        group.MapGet("/projects/has-enabled-templates", HasEnabledTemplates);
         group.MapGet("/projects/{projectId}/templates", GetTemplatesForProject);
         group.MapPut("/projects/{projectId}/templates", SaveTemplate);
         group.MapDelete("/projects/{projectId}/templates/{templateId}", DeleteTemplate);
@@ -293,22 +286,7 @@ public static class ConfigEndpoints
         IProjectStore store, CancellationToken ct)
     {
         var projects = await store.LoadProjectsAsync(ct);
-        var allTemplates = await store.LoadAllTemplatesAsync(ct);
-
-        // Index templates by their ID for O(1) lookup when joining by project.TemplateIds
-        var templatesById = allTemplates.ToDictionary(t => t.Id, t => t);
-
-        var result = projects.Select(p => new ProjectWithTemplates
-        {
-            Project = p,
-            Templates = p.TemplateIds
-                .Select(id => templatesById.TryGetValue(id, out var t) ? t : null)
-                .Where(t => t is not null)
-                .Select(t => t!)
-                .ToList()
-        }).ToList();
-
-        return TypedResults.Ok(result);
+        return TypedResults.Ok(projects);
     }
 
     /// <summary>
@@ -324,13 +302,7 @@ public static class ConfigEndpoints
         if (project is null)
             return TypedResults.NotFound();
 
-        var templates = await store.LoadTemplatesForProjectAsync(id, ct);
-
-        return TypedResults.Ok(new ProjectWithTemplates
-        {
-            Project = project,
-            Templates = templates.ToList()
-        });
+        return TypedResults.Ok(project);
     }
 
     internal static async Task<IResult> SaveProject(
@@ -352,6 +324,41 @@ public static class ConfigEndpoints
     }
 
     // ── Templates ──────────────────────────────────────────────────────────
+
+    internal static async Task<IResult> HasEnabledTemplates(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var hasAny = await db.PipelineJobTemplates.AsNoTracking().AnyAsync(ct);
+        return TypedResults.Ok(hasAny);
+    }
+
+    internal static async Task<IResult> MoveTemplateFlat(
+        [FromBody] MoveTemplateFlatRequest request,
+        IProjectStore store,
+        CancellationToken ct)
+    {
+        await store.MoveTemplateAsync(request.SourceProjectId, request.TargetProjectId, new TemplateId(request.TemplateId), ct);
+        return TypedResults.Ok();
+    }
+
+    internal static async Task<IResult> GetAllTemplates(
+        IProjectStore projectStore,
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        // Fetch all project IDs then load templates per project (reuses store deserialization logic)
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var projectIds = await db.Projects.AsNoTracking().Select(p => p.Id).ToListAsync(ct);
+        var all = new List<PipelineJobTemplate>();
+        foreach (var pid in projectIds)
+        {
+            var templates = await projectStore.LoadTemplatesForProjectAsync(pid.ToString(), ct);
+            all.AddRange(templates);
+        }
+        return TypedResults.Ok(all);
+    }
 
     internal static async Task<IResult> GetTemplatesForProject(
         string projectId,
@@ -426,7 +433,7 @@ public static class ConfigEndpoints
         return TypedResults.Ok();
     }
 
-    // ── Model fetch (Spec 045 Req 7a.1) ───────────────────────────────────
+    // ── Model fetch ────────────────────────────────────────────────────────
 
     /// <summary>
     /// Delegates to <see cref="ModelFetchJobService"/> to dispatch a one-shot K8s Job
@@ -444,7 +451,7 @@ public static class ConfigEndpoints
         return TypedResults.Ok(models);
     }
 
-    // ── Config import/export (Spec 045 Req 2.4a) ──────────────────────────
+    // ── Config import/export ───────────────────────────────────────────────
 
     /// <summary>
     /// GET /api/config/export
@@ -720,7 +727,7 @@ public sealed class KeyValueSetRequest
     public required string Value { get; init; }
 }
 
-// ── DTOs for config import/export bundle (Spec 045 Req 2.4a / Task 8b) ───────────
+// ── DTOs for config import/export bundle ──────────────────────────────────────
 
 /// <summary>
 /// The full config bundle — serialized to/from JSON for export/import.
@@ -781,4 +788,12 @@ public sealed class ImportExportResult
 {
     public bool Success { get; init; }
     public required string Message { get; init; }
+}
+
+/// <summary>Request body for POST /api/config/templates/move.</summary>
+public sealed class MoveTemplateFlatRequest
+{
+    public required string SourceProjectId { get; init; }
+    public required string TargetProjectId { get; init; }
+    public required string TemplateId { get; init; }
 }

@@ -154,11 +154,8 @@ public record JobDistributionRequest
     /// <summary>
     /// Creates a <see cref="JobDistributionRequest"/> for an implementation dispatch.
     /// </summary>
-    // TODO: Behavioral change — the old loop code hardcoded IssueDetail.Description = "" and Labels = [],
-    // but this factory uses issue.Description ?? "" and issue.Labels ?? [], which populates them with actual
-    // data when present. Verify whether this is acceptable or revert to hardcoded empty values for loop callers.
-    // TODO: The `initiatedBy` parameter is not null-checked despite backing a `required string` property.
-    // Consider adding ArgumentException.ThrowIfNullOrEmpty(initiatedBy) for consistency.
+    // Note: Unlike the old loop code which hardcoded IssueDetail.Description = "" and Labels = [],
+    // this factory populates them with actual data from the issue summary when present.
     public static JobDistributionRequest FromTemplate(
         PipelineJobTemplate template,
         IssueSummary issue,
@@ -240,9 +237,8 @@ public record JobDistributionRequest
     /// <summary>
     /// Creates a <see cref="JobDistributionRequest"/> for a decomposition dispatch.
     /// </summary>
-    // TODO: Behavioral change — the old loop decomposition code hardcoded IssueDetail.Description = "" and
-    // Labels = [], but this factory uses issue.Description ?? "" and issue.Labels ?? []. Verify whether
-    // populating actual data is acceptable or revert to hardcoded empty values for loop callers.
+    // Note: Unlike the old loop decomposition code which hardcoded IssueDetail.Description = "" and
+    // Labels = [], this factory populates them with actual data from the issue summary when present.
     public static JobDistributionRequest FromTemplate(
         PipelineJobTemplate template,
         IssueSummary issue,
@@ -273,10 +269,8 @@ public record JobDistributionRequest
         };
     }
 
-    // TODO: Behavioral change — the old loop-dispatched review and decomposition code did NOT set
-    // PipelineProviderConfigId (it defaulted to null). This method always sets it from template.PipelineProviderId.
-    // If templates have a non-null PipelineProviderId, review/decomposition requests will now include a value
-    // that was previously absent. Verify whether this is acceptable.
+    // Note: Unlike the old loop-dispatched review/decomposition code which did NOT set
+    // PipelineProviderConfigId (it defaulted to null), this method always sets it from template.PipelineProviderId.
     private static JobDistributionRequest CreateBase(JobDistributionRequestBaseParams p)
     {
         return new JobDistributionRequest

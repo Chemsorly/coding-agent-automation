@@ -60,30 +60,19 @@ public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase, IClassFixture<E2E
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // F2: Dedup — dispatch same issue twice → second rejected
-    // ═══════════════════════════════════════════════════════════════════════
 
-    [Fact]
-    public async Task DbMode_DuplicateDispatch_SecondAttemptRejected()
-    {
-        // Arrange
-        await SeedIssueAndProfileAsync("100");
-        await using var agent = new FakeAgentClient("edge-agent-dedup", "edge-e2e");
-        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        // Act: first dispatch succeeds
-        var result1 = await DispatchIssueAsync("100");
-        Assert.True(result1.Success, $"First dispatch failed: {result1.ErrorMessage}");
-
-        // Act: second dispatch for the same issue should fail (dedup guard)
-        var result2 = await DispatchIssueAsync("100");
-
-        // Assert: second dispatch is rejected (issue already active)
-        Assert.False(result2.Success,
-            "Second dispatch should fail — issue is already being processed");
-    }
-
+    /// <summary>
+    /// Covers the round trip: dispatch, agent accepts and completes, run reaches history, and the
+    /// issue can be dispatched again.
+    ///
+    /// Its companion — "second attempt while the first is still live is rejected" — was removed.
+    /// Rejection is enforced solely by the partial unique index on
+    /// (IssueIdentifier, IssueProviderConfigId), which EF InMemory cannot express, so this harness
+    /// strips it and no test here can observe it. <c>WorkItemDedupIndexTests</c> pins the index and
+    /// its status filter instead. Note the consequence for this test: the *allowed* half of that
+    /// rule is not really proved here either, since without the index nothing would have blocked
+    /// the second dispatch regardless. What it does prove is the completion path.
+    /// </summary>
     [Fact]
     public async Task DbMode_DuplicateDispatch_AfterCompletion_SecondAttemptSucceeds()
     {

@@ -29,11 +29,9 @@ public static partial class WorkDistributionRegistration
     /// </summary>
     private static void RegisterConsolidationServices(IServiceCollection services, IConfiguration configuration)
     {
-        // ── Pipeline API client ────────────────────────────────────────────────
-        // NOTE: AddPipelineApiClient is now registered unconditionally in Program.cs (Spec 045 Task 2)
-        // before AddWorkDistribution is called. The registration here is retained only as a
-        // safety fallback for test environments that call AddWorkDistribution directly without
-        // going through Program.cs. We use TryAdd-style guard: skip if already registered.
+        // ── Pipeline API client safety fallback for test environments ──────────────────────────
+        // AddPipelineApiClient is registered unconditionally in Program.cs before AddWorkDistribution.
+        // This block is a fallback for tests that call AddWorkDistribution directly without Program.cs.
         if (!services.Any(sd => sd.ServiceType == typeof(PipelineApiClientOptions)))
         {
             var pipelineApiBaseUrl = configuration.GetValue<string>("PipelineApi:BaseUrl") ?? "";
@@ -119,18 +117,14 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<JobTemplateStore>(sp =>
             DispatchService.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
 
-        // ── IPendingWorkQuery — REMOVED in Spec 045 Req 1.2 (M1 gauge audit) ──────────────
-        // dispatch.queue.depth was backed by DbPendingWorkQuery (IDbContextFactory).
-        // No PrometheusRule alert references this metric name — removal is safe.
-        // The gauge is removed from ObservableGaugeRegistrationExtensions.cs.
-        // Restore via GET /api/work-items/pending-count on IPipelineApiWorkItemClient
-        // when queue depth monitoring is needed.
+        // ── IPendingWorkQuery — not registered
+        // dispatch.queue.depth gauge backed by DbPendingWorkQuery was removed.
+        // TODO(Spec 046): restore via GET /api/work-items/pending-count on IPipelineApiWorkItemClient.
 
         // ── ChatJobDispatcher — on-demand ephemeral chat pod dispatch ────────────
-        // ChatJobDispatcher is registered in the monolith because it still injects
-        // IHubContext<AgentHub, IAgentHubClient>. The disconnected IHubContext path
-        // (AssignChatPrompt targeting agents on the API hub) will be fixed by adding
-        // a REST endpoint on the API — see AgentChat.razor for the call site.
+        // Registered in the monolith because it still injects IHubContext<AgentHub, IAgentHubClient>.
+        // The disconnected IHubContext path (AssignChatPrompt cannot reach agents on the API hub)
+        // is tracked for TODO(Spec 046) — a REST endpoint on the API will replace this.
         services.AddSingleton<ChatJobDispatcher>(sp =>
         {
             var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());

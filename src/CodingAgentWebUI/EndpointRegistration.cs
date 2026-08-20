@@ -68,16 +68,14 @@ internal static class EndpointRegistration
         app.UseAuthentication();
         app.UseAuthorization();
 
-        // SignalR hub endpoint removed (Spec 044 Task 8 / 15a.2): agents connect to CodingAgentWebUI.Api hub.
-        // CodingAgentWebUI.Hub project reference is RETAINED: AgentChat.razor injects
-        // IHubContext<AgentHub, IAgentHubClient> to send AssignChatPrompt to running agent pods,
-        // and RegisterJobDispatching wires SignalRAgentCommunication against the same context.
-        // Both require the Hub library type reference and AddSignalRServices() to compile and resolve.
-        // Note: the monolith IHubContext cannot reach agents connected to the API hub — it only
-        // sends to connections this process hosts. AgentChat.razor's send path will be updated in Spec 045.
+        // Hub reference RETAINED: AgentChat.razor injects IHubContext<AgentHub, IAgentHubClient>
+        // and RegisterJobDispatching wires SignalRAgentCommunication. Both require the Hub library
+        // type reference and AddSignalRServices() to compile.
+        // Note: the monolith IHubContext cannot reach agents on the API hub — it only serves
+        // connections registered in this process.
+        // TODO(Spec 046): re-route AgentChat.razor's send path via a REST endpoint on the API.
 
-        // Config import/export endpoints removed (Spec 045 Task 9 / Req 2.5):
-        // Both endpoints are now served by CodingAgentWebUI.Api (/api/config/export, /api/config/import).
+        // Config import/export endpoints now served by CodingAgentWebUI.Api.
 
         app.MapRazorComponents<App>()
             .AddInteractiveServerRenderMode()

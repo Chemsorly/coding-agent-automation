@@ -9,4 +9,7 @@ namespace CodingAgentWebUI;
 /// references both assemblies, which makes the bare name ambiguous; it targets this marker
 /// instead. See <c>CodingAgentWebUI.Api.ApiHostMarker</c> for the API's equivalent.
 /// </summary>
-public sealed class WebUiHostMarker;
+public sealed class WebUiHostMarker
+{
+    private WebUiHostMarker() { }
+}

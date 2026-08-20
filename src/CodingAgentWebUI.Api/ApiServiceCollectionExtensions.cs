@@ -109,7 +109,7 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<IHarnessSuggestionStore>(sp =>
             new PostgresHarnessSuggestionStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
-        // ── IKeyValueStore (scoped, from Spec 041) ──────────────────────────
+        // ── IKeyValueStore ──────────────────────────────────────────────────
         services.AddScoped<IKeyValueStore, EfKeyValueStore>();
 
         // ── IDatabaseProbe (no-op — real DB connectivity is handled by DatabaseStartupService) ─
@@ -233,12 +233,10 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IWorkItemFallbackTransitionService>())));
 
         // ── IKubernetes + ILeaderElectionService ────────────────────────────────────────────
-        // Required by ConsolidationWorkItemDispatchService (already registered above as a hosted service)
-        // and DatabaseMaintenanceService (added in Spec 045 Task 8a.1, Req 1.3b/1.3c).
+        // Required by ConsolidationWorkItemDispatchService and DatabaseMaintenanceService.
         // LeaderElectionService uses K8s Lease-based election when running in-cluster.
         // The Lease name is injected via LeaderElection:PipelineLoopLeaseName (Helm env var) or
         // defaults to "caa-{release}-pipeline-loop-lock" set by orchestrator-deployment.yaml.
-        // api-rbac.yaml grants coordination.k8s.io/leases verbs (added in Spec 045 Task 8a.1).
         services.AddSingleton<IKubernetes>(_ =>
         {
             try
@@ -290,13 +288,26 @@ public static class ApiServiceCollectionExtensions
         // IKubernetes is already registered above; only the job client wrapper is missing.
         services.AddSingleton<IKubernetesJobClient, KubernetesJobClient>();
 
-        // ── DatabaseMaintenanceService (Spec 045 Task 8a.1, Req 1.3a/1.3b) ────────────────────
-        // Spec 042 Req 5.6a originally prohibited hosted services in the API due to ungated sweep
-        // risk. Spec 045 Task 8a.3 amends that prohibition: ILeaderElectionService is now
-        // registered above, gating the sweep via DatabaseMaintenanceService.RunMaintenanceCycleAsync()
-        // which calls _serviceProvider.GetService<ILeaderElectionService>().
-        // This is the ONLY retention sweep in the system — orphaning it causes Postgres to grow
-        // without bound while retention settings still render in the UI (Req 1.3a).
+        // ── JobTemplateStore ─────────────────────────────────────────────────
+        // Required by DispatchLifecycleService, DispatchStateBuilder, and ModelFetchJobService.
+        // Path matches WorkDistribution__JobTemplatesPath env var set in api-deployment.yaml.
+        services.AddSingleton(sp =>
+        {
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            var templatesPath = cfg.GetValue<string>("WorkDistribution:JobTemplatesPath")
+                ?? "/app/config/job-templates.yaml";
+            if (!System.IO.File.Exists(templatesPath))
+            {
+                Serilog.Log.Warning("Job templates file not found at {Path}; starting with empty template store", templatesPath);
+                return JobTemplateStore.CreateEmpty();
+            }
+            return JobTemplateStore.LoadFromFile(templatesPath);
+        });
+
+        // ── DatabaseMaintenanceService ────────────────────────────────────────────────────────
+        // The only retention sweep in the system — orphaning it causes Postgres to grow
+        // without bound while retention settings still render in the UI.
+        // Gated by ILeaderElectionService so only one replica runs cleanup at a time.
         services.AddHostedService(sp => new DatabaseMaintenanceService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<IConsolidationService>(),
@@ -304,19 +315,15 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IConfiguration>(),
             sp.GetRequiredService<IPipelineConfigStore>()));
 
-        // ── WorkItemMetricsBackgroundService (Spec 045 Task 8a.2, Req 1.3a/1.3d) ────────────────
-        // Feeds the static WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback.
-        // workdistribution.workitems_by_status is documented in observability-internals.md.
-        // Only one instance across the whole system — the monolith no longer registers it.
-        // Leader-gating is not needed: the static callback is overwritten on each registration,
-        // so two concurrent instances produce duplicate series at worst — acceptable during the
-        // brief RollingUpdate overlap window. Leader-gating would require leader acquisition
-        // before the first tick, delaying the metric rather than eliminating the brief duplicate.
+        // ── WorkItemMetricsBackgroundService ──────────────────────────────────────────────────
+        // Feeds WorkDistributionTelemetry.workitems_by_status. Only one instance in the system.
+        // Leader-gating not needed: the static callback is overwritten on each registration,
+        // so two concurrent instances during a RollingUpdate overlap produce duplicate series
+        // at worst — acceptable given the brief overlap window.
         services.AddHostedService<CodingAgentWebUI.Orchestration.Telemetry.WorkItemMetricsBackgroundService>();
 
         // ── DispatchLifecycleService (API copy, EF-coupled) ─────────────────────────────
         // Used by ConsolidationWorkItemDispatchService and ModelFetchJobService.
-        // Relocated from CodingAgentWebUI.Orchestration (Spec 043 Task 8b + 9).
         services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(sp =>
         {
             var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
@@ -344,9 +351,9 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<JobTemplateStore>()),
             DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>())));
 
-        // ── ConsolidationWorkItemDispatchService (relocated from Orchestration, Spec 043 Task 9) ──
-        // Registers as a hosted service in the API. Handles consolidation work items (TaskType=Consolidation).
-        // ILabelSwapService accessibility: LabelSwapService is internal sealed in Orchestration,
+        // ── ConsolidationWorkItemDispatchService ──────────────────────────────────────────────
+        // Handles consolidation work items (TaskType=Consolidation).
+        // ILabelSwapService: LabelSwapService is internal sealed in Orchestration,
         // but CodingAgentWebUI.Api is in InternalsVisibleTo — registered above as ILabelSwapService.
         services.AddHostedService(sp => new CodingAgentWebUI.Api.Dispatch.ConsolidationWorkItemDispatchService(
             new CodingAgentWebUI.Api.Dispatch.ConsolidationWorkItemDispatchServiceDependencies(
@@ -364,8 +371,8 @@ public static class ApiServiceCollectionExtensions
                 sp.GetService<IAgentProfileStore>(),
                 sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder>())));
 
-        // ── ModelFetchJobService (relocated from Orchestration monolith, Spec 043 Task 9) ──
-        // Registers as a singleton in the API. The API has K8s RBAC for batch/jobs (Req 9.3b).
+        // ── ModelFetchJobService ─────────────────────────────────────────────────────────────
+        // Singleton in the API. The API has K8s RBAC for batch/jobs.
         services.AddSingleton<ModelFetchJobService>(sp => new ModelFetchJobService(
             new ModelFetchJobDependencies(
                 sp.GetRequiredService<IKubernetesJobClient>(),

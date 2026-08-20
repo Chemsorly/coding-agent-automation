@@ -8,4 +8,7 @@ namespace CodingAgentWebUI.Api;
 /// monolith uses. A test project that hosts both (the E2E harness runs the API and the Blazor app
 /// side by side) cannot name either one unambiguously, so it targets this marker instead.
 /// </summary>
-public sealed class ApiHostMarker;
+public sealed class ApiHostMarker
+{
+    private ApiHostMarker() { }
+}

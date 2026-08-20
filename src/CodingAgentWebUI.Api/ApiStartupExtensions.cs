@@ -75,7 +75,6 @@ internal static class ApiStartupExtensions
     /// <summary>
     /// Registers observable gauges for agent metrics against the <see cref="PipelineTelemetry.Meter"/>.
     /// Agents register on the API hub, so this is the correct process to own these gauges.
-    /// The monolith's registry is permanently empty after Spec 044.
     /// </summary>
     public static WebApplication RegisterApiObservableGauges(this WebApplication app)
     {

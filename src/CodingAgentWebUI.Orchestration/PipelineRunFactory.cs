@@ -4,8 +4,7 @@ namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Shared factory for creating <see cref="PipelineRun"/> instances from a deserialized
-/// <see cref="JobDistributionRequest"/>. Used by startup rehydration and
-/// <c>PendingWorkItemDrainService</c> recovery path to avoid duplication.
+/// <see cref="JobDistributionRequest"/>. Used by startup rehydration.
 /// </summary>
 public static class PipelineRunFactory
 {
@@ -78,11 +77,8 @@ public static class PipelineRunFactory
                 IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
                 IssueProviderConfigId = request.IssueProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
-                // TODO: Behavioral change — the old PendingWorkItemDrainService inline code used "loop" as the
-                // null fallback for InitiatedBy. Now that the drain service shares this factory, a null InitiatedBy
-                // will be labeled "rehydrated" instead of "loop". In practice InitiatedBy is always set by
-                // dispatchers so this is unlikely to trigger, but consider whether the drain path should pass
-                // its own fallback or if "rehydrated" is acceptable for both callers.
+                // TODO: InitiatedBy null fallback — consider whether "rehydrated" is the right
+                // label for all callers, or whether each dispatch path should pass its own fallback.
                 InitiatedBy = request.InitiatedBy ?? "rehydrated",
                 AgentId = agentId,
                 StartedAt = startedAt

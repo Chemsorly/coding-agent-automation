@@ -3,8 +3,7 @@ using CodingAgentWebUI.Pipeline.Models;
 namespace CodingAgentWebUI.Hub;
 
 /// <summary>
-/// Handles token refresh logic for agents, supporting both SignalR mode (PipelineRun in memory)
-/// and K8s mode (WorkItem payload in DB). Extracted from AgentHub.Pipeline.cs to keep the hub thin.
+/// Handles token refresh for agents. Extracted from AgentHub.Pipeline.cs to keep the hub thin.
 /// </summary>
 public interface IAgentTokenRefreshService
 {

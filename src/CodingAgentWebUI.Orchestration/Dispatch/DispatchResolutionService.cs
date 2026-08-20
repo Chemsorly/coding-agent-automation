@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Groups dispatch-time resolution concerns: profile, quality gate, and reviewer resolution.
-/// Extracted from <c>AgentJobDispatcher</c> to reduce constructor parameter count.
+/// Centralises resolution concerns to reduce constructor parameter count.
 /// </summary>
 public sealed class DispatchResolutionService
 {

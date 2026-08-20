@@ -36,27 +36,21 @@ public static partial class ServiceCollectionExtensions
         services.AddSingleton<ApiPipelineConfigStore>(sp =>
         {
             var store = new ApiPipelineConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>());
-            var config = sp.GetService<IConfiguration>();
-            var ttl = config?.GetValue<int>("PipelineLoop:ConfigCacheTtlSeconds");
-            if (ttl.HasValue && ttl.Value >= 0) store.CacheTtlSeconds = ttl.Value;
+            if (ResolveConfigCacheTtl(sp) is { } ttl) store.CacheTtlSeconds = ttl;
             return store;
         });
         services.AddSingleton<IPipelineConfigStore>(sp => sp.GetRequiredService<ApiPipelineConfigStore>());
         services.AddSingleton<ApiProviderConfigStore>(sp =>
         {
             var store = new ApiProviderConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>());
-            var config = sp.GetService<IConfiguration>();
-            var ttl = config?.GetValue<int>("PipelineLoop:ConfigCacheTtlSeconds");
-            if (ttl.HasValue && ttl.Value >= 0) store.CacheTtlSeconds = ttl.Value;
+            if (ResolveConfigCacheTtl(sp) is { } ttl) store.CacheTtlSeconds = ttl;
             return store;
         });
         services.AddSingleton<IProviderConfigStore>(sp => sp.GetRequiredService<ApiProviderConfigStore>());
         services.AddSingleton<ApiProjectStore>(sp =>
         {
             var store = new ApiProjectStore(sp.GetRequiredService<IPipelineApiConfigClient>());
-            var config = sp.GetService<IConfiguration>();
-            var ttl = config?.GetValue<int>("PipelineLoop:ConfigCacheTtlSeconds");
-            if (ttl.HasValue && ttl.Value >= 0) store.CacheTtlSeconds = ttl.Value;
+            if (ResolveConfigCacheTtl(sp) is { } ttl) store.CacheTtlSeconds = ttl;
             return store;
         });
         services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<ApiProjectStore>());
@@ -67,10 +61,15 @@ public static partial class ServiceCollectionExtensions
         // IConfigurationStore was PostgresConfigurationStore before Task 8 removed it.
         services.AddSingleton<ApiConfigurationStore>(sp =>
         {
-            var store = new ApiConfigurationStore(sp.GetRequiredService<IPipelineApiConfigClient>());
-            var config = sp.GetService<IConfiguration>();
-            var ttl = config?.GetValue<int>("PipelineLoop:ConfigCacheTtlSeconds");
-            if (ttl.HasValue && ttl.Value >= 0) store.CacheTtlSeconds = ttl.Value;
+            // Composed from the three narrow stores registered above, not built alongside them:
+            // four independent caches over one client meant a save through IProviderConfigStore
+            // stayed invisible here until the TTL lapsed.
+            var store = new ApiConfigurationStore(
+                sp.GetRequiredService<IPipelineApiConfigClient>(),
+                sp.GetRequiredService<ApiPipelineConfigStore>(),
+                sp.GetRequiredService<ApiProviderConfigStore>(),
+                sp.GetRequiredService<ApiProjectStore>());
+            if (ResolveConfigCacheTtl(sp) is { } ttl) store.CacheTtlSeconds = ttl;
             return store;
         });
         services.AddSingleton<IConfigurationStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
@@ -129,4 +128,20 @@ public static partial class ServiceCollectionExtensions
 
         services.AddTransient<IssueDescriptionParser>();
     }
+
+    /// <summary>
+    /// Cache TTL shared by the API-backed store adapters, or null when unconfigured or negative
+    /// (in which case each store keeps its own default).
+    ///
+    /// The key is named once here rather than at each registration: four call sites repeated both
+    /// the literal and the same three-line read, and a typo in any one of them would have silently
+    /// left that store on the default TTL.
+    /// </summary>
+    private static int? ResolveConfigCacheTtl(IServiceProvider sp)
+    {
+        var ttl = sp.GetService<IConfiguration>()?.GetValue<int>(ConfigCacheTtlKey);
+        return ttl is >= 0 ? ttl : null;
+    }
+
+    private const string ConfigCacheTtlKey = "PipelineLoop:ConfigCacheTtlSeconds";
 }

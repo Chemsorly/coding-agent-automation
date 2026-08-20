@@ -165,7 +165,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
     private async Task<int> ScanProviderAsync(string providerConfigId, CancellationToken ct)
     {
-        var allProviders = await _configClient.GetProviderConfigsAsync(ProviderKind.Issue, ct);
+        var allProviders = await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
         var providerConfig = allProviders.FirstOrDefault(p => p.Id == providerConfigId);
         if (providerConfig is null)
         {

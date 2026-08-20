@@ -11,7 +11,7 @@ internal static class PipelineLoopAutoStartExtensions
 {
     /// <summary>
     /// Auto-starts the pipeline loop if <see cref="CodingAgentWebUI.Pipeline.Models.PipelineConfiguration.ClosedLoopAutoStart"/> is enabled.
-    /// Loads the current configuration from the Pipeline API (Spec 045 Req 4.4).
+    /// Loads the current configuration from the Pipeline API to determine whether to auto-start.
     /// If the API is unreachable, retries with exponential backoff (max 10 minutes) rather than
     /// silently defaulting to disabled. Respects <see cref="IHostApplicationLifetime.ApplicationStopping"/>
     /// so a host shutdown during startup exits cleanly instead of looping forever.
@@ -25,7 +25,7 @@ internal static class PipelineLoopAutoStartExtensions
 
         // Load ClosedLoopAutoStart from the API rather than using the default PipelineConfiguration()
         // (which has ClosedLoopAutoStart=false and would silently prevent the loop from auto-starting).
-        // Spec 045 Req 4.4: do NOT pass pipelineConfig from Program.cs; always fetch from API.
+        // Do NOT pass pipelineConfig from Program.cs; always fetch the current value from the API.
         var configClient = app.Services.GetRequiredService<IPipelineApiConfigClient>();
         var pipelineConfig = await LoadConfigWithRetryAsync(configClient, stoppingToken);
 
@@ -42,7 +42,7 @@ internal static class PipelineLoopAutoStartExtensions
 
     /// <summary>
     /// Loads PipelineConfiguration from the API with exponential backoff on failure.
-    /// Spec 045 Req 4.4 / H6: if the API is unreachable at startup, log a warning and retry
+    /// If the API is unreachable at startup, logs a warning and retries in the background.
     /// (do NOT default to disabled). Hard limit: 10 minutes total wait. On host shutdown or
     /// after exceeding the limit, returns a default config (ClosedLoopAutoStart=false).
     /// </summary>

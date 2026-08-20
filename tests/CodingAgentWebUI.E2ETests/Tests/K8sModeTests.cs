@@ -465,12 +465,26 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         return new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["WorkDistribution:Dispatch:IntervalSeconds"] = "1",
+                // The option is PollIntervalSeconds; "IntervalSeconds" bound to nothing and left
+                // the default 10s in place. Harmless in practice — the base class runs a cycle
+                // before its first delay — but the key was silently doing nothing.
+                ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "1",
                 ["WorkDistribution:Dispatch:RateLimitPerSecond"] = "10",
                 ["WorkDistribution:OrchestratorUrl"] = orchestratorUrl,
                 ["WorkDistribution:AgentApiKeySecretName"] = agentApiKeySecretName,
                 ["WorkDistribution:AgentServiceAccountName"] = agentServiceAccountName,
-                ["WorkDistribution:Namespace"] = ns
+                ["WorkDistribution:Namespace"] = ns,
+
+                // Without a credential pool, DispatchEligibilityChecker returns NoPvcAvailable for
+                // every kiro template and no Job is ever created — which is what made the
+                // DispatchService tests time out waiting for a Job that dispatch had quietly
+                // skipped. Five slots so the concurrency-limit test is bounded by maxConcurrent
+                // rather than by the pool.
+                ["WorkDistribution:CredentialPools:Kiro:0"] = "fake-pvc-0",
+                ["WorkDistribution:CredentialPools:Kiro:1"] = "fake-pvc-1",
+                ["WorkDistribution:CredentialPools:Kiro:2"] = "fake-pvc-2",
+                ["WorkDistribution:CredentialPools:Kiro:3"] = "fake-pvc-3",
+                ["WorkDistribution:CredentialPools:Kiro:4"] = "fake-pvc-4"
             })
             .Build();
     }
@@ -488,7 +502,8 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
             OrchestratorUrl = orchestratorUrl,
             AgentApiKeySecretName = agentApiKeySecretName,
             AgentServiceAccountName = agentServiceAccountName,
-            Namespace = ns
+            Namespace = ns,
+            KiroPvcPool = ["fake-pvc-0", "fake-pvc-1", "fake-pvc-2", "fake-pvc-3", "fake-pvc-4"]
         };
     }
 
@@ -886,7 +901,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
     }
 
     [Fact]
-    public async Task K8sMode_AgentPostsDuplicateTerminalStatus_SecondRejected()
+    public async Task K8sMode_AgentPostsDuplicateTerminalStatus_IsIdempotent()
     {
         // Arrange: WorkItem already in terminal state (Failed)
         var result = await DistributeDirectlyAsync("k8s-status-duplicate-1301");
@@ -910,14 +925,23 @@ public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture
         var response = await httpClient.PostAsJsonAsync(
             $"/api/work-items/{workItemId}/status", statusBody);
 
-        // Assert: rejected — Failed→Failed is not a valid transition
-        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+        // Assert: accepted, not rejected. WorkItemTransitionService short-circuits
+        // `item.Status == target` as idempotent before it reaches IsValidTransition, so a repeat
+        // of a terminal post is a no-op that reports success.
+        //
+        // This test previously asserted 400. Status reporting is at-least-once — an agent that
+        // crashes after posting will post again on restart — so answering an error for work that
+        // already succeeded would push agents into spurious retry and error logging. What has to
+        // hold is that the repeat changes nothing, which is the assertion below: the short-circuit
+        // returns before the mutation, so the first (real) failure survives.
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
 
-        // Assert: original error message preserved
+        // Assert: original error message preserved — the second post must not overwrite it
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
         Assert.NotNull(item);
         Assert.Equal("First failure", item.ErrorMessage);
+        Assert.Equal(WorkItemStatus.Failed, item.Status);
     }
 
     [Fact]

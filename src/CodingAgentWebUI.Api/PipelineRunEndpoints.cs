@@ -16,7 +16,7 @@ public static class PipelineRunEndpoints
     public static void MapPipelineRunEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/pipeline-runs")
-            .RequireAuthorization("AgentApiKey");
+            .RequireAuthorization(ApiAuthPolicies.Agent);
 
         // Paginated history with optional feedbackOnly filter (DB-side filter)
         group.MapGet("/", GetRunHistory);
@@ -75,7 +75,7 @@ public static class PipelineRunEndpoints
     /// Anonymous file download of run history as JSON.
     /// Faithful port of src/CodingAgentWebUI/EndpointRegistration.cs:30.
     /// feedbackOnly filter applied in-memory AFTER paging (matches monolith behaviour).
-    /// Note: Spec 045 reconciles the in-memory vs DB-side feedbackOnly divergence.
+    /// TODO(Spec 046): reconcile with GET /api/pipeline-runs which filters feedbackOnly DB-side.
     /// </summary>
     internal static async Task<IResult> ExportRunsJson(
         IPipelineRunHistoryService history,

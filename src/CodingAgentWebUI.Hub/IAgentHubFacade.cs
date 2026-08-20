@@ -102,8 +102,8 @@ public interface IAgentHubFacade
 
     /// <summary>
     /// Signals that an agent may now be available to pick up pending work.
-    /// No-op after Spec 044 — Legacy/SignalR queue dispatch was removed in Spec 041.
-    /// Retained for interface compatibility; callers may be removed in Spec 045.
+    /// Permanent no-op — queue dispatch was removed in Spec 041. Retained for interface compatibility.
+    /// TODO(Spec 046): remove this member and its call sites.
     /// </summary>
     void Signal();
 

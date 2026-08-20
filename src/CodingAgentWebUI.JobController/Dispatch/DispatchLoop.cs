@@ -220,59 +220,8 @@ public sealed class DispatchLoop
             return;
         }
 
-        // Create per-Job derived-key Secret with ownerReference to the Job (Spec 043 Req 8a.3).
-        // ownerReference ensures the Secret is garbage-collected with the Job.
-        // We must first read the Job to obtain its UID.
-        try
-        {
-            V1Job createdJob;
-            try
-            {
-                createdJob = await _k8sClient.ReadJobAsync(jobName, _options.Namespace, ct);
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Failed to read Job {JobName} after creation to get UID; derived-key Secret not created", jobName);
-                // Non-fatal from dispatch perspective — agent pod will fail to start without the Secret,
-                // but ReconciliationService will detect the failed pod and mark the WorkItem as Failed.
-                activeConcurrency[selector] = (activeConcurrency.TryGetValue(selector, out var curr2) ? curr2 : 0) + 1;
-                goto LabelSwap;
-            }
+        await TryCreateDerivedKeySecretAsync(jobName, derivedSecretName, derivedKey, item.Id, ct);
 
-            var secret = new V1Secret
-            {
-                Metadata = new V1ObjectMeta
-                {
-                    Name = derivedSecretName,
-                    NamespaceProperty = _options.Namespace,
-                    OwnerReferences =
-                    [
-                        new V1OwnerReference
-                        {
-                            ApiVersion = "batch/v1",
-                            Kind = "Job",
-                            Name = createdJob.Metadata.Name,
-                            Uid = createdJob.Metadata.Uid,
-                            BlockOwnerDeletion = true
-                        }
-                    ]
-                },
-                StringData = new Dictionary<string, string>
-                {
-                    ["agent-api-key"] = derivedKey
-                }
-            };
-
-            await _k8sClient.CreateSecretAsync(secret, _options.Namespace, ct);
-            Log.Debug("Derived-key Secret {SecretName} created for WorkItem {Id}", derivedSecretName, item.Id);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Failed to create derived-key Secret {SecretName} for WorkItem {Id}", derivedSecretName, item.Id);
-            // Agent pod will fail to start; ReconciliationService handles cleanup.
-        }
-
-        LabelSwap:
         activeConcurrency[selector] = (activeConcurrency.TryGetValue(selector, out var curr) ? curr : 0) + 1;
 
         // Label swap — non-fatal; job is already running
@@ -292,6 +241,84 @@ public sealed class DispatchLoop
             createdAt: item.CreatedAt,
             agentSelector: item.AgentSelector);
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+    }
+
+    /// <summary>
+    /// Creates the per-Job derived-key Secret, owned by the Job so Kubernetes garbage-collects it
+    /// with the Job (Spec 043 Req 8a.3). Obtaining the owner reference requires reading the Job
+    /// back for its UID.
+    ///
+    /// Every failure here is non-fatal to dispatch: the Job is already running, and a pod that
+    /// cannot read its key fails to start, which <c>ReconciliationService</c> turns into a failed
+    /// WorkItem. Extracted from the dispatch path, where the read-failure branch used
+    /// <c>goto LabelSwap</c> to skip ahead — and incremented the selector's active count on the
+    /// way, which the label-swap block then incremented a second time. One dispatched Job counted
+    /// twice against <c>maxConcurrent</c>, so a template's concurrency limit was reached early
+    /// whenever this read failed.
+    /// </summary>
+    private async Task TryCreateDerivedKeySecretAsync(
+        string jobName,
+        string derivedSecretName,
+        string derivedKey,
+        Guid workItemId,
+        CancellationToken ct)
+    {
+        V1Job? createdJob;
+        try
+        {
+            createdJob = await _k8sClient.ReadJobAsync(jobName, _options.Namespace, ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to read Job {JobName} after creation to get UID; derived-key Secret not created", jobName);
+            return;
+        }
+
+        // A read that returns without a UID is as useless as one that throws: an ownerReference
+        // needs it, and without the reference the Secret would outlive its Job. The previous
+        // shape let the resulting NullReferenceException fall into a broad catch and be logged as
+        // a Secret-creation failure, which named the wrong cause.
+        if (createdJob?.Metadata?.Uid is null || createdJob.Metadata.Name is null)
+        {
+            Log.Error(
+                "Job {JobName} read back without metadata/UID; derived-key Secret not created for WorkItem {Id}",
+                jobName, workItemId);
+            return;
+        }
+
+        var secret = new V1Secret
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = derivedSecretName,
+                NamespaceProperty = _options.Namespace,
+                OwnerReferences =
+                [
+                    new V1OwnerReference
+                    {
+                        ApiVersion = "batch/v1",
+                        Kind = "Job",
+                        Name = createdJob.Metadata.Name,
+                        Uid = createdJob.Metadata.Uid,
+                        BlockOwnerDeletion = true
+                    }
+                ]
+            },
+            StringData = new Dictionary<string, string>
+            {
+                ["agent-api-key"] = derivedKey
+            }
+        };
+
+        try
+        {
+            await _k8sClient.CreateSecretAsync(secret, _options.Namespace, ct);
+            Log.Debug("Derived-key Secret {SecretName} created for WorkItem {Id}", derivedSecretName, workItemId);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to create derived-key Secret {SecretName} for WorkItem {Id}", derivedSecretName, workItemId);
+        }
     }
 
     private async Task SafeRequeueAsync(Guid workItemId, CancellationToken ct)

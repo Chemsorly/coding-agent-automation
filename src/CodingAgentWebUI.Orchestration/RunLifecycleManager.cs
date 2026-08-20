@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Orchestration;
 /// Default implementation of <see cref="IRunLifecycleManager"/>.
 /// Coordinates terminal state transitions across all stores:
 /// - In-memory (OrchestratorRunService)
-/// - Database (WorkItemFallbackTransitionService / WorkItemTransitionService) — null in Legacy mode
+/// - Database (WorkItemFallbackTransitionService / WorkItemTransitionService) — null in test environments
 /// - Agent registry (IAgentRegistryService)
 /// - Labels (ILabelService)
 /// - History (IPipelineRunHistoryService)
@@ -72,7 +72,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         run.MarkCompleted();
         run.CurrentStep = PipelineStep.Failed;
 
-        // 2. Transition WorkItem in DB (no-op in Legacy mode)
+        // 2. Transition WorkItem in DB (no-op when WorkItemFallbackTransitionService is not registered)
         await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct, failureReason, failureReasonEnum);
 
         // 3. Persist to history — wrapped in try/catch so downstream cleanup still runs

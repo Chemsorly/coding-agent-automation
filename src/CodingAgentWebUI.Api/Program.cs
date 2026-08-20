@@ -42,6 +42,7 @@ if (string.IsNullOrEmpty(agentApiKey))
 // ── Configure JSON serialization (enum-as-string to match agent DTOs) ───────
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
+    options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 });
 
@@ -83,7 +84,7 @@ builder.Services.AddOpenTelemetry()
     {
         m.AddAspNetCoreInstrumentation()
          .AddHttpClientInstrumentation()
-         // The API owns the work-distribution instruments from Spec 045 onward:
+         // The API owns the work-distribution instruments; this AddMeter ensures they are exported.
          // WorkItemMetricsBackgroundService feeds the workitems-by-status gauges here, and
          // WorkItemEndpoints/DispatchStateBuilder record terminal statuses and dispatch
          // latency. Without this AddMeter the measurements are taken but never exported, and
@@ -108,8 +109,8 @@ app.RegisterApiObservableGauges();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// SignalR hub -- agents connect here; ORCHESTRATOR_URL re-pointed to this host in Spec 044
-app.MapHub<AgentHub>(HubRoutes.Agent).RequireAuthorization("AgentApiKey");
+// SignalR hub — agents connect here.
+app.MapHub<AgentHub>(HubRoutes.Agent).RequireAuthorization(ApiAuthPolicies.Agent);
 
 app.MapWorkItemEndpoints();
 app.MapPipelineRunEndpoints();

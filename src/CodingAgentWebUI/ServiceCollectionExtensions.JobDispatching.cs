@@ -35,7 +35,7 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<DispatchResolutionService>(),
-            sp.GetService<AnalysisStalenessDetector>()));  // null in Legacy mode
+        sp.GetService<AnalysisStalenessDetector>()));  // null — not registered in monolith DI
 
         services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
             sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
@@ -49,7 +49,5 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<AgentRegistryService>(),
             sp.GetRequiredService<IAgentCommunication>(),
             Log.Logger));
-
-        // AgentJobDispatcher, IJobDispatcher, JobQueueDrainService removed in Spec 044 Task 10/15d.
     }
 }

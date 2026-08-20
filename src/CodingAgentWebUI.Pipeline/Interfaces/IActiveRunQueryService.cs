@@ -30,9 +30,9 @@ public sealed record ActiveRunSummary
     public required DateTimeOffset StartedAt { get; init; }
     public required string? ProjectName { get; init; }
 
-    /// <summary>
-    /// Current pipeline step. In DB mode, maps from WorkItemStatus (Dispatched→Running step);
-    /// in Legacy mode, reflects the actual PipelineStep from in-memory state.
-    /// </summary>
+/// <summary>
+/// Current pipeline step. Maps from WorkItemStatus (Dispatched→Running step)
+/// for active runs queried from the database.
+/// </summary>
     public required PipelineStep CurrentStep { get; init; }
 }

@@ -3,7 +3,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// <summary>
 /// Key/value persistence abstraction backed by the <c>KeyValueStore</c> table.
 /// Lives in Pipeline (not Infrastructure) so <c>CodingAgentWebUI.Api.Client</c> can reference it
-/// in Spec 042 without depending on Infrastructure.
+/// without depending on Infrastructure.
 /// </summary>
 public interface IKeyValueStore
 {

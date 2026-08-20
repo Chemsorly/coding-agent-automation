@@ -13,10 +13,9 @@ using Serilog;
 namespace CodingAgentWebUI.Components.Pages;
 
 /// <summary>
-/// Spec 045: Live streaming restored via <see cref="IAgentHubConnection"/> hub subscriptions.
-/// IOrchestratorRunService, IRunLifecycleManager, IHubContext, PipelineRunLifecycleService, and
-/// IChangeNotifier injections removed — the monolith no longer owns in-memory run state.
-/// Active run output is streamed from the API hub using run-{jobId} groups.
+/// Blazor component for the Agent Monitoring page. Live run streaming uses
+/// <see cref="IAgentHubConnection"/> hub subscriptions (run-{jobId} groups).
+/// Cancel/disconnect operations route through <see cref="AgentMonitoringPageService"/>.
 /// </summary>
 public partial class AgentMonitoring : IAsyncDisposable
 {
@@ -28,9 +27,9 @@ public partial class AgentMonitoring : IAsyncDisposable
     [Inject] private TimeProvider Clock { get; set; } = default!;
     [Inject] private IConsolidationService ConsolidationService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
-    // Spec 045 Req 3.1-3.6: hub connection for live run streaming (scoped per circuit)
+    // Hub connection for live run streaming (scoped per circuit)
     [Inject] private IAgentHubConnection HubConnection { get; set; } = default!;
-    // Spec 045 Req 3.4: reload run state from API on reconnect / initial load
+    // Reload run state from API on reconnect / initial load
     [Inject] private IPipelineApiRunHistoryClient RunHistoryClient { get; set; } = default!;
 
     // ── State forwarding from PageService ──
@@ -59,7 +58,7 @@ public partial class AgentMonitoring : IAsyncDisposable
     private DateTimeOffset _lastSuccessfulRefresh;
     private bool _lastRefreshFailed;
 
-    // ── Live run streaming state (Spec 045 Req 3.1-3.6) ──
+    // ── Live run streaming state ──
 
     // Loaded from API on modal open; updated on hub OnRunCompleted
     private PipelineRunSummary? _activeModalRun;
@@ -78,17 +77,15 @@ public partial class AgentMonitoring : IAsyncDisposable
     protected override async Task OnInitializedAsync()
     {
         _lastSuccessfulRefresh = Clock.GetUtcNow();
-        // Spec 045: IChangeNotifier fully removed — NullChangeNotifier stub deleted.
-        // Change notification for the monitoring page arrives via hub events.
+        // IChangeNotifier removed — change notification arrives via hub events.
         // ConsolidationService.OnChange still drives the consolidation panel refresh.
         ConsolidationService.OnChange += HandleStateChanged;
 
-        // Register hub event handlers for live run streaming (Spec 045 Req 3.2).
+        // Register hub event handlers for live run streaming.
         // Handlers filter by _selectedRunId so events from other runs are ignored.
         RegisterHubEventHandlers();
 
         // Start hub connection if not already connected.
-        // Uses the scoped AgentHubConnection registered in Program.cs (Req 3.6 L1).
         if (HubConnection.State == HubConnectionState.Disconnected)
         {
             try
@@ -135,7 +132,7 @@ public partial class AgentMonitoring : IAsyncDisposable
             (jobId, step, timestamp) =>
             {
                 if (_disposed || jobId != _selectedRunId) return;
-                var unused1 = InvokeAsync(() =>
+                _ = InvokeAsync(() =>
                 {
                     if (_disposed) return;
                     _activeModalCurrentStep = step;
@@ -149,10 +146,10 @@ public partial class AgentMonitoring : IAsyncDisposable
             (jobId, payload) =>
             {
                 if (_disposed || jobId != _selectedRunId) return;
-                var unused2 = InvokeAsync(async () =>
+                _ = InvokeAsync(async () =>
                 {
                     if (_disposed) return;
-                    // Reload from API for authoritative final state (Req 3.4)
+                    // Reload from API for authoritative final state
                     if (Guid.TryParse(jobId, out var runGuid))
                     {
                         try
@@ -250,7 +247,7 @@ public partial class AgentMonitoring : IAsyncDisposable
 
     /// <summary>
     /// Opens the run detail modal and subscribes to the hub run group for live streaming.
-    /// Server pushes the output backlog immediately on SubscribeToRun (Req 3.4a).
+    /// Server pushes the output backlog immediately on SubscribeToRun.
     /// All async work and StateHasChanged run inside InvokeAsync so exceptions stay on the
     /// Blazor synchronization context rather than propagating to the thread pool.
     /// </summary>
@@ -271,7 +268,7 @@ public partial class AgentMonitoring : IAsyncDisposable
                 _activeModalOutputLines.Clear();
                 _activeModalCurrentStep = null;
 
-                // Subscribe to hub group — server pushes backlog immediately (Req 3.4a)
+                // Subscribe to hub group — server pushes backlog immediately
                 if (HubConnection.State == HubConnectionState.Connected)
                 {
                     try
@@ -284,7 +281,7 @@ public partial class AgentMonitoring : IAsyncDisposable
                     }
                 }
 
-                // Load current run state from API for run metadata (Req 3.2 step 1)
+                // Load current run state from API for run metadata
                 if (Guid.TryParse(runId, out var runGuid))
                 {
                     try
@@ -307,7 +304,7 @@ public partial class AgentMonitoring : IAsyncDisposable
     }
 
     /// <summary>
-    /// Closes the run detail modal and unsubscribes from the hub run group (Req 3.3).
+    /// Closes the run detail modal and unsubscribes from the hub run group.
     /// All async work and StateHasChanged run inside InvokeAsync so exceptions stay on the
     /// Blazor synchronization context rather than propagating to the thread pool.
     /// </summary>
@@ -431,8 +428,7 @@ public partial class AgentMonitoring : IAsyncDisposable
 
     /// <summary>
     /// Disposes hub event subscriptions, the refresh timer, and event handler registrations.
-    /// Unsubscribes from the active run group if the run detail modal was open (Req 3.3).
-    /// Implements IAsyncDisposable (Spec 045 Req 3.6).
+    /// Unsubscribes from the active run group if the run detail modal was open.
     /// </summary>
     public async ValueTask DisposeAsync()
     {

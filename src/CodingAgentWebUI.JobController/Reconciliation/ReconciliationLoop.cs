@@ -17,6 +17,14 @@ public sealed class ReconciliationLoop
 {
     private static readonly Serilog.ILogger Log = Serilog.Log.ForContext<ReconciliationLoop>();
 
+    // Kubernetes Job phases, distinct from WorkItem statuses despite two of them sharing their
+    // text. These are read from the Job's own conditions and counters; a WorkItem status is what
+    // we post back to the API afterwards. Collapsing the two into one set of constants would tie
+    // an external API's vocabulary to ours.
+    private const string JobPhaseSucceeded = "Succeeded";
+    private const string JobPhaseFailed = "Failed";
+    private const string JobPhaseComplete = "Complete"; // the condition type Kubernetes sets on success
+
     private readonly IPipelineApiWorkItemClient _workItemClient;
     private readonly IKubernetesJobClient _k8sClient;
     private readonly PvcPool _pvcPool;
@@ -96,7 +104,7 @@ public sealed class ReconciliationLoop
             {
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
-                    Status = "Failed",
+                    Status = nameof(WorkItemStatus.Failed),
                     ErrorMessage = $"Agent timeout after {_options.ChatSessionMaxDurationSeconds}s",
                     FailureReason = "Timeout"
                 }, ct);
@@ -169,7 +177,7 @@ public sealed class ReconciliationLoop
             {
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
-                    Status = "Failed",
+                    Status = nameof(WorkItemStatus.Failed),
                     ErrorMessage = $"No K8s Job created within {_options.ChatPodConnectTimeoutSeconds}s of dispatch",
                     FailureReason = "DispatchTimeout"
                 }, ct);
@@ -243,12 +251,12 @@ public sealed class ReconciliationLoop
 
         switch (phase)
         {
-            case "Succeeded":
-                await HandleJobCompletedAsync(workItemId.Value, job, "Succeeded", null, null, ct);
+            case JobPhaseSucceeded:
+                await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseSucceeded, null, null, ct);
                 break;
-            case "Failed":
+            case JobPhaseFailed:
                 var errorMsg = GetFailureMessage(job);
-                await HandleJobCompletedAsync(workItemId.Value, job, "Failed", "AgentError", errorMsg, ct);
+                await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, "AgentError", errorMsg, ct);
                 break;
             // Active/Unknown/Pending — no action needed
         }
@@ -277,7 +285,7 @@ public sealed class ReconciliationLoop
                 _pvcPool.Release(pvcName);
 
             // Record terminal metrics
-            var workItemStatus = status == "Succeeded" ? WorkItemStatus.Succeeded : WorkItemStatus.Failed;
+            var workItemStatus = status == JobPhaseSucceeded ? WorkItemStatus.Succeeded : WorkItemStatus.Failed;
             var failureReasonEnum = failureReason == "AgentError" ? (FailureReason?)FailureReason.AgentError : null;
             var dispatchedAt = job.Status?.StartTime is not null
                 ? new DateTimeOffset(job.Status.StartTime.Value, TimeSpan.Zero)
@@ -323,15 +331,15 @@ public sealed class ReconciliationLoop
         var conditions = job.Status?.Conditions;
         if (conditions is not null)
         {
-            if (conditions.Any(c => c.Type == "Complete" && c.Status == "True"))
-                return "Succeeded";
-            if (conditions.Any(c => c.Type == "Failed" && c.Status == "True"))
-                return "Failed";
+            if (conditions.Any(c => c.Type == JobPhaseComplete && c.Status == "True"))
+                return JobPhaseSucceeded;
+            if (conditions.Any(c => c.Type == JobPhaseFailed && c.Status == "True"))
+                return JobPhaseFailed;
         }
 
         // Fall back to counters
-        if (job.Status?.Succeeded > 0) return "Succeeded";
-        if (job.Status?.Failed > 0) return "Failed";
+        if (job.Status?.Succeeded > 0) return JobPhaseSucceeded;
+        if (job.Status?.Failed > 0) return JobPhaseFailed;
         return "Active";
     }
 
@@ -345,7 +353,7 @@ public sealed class ReconciliationLoop
     private static string? GetFailureMessage(V1Job job)
     {
         var conditions = job.Status?.Conditions;
-        var failedCondition = conditions?.FirstOrDefault(c => c.Type == "Failed" && c.Status == "True");
+        var failedCondition = conditions?.FirstOrDefault(c => c.Type == JobPhaseFailed && c.Status == "True");
         return failedCondition?.Message;
     }
 }

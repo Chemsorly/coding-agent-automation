@@ -136,7 +136,7 @@ public sealed class ApiBackedConfigStoresTests
     public async Task ApiConfigurationStore_EachKind_ReturnsItsOwnConfigs_WithinCacheTtl()
     {
         var client = ClientReturningOnePerKind();
-        var store = new ApiConfigurationStore(client.Object) { CacheTtlSeconds = 600 };
+        var store = CreateCompositeStore(client.Object, ttlSeconds: 600);
 
         foreach (var kind in Enum.GetValues<ProviderKind>())
         {
@@ -155,7 +155,7 @@ public sealed class ApiBackedConfigStoresTests
     public async Task ApiConfigurationStore_DispatchCallOrder_ResolvesEachKindCorrectly()
     {
         var client = ClientReturningOnePerKind();
-        var store = new ApiConfigurationStore(client.Object) { CacheTtlSeconds = 600 };
+        var store = CreateCompositeStore(client.Object, ttlSeconds: 600);
 
         var repo = await store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
         var agent = await store.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
@@ -170,7 +170,7 @@ public sealed class ApiBackedConfigStoresTests
     public async Task ApiConfigurationStore_InvalidateCaches_ClearsProviderConfigsForEveryKind()
     {
         var client = ClientReturningOnePerKind();
-        var store = new ApiConfigurationStore(client.Object) { CacheTtlSeconds = 600 };
+        var store = CreateCompositeStore(client.Object, ttlSeconds: 600);
 
         await store.LoadProviderConfigsAsync(ProviderKind.Brain, CancellationToken.None);
         store.InvalidateCaches();
@@ -202,4 +202,16 @@ public sealed class ApiBackedConfigStoresTests
         client.Verify(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Exactly(2),
             "an update must invalidate the cached configuration");
     }
+
+    /// <summary>
+    /// Builds the composite store the way DI does: over the same three narrow stores, so the
+    /// caches under test are the ones production shares rather than private copies.
+    /// </summary>
+    private static ApiConfigurationStore CreateCompositeStore(IPipelineApiConfigClient client, int ttlSeconds)
+        => new(
+            client,
+            new ApiPipelineConfigStore(client) { CacheTtlSeconds = ttlSeconds },
+            new ApiProviderConfigStore(client) { CacheTtlSeconds = ttlSeconds },
+            new ApiProjectStore(client) { CacheTtlSeconds = ttlSeconds })
+        { CacheTtlSeconds = ttlSeconds };
 }

@@ -19,7 +19,7 @@ namespace CodingAgentWebUI.Api.Dispatch;
 /// them as K8s Jobs. Runs under leader election (same Lease as DispatchService).
 /// Extracted from DispatchService to separate consolidation-specific concerns (run status transitions,
 /// provider config resolution, cascade failure) from regular issue dispatch.
-/// Relocated from CodingAgentWebUI.Orchestration to CodingAgentWebUI.Api (Spec 043 Task 9).
+/// Relocated from CodingAgentWebUI.Orchestration to CodingAgentWebUI.Api.
 /// </summary>
 internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollingService
 {

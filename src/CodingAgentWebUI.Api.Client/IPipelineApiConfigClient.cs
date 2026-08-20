@@ -77,10 +77,10 @@ public interface IPipelineApiConfigClient
     Task SetKeyValueAsync(string key, string value, CancellationToken ct = default);
     Task DeleteKeyValueAsync(string key, CancellationToken ct = default);
 
-    // Config import/export (Spec 045 Req 2.4a — implemented in Task 8b on the API side)
+    // Config import/export (implemented in Task 8b on the API side)
     Task<byte[]> ExportConfigAsync(CancellationToken ct = default);
     Task ImportConfigAsync(Stream jsonStream, string fileName, CancellationToken ct = default);
 
-    // Model fetch (Spec 045 Req 7a.2 — Option A passthrough via GET /api/config/models)
+    // Model fetch — Option A passthrough via GET /api/config/models
     Task<(IReadOnlyList<AgentModelInfo> Models, string? Error)> GetModelsAsync(CancellationToken ct = default);
 }

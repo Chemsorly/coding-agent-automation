@@ -1,6 +1,6 @@
 // DEAD CODE (Spec 043) — this class is no longer registered as a hosted service in any host.
-// Source retained because test projects in CodingAgentWebUI.Pipeline.UnitTests directly
-// instantiate it via 'new DispatchService(...)'. Spec 045 task: migrate those tests and delete.
+// Source retained because test projects directly instantiate it via 'new DispatchService(...)'.
+// TODO(Spec 046): migrate those tests to use the Job Controller's DispatchLoop and delete this class.
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline.LeaderElection;

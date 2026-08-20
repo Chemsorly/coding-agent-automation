@@ -65,64 +65,83 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             return await next(invocationContext);
         }
 
-        var connectionId = invocationContext.Context.ConnectionId;
-        var methodName = invocationContext.HubMethodName;
+        if (IsOperatorConnection(invocationContext))
+            GuardOperatorMethod(invocationContext);
+        else
+            GuardAgentMethod(invocationContext);
 
-        // Operator connections (AgentApiKeyAuthHandler sets auth_kind=operator when no agentId
-        // query parameter is present) are UI circuits, not agents. They may subscribe to run
-        // groups but must not drive the agent-facing surface.
-        var isOperator = string.Equals(
-            invocationContext.Context.User?.FindFirst("auth_kind")?.Value,
+        return await next(invocationContext);
+    }
+
+    /// <summary>
+    /// True when the caller authenticated with the master key and no <c>agentId</c> query
+    /// parameter — <c>AgentApiKeyAuthHandler</c> stamps <c>auth_kind=operator</c> for that case.
+    /// In practice this is the Blazor UI circuit.
+    /// </summary>
+    private static bool IsOperatorConnection(HubInvocationContext ctx) =>
+        string.Equals(
+            ctx.Context.User?.FindFirst("auth_kind")?.Value,
             "operator",
             StringComparison.Ordinal);
 
-        if (isOperator)
-        {
-            if (!OperatorAllowedMethods.Contains(methodName))
-            {
-                _logger.Warning(
-                    "Hub method {Method} rejected — operator connection {ConnectionId} may only invoke UI subscription methods",
-                    methodName, connectionId);
-                throw new HubException($"Method {methodName} is not available to operator connections");
-            }
+    /// <summary>
+    /// Operator connections are not agents and never call <c>RegisterAgent</c>. They may join and
+    /// leave run groups so the UI can stream output; everything else on this hub is agent-facing.
+    /// </summary>
+    private void GuardOperatorMethod(HubInvocationContext ctx)
+    {
+        if (OperatorAllowedMethods.Contains(ctx.HubMethodName))
+            return;
 
-            return await next(invocationContext);
+        _logger.Warning(
+            "Hub method {Method} rejected — operator connection {ConnectionId} may only invoke UI subscription methods",
+            ctx.HubMethodName, ctx.Context.ConnectionId);
+        throw new HubException($"Method {ctx.HubMethodName} is not available to operator connections");
+    }
+
+    /// <summary>
+    /// Requires the caller to be a registered agent, and for <see cref="RequiresActiveJobAttribute"/>
+    /// methods, to own the job it is addressing. <c>RegisterAgent</c> is exempt — it is how a
+    /// connection becomes a registered agent in the first place.
+    /// </summary>
+    private void GuardAgentMethod(HubInvocationContext ctx)
+    {
+        if (string.Equals(ctx.HubMethodName, nameof(AgentHub.RegisterAgent), StringComparison.Ordinal))
+            return;
+
+        var agent = _registry.GetByConnectionId(ctx.Context.ConnectionId);
+        if (agent is null)
+        {
+            _logger.Warning(
+                "Hub method {Method} rejected — connection {ConnectionId} is not a registered agent",
+                ctx.HubMethodName, ctx.Context.ConnectionId);
+            throw new HubException($"Agent not registered (connection {ctx.Context.ConnectionId})");
         }
 
-        // RegisterAgent is the only method that doesn't require a registered agent
-        if (!string.Equals(methodName, nameof(AgentHub.RegisterAgent), StringComparison.Ordinal))
+        if (ctx.HubMethod.GetCustomAttribute<RequiresActiveJobAttribute>() is not null)
+            GuardActiveJob(ctx, agent);
+    }
+
+    /// <summary>
+    /// Validates the <c>jobId</c> first parameter against the agent's <c>ActiveJobId</c>.
+    /// The first-parameter convention is documented on <see cref="RequiresActiveJobAttribute"/>.
+    /// </summary>
+    private void GuardActiveJob(HubInvocationContext ctx, AgentEntry agent)
+    {
+        if (ctx.HubMethodArguments.Count == 0 || ctx.HubMethodArguments[0] is not JobId jobId)
         {
-            var agent = _registry.GetByConnectionId(connectionId);
-            if (agent is null)
-            {
-                _logger.Warning(
-                    "Hub method {Method} rejected — connection {ConnectionId} is not a registered agent",
-                    methodName, connectionId);
-                throw new HubException($"Agent not registered (connection {connectionId})");
-            }
-
-            // Methods with [RequiresActiveJob] validate jobId (always first parameter)
-            var requiresActiveJob = invocationContext.HubMethod.GetCustomAttribute<RequiresActiveJobAttribute>() is not null;
-            if (requiresActiveJob)
-            {
-                if (invocationContext.HubMethodArguments.Count == 0 || invocationContext.HubMethodArguments[0] is not JobId jobId)
-                {
-                    _logger.Warning(
-                        "Hub method {Method} rejected — missing or invalid jobId parameter from agent {AgentId}",
-                        methodName, agent.AgentId);
-                    throw new HubException($"Method {methodName} requires a jobId as the first parameter");
-                }
-
-                if (!string.Equals(agent.ActiveJobId, jobId.Value, StringComparison.Ordinal))
-                {
-                    _logger.Warning(
-                        "Hub method {Method} rejected — job {JobId} not assigned to agent {AgentId} (active job: {ActiveJobId})",
-                        methodName, jobId.Value, agent.AgentId, agent.ActiveJobId ?? "none");
-                    throw new HubException($"Job {jobId.Value} is not assigned to agent {agent.AgentId}");
-                }
-            }
+            _logger.Warning(
+                "Hub method {Method} rejected — missing or invalid jobId parameter from agent {AgentId}",
+                ctx.HubMethodName, agent.AgentId);
+            throw new HubException($"Method {ctx.HubMethodName} requires a jobId as the first parameter");
         }
 
-        return await next(invocationContext);
+        if (!string.Equals(agent.ActiveJobId, jobId.Value, StringComparison.Ordinal))
+        {
+            _logger.Warning(
+                "Hub method {Method} rejected — job {JobId} not assigned to agent {AgentId} (active job: {ActiveJobId})",
+                ctx.HubMethodName, jobId.Value, agent.AgentId, agent.ActiveJobId ?? "none");
+            throw new HubException($"Job {jobId.Value} is not assigned to agent {agent.AgentId}");
+        }
     }
 }

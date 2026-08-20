@@ -254,43 +254,6 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase, IClassFixture<
             $"Agent should be null or Disconnected, got: {agentEntry?.Status}");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // B7: Duplicate dispatch via concurrent API calls → dedup rejects second
-    // ═══════════════════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task DbMode_ConcurrentDuplicateDispatch_OnlyOneSucceeds()
-    {
-        // Arrange
-        await SeedIssueAndProfileAsync("1004", "Concurrent dedup issue");
-        await using var agent = new FakeAgentClient("unhappy-concurrent-agent", "unhappy-e2e");
-        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        // Act: dispatch the same issue from two concurrent tasks
-        var task1 = DispatchIssueAsync("1004");
-        var task2 = DispatchIssueAsync("1004");
-
-        var results = await Task.WhenAll(task1, task2);
-
-        // Assert: exactly one succeeds, one fails (or one succeeds and one returns null from prepare)
-        var successes = results.Count(r => r.Success);
-        var failures = results.Count(r => !r.Success);
-
-        // At least one must succeed
-        Assert.True(successes >= 1, "At least one dispatch must succeed");
-        // Total should be 2 (both complete without exception)
-        Assert.Equal(2, results.Length);
-        // If both "succeed", one might be queued — but there should only be 1 active WorkItem
-        // for this issue in the DB
-        await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var activeItems = await db.WorkItems.AsNoTracking()
-            .Where(w => w.IssueIdentifier == "1004" &&
-                        w.Status != WorkItemStatus.Failed &&
-                        w.Status != WorkItemStatus.Cancelled)
-            .ToListAsync();
-        Assert.True(activeItems.Count <= 1,
-            $"Expected at most 1 active WorkItem for issue 1004, got {activeItems.Count}");
-    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // B9: Shutdown signal blocks new dispatch

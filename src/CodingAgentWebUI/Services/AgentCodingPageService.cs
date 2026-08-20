@@ -11,10 +11,7 @@ namespace CodingAgentWebUI.Services;
 /// forwards drawer operations to the focused drawer services.
 /// The Blazor component delegates to this service and retains only UI state.
 /// Registered as Scoped because it holds per-page mutable state.
-/// <para>
-/// Spec 045: IConfigurationStore and IProjectStore replaced by IPipelineApiConfigClient.
-/// The monolith has no direct Postgres access.
-/// </para>
+/// Config and project data are loaded via <see cref="IPipelineApiConfigClient"/>.
 /// </summary>
 public class AgentCodingPageService
 {
@@ -121,9 +118,9 @@ public class AgentCodingPageService
     {
         try
         {
-            IssueProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
-            var allRepoProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
-            PipelineProviders = (await _configClient.GetProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
+            IssueProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+            var allRepoProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
+            PipelineProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
             BrainProviders = allRepoProviders.Where(p => p.RepositoryRole == RepositoryRole.Brain).ToList();
             RepoProviders = allRepoProviders.Where(p => p.RepositoryRole != RepositoryRole.Brain).ToList();
 

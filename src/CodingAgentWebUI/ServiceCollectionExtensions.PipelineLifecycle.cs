@@ -16,8 +16,8 @@ public static partial class ServiceCollectionExtensions
         services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
 
         // IPipelineRunHistoryService is not registered here — it is registered by AddWorkDistribution
-        // via RegisterKubernetesMode → PostgresPipelineRunHistoryService. If AddWorkDistribution is
-        // ever removed or conditionalized, GetRequiredService below will fail at runtime.
+        // via WorkDistributionRegistration.RegisterConsolidationServices → PostgresPipelineRunHistoryService.
+        // If AddWorkDistribution is ever removed or conditionalized, GetRequiredService below will fail at runtime.
         services.AddSingleton(sp => new PipelineRunLifecycleService(
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IOrchestratorRunService>(),

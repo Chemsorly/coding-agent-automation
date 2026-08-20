@@ -11,21 +11,16 @@ namespace CodingAgentWebUI.Services;
 
 /// <summary>
 /// Encapsulates the business logic for the AgentMonitoring page — data refresh, cancellation
+/// <summary>
+/// Encapsulates the business logic for the AgentMonitoring page — data refresh, cancellation
 /// orchestration, and state management. The Blazor component delegates to this service
 /// and retains only UI state (modals, timers, JS interop, StateHasChanged).
 /// Registered as Scoped because it holds per-page mutable state.
 /// <para>
-/// Spec 044: Operates in degraded (history-only) mode. The monolith no longer owns
-/// in-memory run state — IOrchestratorRunService, IRunLifecycleManager, and IHubContext
-/// have been removed. Cancel/disconnect operations route through IWorkDistributor.
-/// Full live streaming is restored in Spec 045.
-/// </para>
-/// <para>
-/// Spec 045: IConfigurationStore replaced by IPipelineApiConfigClient;
-/// IPipelineRunHistoryService replaced by IPipelineApiRunHistoryClient;
-/// IActiveRunQueryService removed — active runs are derived from run history by filtering
-/// non-terminal PipelineStep values (Completed, Failed, Cancelled). The monolith has no
-/// direct Postgres access.
+/// Active runs are derived from run history via <see cref="IPipelineApiRunHistoryClient"/>
+/// by filtering non-terminal <see cref="PipelineStep"/> values. Config and run history
+/// are loaded via <see cref="IPipelineApiConfigClient"/> and <see cref="IPipelineApiRunHistoryClient"/>.
+/// Cancel/disconnect operations route through <see cref="IWorkDistributor"/>.
 /// </para>
 /// </summary>
 public class AgentMonitoringPageService
@@ -130,7 +125,7 @@ public class AgentMonitoringPageService
     public async Task RefreshDataAsync(bool includeConsolidation = false)
     {
         Agents = _registry.GetAllAgents();
-        // Fetch run history via the Pipeline API (no direct DB access in Spec 045+).
+        // Fetch run history via the Pipeline API.
         // Request a large page to approximate "all" for the monitoring view; paging is
         // supported by the underlying endpoint if larger datasets require it in future.
         var historyPage = await _runHistoryClient.GetRunHistoryAsync(page: 1, pageSize: 1000, ct: CancellationToken.None);
@@ -203,8 +198,8 @@ public class AgentMonitoringPageService
     // ── Orchestration Methods ──
 
     /// <summary>
-    /// Spec 044 (degraded mode): routes all cancel requests through IWorkDistributor.
-    /// IOrchestratorRunService and IRunLifecycleManager are no longer in the monolith.
+    /// Cancels a run by ID via IWorkDistributor.
+    /// IOrchestratorRunService is not available in the monolith.
     /// </summary>
     public async Task CancelAgentRunByIdAsync(string runId)
     {
@@ -225,15 +220,13 @@ public class AgentMonitoringPageService
     }
 
     /// <summary>
-    /// Spec 044 (degraded mode): CancelJob hub message cannot be sent (hub is in the API).
-    /// Cancels via WorkDistributor only.
+    /// Cancels a run via IWorkDistributor. CancelJob hub message is not sent from the monolith —
+    /// the agent hub lives in CodingAgentWebUI.Api.
     /// </summary>
     public async Task CancelAgentRunAsync(PipelineRun run)
     {
-        // Spec 044: no hub context available in the monolith — cancel via WorkDistributor.
-        // CancelJob signal to the agent is not sent here; the agent will be notified via
-        // the API hub once 045 restores live streaming.
-        Logger.Information("Cancel (degraded mode): run {RunId} — delegating to IWorkDistributor", run.RunId);
+        // Cancel via WorkDistributor — no hub context in monolith. Agent receives cancellation via the API hub.
+        Logger.Information("Cancel: run {RunId} — delegating to IWorkDistributor", run.RunId);
         try
         {
             await _workDistributor.CancelJobAsync(run.RunId, CancellationToken.None);
@@ -276,16 +269,15 @@ public class AgentMonitoringPageService
     }
 
     /// <summary>
-    /// Spec 044 (degraded mode): ForceDisconnect hub message cannot be sent (hub is in the API).
-    /// Deregisters the agent from the local registry only.
+    /// Deregisters the agent from the local registry. ForceDisconnect hub message is not sent
+    /// from the monolith — the agent hub lives in CodingAgentWebUI.Api.
     /// </summary>
     public Task ForceDisconnectAsync(AgentEntry agent)
     {
         try
         {
-            // Spec 044: no hub context available — skip ForceDisconnect signal.
-            // The agent will be swept by HeartbeatMonitorService in the API.
-            Logger.Information("ForceDisconnect (degraded mode): deregistering agent {AgentId} from local registry", agent.AgentId);
+            // No hub context in monolith — ForceDisconnect signal not sent. Agent will be swept by HeartbeatMonitorService in the API.
+            Logger.Information("ForceDisconnect: deregistering agent {AgentId} from local registry", agent.AgentId);
             _registry.Deregister(agent.AgentId);
         }
         catch (Exception ex)

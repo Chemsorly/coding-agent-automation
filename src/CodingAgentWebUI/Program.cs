@@ -39,8 +39,8 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 // ShutdownBudgetValidation warns if headroom drops below 5s (i.e., drain + shutdown > 35s).
 builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(40));
 
-// ── Pipeline API client (Spec 045 Req 2.1, 3.1, 3.6) ───────────────────────
-// Fast-fail: API URL required (replaces DB connection string as primary dependency check).
+// ── Pipeline API client ───────────────────────────────────────────────────────────────────────
+// Fast-fail: API URL required — monolith has no direct DB access.
 // Helm injects this as PipelineApi__BaseUrl (double-underscore → colon convention).
 var apiBaseUrl = builder.Configuration.GetValue<string>("PipelineApi:BaseUrl");
 if (string.IsNullOrEmpty(apiBaseUrl))
@@ -68,14 +68,11 @@ var apiHubUrl = builder.Configuration.GetValue<string>("PipelineApi:HubUrl")
     ?? $"{apiBaseUrl.TrimEnd('/')}/hubs/agent";
 builder.Services.AddScoped<IAgentHubConnection>(_ => new AgentHubConnection(apiHubUrl, agentApiKey));
 
-// Domain service registrations (extracted into focused extension methods)
-// dbConnectionString removed (Spec 045 Task 9 / Req 1.4, 7.2): monolith no longer has DB access.
-// AddApplicationTelemetry no longer receives a connection string — Npgsql tracing is removed.
+// null — monolith has no direct DB access; AddApplicationTelemetry does not include Npgsql tracing.
 var dbConnectionString = (string?)null;
 
 // Bootstrap config for DI registration only — real config is loaded from Pipeline API at runtime.
-// NOTE: ClosedLoopAutoStart defaults to false here; AutoStartPipelineLoopAsync loads the real value
-// from the API (Spec 045 Req 4.4).
+// NOTE: ClosedLoopAutoStart defaults to false here; AutoStartPipelineLoopAsync loads the real value from the API.
 var pipelineConfig = new PipelineConfiguration();
 
 builder.Services.AddInfrastructureServices();
@@ -85,9 +82,8 @@ builder.Services.AddOrchestrationServices(pipelineConfig);
 builder.Services.AddConsolidationServices(pipelineConfig);
 builder.Services.AddWorkDistribution(builder.Configuration);
 
-// Infrastructure health aggregation — reads from IConnectionMultiplexer (Redis, optional)
-// DB health monitoring removed (Spec 045 Req 1.5): monolith no longer directly queries Postgres.
-// DatabaseHealthState was backed by DatabaseReadinessMonitor which pinged DB every 10s.
+// Infrastructure health aggregation — reads from IConnectionMultiplexer (Redis, optional).
+// DB health monitoring removed — monolith has no direct Postgres connection.
 builder.Services.AddSingleton<CodingAgentWebUI.Services.InfrastructureHealthService>();
 
 // Page-level services (scoped — one instance per Blazor circuit)
@@ -123,9 +119,6 @@ var app = builder.Build();
 // were added yet. (review-findings)
 
 app.ValidateShutdownBudget();
-// InitializeDatabaseAsync removed (Spec 045 Task 9 / Req 1.4): monolith no longer has DB access.
-// Spec 044: RehydrateActiveRunsAsync removed — IOrchestratorRunService rehydration is now performed
-// in CodingAgentWebUI.Api (Task 2). The monolith's in-memory run state is no longer authoritative.
 app.ValidateDiWiring();
 app.RegisterObservableGauges();
 app.MapApplicationEndpoints();

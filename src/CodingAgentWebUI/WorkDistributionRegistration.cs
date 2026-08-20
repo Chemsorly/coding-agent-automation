@@ -26,7 +26,8 @@ public static partial class WorkDistributionRegistration
     /// <summary>
     /// Registers work distribution services: K8s infrastructure, leader election,
     /// work distributor, and SignalR backplane.
-    /// All high-level Postgres-backed config/key-value stores removed (Spec 045 Req 1.2).
+    /// IDbContextFactory retained for KubernetesWorkDistributor and consolidation services.
+    /// TODO(Spec 046): migrate those to API calls to remove the last DB dependency from the monolith.
     /// </summary>
     public static IServiceCollection AddWorkDistribution(
         this IServiceCollection services,
@@ -75,8 +76,6 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemFallbackTransitionService>()));
 
         // ── IPipelineRunHistoryService — still needed by consolidation services and PipelineRunLifecycleService ──
-        // Spec 045 Req 1.2: PostgresPipelineRunHistoryService is the only remaining DB-backed service
-        // in this registration that will stay until consolidation services are migrated to the API.
         services.AddSingleton<IPipelineRunHistoryService>(sp => new PostgresPipelineRunHistoryService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             Log.Logger));
@@ -89,19 +88,14 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<IHarnessSuggestionStore>(sp =>
             new PostgresHarnessSuggestionStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
-        // REMOVED (Spec 045 Req 1.2):
-        //   IActiveRunQueryService (PostgresActiveRunQueryService) — active runs now via IPipelineApiRunHistoryClient
-        //   IWorkItemQueryService (WorkItemTransitionService) — staleness detector removed
-        //   AnalysisStalenessDetector — registration removed; ServiceCollectionExtensions.JobDispatching
-        //     uses GetService<AnalysisStalenessDetector>() (null-safe), so null is acceptable
-        //   IDispatchOrchestrationService — Task 7 moved run creation to API; remaining Dispatch call
-        //     goes through IWorkDistributor. TODO: remove from consolidation if no longer needed.
-        //   PostgresConfigurationStore + RegisterConfigStoreSubInterfaces — replaced by API-backed adapters
-        //     in ServiceCollectionExtensions.PipelineBackgroundServices (Task 6)
-        //   ILoopStateStore (PostgresLoopStateStore) — Option B: ClosedLoopAutoStart in PipelineConfiguration
-        //   IKeyValueStore (EfKeyValueStore) — replaced by IPipelineApiConfigClient (Task 3)
-        //   WorkItemMetricsBackgroundService — re-homed to CodingAgentWebUI.Api (Task 8a)
-        //   DatabaseMaintenanceService — re-homed to CodingAgentWebUI.Api (Task 8a)
+        // The following services were removed — registrations live in CodingAgentWebUI.Api:
+        //   IActiveRunQueryService → IPipelineApiRunHistoryClient
+        //   AnalysisStalenessDetector → not registered (GetService returns null)
+        //   PostgresConfigurationStore → API-backed adapters in ServiceCollectionExtensions.PipelineBackgroundServices
+        //   ILoopStateStore → ClosedLoopAutoStart in PipelineConfiguration
+        //   IKeyValueStore → IPipelineApiConfigClient
+        //   WorkItemMetricsBackgroundService → CodingAgentWebUI.Api
+        //   DatabaseMaintenanceService → CodingAgentWebUI.Api
 
         // ── Polly resilience pipelines (no DB dependency) ────────────────────
         services.RegisterResiliencePipelines();
@@ -134,10 +128,10 @@ public static partial class WorkDistributionRegistration
     }
 
     /// <summary>
+    /// <summary>
     /// Wires SignalR Redis backplane when SignalR:Redis:ConnectionString is configured.
-    /// Without Redis, uses default in-memory transport (single replica / docker-compose).
-    /// Called for both DB modes (SignalR and Kubernetes) since the Redis backplane is for
-    /// the SignalR hub used by the web UI, not the work distribution mode.
+    /// Without Redis, uses default in-memory transport (single replica only).
+    /// The Redis backplane is for the SignalR hub used by the web UI, not for work distribution.
     /// </summary>
     private static void ConfigureSignalRRedisBackplane(IServiceCollection services, IConfiguration configuration)
     {

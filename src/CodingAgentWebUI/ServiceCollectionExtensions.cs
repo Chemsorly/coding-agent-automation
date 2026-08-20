@@ -20,8 +20,8 @@ namespace CodingAgentWebUI;
 public static partial class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers infrastructure services WITHOUT config store registrations.
-    /// Used in DB mode where PostgresConfigurationStore is registered by AddWorkDistribution.
+    /// Registers infrastructure services. Config stores are registered by
+    /// <see cref="AddWorkDistribution"/> and <c>RegisterPipelineBackgroundServices</c>.
     /// </summary>
     public static IServiceCollection AddInfrastructureServices(
         this IServiceCollection services)
@@ -36,9 +36,8 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers WebUI-specific pipeline services: orchestration, loop service, lifecycle, and history.
-    /// In DB mode, skips the in-memory history service registration (PostgresPipelineRunHistoryService
-    /// is registered by AddWorkDistribution instead).
+    /// Registers WebUI-specific pipeline services: lifecycle, facades, shutdown, and background services.
+    /// Config stores are registered by <see cref="AddWorkDistribution"/> and <c>RegisterPipelineBackgroundServices</c>.
     /// </summary>
     public static IServiceCollection AddPipelineCoreServices(this IServiceCollection services)
     {
@@ -58,8 +57,8 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers multi-agent orchestration services: agent registry, job dispatch, token vending,
-    /// heartbeat monitoring, and job dispatching. Hub services moved to API in Spec 044.
+    /// Registers multi-agent orchestration services: agent registry, job dispatch,
+    /// token vending, and dispatch infrastructure. HeartbeatMonitorService lives in the API.
     /// </summary>
     public static IServiceCollection AddOrchestrationServices(
         this IServiceCollection services,

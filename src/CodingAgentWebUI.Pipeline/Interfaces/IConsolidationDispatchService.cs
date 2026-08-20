@@ -62,7 +62,7 @@ public interface IConsolidationDispatchService
 
     /// <summary>
     /// Notifies the dispatcher that a queued run has been cancelled, so it won't be dispatched.
-    /// In DB mode, transitions the WorkItem to Cancelled. In Legacy mode, removes from in-memory queue.
+    /// Transitions the WorkItem to Cancelled in the database.
     /// </summary>
     /// <param name="runId">The run ID that was cancelled.</param>
     /// <param name="ct">Cancellation token.</param>

@@ -268,7 +268,7 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
 
     /// <inheritdoc/>
     /// Delegates to GET /api/config/models, which dispatches a one-shot K8s Job on the API
-    /// to query available models from the Kiro CLI (Spec 045 Req 7a.2 Option A).
+    /// to query available models from the Kiro CLI via a one-shot K8s Job.
     public async Task<(IReadOnlyList<AgentModelInfo> Models, string? Error)> GetModelsAsync(CancellationToken ct = default)
     {
         var response = await _http.GetAsync("/api/config/models", ct);

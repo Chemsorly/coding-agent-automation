@@ -144,9 +144,9 @@ internal sealed class DispatchLifecycleService : IDisposable
         {
             await db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateConcurrencyException)
+        catch (DbUpdateConcurrencyException ex)
         {
-            Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
+            Log.Warning(ex, "DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
             ReleaseClaimedPvc(claimedPvc, availablePvcs);
             return;
         }
@@ -246,9 +246,9 @@ internal sealed class DispatchLifecycleService : IDisposable
             if (onDispatchSuccess is not null)
                 await onDispatchSuccess(workItem);
         }
-        catch (DbUpdateConcurrencyException)
+        catch (DbUpdateConcurrencyException ex)
         {
-            Log.Warning("DispatchLifecycleService: concurrency conflict updating {LogPrefix}WorkItem {WorkItemId} to Dispatched", logPrefix, item.Id);
+            Log.Warning(ex, "DispatchLifecycleService: concurrency conflict updating {LogPrefix}WorkItem {WorkItemId} to Dispatched", logPrefix, item.Id);
             // Job exists in K8s — ReconciliationService will reconcile
         }
     }
@@ -352,7 +352,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
             // 409 Conflict = Job already exists = success (idempotent)
-            Log.Information("DispatchLifecycleService: K8s Job {JobName} already exists (409 Conflict), treating as success", ctx.JobName);
+            Log.Information(httpEx, "DispatchLifecycleService: K8s Job {JobName} already exists (409 Conflict), treating as success", ctx.JobName);
         }
         catch (Exception ex)
         {

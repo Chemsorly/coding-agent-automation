@@ -4,7 +4,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
-// WorkItemStatusUpdate moved to CodingAgentWebUI.Pipeline.Models (Spec 042 Req 7.2a)
+// WorkItemStatusUpdate moved to CodingAgentWebUI.Pipeline.Models
 
 namespace CodingAgentWebUI.Agent;
 
@@ -24,8 +24,8 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
     private readonly Serilog.ILogger _logger;
 
     /// <summary>
-    /// When set, appended as ?agentId= query param to GetAssignment and PostStatus calls (Spec 043 Req 8a.2).
-    /// Null = no query param (legacy / non-K8s mode).
+    /// When set, appended as ?agentId= query param to GetAssignment and PostStatus calls.
+    /// Null = no query param (agent authenticates with master key, no per-agent derivation).
     /// </summary>
     internal string? AgentId { get; set; }
 

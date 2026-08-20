@@ -43,8 +43,7 @@ internal sealed record AgentStartupConfig
             .FirstOrDefault(a => a.StartsWith(AgentDefaults.CliWorkItemIdPrefix, StringComparison.OrdinalIgnoreCase))
             ?.Substring(AgentDefaults.CliWorkItemIdPrefix.Length);
 
-        // Parse --mode flag (Spec 043 Req 13b.2, mandatory as of Spec 044 Req C5.1b).
-        // Valid values: "workitem" | "chat". Absent or unknown → InvalidOperationException.
+        // Parse --mode flag. Valid values: "workitem" | "chat". Absent or unknown → InvalidOperationException.
         var modeArg = args
             .FirstOrDefault(a => a.StartsWith("--mode=", StringComparison.OrdinalIgnoreCase))
             ?.Split('=', 2)[1];
@@ -72,7 +71,7 @@ internal sealed record AgentStartupConfig
                 $"Unknown --mode value '{modeArg}'. Valid values: workitem | chat.");
         }
 
-        // Read API key: from file (K8s mode) or env var (SignalR mode)
+        // Read API key: prefer AGENT_API_KEY_FILE (K8s Secret mount), fall back to AGENT_API_KEY env var.
         string agentApiKey;
         var apiKeyFilePath = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKeyFile);
         if (!string.IsNullOrEmpty(apiKeyFilePath))
@@ -83,8 +82,7 @@ internal sealed record AgentStartupConfig
         {
             agentApiKey = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKey)
                 ?? throw new InvalidOperationException(
-                    $"Neither {AgentDefaults.EnvAgentApiKeyFile} nor {AgentDefaults.EnvAgentApiKey} is set. " +
-                    "Provide --work-item-id={{id}} with AGENT_API_KEY_FILE, or AGENT_API_KEY for SignalR mode.");
+                    $"Neither {AgentDefaults.EnvAgentApiKeyFile} nor {AgentDefaults.EnvAgentApiKey} is set.");
         }
 
         var orchestratorUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOrchestratorUrl)

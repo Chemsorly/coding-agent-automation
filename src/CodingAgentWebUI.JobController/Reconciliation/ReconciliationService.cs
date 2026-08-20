@@ -17,22 +17,18 @@ public sealed class ReconciliationService : LeaderElectedPollingService
     private static readonly Serilog.ILogger Log = Serilog.Log.ForContext<ReconciliationService>();
 
     private readonly ReconciliationLoop _loop;
-    private readonly DispatchServiceOptions _options;
 
     protected override string ServiceName => "ReconciliationService";
     protected override int PollIntervalSeconds => 30; // fixed; reconciliation doesn't need to match dispatch cadence
 
     public ReconciliationService(
         ILeaderElectionService leaderElection,
-        ReconciliationLoop loop,
-        DispatchServiceOptions options)
+        ReconciliationLoop loop)
         : base(leaderElection) // no rate limiter — reconciliation doesn't need throttling
     {
         ArgumentNullException.ThrowIfNull(leaderElection);
         ArgumentNullException.ThrowIfNull(loop);
-        ArgumentNullException.ThrowIfNull(options);
         _loop = loop;
-        _options = options;
     }
 
     protected override async Task OnPollCycleAsync(CancellationToken ct)

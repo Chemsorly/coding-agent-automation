@@ -11,8 +11,7 @@ namespace CodingAgentWebUI;
 ///
 /// - agent.jobs.active and agent.connections.total: moved to CodingAgentWebUI.Api
 ///   (<see cref="ApiStartupExtensions.RegisterApiObservableGauges"/>).
-///   Agents register on the API hub (post Spec 044); the monolith's IAgentRegistryService
-///   was always empty. The API is the correct owner of these gauges.
+///   Agents register on the API hub; the monolith's IAgentRegistryService is always empty.
 internal static class ObservableGaugeRegistrationExtensions
 {
     /// <summary>

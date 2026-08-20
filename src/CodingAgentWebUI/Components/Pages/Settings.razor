@@ -202,10 +202,10 @@
     {
         try
         {
-            _issueProviders = (await ConfigClient.GetProviderConfigsAsync(ProviderKind.Issue, _cts.Token)).ToList();
-            _repoProviders = (await ConfigClient.GetProviderConfigsAsync(ProviderKind.Repository, _cts.Token)).ToList();
-            _agentProviders = (await ConfigClient.GetProviderConfigsAsync(ProviderKind.Agent, _cts.Token)).ToList();
-            _pipelineProviders = (await ConfigClient.GetProviderConfigsAsync(ProviderKind.Pipeline, _cts.Token)).ToList();
+            _issueProviders = (await ConfigClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, _cts.Token)).ToList();
+            _repoProviders = (await ConfigClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, _cts.Token)).ToList();
+            _agentProviders = (await ConfigClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Agent, _cts.Token)).ToList();
+            _pipelineProviders = (await ConfigClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, _cts.Token)).ToList();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)

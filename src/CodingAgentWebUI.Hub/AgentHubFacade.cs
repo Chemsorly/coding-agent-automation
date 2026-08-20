@@ -152,8 +152,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public void Signal()
     {
-        // No-op after Spec 044 — Legacy/SignalR queue dispatch removed in Spec 041.
-        // JobQueueDrainService was removed in Spec 044 Task 15d.
+        // Permanent no-op — queue dispatch was removed in Spec 041.
     }
 
     /// <inheritdoc />

@@ -15,7 +15,7 @@ public static class JobControllerServiceCollectionExtensions
 {
     /// <summary>
     /// Registers all Job Controller services:
-    /// - Kubernetes client (explicit in-cluster-first branch per 041 Req 5.9)
+    /// - Kubernetes client (in-cluster-first with kubeconfig fallback)
     /// - KubernetesJobClient
     /// - JobTemplateStore
     /// - ILeaderElectionService / LeaderElectionService
@@ -26,7 +26,7 @@ public static class JobControllerServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // ── Kubernetes client (explicit in-cluster-first; 041 Req 5.9) ────────
+        // ── Kubernetes client (in-cluster-first with kubeconfig fallback) ─────
         services.AddKubernetesClient();
         services.AddSingleton<IKubernetesJobClient, KubernetesJobClient>();
 

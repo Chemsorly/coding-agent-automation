@@ -25,8 +25,7 @@ public static class ReconciliationServiceRegistration
 
         services.AddSingleton<ReconciliationService>(sp => new ReconciliationService(
             sp.GetRequiredService<ILeaderElectionService>(),
-            sp.GetRequiredService<ReconciliationLoop>(),
-            sp.GetRequiredService<DispatchServiceOptions>()));
+            sp.GetRequiredService<ReconciliationLoop>()));
 
         services.AddHostedService(sp => sp.GetRequiredService<ReconciliationService>());
 

@@ -8,8 +8,7 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Extracts shared orchestration logic from <c>AgentJobDispatcher</c>
-/// for consumption by DB-backed <see cref="IWorkDistributor"/> implementations.
+/// Standalone dispatch orchestration service.
 /// Performs: issue fetching, label swapping, profile/QG resolution, and provider config preparation.
 /// </summary>
 /// <remarks>
@@ -399,7 +398,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // (GitHub API error), we log a warning but do NOT propagate the exception — otherwise
         // PipelineLoopService treats it as a failed dispatch (FailedCount++) even though the
         // agent is actively working. Note: IRunLifecycleManager.AgentAcceptedRunAsync also
-        // performs this swap (best-effort) in the SignalR direct-dispatch path, so this call
+        // performs this swap (best-effort) in a concurrent dispatch path, so this call
         // is a safety net / idempotent confirmation.
         try
         {

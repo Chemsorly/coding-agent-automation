@@ -4,7 +4,7 @@ namespace CodingAgentWebUI.Api.Client;
 
 /// <summary>
 /// Abstraction over a SignalR connection to the agent hub.
-/// Used by UI-side consumers (Spec 045) for event subscription only — no invoke wrappers.
+/// Used by UI-side consumers for event subscription only — no invoke wrappers.
 /// K8s agents use <c>IAgentConnectionManager</c> / <c>HubConnectionManager</c> from the Agent project.
 /// </summary>
 public interface IAgentHubConnection : IAsyncDisposable

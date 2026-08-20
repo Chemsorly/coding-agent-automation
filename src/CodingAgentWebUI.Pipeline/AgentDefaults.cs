@@ -13,7 +13,7 @@ public static class AgentDefaults
     /// <summary>
     /// Root directory for per-window chat session workspaces.
     /// Each chat window gets a subdirectory: <see cref="ChatWorkspacesRoot"/>/{chatWindowId}.
-    /// Distinct from <see cref="ChatWorkspacePath"/> (the legacy single-path for SignalR mode).
+    /// Distinct from <see cref="ChatWorkspacePath"/> (the legacy single-path constant retained for backward compatibility).
     /// </summary>
     public const string ChatWorkspacesRoot = "/app/workspaces/chat-sessions";
 

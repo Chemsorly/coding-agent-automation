@@ -186,9 +186,10 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
                 await db.SaveChangesAsync(ct);
                 return true;
             }
-            catch (DbUpdateConcurrencyException) when (attempt < maxRetries)
+            catch (DbUpdateConcurrencyException ex) when (attempt < maxRetries)
             {
                 _logger.LogInformation(
+                    ex,
                     "Concurrency conflict on WorkItem {WorkItemId} TransitionIfAsync to {Target}, retry {Attempt}/{MaxRetries}",
                     workItemId, target, attempt + 1, maxRetries);
                 // Row changed — retry; the loop will re-read and re-check both conditions

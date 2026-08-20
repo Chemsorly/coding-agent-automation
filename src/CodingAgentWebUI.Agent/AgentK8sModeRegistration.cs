@@ -46,7 +46,7 @@ internal static class AgentK8SModeRegistration
             var httpClient = factory.CreateClient(nameof(WorkItemHttpClient));
             var client = new WorkItemHttpClient(httpClient, Serilog.Log.Logger)
             {
-                AgentId = agentIdValue // Spec 043 Req 8a.2: append ?agentId= to work-item API calls
+                AgentId = agentIdValue // append ?agentId= to work-item API calls for HMAC key derivation
             };
             return client;
         });

@@ -10,16 +10,7 @@ public static partial class ServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the scoped <see cref="AgentMonitoringPageServiceDependencies"/> record needed
-    /// by <see cref="AgentMonitoringPageService"/> (which is registered as scoped via AddScoped&lt;T&gt;
-    /// auto-construction in Program.cs).
-    /// <para>
-    /// Spec 044: IOrchestratorRunService, IRunLifecycleManager, PipelineRunLifecycleService, and
-    /// IHubContext&lt;AgentHub&gt; removed — the monolith is in degraded (history-only) mode.
-    /// </para>
-    /// <para>
-    /// Spec 045: IConfigurationStore replaced by IPipelineApiConfigClient;
-    /// IPipelineRunHistoryService replaced by IPipelineApiRunHistoryClient.
-    /// </para>
+    /// by <see cref="AgentMonitoringPageService"/>.
     /// </summary>
     public static IServiceCollection AddAgentMonitoringPageServiceDependencies(this IServiceCollection services)
     {
@@ -28,7 +19,7 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<IPipelineApiConfigClient>(),
             sp.GetRequiredService<IConsolidationService>(),
-            sp.GetService<IPendingWorkQuery>(),  // nullable — removed from monolith DI in Spec 045 Req 1.2
+            sp.GetService<IPendingWorkQuery>(),  // nullable — not registered in monolith DI
             sp.GetRequiredService<IWorkDistributor>(),
             sp.GetRequiredService<IPipelineApiRunHistoryClient>()));
         return services;

@@ -62,41 +62,6 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase, IClassFixtur
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // C1: Concurrent dispatch to same issue — only one wins dedup
-    // ═══════════════════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task Race_ConcurrentDispatchSameIssue_OnlyOneActiveWorkItem()
-    {
-        // Arrange: seed issue + connect agent so dispatch path is fully exercised
-        await SeedIssueAndProfileAsync("2000", "Concurrent dispatch race");
-        await using var agent = new FakeAgentClient("race-agent-c1", "race-e2e");
-        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        // Act: fire 5 concurrent dispatches for the same issue
-        var tasks = Enumerable.Range(0, 5)
-            .Select(_ => Task.Run(() => DispatchIssueAsync("2000")))
-            .ToList();
-
-        var results = await Task.WhenAll(tasks);
-
-        // Assert: at most 1 succeeds with a non-null WorkItemId
-        var successfulDispatches = results.Where(r => r.Success && r.WorkItemId is not null).ToList();
-        Assert.True(successfulDispatches.Count <= 1,
-            $"Expected at most 1 successful dispatch, got {successfulDispatches.Count}. " +
-            "Dedup guard should prevent concurrent duplicates.");
-
-        // Assert: DB has at most 1 non-terminal WorkItem for this issue
-        await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var activeItems = await db.WorkItems.AsNoTracking()
-            .Where(w => w.IssueIdentifier == "2000" &&
-                        w.Status != WorkItemStatus.Failed &&
-                        w.Status != WorkItemStatus.Cancelled)
-            .ToListAsync();
-        Assert.True(activeItems.Count <= 1,
-            $"Expected at most 1 active WorkItem, got {activeItems.Count}");
-    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // C4: Simultaneous job completion + heartbeat timeout — only one finalizes

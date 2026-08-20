@@ -7,9 +7,9 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Hub;
 
 /// <summary>
-/// Handles token refresh logic for agents. Resolves provider configurations from either
-/// the in-memory PipelineRun (SignalR mode) or the WorkItem payload in DB (K8s mode),
-/// then returns an appropriate token based on the auth mechanism configured.
+/// Handles token refresh logic for agents. Resolves provider configurations from
+/// the WorkItem payload in the database, then returns an appropriate token
+/// based on the auth mechanism configured.
 /// </summary>
 internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
 {
@@ -44,7 +44,7 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
         if (run is not null)
             return (run.RepoProviderConfigId, run.BrainProviderConfigId);
 
-        // K8s mode fallback: resolve from WorkItem payload in DB
+        // Fallback: resolve from WorkItem payload in DB (no in-memory run found)
         var configIds = await _facade.GetWorkItemProviderConfigIdsAsync(jobId, ct);
         if (configIds is null)
         {

@@ -1,13 +1,12 @@
 namespace CodingAgentWebUI.Pipeline.LeaderElection;
 
 /// <summary>
-/// Single-instance no-op leader election service for deployments without a database
-/// or Kubernetes lease. Always reports itself as the leader.
-///
-/// Used as a fallback in SignalR work-distribution mode when no Postgres connection
-/// string is configured. <see cref="LeaderElectedPollingService"/> polls
-/// <see cref="IsLeader"/> directly, so this implementation requires no
-/// <see cref="Microsoft.Extensions.Hosting.IHostedService"/> — it is a pure null-object.
+/// Single-instance no-op leader election service for deployments without Kubernetes
+/// lease infrastructure. Always reports itself as the leader.
+/// Used in test environments and single-instance deployments where
+/// <see cref="LeaderElectedPollingService"/> needs an <see cref="ILeaderElectionService"/>
+/// but real leader election is not required. This is a pure null-object —
+/// it does not implement <see cref="Microsoft.Extensions.Hosting.IHostedService"/>.
 /// </summary>
 public sealed class AlwaysLeaderElectionService : ILeaderElectionService
 {

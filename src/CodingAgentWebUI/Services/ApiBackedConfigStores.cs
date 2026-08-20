@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Services;
 /// <summary>
 /// API-backed implementation of <see cref="IPipelineConfigStore"/> using <see cref="IPipelineApiConfigClient"/>.
 /// Implements TTL caching (configurable via <see cref="CacheTtlSeconds"/>) to avoid excessive API
-/// calls during the tight polling loop. (Spec 045 Req 4.2 Option B, Req 4.3)
+/// calls during the tight polling loop.
 /// Thread-safe: the lock is released before awaiting to avoid holding a lock across async I/O.
 /// Two concurrent callers may both reach the API (double-fetch window) — acceptable trade-off.
 /// </summary>
@@ -20,6 +20,16 @@ public sealed class ApiPipelineConfigStore : IPipelineConfigStore
     public int CacheTtlSeconds { get; set; } = 60;
 
     public ApiPipelineConfigStore(IPipelineApiConfigClient client) => _client = client;
+
+    /// <summary>Drops the cached configuration so the next load goes to the API.</summary>
+    public void InvalidateCaches()
+    {
+        lock (_cacheLock)
+        {
+            _cached = null;
+            _cacheExpiry = DateTime.MinValue;
+        }
+    }
 
     public async Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
     {
@@ -59,7 +69,7 @@ public sealed class ApiPipelineConfigStore : IPipelineConfigStore
 
 /// <summary>
 /// API-backed implementation of <see cref="IProviderConfigStore"/> using <see cref="IPipelineApiConfigClient"/>.
-/// Implements TTL caching to avoid excessive API calls. (Spec 045 Req 4.2 Option B, Req 4.3)
+/// Implements TTL caching to avoid excessive API calls.
 /// Thread-safe: the lock is released before awaiting to avoid holding a lock across async I/O.
 /// </summary>
 public sealed class ApiProviderConfigStore : IProviderConfigStore
@@ -70,6 +80,12 @@ public sealed class ApiProviderConfigStore : IProviderConfigStore
     public int CacheTtlSeconds { get; set; } = 60;
 
     public ApiProviderConfigStore(IPipelineApiConfigClient client) => _client = client;
+
+    /// <summary>Drops every cached provider kind so the next load goes to the API.</summary>
+    public void InvalidateCaches()
+    {
+        lock (_cacheLock) _providerCache.Clear();
+    }
 
     public Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
         => _providerCache.GetOrFetchAsync(_cacheLock, kind, CacheTtlSeconds, _client, ct);
@@ -158,7 +174,7 @@ internal sealed class ProviderConfigCache
 
 /// <summary>
 /// API-backed implementation of <see cref="IProjectStore"/> using <see cref="IPipelineApiConfigClient"/>.
-/// Implements TTL caching to avoid excessive API calls. (Spec 045 Req 4.2 Option B, Req 4.3)
+/// Implements TTL caching to avoid excessive API calls.
 /// Thread-safe: the lock is released before awaiting to avoid holding a lock across async I/O.
 /// </summary>
 public sealed class ApiProjectStore : IProjectStore
@@ -172,6 +188,18 @@ public sealed class ApiProjectStore : IProjectStore
     public int CacheTtlSeconds { get; set; } = 60;
 
     public ApiProjectStore(IPipelineApiConfigClient client) => _client = client;
+
+    /// <summary>Drops cached projects and templates so the next load goes to the API.</summary>
+    public void InvalidateCaches()
+    {
+        lock (_cacheLock)
+        {
+            _cachedProjects = null;
+            _projectsExpiry = DateTime.MinValue;
+            _cachedTemplates = null;
+            _templatesExpiry = DateTime.MinValue;
+        }
+    }
 
     public async Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
     {
@@ -262,315 +290,200 @@ public sealed class ApiProjectStore : IProjectStore
 }
 
 /// <summary>
-/// API-backed implementation of the composite <see cref="IConfigurationStore"/> interface.
-/// Delegates all operations to <see cref="IPipelineApiConfigClient"/> with the same TTL
-/// caching as the individual adapters. Registered so that services requiring
-/// <see cref="IConfigurationStore"/> (e.g. <see cref="LabelService"/>,
-/// <see cref="DispatchOrchestrationService"/>) resolve correctly after the
-/// Postgres-backed PostgresConfigurationStore was removed in Spec 045 Task 8.
-/// Thread-safe: the lock is released before awaiting to avoid holding a lock across async I/O.
+/// API-backed implementation of the composite <see cref="IConfigurationStore"/> interface, for
+/// services that want the whole configuration surface through one dependency (<c>LabelService</c>,
+/// <c>DispatchOrchestrationService</c>).
+///
+/// It composes the narrow stores rather than reimplementing them. The earlier version duplicated
+/// every pipeline-config, provider-config, project and template method verbatim, differing only in
+/// the names of its cache fields — and because DI registers all four as separate singletons over
+/// the same client, that meant two independent caches of the same data. A save through
+/// <see cref="IProviderConfigStore"/> left this store serving the pre-save list until its own TTL
+/// lapsed. Delegating gives one cache per concern and makes an invalidation here reach everyone.
+///
+/// Agent profiles, quality gates and reviewers have no narrow store, so they are cached here.
+/// Thread-safe: the lock is released before awaiting, never held across async I/O.
 /// </summary>
 public sealed class ApiConfigurationStore : IConfigurationStore
 {
     private readonly IPipelineApiConfigClient _client;
+    private readonly ApiPipelineConfigStore _pipeline;
+    private readonly ApiProviderConfigStore _providers;
+    private readonly ApiProjectStore _projects;
+
     private readonly Lock _cacheLock = new();
     public int CacheTtlSeconds { get; set; } = 60;
 
-    // ── cached state ─────────────────────────────────────────────────────
-    private PipelineConfiguration? _cachedPipeline;
-    private DateTime _pipelineExpiry = DateTime.MinValue;
+    // Only the three concerns with no narrow store of their own.
+    private readonly TtlCache<IReadOnlyList<AgentProfile>> _profiles = new();
+    private readonly TtlCache<IReadOnlyList<QualityGateConfiguration>> _qualityGates = new();
+    private readonly TtlCache<IReadOnlyList<ReviewerConfiguration>> _reviewers = new();
 
-    // Keyed per ProviderKind — see ProviderConfigCache for why a two-slot cache is wrong.
-    private readonly ProviderConfigCache _providerCache = new();
+    public ApiConfigurationStore(
+        IPipelineApiConfigClient client,
+        ApiPipelineConfigStore pipeline,
+        ApiProviderConfigStore providers,
+        ApiProjectStore projects)
+    {
+        _client = client;
+        _pipeline = pipeline;
+        _providers = providers;
+        _projects = projects;
+    }
 
-    private IReadOnlyList<AgentProfile>? _cachedProfiles;
-    private DateTime _profilesExpiry = DateTime.MinValue;
-
-    private IReadOnlyList<QualityGateConfiguration>? _cachedQG;
-    private DateTime _qgExpiry = DateTime.MinValue;
-
-    private IReadOnlyList<ReviewerConfiguration>? _cachedReviewers;
-    private DateTime _reviewersExpiry = DateTime.MinValue;
-
-    private IReadOnlyList<PipelineProject>? _cachedProjects;
-    private DateTime _projectsExpiry = DateTime.MinValue;
-
-    private IReadOnlyList<PipelineJobTemplate>? _cachedTemplates;
-    private DateTime _templatesExpiry = DateTime.MinValue;
-
-    public ApiConfigurationStore(IPipelineApiConfigClient client) => _client = client;
-
+    /// <summary>Drops every cached value, here and in the composed stores.</summary>
     public void InvalidateCaches()
     {
         lock (_cacheLock)
         {
-            _cachedPipeline = null; _pipelineExpiry = DateTime.MinValue;
-            _providerCache.Clear();
-            _cachedProfiles = null; _profilesExpiry = DateTime.MinValue;
-            _cachedQG = null; _qgExpiry = DateTime.MinValue;
-            _cachedReviewers = null; _reviewersExpiry = DateTime.MinValue;
-            _cachedProjects = null; _projectsExpiry = DateTime.MinValue;
-            _cachedTemplates = null; _templatesExpiry = DateTime.MinValue;
+            _profiles.Clear();
+            _qualityGates.Clear();
+            _reviewers.Clear();
         }
+
+        _pipeline.InvalidateCaches();
+        _providers.InvalidateCaches();
+        _projects.InvalidateCaches();
     }
 
     // ── IPipelineConfigStore ─────────────────────────────────────────────
-    public async Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
-    {
-        lock (_cacheLock)
-        {
-            if (_cachedPipeline is not null && DateTime.UtcNow <= _pipelineExpiry)
-                return _cachedPipeline;
-        }
-        var fresh = await _client.GetPipelineConfigAsync(ct);
-        lock (_cacheLock)
-        {
-            _cachedPipeline = fresh;
-            _pipelineExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
-        return fresh;
-    }
+    public Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
+        => _pipeline.LoadPipelineConfigAsync(ct);
 
-    public async Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct)
-    {
-        await _client.SavePipelineConfigAsync(config, ct);
-        lock (_cacheLock)
-        {
-            _cachedPipeline = config;
-            _pipelineExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
-    }
+    public Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct)
+        => _pipeline.SavePipelineConfigAsync(config, ct);
 
-    public async Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct)
-    {
-        await _client.UpdatePipelineConfigAsync(transform, ct);
-        lock (_cacheLock)
-        {
-            _cachedPipeline = null;
-        }
-    }
+    public Task UpdatePipelineConfigAsync(Func<PipelineConfiguration, PipelineConfiguration> transform, CancellationToken ct)
+        => _pipeline.UpdatePipelineConfigAsync(transform, ct);
 
     // ── IProviderConfigStore ─────────────────────────────────────────────
     public Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
-        => _providerCache.GetOrFetchAsync(_cacheLock, kind, CacheTtlSeconds, _client, ct);
+        => _providers.LoadProviderConfigsAsync(kind, ct);
 
-    public async Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct)
-    {
-        var all = await LoadProviderConfigsAsync(kind, ct);
-        return all.FirstOrDefault(p => p.Id == id);
-    }
+    public Task<ProviderConfig?> GetProviderConfigByIdAsync(string id, ProviderKind kind, CancellationToken ct)
+        => _providers.GetProviderConfigByIdAsync(id, kind, ct);
 
-    public async Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
-    {
-        await _client.SaveProviderConfigAsync(config, ct);
-        lock (_cacheLock) _providerCache.Clear();
-    }
+    public Task SaveProviderConfigAsync(ProviderConfig config, CancellationToken ct)
+        => _providers.SaveProviderConfigAsync(config, ct);
 
-    public async Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct)
-    {
-        await _client.DeleteProviderConfigAsync(id, kind, ct);
-        lock (_cacheLock) _providerCache.Clear();
-    }
+    public Task DeleteProviderConfigAsync(string id, ProviderKind kind, CancellationToken ct)
+        => _providers.DeleteProviderConfigAsync(id, kind, ct);
 
     // ── IAgentProfileStore ───────────────────────────────────────────────
-    public async Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct)
-    {
-        lock (_cacheLock)
-        {
-            if (_cachedProfiles is not null && DateTime.UtcNow <= _profilesExpiry)
-                return _cachedProfiles;
-        }
-        var fresh = await _client.GetAgentProfilesAsync(ct);
-        lock (_cacheLock)
-        {
-            _cachedProfiles = fresh;
-            _profilesExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
-        return fresh;
-    }
+    public Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct)
+        => LoadCachedAsync(_profiles, _client.GetAgentProfilesAsync, ct);
 
-    public async Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct)
-    {
-        await _client.SaveAgentProfileAsync(profile, ct);
-        lock (_cacheLock)
-        {
-            _cachedProfiles = null;
-        }
-    }
+    public Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct)
+        => WriteThenInvalidateAsync(_client.SaveAgentProfileAsync(profile, ct), _profiles);
 
-    public async Task DeleteAgentProfileAsync(string id, CancellationToken ct)
-    {
-        await _client.DeleteAgentProfileAsync(id, ct);
-        lock (_cacheLock)
-        {
-            _cachedProfiles = null;
-        }
-    }
+    public Task DeleteAgentProfileAsync(string id, CancellationToken ct)
+        => WriteThenInvalidateAsync(_client.DeleteAgentProfileAsync(id, ct), _profiles);
 
     // ── IQualityGateConfigStore ──────────────────────────────────────────
-    public async Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
-    {
-        lock (_cacheLock)
-        {
-            if (_cachedQG is not null && DateTime.UtcNow <= _qgExpiry)
-                return _cachedQG;
-        }
-        var fresh = await _client.GetQualityGateConfigsAsync(ct);
-        lock (_cacheLock)
-        {
-            _cachedQG = fresh;
-            _qgExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
-        return fresh;
-    }
+    public Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
+        => LoadCachedAsync(_qualityGates, _client.GetQualityGateConfigsAsync, ct);
 
-    public async Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct)
-    {
-        await _client.SaveQualityGateConfigAsync(config, ct);
-        lock (_cacheLock)
-        {
-            _cachedQG = null;
-        }
-    }
+    public Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct)
+        => WriteThenInvalidateAsync(_client.SaveQualityGateConfigAsync(config, ct), _qualityGates);
 
-    public async Task DeleteQualityGateConfigAsync(string id, CancellationToken ct)
-    {
-        await _client.DeleteQualityGateConfigAsync(id, ct);
-        lock (_cacheLock)
-        {
-            _cachedQG = null;
-        }
-    }
+    public Task DeleteQualityGateConfigAsync(string id, CancellationToken ct)
+        => WriteThenInvalidateAsync(_client.DeleteQualityGateConfigAsync(id, ct), _qualityGates);
 
     // ── IReviewerConfigStore ─────────────────────────────────────────────
-    public async Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
-    {
-        lock (_cacheLock)
-        {
-            if (_cachedReviewers is not null && DateTime.UtcNow <= _reviewersExpiry)
-                return _cachedReviewers;
-        }
-        var fresh = await _client.GetReviewerConfigsAsync(ct);
-        lock (_cacheLock)
-        {
-            _cachedReviewers = fresh;
-            _reviewersExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
-        return fresh;
-    }
+    public Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
+        => LoadCachedAsync(_reviewers, _client.GetReviewerConfigsAsync, ct);
 
-    public async Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct)
-    {
-        await _client.SaveReviewerConfigAsync(config, ct);
-        lock (_cacheLock)
-        {
-            _cachedReviewers = null;
-        }
-    }
+    public Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct)
+        => WriteThenInvalidateAsync(_client.SaveReviewerConfigAsync(config, ct), _reviewers);
 
-    public async Task DeleteReviewerConfigAsync(string id, CancellationToken ct)
-    {
-        await _client.DeleteReviewerConfigAsync(id, ct);
-        lock (_cacheLock)
-        {
-            _cachedReviewers = null;
-        }
-    }
+    public Task DeleteReviewerConfigAsync(string id, CancellationToken ct)
+        => WriteThenInvalidateAsync(_client.DeleteReviewerConfigAsync(id, ct), _reviewers);
 
-    public async Task ResetReviewerConfigsToDefaultAsync(CancellationToken ct)
-    {
-        await _client.ResetReviewerConfigsToDefaultAsync(ct);
-        lock (_cacheLock)
-        {
-            _cachedReviewers = null;
-        }
-    }
+    public Task ResetReviewerConfigsToDefaultAsync(CancellationToken ct)
+        => WriteThenInvalidateAsync(_client.ResetReviewerConfigsToDefaultAsync(ct), _reviewers);
 
     // ── IProjectStore ────────────────────────────────────────────────────
-    public async Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
+    public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
+        => _projects.LoadProjectsAsync(ct);
+
+    public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
+        => _projects.GetProjectByIdAsync(id, ct);
+
+    public Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
+        => _projects.SaveProjectAsync(project, ct);
+
+    public Task DeleteProjectAsync(string id, CancellationToken ct)
+        => _projects.DeleteProjectAsync(id, ct);
+
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
+        => _projects.LoadTemplatesForProjectAsync(projectId, ct);
+
+    public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
+        => _projects.LoadAllTemplatesAsync(ct);
+
+    public Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
+        => _projects.SaveTemplateAsync(projectId, template, ct);
+
+    public Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
+        => _projects.DeleteTemplateAsync(projectId, templateId, ct);
+
+    public Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct)
+        => _projects.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId, ct);
+
+    public Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)
+        => _projects.HasEnabledTemplatesAsync(ct);
+
+    // ── Cache plumbing ───────────────────────────────────────────────────
+
+    private async Task<T> LoadCachedAsync<T>(
+        TtlCache<T> cache,
+        Func<CancellationToken, Task<T>> fetch,
+        CancellationToken ct) where T : class
     {
         lock (_cacheLock)
         {
-            if (_cachedProjects is not null && DateTime.UtcNow <= _projectsExpiry)
-                return _cachedProjects;
+            if (cache.TryGet(out var hit)) return hit!;
         }
-        var fresh = await _client.GetProjectsAsync(ct);
-        lock (_cacheLock)
-        {
-            _cachedProjects = fresh;
-            _projectsExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
+
+        // Deliberately outside the lock: two concurrent callers may both fetch. That double-fetch
+        // window is cheaper than holding a lock across network I/O.
+        var fresh = await fetch(ct);
+
+        lock (_cacheLock) cache.Set(fresh, CacheTtlSeconds);
         return fresh;
     }
 
-    public async Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct)
-        => await _client.GetProjectByIdAsync(id, ct);
-
-    public async Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
+    private async Task WriteThenInvalidateAsync<T>(Task write, TtlCache<T> cache) where T : class
     {
-        await _client.SaveProjectAsync(project, ct);
-        lock (_cacheLock)
-        {
-            _cachedProjects = null;
-        }
+        await write;
+        lock (_cacheLock) cache.Clear();
     }
 
-    public async Task DeleteProjectAsync(string id, CancellationToken ct)
+    /// <summary>
+    /// A single TTL-cached value. Callers hold the shared lock around every member; the lock is
+    /// released across the awaited fetch.
+    /// </summary>
+    private sealed class TtlCache<T> where T : class
     {
-        await _client.DeleteProjectAsync(id, ct);
-        lock (_cacheLock)
+        private T? _value;
+        private DateTime _expiry = DateTime.MinValue;
+
+        public bool TryGet(out T? value)
         {
-            _cachedProjects = null;
+            value = _value is not null && DateTime.UtcNow <= _expiry ? _value : null;
+            return value is not null;
+        }
+
+        public void Set(T value, int ttlSeconds)
+        {
+            _value = value;
+            _expiry = DateTime.UtcNow.AddSeconds(ttlSeconds);
+        }
+
+        public void Clear()
+        {
+            _value = null;
+            _expiry = DateTime.MinValue;
         }
     }
-
-    public async Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct)
-        => await _client.GetTemplatesForProjectAsync(projectId, ct);
-
-    public async Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
-    {
-        lock (_cacheLock)
-        {
-            if (_cachedTemplates is not null && DateTime.UtcNow <= _templatesExpiry)
-                return _cachedTemplates;
-        }
-        var fresh = await _client.GetAllTemplatesAsync(ct);
-        lock (_cacheLock)
-        {
-            _cachedTemplates = fresh;
-            _templatesExpiry = DateTime.UtcNow.AddSeconds(CacheTtlSeconds);
-        }
-        return fresh;
-    }
-
-    public async Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct)
-    {
-        await _client.SaveTemplateAsync(projectId, template, ct);
-        lock (_cacheLock)
-        {
-            _cachedTemplates = null;
-        }
-    }
-
-    public async Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
-    {
-        await _client.DeleteTemplateAsync(projectId, templateId.ToString(), ct);
-        lock (_cacheLock)
-        {
-            _cachedTemplates = null;
-        }
-    }
-
-    public async Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct)
-    {
-        await _client.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId.ToString(), ct);
-        lock (_cacheLock)
-        {
-            _cachedTemplates = null;
-            _cachedProjects = null;
-        }
-    }
-
-    public async Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)
-        => await _client.HasEnabledTemplatesAsync(ct);
 }

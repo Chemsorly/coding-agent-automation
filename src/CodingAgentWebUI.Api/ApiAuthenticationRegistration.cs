@@ -28,10 +28,10 @@ internal static class ApiAuthenticationRegistration
                 options => options.ApiKey = agentApiKey);
 
         services.AddAuthorizationBuilder()
-            .AddPolicy("AgentApiKey", policy =>
+            .AddPolicy(ApiAuthPolicies.Agent, policy =>
                 policy.AddAuthenticationSchemes(AgentApiKeyDefaults.AuthenticationScheme)
                       .RequireAuthenticatedUser())
-            .AddPolicy("OperatorApiKey", policy =>
+            .AddPolicy(ApiAuthPolicies.Operator, policy =>
                 policy.AddAuthenticationSchemes(AgentApiKeyDefaults.AuthenticationScheme)
                       .RequireAuthenticatedUser()
                       .RequireClaim("auth_kind", "operator"));

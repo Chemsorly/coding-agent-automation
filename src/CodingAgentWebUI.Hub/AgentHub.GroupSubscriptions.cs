@@ -15,7 +15,7 @@ public sealed partial class AgentHub
     /// observe runs assigned to themselves. Operator-authenticated callers (those with
     /// no <c>agentId</c> query parameter) may subscribe to any run.
     ///
-    /// Spec 045 Req 3.4a: immediately pushes the current output backlog to the new subscriber
+    /// Immediately pushes the current output backlog to the new subscriber
     /// so navigating to a mid-run page shows existing output without a separate fetch.
     /// </summary>
     public async Task SubscribeToRun(string jobId)

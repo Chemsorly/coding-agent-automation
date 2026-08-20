@@ -308,7 +308,7 @@ public sealed partial class PipelineLoopService
         }
     }
 
-    /// <summary>Detects and remediates stuck work items (SignalR mode: Dispatched > 5min → Failed).</summary>
+    /// <summary>No-op: stuck item detection is owned by the Job Controller's ReconciliationService.</summary>
     private async Task ReconcileStuckWorkItemsAsync(CancellationToken ct)
     {
         if (_workDistributor is null) return;

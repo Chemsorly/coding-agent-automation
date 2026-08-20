@@ -181,25 +181,74 @@ public sealed class HubAndDiTests
 
     // ── Startup: missing env vars cause fast-fail ─────────────────────────────────
 
-    [Fact]
-    public void Startup_MissingDatabaseHost_FactoryCtorOverridesEnvBeforeBuild()
+    /// <summary>
+    /// Runs <paramref name="action"/> with the console redirected, and returns what was written.
+    ///
+    /// <c>Program.cs</c> reports a missing setting with <c>Log.Fatal(...)</c> and then returns, so
+    /// <c>WebApplicationFactory</c> surfaces only "The entry point exited without ever building an
+    /// IHost" — identical whichever guard fired. Without the log text these two tests would both
+    /// pass on either guard. A Serilog sink cannot be used to capture it: <c>Program.cs</c>
+    /// assigns its own bootstrap logger before the checks run, discarding anything the test
+    /// installed. Its console sink writes to <c>Console.Out</c> as it resolves at that moment,
+    /// which is why redirecting the console does work.
+    /// </summary>
+    private static string CaptureConsole(Action action)
     {
-        // Verifies that a Program.cs fast-fail on missing Database__Host is handled gracefully.
-        // Because WebApplicationFactory reads env vars during WebApplication.CreateBuilder (before
-        // ConfigureWebHost callbacks run), we must set the sentinel value before constructing the
-        // factory. MissingDbHostFactory does this in its constructor.
-        // The test passes as long as creating the factory and calling CreateClient() doesn't crash
-        // the test process with an unhandled exception.
-        using var factory = new MissingDbHostFactory();
-        try { factory.CreateClient(); } catch { /* expected — host fast-fails */ }
+        var captured = new StringWriter();
+        var original = Console.Out;
+        Console.SetOut(captured);
+        try
+        {
+            action();
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
+        return captured.ToString();
     }
 
     [Fact]
-    public void Startup_MissingAgentApiKey_FactoryCtorOverridesEnvBeforeBuild()
+    public void Startup_MissingDatabaseHost_FailsFastWithNamedSetting()
     {
-        // Same pattern: AGENT_API_KEY null triggers fast-fail in Program.cs.
+        // WebApplicationFactory reads env vars during WebApplication.CreateBuilder, before any
+        // ConfigureWebHost callback runs, so the sentinel has to be set in the factory's
+        // constructor. MissingDbHostFactory does that.
+        using var factory = new MissingDbHostFactory();
+
+        // Two things must hold, and the old version of this test asserted neither: the host must
+        // not come up, and it must be *this* guard that stopped it.
+        Exception? ex = null;
+        var console = CaptureConsole(() => ex = Record.Exception(() => factory.CreateClient()));
+
+        ex.Should().NotBeNull("startup must fail when Database__Host is unset");
+        FlattenMessages(ex!).Should().Contain("without ever building an IHost");
+        console.Should().Contain("Database__Host");
+    }
+
+    [Fact]
+    public void Startup_MissingAgentApiKey_FailsFastWithNamedSetting()
+    {
         using var factory = new MissingAgentApiKeyFactory();
-        try { factory.CreateClient(); } catch { /* expected — host fast-fails */ }
+
+        Exception? ex = null;
+        var console = CaptureConsole(() => ex = Record.Exception(() => factory.CreateClient()));
+
+        ex.Should().NotBeNull("startup must fail when AGENT_API_KEY is unset");
+        FlattenMessages(ex!).Should().Contain("without ever building an IHost");
+        console.Should().Contain("AGENT_API_KEY");
+    }
+
+    /// <summary>
+    /// Host startup failures surface wrapped — the useful text is usually on an inner exception,
+    /// so match against the whole chain rather than the outermost message.
+    /// </summary>
+    private static string FlattenMessages(Exception ex)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var current = ex; current is not null; current = current.InnerException)
+            sb.AppendLine(current.Message);
+        return sb.ToString();
     }
 }
 

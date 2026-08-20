@@ -32,7 +32,7 @@ public static class WorkItemEndpoints
     public static void MapWorkItemEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/work-items")
-            .RequireAuthorization("AgentApiKey");
+            .RequireAuthorization(ApiAuthPolicies.Agent);
 
         // ── Agent-facing endpoints ─────────────────────────────────────────
         // These are the only two an agent pod calls (WorkItemHttpClient), and the only two
@@ -65,19 +65,19 @@ public static class WorkItemEndpoints
         // key (operator tier). No agent pod calls these, so agent-derived keys are refused
         // outright — otherwise a single compromised pod could claim, requeue or enumerate
         // every work item in the cluster.
-        group.MapPost("/", CreateWorkItem).RequireAuthorization("OperatorApiKey");
-        group.MapGet("/pending", GetPendingWorkItems).RequireAuthorization("OperatorApiKey");
-        group.MapGet("/active", GetActiveWorkItems).RequireAuthorization("OperatorApiKey");
-        group.MapPost("/{id:guid}/claim", ClaimWorkItem).RequireAuthorization("OperatorApiKey");
-        group.MapPost("/{id:guid}/requeue", RequeueWorkItem).RequireAuthorization("OperatorApiKey");
-        group.MapGet("/{id:guid}/retry-count", GetRetryCount).RequireAuthorization("OperatorApiKey");
-        group.MapGet("/staleness", GetStaleness).RequireAuthorization("OperatorApiKey");
-        group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization("OperatorApiKey");
-        group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization("OperatorApiKey");
-        group.MapGet("/{id:guid}/k8s-job-name", GetK8sJobName).RequireAuthorization("OperatorApiKey");
-        group.MapGet("/{id:guid}/status", GetWorkItemStatus).RequireAuthorization("OperatorApiKey");
-        group.MapGet("/is-distributed", GetIsDistributed).RequireAuthorization("OperatorApiKey");
-        group.MapGet("/active-identifiers", GetActiveIdentifiers).RequireAuthorization("OperatorApiKey");
+        group.MapPost("/", CreateWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapGet("/pending", GetPendingWorkItems).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapGet("/active", GetActiveWorkItems).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapPost("/{id:guid}/claim", ClaimWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapPost("/{id:guid}/requeue", RequeueWorkItem).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapGet("/{id:guid}/retry-count", GetRetryCount).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapGet("/staleness", GetStaleness).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapGet("/{id:guid}/k8s-job-name", GetK8sJobName).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapGet("/{id:guid}/status", GetWorkItemStatus).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapGet("/is-distributed", GetIsDistributed).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapGet("/active-identifiers", GetActiveIdentifiers).RequireAuthorization(ApiAuthPolicies.Operator);
     }
 
     // ── Agent → work item binding ─────────────────────────────────────────

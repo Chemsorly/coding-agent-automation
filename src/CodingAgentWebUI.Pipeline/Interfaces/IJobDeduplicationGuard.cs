@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// <summary>
 /// Releases the dedup guard for an issue identifier, making it re-dispatchable.
 /// Separated from dispatch logic to avoid circular DI dependencies
-/// (PipelineOrchestrationService cannot depend on AgentJobDispatcher).
+/// (PipelineOrchestrationService cannot depend on DispatchRunCreationService).
 /// </summary>
 public interface IJobDeduplicationGuard
 {
