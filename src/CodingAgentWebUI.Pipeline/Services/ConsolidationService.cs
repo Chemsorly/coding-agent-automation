@@ -127,10 +127,47 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
         if (!_runningRuns.TryAdd(key, run))
         {
-            _logger.Warning(
-                "Consolidation run rejected: {Type} for template {TemplateId} is already running or queued",
-                type, templateId ?? "Global");
-            return null;
+            // The in-memory dict says this (type, templateId) is already running.
+            // In the multi-process architecture the API may have updated the run to a
+            // terminal state (Succeeded/Failed) without notifying the orchestrator's
+            // ConsolidationService. Check the store and evict the stale entry if so.
+            if (_runningRuns.TryGetValue(key, out var existing))
+            {
+                var stored = await _runStore.GetByIdAsync(new RunId(existing.RunId), ct);
+                if (stored is not null &&
+                    stored.Status is ConsolidationRunStatus.Succeeded
+                        or ConsolidationRunStatus.Failed
+                        or ConsolidationRunStatus.Cancelled)
+                {
+                    _logger.Information(
+                        "ConsolidationService: evicting stale _runningRuns entry for {Type}/{TemplateId} " +
+                        "(store status={Status}) to allow new run",
+                        type, templateId ?? "Global", stored.Status);
+                    _runningRuns.TryRemove(key, out _);
+                    // Retry the add — if it fails again, a genuinely concurrent trigger won
+                    if (!_runningRuns.TryAdd(key, run))
+                    {
+                        _logger.Warning(
+                            "Consolidation run rejected: {Type} for template {TemplateId} is already running or queued",
+                            type, templateId ?? "Global");
+                        return null;
+                    }
+                }
+                else
+                {
+                    _logger.Warning(
+                        "Consolidation run rejected: {Type} for template {TemplateId} is already running or queued",
+                        type, templateId ?? "Global");
+                    return null;
+                }
+            }
+            else
+            {
+                _logger.Warning(
+                    "Consolidation run rejected: {Type} for template {TemplateId} is already running or queued",
+                    type, templateId ?? "Global");
+                return null;
+            }
         }
 
         if (type == ConsolidationRunType.HarnessSuggestions)
