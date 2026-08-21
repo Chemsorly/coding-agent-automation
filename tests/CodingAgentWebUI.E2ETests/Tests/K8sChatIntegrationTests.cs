@@ -17,7 +17,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "K8sChatMode")]
-public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
 {
     private readonly AgentRegistryService _registry;
 
@@ -93,7 +94,11 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase, IClassFixture
         await using (fakeAgent)
         {
             var entry = _registry.GetByAgentId(agentId)!;
-            var hubContext = Fixture.Factory.Services
+
+            // The API host's hub context, not the monolith's. Both resolve, but only this one has
+            // the agent's connection on it — sending through the other one silently goes nowhere
+            // and the wait below times out after 10s.
+            var hubContext = Fixture.ApiServices
                 .GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<
                     CodingAgentWebUI.Hub.AgentHub,
                     CodingAgentWebUI.Pipeline.Interfaces.IAgentHubClient>>();
@@ -139,7 +144,7 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase, IClassFixture
             var jobName = job.Metadata!.Name!;
 
             // Terminate the session
-            await Fixture.Factory.ChatDispatcher.TerminateChatSessionAsync(
+            await Fixture.ChatDispatcher.TerminateChatSessionAsync(
                 agentId, CancellationToken.None);
 
             // Wait for CancelChat to be delivered to the fake agent
@@ -161,7 +166,7 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase, IClassFixture
     public async Task K8sChat_DoubleDispatch_SameSelector_SecondThrows()
     {
         // First dispatch — don't connect agent (keep job non-terminal)
-        var firstDispatchTask = Fixture.Factory.ChatDispatcher.DispatchChatPodAsync(
+        var firstDispatchTask = Fixture.ChatDispatcher.DispatchChatPodAsync(
             "kiro,dotnet", null, null, CancellationToken.None);
 
         // Wait for job to be created
@@ -169,7 +174,7 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase, IClassFixture
 
         // Second dispatch for same selector — should throw immediately
         var ex = await Assert.ThrowsAsync<ChatAlreadyActiveException>(async () =>
-            await Fixture.Factory.ChatDispatcher.DispatchChatPodAsync(
+            await Fixture.ChatDispatcher.DispatchChatPodAsync(
                 "kiro,dotnet", null, null, CancellationToken.None));
 
         Assert.NotEmpty(ex.Message);
@@ -215,7 +220,7 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase, IClassFixture
             // Both pool PVCs are now held by active in-process sessions.
             // Third dispatch should throw NoPvcAvailableException.
             await Assert.ThrowsAsync<NoPvcAvailableException>(async () =>
-                await Fixture.Factory.ChatDispatcher.DispatchChatPodAsync(
+                await Fixture.ChatDispatcher.DispatchChatPodAsync(
                     "kiro,node", null, null, CancellationToken.None));
         }
     }

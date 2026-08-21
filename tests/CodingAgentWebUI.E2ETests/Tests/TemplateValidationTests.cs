@@ -10,7 +10,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Ensures the UI shows clear validation messages when form inputs are invalid.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class TemplateValidationTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class TemplateValidationTests : E2ETestBase
 {
     public TemplateValidationTests(E2EFixture fixture) : base(fixture) { }
 

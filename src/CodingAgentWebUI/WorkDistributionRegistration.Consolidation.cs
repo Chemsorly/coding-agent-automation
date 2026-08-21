@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Kubernetes;
@@ -9,7 +8,6 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using k8s;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -125,30 +123,17 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<JobTemplateStore>(sp =>
             DispatchService.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
 
-        // ── IPendingWorkQuery — API-backed for Agent Monitoring Job Queue widget ─────────────────
-        // Calls GET /api/work-items/pending and maps DTOs to PendingJob for UI display.
-        services.AddSingleton<IPendingWorkQuery>(sp =>
-            new ApiBackedPendingWorkQuery(sp.GetRequiredService<IPipelineApiWorkItemClient>()));
-
-        // ── ChatJobDispatcher — on-demand ephemeral chat pod dispatch ────────────
-        // Registered in the monolith because it still injects IHubContext<AgentHub, IAgentHubClient>.
-        // The disconnected IHubContext path (AssignChatPrompt cannot reach agents on the API hub)
-        // is tracked for TODO(Spec 046) — a REST endpoint on the API will replace this.
-        services.AddSingleton<ChatJobDispatcher>(sp =>
-        {
-            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
-            options.ValidateAndClamp(Log.Logger);
-            return new ChatJobDispatcher(
-                sp.GetRequiredService<IKubernetesJobClient>(),
-                sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
-                sp.GetRequiredService<JobTemplateStore>(),
-                sp.GetRequiredService<AgentRegistryService>(),
-                options,
-                sp.GetRequiredService<ILeaderElectionService>(),
-                Log.Logger);
-        });
-        services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());
-        services.AddSingleton<IChatJobDispatcher>(sp => sp.GetRequiredService<ChatJobDispatcher>());
+        // ── IChatJobDispatcher — placeholder ─────────────────────────────────
+        // ChatJobDispatcher moved to the Pipeline API, which owns AgentHub and the registry it
+        // polls. AgentChat.razor still injects IChatJobDispatcher, and with nothing bound here the
+        // page threw on first render — an operator opening Agent Chat got a blank page.
+        //
+        // This binds the null object so the page renders and says the feature is unavailable
+        // instead of failing to load. Chat is genuinely not operable from this process yet: the
+        // prompt/response path is SignalR between the pod and the API hub, so restoring it needs a
+        // REST surface on the API and a client here, not just a dispatcher.
+        // TODO(Spec 046): replace with a client for the API's chat endpoints.
+        services.AddSingleton<IChatJobDispatcher>(new NullChatJobDispatcher());
 
         Log.Information("WorkDistribution: Kubernetes infrastructure registered (LeaderElection, K8s client)");
     }

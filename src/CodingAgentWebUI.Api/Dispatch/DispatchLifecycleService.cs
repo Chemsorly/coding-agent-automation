@@ -320,17 +320,6 @@ internal sealed class DispatchLifecycleService : IDisposable
         string LogPrefix,
         Func<Guid, string, Task>? OnFailure);
 
-    private static string DeriveAgentKey(string masterKey, string agentId)
-    {
-        var keyBytes = System.Text.Encoding.UTF8.GetBytes(masterKey);
-        var dataBytes = System.Text.Encoding.UTF8.GetBytes(agentId);
-        var hash = System.Security.Cryptography.HMACSHA256.HashData(keyBytes, dataBytes);
-        return Convert.ToHexString(hash).ToLowerInvariant();
-    }
-
-    private static string GenerateDerivedKeySecretName(Guid workItemId)
-        => $"caa-agent-key-{workItemId:N}"[..32];
-
     /// <summary>
     /// Creates a K8s Job via JobSpecBuilder. Handles 409 Conflict (idempotent) and general failures
     /// (releases PVC, fails WorkItem). Returns true if job creation succeeded (or 409), false if the

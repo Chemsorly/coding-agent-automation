@@ -78,8 +78,27 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     /// <summary>Exposes the agent registry for test assertions and wait helpers.</summary>
     public AgentRegistryService AgentRegistry => _registry ?? throw new InvalidOperationException("Not initialized");
 
-    /// <summary>The real <see cref="ChatJobDispatcher"/>, backed by <see cref="FakeK8sClient"/>.</summary>
-    public ChatJobDispatcher ChatDispatcher => Services.GetRequiredService<ChatJobDispatcher>();
+    /// <summary>
+    /// Refreshes the Blazor host's <see cref="ApiAgentRegistryService"/> snapshot immediately.
+    ///
+    /// <para>
+    /// <see cref="AgentRegistrySyncService"/> does run in this host — the harness only unhosts
+    /// <c>PipelineLoopService</c> — so the snapshot catches up on its own within one poll interval
+    /// (2s). This exists to collapse that interval: a test that connects an agent and then
+    /// navigates to a page rendering agent status would otherwise be racing the poller, and
+    /// "sometimes the agent is not listed yet" is the flakiest kind of failure to read.
+    /// </para>
+    /// </summary>
+    public Task ForceAgentRegistryRefreshAsync(CancellationToken ct = default)
+        => Services.GetRequiredService<ApiAgentRegistryService>().RefreshAsync(ct);
+
+    /// <summary>
+    /// ChatJobDispatcher moved to the API host (Spec 044/045). Use <c>E2EFixture.ChatDispatcher</c>
+    /// instead of this property — it now throws to prevent silent misuse.
+    /// </summary>
+    public ChatJobDispatcher ChatDispatcher =>
+        throw new InvalidOperationException(
+            "ChatJobDispatcher moved to the API host (Spec 044/045). Use Fixture.ChatDispatcher instead of Fixture.Factory.ChatDispatcher.");
 
     /// <summary>InMemory DbContextFactory, for test assertions against WorkItem state.</summary>
     public IDbContextFactory<PipelineDbContext> DbContextFactory =>
@@ -156,37 +175,12 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // dies at startup wherever no kubeconfig exists.
             E2ETestDefaults.InstallKubernetesStub(services);
 
-            // JobTemplateStore loads /app/config/job-templates.yaml, which only exists in-cluster
-            // (mounted from the job-templates ConfigMap). ChatJobDispatcher depends on it.
-            // The selectors below are the ones the tests dispatch against; maxConcurrent is high
-            // enough that a test asserting on concurrency limits sets its own.
-            services.RemoveAll<JobTemplateStore>();
-            services.AddSingleton(JobTemplateStore.LoadFromYaml("""
-                - labels: "kiro,dotnet"
-                  image: "chemsorly/coding-agent:kiro-dotnet10-latest"
-                  imagePullPolicy: "Always"
-                  providerType: "kiro"
-                  maxConcurrent: 5
-                - labels: "kiro,python"
-                  image: "chemsorly/coding-agent:kiro-python-latest"
-                  imagePullPolicy: "Always"
-                  providerType: "kiro"
-                  maxConcurrent: 5
-                - labels: "kiro,node"
-                  image: "chemsorly/coding-agent:kiro-node-latest"
-                  imagePullPolicy: "Always"
-                  providerType: "kiro"
-                  maxConcurrent: 5
-                - labels: "opencode,dotnet"
-                  image: "chemsorly/coding-agent:opencode-dotnet10-latest"
-                  imagePullPolicy: "Always"
-                  providerType: "opencode"
-                  maxConcurrent: 5
-                """));
+            // Same template set as the API host — see E2ETestDefaults.InstallJobTemplates.
+            E2ETestDefaults.InstallJobTemplates(services);
 
-            // Leadership is a cluster lease the harness has no way to win, and both
-            // ChatJobDispatcher and DatabaseMaintenanceService gate their work on it — without
-            // this the chat dispatcher accepts a request and then silently creates no Job.
+            // Leadership is a cluster lease the harness has no way to win, and the work gated on
+            // it here — DatabaseMaintenanceService, the consolidation sweep — silently does
+            // nothing without it. The API host needs the same treatment for chat dispatch.
             // This is the production always-leader implementation, not a test double: a single
             // test process is exactly the case it exists for.
             services.RemoveAll<ILeaderElectionService>();
@@ -213,8 +207,17 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // Replace singleton services with resettable subclasses
             ReplaceWithResettableServices(services);
 
-            // Disable PipelineLoopService (background polling)
-            RemoveHostedService<PipelineLoopService>(services);
+            // PipelineLoopService stays hosted, unlike every other background service here.
+            //
+            // Unhosting it looks safe — it is the polling loop, and no test wants polling it did
+            // not ask for — but it polls nothing until StartLoopAsync signals it: ExecuteAsync
+            // parks on an activation signal from startup. What unhosting actually removed was the
+            // *stop* half. IsLoopActive is cleared in CleanupAsync, which only runs at the end of
+            // ExecuteAsync's cycle, so with no ExecuteAsync a loop started from the UI went active
+            // and stayed active forever — StopLoop set "⏹ Loop stopping… (finishing current run)"
+            // and nothing ever finished it. Every later test then found the Agent Coding page
+            // offering Stop Loop where it expected Start Loop, and which tests failed depended on
+            // whether some earlier test had happened to call StartAsync on the singleton itself.
 
             // Reduce shutdown timeout for faster test teardown
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
@@ -266,10 +269,17 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         HistoryService.Reset();
         FakeK8sClient.Reset();
 
-        // Clear the InMemory database
+        // Clear the InMemory database.
+        //
+        // Runs and consolidation runs are cleared alongside work items because the harness now
+        // shares one database for the whole assembly (see E2ECollection) rather than one per test
+        // class. Rows the previous class wrote used to disappear with its host; now they would
+        // pile up for the length of the run and show up in another class's queries.
         using (var db = DbContextFactory.CreateDbContext())
         {
             db.WorkItems.RemoveRange(db.WorkItems);
+            db.PipelineRuns.RemoveRange(db.PipelineRuns);
+            db.ConsolidationRuns.RemoveRange(db.ConsolidationRuns);
             db.SaveChanges();
         }
 
@@ -298,24 +308,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     private static void RemoveService<T>(IServiceCollection services)
     {
         var descriptors = services.Where(d => d.ServiceType == typeof(T)).ToList();
-        foreach (var descriptor in descriptors)
-            services.Remove(descriptor);
-    }
-
-    /// <summary>
-    /// Unhosts <typeparamref name="T"/> without unregistering it.
-    ///
-    /// Only the <see cref="IHostedService"/> descriptor is removed — the typed singleton stays,
-    /// because other services resolve it directly (<c>IPipelineLoopService</c> forwards to
-    /// <c>PipelineLoopService</c>, and <c>LoopStatePersistenceService</c> takes that forward).
-    /// Removing the typed registration too breaks the DI graph at startup.
-    /// </summary>
-    private static void RemoveHostedService<T>(IServiceCollection services) where T : class
-    {
-        var descriptors = services.Where(d =>
-            d.ServiceType == typeof(IHostedService) &&
-            (d.ImplementationType == typeof(T) ||
-             d.ImplementationFactory?.Method.ReturnType == typeof(T))).ToList();
         foreach (var descriptor in descriptors)
             services.Remove(descriptor);
     }

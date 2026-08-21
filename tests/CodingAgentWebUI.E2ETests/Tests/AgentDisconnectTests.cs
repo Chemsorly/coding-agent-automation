@@ -8,7 +8,6 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 
 namespace CodingAgentWebUI.E2ETests.Tests;
@@ -18,7 +17,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Ensures the system handles agent failures gracefully and the UI reflects state changes.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class AgentDisconnectTests : E2ETestBase
 {
     public AgentDisconnectTests(E2EFixture fixture) : base(fixture) { }
 
@@ -76,8 +76,10 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
         // Simulate agent disconnect by disposing the connection
         await fakeAgent.DisposeAsync();
 
-        // Wait for hub to process disconnect and mark agent as Disconnected
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        // Wait for hub to process disconnect and mark agent as Disconnected.
+        // Agents connect to the API hub (Spec 044), so their registry entry lives on the API host
+        // — use Fixture.AgentRegistry, not Fixture.Factory.Services (the Blazor host's local registry).
+        var registry = Fixture.AgentRegistry;
         await WaitUntilAsync(() => registry.GetByAgentId("disconnect-agent-1")?.Status == AgentStatus.Disconnected);
 
         // Assert: agent is marked as disconnected in the registry
@@ -163,11 +165,17 @@ public sealed class AgentDisconnectTests : E2ETestBase, IClassFixture<E2EFixture
         await using var fakeAgent = new FakeAgentClient("force-dc-agent", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        // Verify agent is registered
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        // Verify agent is registered.
+        // Agents connect to the API hub (Spec 044), so their registry entry lives on the API host
+        // — use Fixture.AgentRegistry, not Fixture.Factory.Services (the Blazor host's local registry).
+        var registry = Fixture.AgentRegistry;
         var agentBefore = registry.GetByAgentId("force-dc-agent");
         Assert.NotNull(agentBefore);
         Assert.NotEqual(AgentStatus.Disconnected, agentBefore.Status);
+
+        // Force the Blazor host's ApiAgentRegistryService to refresh its snapshot so the UI
+        // picks up the connected agent — the AgentRegistrySyncService poller is disabled in E2E harness.
+        await Fixture.ForceAgentRegistryRefreshAsync();
 
         // Act: navigate to monitoring, click on the agent row to open modal
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);

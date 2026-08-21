@@ -8,6 +8,7 @@ using FsCheck.Xunit;
 using Moq;
 using ILogger = Serilog.ILogger;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 

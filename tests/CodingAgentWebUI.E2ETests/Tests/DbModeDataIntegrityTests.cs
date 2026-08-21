@@ -21,7 +21,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 // These are the exact conditions that produced bugs #1154 and #1270.
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
-public sealed class DbModeDataIntegrityTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class DbModeDataIntegrityTests : HeadlessE2ETestBase
 {
     private static readonly string[] s_EnhancementAgentNextLabels = new[] { "enhancement", "agent:next" };
     private static readonly string[] s_IntegrityE2eMatchLabels = new[] { "integrity-e2e" };

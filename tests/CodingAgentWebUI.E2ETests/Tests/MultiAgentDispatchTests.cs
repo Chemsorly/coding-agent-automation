@@ -13,7 +13,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Uses FakeAgentClient to simulate real SignalR agent connections.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class MultiAgentDispatchTests : E2ETestBase
 {
     public MultiAgentDispatchTests(E2EFixture fixture) : base(fixture) { }
 
@@ -23,6 +24,10 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         // Arrange: connect a fake agent
         await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+
+        // Force the Blazor host's ApiAgentRegistryService to refresh its snapshot — the
+        // AgentRegistrySyncService background poller is disabled in the E2E harness.
+        await Fixture.ForceAgentRegistryRefreshAsync();
 
         // Act: navigate to the monitoring page
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
@@ -123,8 +128,10 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         await busyAgent.AcceptJobAsync(assignment1.JobId);
         await busyAgent.ReportStepAsync(assignment1.JobId, PipelineStep.CloningRepository);
 
-        // Wait for the busy agent to be marked as Busy in registry before dispatching second job
-        var registry = Fixture.Factory.AgentRegistry;
+        // Wait for the busy agent to be marked as Busy in registry before dispatching second job.
+        // Agents connect to the API hub (Spec 044), so use Fixture.AgentRegistry (API host),
+        // not Fixture.AgentRegistry (the Blazor host's local, never-written registry).
+        var registry = Fixture.AgentRegistry;
         await WaitUntilAsync(() => registry.GetByAgentId(busyAgent.AgentId)?.Status == AgentStatus.Busy);
 
         // Navigate back to dispatch the second issue
@@ -161,7 +168,7 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         }
         catch (TimeoutException)
         {
-            var reg = Fixture.Factory.AgentRegistry;
+            var reg = Fixture.AgentRegistry;
             var a1 = reg.GetByAgentId("multi-agent-1");
             var a2 = reg.GetByAgentId("multi-agent-2");
             var hist = (await Fixture.Factory.HistoryService.GetRunHistoryAsync());

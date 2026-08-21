@@ -19,7 +19,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "AgentChat")]
-public sealed class AgentChatSignalRTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class AgentChatSignalRTests : E2ETestBase
 {
     public AgentChatSignalRTests(E2EFixture fixture) : base(fixture) { }
 

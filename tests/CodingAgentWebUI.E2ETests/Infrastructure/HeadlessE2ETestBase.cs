@@ -39,18 +39,16 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         Fixture = fixture;
     }
 
-    public Task InitializeAsync()
+    public async Task InitializeAsync()
     {
         // Reset all state between tests
-        Fixture.ResetAll();
+        await Fixture.ResetAllAsync();
 
         // Guard: verify DI replacement worked
         var factory = Fixture.Factory.Services.GetRequiredService<IProviderFactory>();
         if (factory is not FakeProviderFactory)
             throw new InvalidOperationException(
                 $"DI replacement failed: IProviderFactory resolved as {factory.GetType().Name} instead of FakeProviderFactory");
-
-        return Task.CompletedTask;
     }
 
     public Task DisposeAsync() => Task.CompletedTask;
@@ -201,8 +199,10 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
     {
         var agentId = overrideAgentId ?? $"fake-chat-agent-{Guid.NewGuid().ToString("N")[..6]}";
 
-        // Start dispatch — this will poll for agent connection
-        var dispatchTask = Fixture.Factory.ChatDispatcher.DispatchChatPodAsync(
+        // Start dispatch — this will poll for agent connection.
+        // ChatJobDispatcher lives on the API host (Spec 044/045) — use Fixture.ChatDispatcher
+        // to reach it, not Fixture.Factory.ChatDispatcher (the Blazor host has no dispatcher).
+        var dispatchTask = Fixture.ChatDispatcher.DispatchChatPodAsync(
             agentSelector, model, effort, CancellationToken.None);
 
         // Wait for the job to be created (brief poll), then connect the fake agent.

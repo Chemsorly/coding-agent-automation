@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Kubernetes;
 using k8s;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -86,6 +87,51 @@ internal static class E2ETestDefaults
         {
             Environment.SetEnvironmentVariable(key, null);
         }
+    }
+
+    /// <summary>
+    /// Installs the job templates both hosts dispatch against.
+    ///
+    /// <para>
+    /// <c>JobTemplateStore</c> loads <c>/app/config/job-templates.yaml</c>, which exists only
+    /// in-cluster where the ConfigMap is mounted, so every host in the harness has to be given a
+    /// literal set instead. Both hosts are given the <em>same</em> set from here rather than each
+    /// declaring its own: the API dispatches chat pods and the monolith owns work-item cleanup, and
+    /// when the two lists drifted apart a chat test asking for a selector only one side knew about
+    /// failed with "no template for selector" — a harness artifact that looks exactly like a
+    /// product bug.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>maxConcurrent</c> is high enough to stay out of the way; a test asserting on concurrency
+    /// limits sets its own.
+    /// </para>
+    /// </summary>
+    public static void InstallJobTemplates(IServiceCollection services)
+    {
+        services.RemoveAll<JobTemplateStore>();
+        services.AddSingleton(JobTemplateStore.LoadFromYaml("""
+            - labels: "kiro,dotnet"
+              image: "chemsorly/coding-agent:kiro-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "kiro"
+              maxConcurrent: 5
+            - labels: "kiro,python"
+              image: "chemsorly/coding-agent:kiro-python-latest"
+              imagePullPolicy: "Always"
+              providerType: "kiro"
+              maxConcurrent: 5
+            - labels: "kiro,node"
+              image: "chemsorly/coding-agent:kiro-node-latest"
+              imagePullPolicy: "Always"
+              providerType: "kiro"
+              maxConcurrent: 5
+            - labels: "opencode,dotnet"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
+            """));
     }
 
     /// <summary>

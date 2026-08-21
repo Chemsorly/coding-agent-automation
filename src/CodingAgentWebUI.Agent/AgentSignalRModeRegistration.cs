@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure.Resilience;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;

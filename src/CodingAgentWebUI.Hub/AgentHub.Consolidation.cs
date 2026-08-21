@@ -33,7 +33,7 @@ public sealed partial class AgentHub
 
         // DIAGNOSTIC: Return debug info to caller for E2E test observability
         var debugInfo = $"connId={Context.ConnectionId}, agentFound={agent is not null}, agentId={agent?.AgentId ?? "NULL"}, activeJobId={agent?.ActiveJobId ?? "NULL"}";
-        _logger.Information("ReportConsolidationComplete ENTRY: {DebugInfo}", debugInfo);
+        _logger.Debug("ReportConsolidationComplete ENTRY: {DebugInfo}", debugInfo);
 
         // Manual job validation (cannot use [RequiresActiveJob] because that attribute
         // expects JobId as first parameter, but this method takes a complex object).

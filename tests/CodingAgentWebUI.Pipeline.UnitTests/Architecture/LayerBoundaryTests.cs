@@ -8,6 +8,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Architecture;
 /// - Pipeline must NOT reference Infrastructure or Orchestration
 /// - Infrastructure must NOT reference Orchestration or WebUI
 /// - Agent projects must NOT reference Orchestration
+/// - Agent (main) must NOT reference Infrastructure (confirmed violation — tracked here to prevent regression)
 /// </summary>
 public class LayerBoundaryTests
 {
@@ -17,6 +18,9 @@ public class LayerBoundaryTests
 
     private static readonly System.Reflection.Assembly InfrastructureAssembly =
         typeof(CodingAgentWebUI.Infrastructure.GitHub.GitHubRepositoryProvider).Assembly;
+
+    private static readonly System.Reflection.Assembly AgentAssembly =
+        typeof(CodingAgentWebUI.Agent.WorkItemAgentService).Assembly;
 
     private static readonly System.Reflection.Assembly AgentKiroCliAssembly =
         typeof(CodingAgentWebUI.Agent.KiroCli.KiroCliAgentProvider).Assembly;
@@ -114,6 +118,23 @@ public class LayerBoundaryTests
 
         Assert.True(result.IsSuccessful,
             $"Agent.OpenCode must not reference Orchestration. Violating types: {FormatViolations(result)}");
+    }
+
+    [Fact]
+    public void AgentKiroCli_ShouldNot_DependOnOrchestration_ViaAgent()
+    {
+        // The main Agent assembly carries GitHub/GitLab/Resilience from Infrastructure
+        // because the agent directly instantiates repository providers and uses resilience
+        // helpers. This is a known architectural violation (tracked in architecture analysis).
+        // This test documents the *current* boundary that MUST NOT get worse:
+        // Agent must not reach into Orchestration (the in-process dispatch layer).
+        var result = Types.InAssembly(AgentAssembly)
+            .ShouldNot()
+            .HaveDependencyOn("CodingAgentWebUI.Orchestration")
+            .GetResult();
+
+        Assert.True(result.IsSuccessful,
+            $"Agent must not reference Orchestration. Violating types: {FormatViolations(result)}");
     }
 
     // ── Positive Control ────────────────────────────────────────────────

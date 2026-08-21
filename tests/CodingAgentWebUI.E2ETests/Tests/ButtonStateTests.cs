@@ -16,7 +16,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// - Drawer pagination boundaries are respected
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class ButtonStateTests : E2ETestBase
 {
     public ButtonStateTests(E2EFixture fixture) : base(fixture) { }
 
@@ -194,7 +195,7 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
         }
         catch (TimeoutException)
         {
-            var reg = Fixture.Factory.AgentRegistry;
+            var reg = Fixture.AgentRegistry;
             var agent = reg.GetByAgentId("fake-agent-1");
             var allAgents = reg.GetAllAgents();
             Assert.Fail(

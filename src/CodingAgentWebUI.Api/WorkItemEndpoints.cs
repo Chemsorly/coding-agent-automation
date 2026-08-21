@@ -53,11 +53,12 @@ public static class WorkItemEndpoints
             async (Guid id, [FromBody] WorkItemStatusRequest request,
                    [FromServices] WorkItemTransitionService transitionService,
                    [FromServices] IOrchestratorRunService runService,
+                   [FromServices] IRunLifecycleManager runLifecycleManager,
                    [FromServices] IDbContextFactory<PipelineDbContext> dbFactory,
                    HttpContext httpContext,
                    CancellationToken ct) =>
                 await AuthorizeAgentForWorkItemAsync(httpContext, id, dbFactory, ct)
-                    ?? await PostStatus(id, request, transitionService, runService, dbFactory))
+                    ?? await PostStatus(id, request, transitionService, runService, runLifecycleManager, dbFactory, ct))
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(1_048_576)); // 1 MB limit
 
         // ── Control-plane endpoints ────────────────────────────────────────
@@ -190,7 +191,9 @@ public static class WorkItemEndpoints
         WorkItemStatusRequest request,
         WorkItemTransitionService transitionService,
         IOrchestratorRunService runService,
-        IDbContextFactory<PipelineDbContext>? dbFactory = null)
+        IRunLifecycleManager runLifecycleManager,
+        IDbContextFactory<PipelineDbContext>? dbFactory = null,
+        CancellationToken ct = default)
     {
         var success = await transitionService.TransitionAsync(
             id, request.Status,
@@ -207,6 +210,25 @@ public static class WorkItemEndpoints
             }
 
             return TypedResults.BadRequest("Invalid status transition");
+        }
+
+        // For terminal transitions, drive the run through RunLifecycleManager so history,
+        // label-swap, registry clear, and dedup-guard are all updated — mirrors what
+        // AgentJobLifecycleService does for agent-reported completions. Without this,
+        // infrastructure-killed runs (agent disconnect, reconciliation timeout) never appear
+        // in IPipelineRunHistoryService and WaitForHistoryAsync in E2E tests times out.
+        if (request.Status == WorkItemStatus.Failed)
+        {
+            var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
+            await runLifecycleManager.FailRunAsync(
+                new RunId(id.ToString()),
+                failureReason,
+                ct,
+                CodingAgentWebUI.Pipeline.Models.FailureReason.InfrastructureFailure);
+        }
+        else if (request.Status == WorkItemStatus.Cancelled)
+        {
+            await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
         }
 
         // Emit telemetry for terminal transitions
@@ -510,9 +532,18 @@ public static class WorkItemEndpoints
     /// <summary>
     /// POST /api/work-items/{id}/label-swap
     /// Body: { "label": string } — the label field is kept for wire compatibility but is NOT
-    /// used to drive behavior. The handler always calls SwapLabelWithRetryAsync with
-    /// LabelTargetKind.Issue (work items are always issue-origin at dispatch time).
+    /// used to drive behavior. The handler always swaps to agent:in-progress.
     /// Returns 200, 404 if WorkItem not found.
+    ///
+    /// <para>
+    /// The target follows the work item's task type. A review's identifier is a pull request
+    /// number, not an issue number, so labelling it as an issue puts the in-progress marker on
+    /// whatever issue happens to share that number. This handler used to pass
+    /// <c>LabelTargetKind.Issue</c> unconditionally — "work items are always issue-origin at
+    /// dispatch time", which reviews are not — and it disagreed with the completion path, which
+    /// labels the pull request. GitHub hides the disagreement, since its issues API accepts a PR
+    /// number; a provider that keeps the two apart does not.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> PostLabelSwap(
         Guid id,
@@ -525,7 +556,7 @@ public static class WorkItemEndpoints
         var item = await db.WorkItems
             .AsNoTracking()
             .Where(w => w.Id == id)
-            .Select(w => new { w.IssueProviderConfigId, w.IssueIdentifier })
+            .Select(w => new { w.IssueProviderConfigId, w.IssueIdentifier, w.TaskType })
             .FirstOrDefaultAsync(ct);
 
         if (item is null)
@@ -535,10 +566,12 @@ public static class WorkItemEndpoints
         {
             var providerConfigId = new ProviderConfigId(item.IssueProviderConfigId);
             var issueIdentifier = new IssueIdentifier(item.IssueIdentifier);
+            var targetKind = item.TaskType == WorkItemTaskType.Review
+                ? LabelTargetKind.PullRequest
+                : LabelTargetKind.Issue;
 
-            // Label field is not used — always swap to agent:in-progress (LabelTargetKind.Issue)
             await labelSwapService.SwapLabelWithRetryAsync(
-                id, providerConfigId, issueIdentifier, LabelTargetKind.Issue, ct);
+                id, providerConfigId, issueIdentifier, targetKind, ct);
         }
 
         return TypedResults.Ok();

@@ -1,8 +1,11 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.E2ETests.Fakes;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
@@ -10,8 +13,9 @@ using Microsoft.Playwright;
 namespace CodingAgentWebUI.E2ETests.Infrastructure;
 
 /// <summary>
-/// The E2E harness: both processes of the post-Spec-045 topology, created once per test class
-/// via <c>IClassFixture</c>.
+/// The E2E harness: both processes of the post-Spec-045 topology, created once for the whole
+/// assembly and shared through <see cref="E2ECollection"/>. Per-test isolation comes from
+/// <see cref="ResetAllAsync"/>, not from rebuilding the hosts.
 ///
 /// The Pipeline API owns <c>/hubs/agent</c>, <c>/api/work-items/*</c> and the database; the
 /// Blazor app serves the UI and talks to the API over HTTP. They share an EF InMemory database,
@@ -72,12 +76,49 @@ public sealed class E2EFixture : IAsyncLifetime
         ?? throw new InvalidOperationException("API host not started");
 
     /// <summary>
+    /// The API host's container, for the services that have no named accessor here.
+    ///
+    /// <para>
+    /// Reach for this whenever a test needs something on the agent-facing side of the split:
+    /// <c>IHubContext&lt;AgentHub&gt;</c> above all, since the monolith's copy resolves fine and
+    /// then delivers to nobody — every agent connection lives on this host. A test that resolves
+    /// one of those from <see cref="Factory"/> does not fail loudly; it waits for a message that
+    /// was sent into an empty hub and times out.
+    /// </para>
+    /// </summary>
+    public IServiceProvider ApiServices => _apiFactory?.Services
+        ?? throw new InvalidOperationException("API host not started");
+
+    /// <summary>
+    /// Chat job dispatcher. Moved to the API host (Spec 044/045) so it polls the registry
+    /// that the hub actually writes to. Tests must use this rather than Factory.ChatDispatcher.
+    /// </summary>
+    public ChatJobDispatcher ChatDispatcher => _apiFactory?.ChatDispatcher
+        ?? throw new InvalidOperationException("API host not started");
+
+    /// <summary>
+    /// Refreshes the Blazor host's <see cref="ApiAgentRegistryService"/> snapshot immediately.
+    /// Call this after connecting agents (which register on the API hub) and before navigating to a
+    /// Blazor page that renders agent status, so the page does not race the 2s background poll.
+    /// </summary>
+    public Task ForceAgentRegistryRefreshAsync(CancellationToken ct = default)
+        => Factory.ForceAgentRegistryRefreshAsync(ct);
+
+    /// <summary>
     /// Run lifecycle manager. Spec 045 removed it from the monolith's DI and re-homed it in the
     /// API alongside the run state it mutates, so tests must resolve it from that host.
     /// </summary>
     public IRunLifecycleManager RunLifecycleManager => _apiFactory?.Services
         .GetRequiredService<IRunLifecycleManager>()
         ?? throw new InvalidOperationException("API host not started");
+
+    /// <summary>
+    /// The monolith's work-item client, pointed at the API host — the same one the Job Controller
+    /// uses. Lets a test read queue state (pending, claimed, status) over the real endpoints
+    /// instead of reaching into the database behind them.
+    /// </summary>
+    public IPipelineApiWorkItemClient WorkItems =>
+        Factory.Services.GetRequiredService<IPipelineApiWorkItemClient>();
 
     /// <summary>
     /// Stands in for the Job Controller process. Nothing else moves a WorkItem out of
@@ -92,6 +133,8 @@ public sealed class E2EFixture : IAsyncLifetime
             Factory.DbName,
             Factory.ConfigStore,
             Factory.HistoryService,
+            Factory.FakeProviders,
+            Factory.FakeK8sClient,
             ApiKey);
 
         // CreateClient() forces the host to build and Kestrel to bind.
@@ -105,7 +148,8 @@ public sealed class E2EFixture : IAsyncLifetime
         // exactly as the real one does.
         _jobController = new FakeJobController(
             Factory.Services.GetRequiredService<IPipelineApiWorkItemClient>(),
-            _apiFactory.AgentRegistry);
+            _apiFactory.AgentRegistry,
+            Factory.ConfigStore);
 
         return Task.CompletedTask;
     }
@@ -122,6 +166,30 @@ public sealed class E2EFixture : IAsyncLifetime
         Factory.ResetAll();
         _apiFactory?.ResetAll();
         _jobController?.ForgetAllInFlight();
+    }
+
+    /// <summary>
+    /// <see cref="ResetAll"/> plus a stopped pipeline loop.
+    ///
+    /// <para>
+    /// <c>PipelineLoopService</c> is a singleton that survives the test that started it, and
+    /// <see cref="ResetAll"/> cannot stop it on its own: <c>StopLoop</c> only <em>requests</em> a
+    /// stop and the loop finishes its current cycle first. A test that started the loop therefore
+    /// handed the next one a page showing "Loop stopping… (finishing current run)" and a Stop Loop
+    /// button where it expected Start Loop — which is what <c>LoopControlTests</c> kept failing on,
+    /// with no hint that the cause was the previous test.
+    /// </para>
+    /// </summary>
+    public async Task ResetAllAsync()
+    {
+        var loop = Factory.Services.GetRequiredService<PipelineLoopService>();
+        loop.StopLoop();
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (loop.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(25);
+
+        ResetAll();
     }
 
     /// <summary>

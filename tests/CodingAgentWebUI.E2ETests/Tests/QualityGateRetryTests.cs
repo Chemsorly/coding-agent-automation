@@ -11,7 +11,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Uses the multi-agent dispatch path (JobDispatcher → FakeAgentClient → ReportJobCompleted).
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class QualityGateRetryTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class QualityGateRetryTests : E2ETestBase
 {
     public QualityGateRetryTests(E2EFixture fixture) : base(fixture) { }
 

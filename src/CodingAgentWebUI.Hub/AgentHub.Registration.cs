@@ -42,13 +42,9 @@ public sealed partial class AgentHub
         if (!string.IsNullOrEmpty(authenticatedAgentId) && authenticatedAgentId != "agent" &&
             !string.Equals(message.AgentId.Value, authenticatedAgentId, StringComparison.Ordinal))
         {
-            // TODO: authenticatedAgentId originates from the JWT NameIdentifier claim (external input)
-            // and is logged unsanitized. If the claim contains newline characters an attacker could
-            // inject fake log entries (log forging). Wrap with SanitizeForLog(authenticatedAgentId)
-            // to match the sanitization already applied to message.AgentId.Value and queryAgentId above.
             _logger.Warning(
                 "RegisterAgent rejected — authenticated as '{AuthenticatedAgentId}' but registering as '{MessageAgentId}'",
-                authenticatedAgentId, message.AgentId);
+                SanitizeForLog(authenticatedAgentId), SanitizeForLog(message.AgentId.Value));
             throw new HubException($"AgentId mismatch: authenticated as '{authenticatedAgentId}' but registering as '{message.AgentId}'");
         }
 

@@ -30,7 +30,7 @@ public abstract class E2ETestBase : IAsyncLifetime
     public async Task InitializeAsync()
     {
         // Reset all state between tests
-        Fixture.ResetAll();
+        await Fixture.ResetAllAsync();
 
         // Fresh browser context per test (isolated cookies, storage)
         var browser = await Fixture.GetBrowserAsync();

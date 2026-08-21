@@ -10,7 +10,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Tests that validate issue dependency blocking prevents dispatch and shows clear UI feedback.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class DependencyBlockingTests : E2ETestBase
 {
     public DependencyBlockingTests(E2EFixture fixture) : base(fixture) { }
 

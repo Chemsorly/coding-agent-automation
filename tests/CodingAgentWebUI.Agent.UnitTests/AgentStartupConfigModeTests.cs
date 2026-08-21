@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
 

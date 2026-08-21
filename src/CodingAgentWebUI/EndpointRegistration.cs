@@ -60,7 +60,7 @@ internal static class EndpointRegistration
             var bytes = System.Text.Encoding.UTF8.GetBytes(json);
             var fileName = $"pipeline-runs-{DateTime.UtcNow:yyyy-MM-dd}.json";
             return Results.File(bytes, "application/json", fileName);
-        }).AllowAnonymous();
+        }).RequireAuthorization("AgentApiKey");
 
         app.UseStaticFiles();
         app.MapStaticAssets();

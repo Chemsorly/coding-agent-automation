@@ -254,75 +254,41 @@ public sealed class DispatchLoopTests
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ─── Secret creation path (Req 8a.3) ─────────────────────────────────────────
+    // ─── Key delivery ────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Dispatch must create the Job and nothing else — specifically, no per-Job derived-key Secret.
+    ///
+    /// Spec 043 Req 8a.3 originally had the dispatcher derive HMAC(master, jobName), write it to a
+    /// Job-owned Secret, and mount that into the pod. That was removed because the agent derives
+    /// the same key itself at runtime — <c>HubConnectionManager.DeriveKey</c> and
+    /// <c>WorkItemHttpClient</c> both call HMAC(AGENT_API_KEY, AGENT_ID) — so a pre-derived key
+    /// arriving in the pod got derived a second time and failed auth. Work-item pods now receive
+    /// the master key via the file mount instead (<c>DerivedKeySecretName</c> stays null in the
+    /// build context).
+    ///
+    /// This is the guard against re-introducing that double-derivation: three tests used to assert
+    /// the Secret was written, and they are what caught the removal.
+    /// </summary>
     [Fact]
-    public async Task WhenClaimSucceeds_ShouldCallCreateSecretAsync_WithOwnerReference()
+    public async Task WhenClaimSucceeds_ShouldCreateJob_ButNoDerivedKeySecret()
     {
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending()]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
 
-        var jobUid = "test-job-uid-123";
-        _k8sClient.Setup(c => c.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Name = DispatchLoop.GenerateJobName(ItemId), Uid = jobUid } });
-
         var loop = CreateLoop();
         await loop.RunOneCycleAsync(CancellationToken.None);
 
-        // Secret must be created with ownerReference pointing to the Job UID
-        _k8sClient.Verify(c => c.CreateSecretAsync(
-            It.Is<V1Secret>(s =>
-                s.Metadata.Name == DispatchLoop.GenerateDerivedKeySecretName(ItemId) &&
-                s.Metadata.OwnerReferences != null &&
-                s.Metadata.OwnerReferences.Any(r => r.Uid == jobUid)),
-            _options.Namespace,
-            It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task WhenReadJobFails_ShouldNotCallCreateSecretAsync_ButShouldContinueDispatch()
-    {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending()]);
-        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(MakeClaimed());
-
-        // ReadJobAsync fails (K8s API error)
-        _k8sClient.Setup(c => c.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new Exception("K8s API unavailable"));
-
-        var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
-
-        // Job was created — dispatch continues
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        // Secret was NOT created (ReadJobAsync failed)
         _k8sClient.Verify(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        // Must NOT requeue (Job exists and is running)
-        _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
 
-    [Fact]
-    public async Task WhenCreateSecretFails_ShouldNotRequeue_JobContinues()
-    {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending()]);
-        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(MakeClaimed());
-        _k8sClient.Setup(c => c.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Name = DispatchLoop.GenerateJobName(ItemId), Uid = "uid-1" } });
-        _k8sClient.Setup(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new Exception("K8s API unavailable for secrets"));
+        // The Job read-back existed only to get a UID for the Secret's ownerReference. With no
+        // Secret to own, dispatch should not be paying for that call either.
+        _k8sClient.Verify(c => c.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
-        var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
-
-        // Job was created; Secret creation failed
-        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        // Agent pod will start without key; ReconciliationService will handle cleanup.
-        // Must NOT requeue — Job exists and is running.
+        // Job is running, so nothing goes back on the queue.
         _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

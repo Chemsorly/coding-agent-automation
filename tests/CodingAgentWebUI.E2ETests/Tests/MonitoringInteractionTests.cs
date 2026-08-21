@@ -15,7 +15,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// and agent status display.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class MonitoringInteractionTests : E2ETestBase
 {
     public MonitoringInteractionTests(E2EFixture fixture) : base(fixture) { }
 
@@ -137,9 +138,17 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
         await monitoringPage.NavigateAsync();
 
-        // Wait for the clickable row to appear (ARM runners can be slow to render)
-        await Page.WaitForSelectorAsync("tr.monitoring-row-clickable", new() { Timeout = 15_000 });
-        await Page.ClickAsync("tr.monitoring-row-clickable");
+        // Click the row for *this run*, addressed by its id.
+        //
+        // Three tables on this page use tr.monitoring-row-clickable — agents, active runs, recent
+        // runs — so the bare selector resolves to whichever renders first, the agents table. That
+        // used to be reliably empty (the monolith's agent registry had no writer), which is the
+        // only reason clicking the first match ever hit a run; now that the page shows real agents
+        // it clicks one of them, which opens no modal.
+        var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "71").RunId;
+        var runRow = Page.Locator("tr.monitoring-row-clickable", new() { HasTextString = runId });
+        await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
+        await runRow.First.ClickAsync();
 
         // Wait for modal to open
         await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });
@@ -203,11 +212,15 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "72" && r.CurrentStep == PipelineStep.GeneratingCode));
 
-        // Navigate to monitoring and open modal
+        // Navigate to monitoring and open the modal for this run. Addressed by run id because the
+        // agents table shares the row class and renders first — see the note in
+        // Monitoring_RunDetailModal_OpensOnRowClick.
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
         await monitoringPage.NavigateAsync();
-        await Page.WaitForSelectorAsync("tr.monitoring-row-clickable", new() { Timeout = 15_000 });
-        await Page.ClickAsync("tr.monitoring-row-clickable");
+        var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "72").RunId;
+        var runRow = Page.Locator("tr.monitoring-row-clickable", new() { HasTextString = runId });
+        await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
+        await runRow.First.ClickAsync();
         await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });
 
         // Act: focus the modal overlay (tabindex="-1" makes it focusable) then press Escape

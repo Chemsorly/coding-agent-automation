@@ -27,27 +27,72 @@ public static class PipelineRunEndpoints
         // No-op create (reserved, no caller in 042–045)
         group.MapPost("/", () => Results.StatusCode(201));
 
-        // Anonymous file download — mirrors monolith's EndpointRegistration.cs:30
-        // Note: registered outside the group so it is anonymous and at the /api/export path
-        app.MapGet("/api/export/runs.json", ExportRunsJson).AllowAnonymous();
+        // Run history export — requires operator authentication.
+        // Returns pipeline run summaries including issue identifiers and project names;
+        // these must not be exposed to unauthenticated callers.
+        app.MapGet("/api/export/runs.json", ExportRunsJson)
+            .RequireAuthorization(ApiAuthPolicies.Operator);
     }
 
     // ── GET /api/pipeline-runs ─────────────────────────────────────────────
 
     /// <summary>
-    /// GET /api/pipeline-runs?page=1&amp;pageSize=50&amp;feedbackOnly=false
-    /// Returns paginated run history. feedbackOnly filter is applied at DB level.
+    /// GET /api/pipeline-runs?page=1&amp;pageSize=50&amp;feedbackOnly=false&amp;includeActive=false
+    /// Returns paginated run history, optionally merged with in-flight active runs from
+    /// IOrchestratorRunService. includeActive=true is used by the monitoring page so it can
+    /// show dispatched/running jobs that haven't reached a terminal state yet.
     /// </summary>
     internal static async Task<IResult> GetRunHistory(
         IPipelineRunHistoryService history,
+        IOrchestratorRunService runService,
         int page = 1,
         int pageSize = 50,
         bool feedbackOnly = false,
+        bool includeActive = false,
         CancellationToken ct = default)
     {
         var result = await history.GetRunHistoryAsync(page, pageSize, feedbackOnly, ct);
-        return TypedResults.Ok(result);
+
+        if (!includeActive || feedbackOnly)
+            return TypedResults.Ok(result);
+
+        // Merge in-flight runs from IOrchestratorRunService that are not yet in history.
+        // These are runs that CreateWorkItem materialised in memory but have not yet reached
+        // a terminal step (Completed/Failed/Cancelled) — so they are absent from history.
+        var activeRunIds = result.Items
+            .Where(r => !s_terminalSteps.Contains(r.FinalStep))
+            .Select(r => r.RunId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var inFlightSummaries = runService.GetActiveRuns()
+            .Where(r => !activeRunIds.Contains(r.RunId))   // not already in history page
+            .Select(r => r.ToSummary())
+            .ToList();
+
+        if (inFlightSummaries.Count == 0)
+            return TypedResults.Ok(result);
+
+        // Prepend in-flight runs (newest activity first) to the paged history result.
+        var mergedItems = inFlightSummaries
+            .Concat(result.Items)
+            .ToList()
+            .AsReadOnly();
+
+        return TypedResults.Ok(new PagedResult<PipelineRunSummary>
+        {
+            Items = mergedItems,
+            Page = result.Page,
+            PageSize = result.PageSize,
+            HasMore = result.HasMore
+        });
     }
+
+    private static readonly HashSet<PipelineStep> s_terminalSteps =
+    [
+        PipelineStep.Completed,
+        PipelineStep.Failed,
+        PipelineStep.Cancelled
+    ];
 
     // ── GET /api/pipeline-runs/{runId} ─────────────────────────────────────
 

@@ -11,7 +11,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// is persisted in run history, and is visible in the monitoring run detail UI.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class FeedbackFlowTests : E2ETestBase
 {
     public FeedbackFlowTests(E2EFixture fixture) : base(fixture) { }
 

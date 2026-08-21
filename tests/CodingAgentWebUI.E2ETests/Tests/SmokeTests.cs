@@ -7,7 +7,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// factory starts, Kestrel binds, Playwright connects, page loads.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class SmokeTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class SmokeTests : E2ETestBase
 {
     public SmokeTests(E2EFixture fixture) : base(fixture) { }
 

@@ -786,24 +786,29 @@ public class JobSpecBuilderTests
     #region OpenCode Provider
 
     [Fact]
-    public void Build_OpencodeAgent_WithConfigSecret_MountsOpencodeConfigVolume()
+    public void Build_OpencodeAgent_WithConfigSecret_InjectsOpencodeConfigEnvVar()
     {
+        // Spec 043/045: opencode config is injected via OPENCODE_CONFIG_CONTENT env var
+        // sourced from the secret, not via a directory volume mount. entrypoint.sh writes
+        // the file at startup. See JobSpecBuilder.BuildEnvVars for rationale.
         var template = CreateTemplate(providerType: "opencode", image: "chemsorly/coding-agent:opencode");
         var ctx = CreateContext(opcConfigSecret: "opencode-config-secret");
 
         var job = JobSpecBuilder.Build(template, ctx);
 
-        var volumes = job.Spec.Template.Spec.Volumes;
-        volumes.Should().Contain(v => v.Name == "opencode-config");
-        var opcVol = volumes.First(v => v.Name == "opencode-config");
-        opcVol.Secret.Should().NotBeNull();
-        opcVol.Secret.SecretName.Should().Be("opencode-config-secret");
-
+        // Env var must be present with SecretKeyRef pointing to the config secret
         var container = job.Spec.Template.Spec.Containers[0];
-        container.VolumeMounts.Should().Contain(vm => vm.Name == "opencode-config");
-        var opcMount = container.VolumeMounts.First(vm => vm.Name == "opencode-config");
-        opcMount.MountPath.Should().Be("/home/ubuntu/.config/opencode");
-        opcMount.ReadOnlyProperty.Should().BeTrue();
+        var envVar = container.Env.FirstOrDefault(e => e.Name == "OPENCODE_CONFIG_CONTENT");
+        envVar.Should().NotBeNull("OPENCODE_CONFIG_CONTENT must be injected when OpencodeConfigSecretName is set");
+        envVar!.ValueFrom.Should().NotBeNull();
+        envVar.ValueFrom.SecretKeyRef.Should().NotBeNull();
+        envVar.ValueFrom.SecretKeyRef.Name.Should().Be("opencode-config-secret");
+        envVar.ValueFrom.SecretKeyRef.Key.Should().Be("opencode-config-content");
+
+        // No volume mount — directory volume mounts break entrypoint.sh's ability to write the file
+        var volumes = job.Spec.Template.Spec.Volumes;
+        volumes.Should().NotContain(v => v.Name == "opencode-config");
+        container.VolumeMounts.Should().NotContain(vm => vm.Name == "opencode-config");
     }
 
     [Fact]

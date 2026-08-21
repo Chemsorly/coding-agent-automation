@@ -128,7 +128,7 @@ public class AgentMonitoringPageService
         // Fetch run history via the Pipeline API.
         // Request a large page to approximate "all" for the monitoring view; paging is
         // supported by the underlying endpoint if larger datasets require it in future.
-        var historyPage = await _runHistoryClient.GetRunHistoryAsync(page: 1, pageSize: 1000, ct: CancellationToken.None);
+        var historyPage = await _runHistoryClient.GetRunHistoryAsync(page: 1, pageSize: 1000, includeActive: true, ct: CancellationToken.None);
         RunHistory = historyPage.Items;
 
         // Derive active runs from history by filtering non-terminal steps.

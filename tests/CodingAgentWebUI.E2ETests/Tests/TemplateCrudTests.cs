@@ -10,7 +10,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Validates that pre-seeded templates appear in the template-select dropdown on /agent-coding.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class TemplateCrudTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class TemplateCrudTests : E2ETestBase
 {
     public TemplateCrudTests(E2EFixture fixture) : base(fixture) { }
 

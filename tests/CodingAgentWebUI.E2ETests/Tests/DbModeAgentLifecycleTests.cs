@@ -19,7 +19,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
 [Trait("Feature", "AgentLifecycle")]
-public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
 {
     public DbModeAgentLifecycleTests(E2EFixture fixture) : base(fixture) { }
 

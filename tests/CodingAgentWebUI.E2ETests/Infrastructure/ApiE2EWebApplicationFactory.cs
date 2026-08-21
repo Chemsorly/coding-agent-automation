@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Api;
 using CodingAgentWebUI.E2ETests.Fakes;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
@@ -8,6 +9,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -39,17 +41,23 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
     private readonly string _dbName;
     private readonly InMemoryConfigurationStore _configStore;
     private readonly InMemoryPipelineRunHistoryService _historyService;
+    private readonly FakeProviderFactory _fakeProviders;
+    private readonly FakeKubernetesJobClient _fakeK8sClient;
     private readonly string _apiKey;
 
     public ApiE2EWebApplicationFactory(
         string dbName,
         InMemoryConfigurationStore configStore,
         InMemoryPipelineRunHistoryService historyService,
+        FakeProviderFactory fakeProviders,
+        FakeKubernetesJobClient fakeK8sClient,
         string apiKey)
     {
         _dbName = dbName;
         _configStore = configStore;
         _historyService = historyService;
+        _fakeProviders = fakeProviders;
+        _fakeK8sClient = fakeK8sClient;
         _apiKey = apiKey;
         UseKestrel(0);
     }
@@ -62,6 +70,12 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
 
     /// <summary>In-memory run state — owned by the API since the hub moved.</summary>
     public IOrchestratorRunService RunService => Services.GetRequiredService<IOrchestratorRunService>();
+
+    /// <summary>
+    /// Chat job dispatcher — moved to the API host (Spec 044/045 follow-up) so it polls the
+    /// registry that the hub actually writes to.
+    /// </summary>
+    public ChatJobDispatcher ChatDispatcher => Services.GetRequiredService<ChatJobDispatcher>();
 
     /// <summary>
     /// Clears the per-test state this host owns.
@@ -83,6 +97,14 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
     {
         E2ETestDefaults.ApplyDatabaseEnvironment();
         Environment.SetEnvironmentVariable("AGENT_API_KEY", _apiKey);
+
+        // Chat dispatch reads its namespace, PVC credential pool and pod timeouts from
+        // configuration through DispatchServiceOptionsFactory. The Blazor factory also applies
+        // these, but this host is built first, so relying on that ordering would leave the API's
+        // options at their defaults — an empty credential pool, which makes every kiro chat
+        // dispatch fail to claim a PVC.
+        E2ETestDefaults.ApplyDispatchEnvironment();
+
         E2ETestDefaults.ResetSerilogBootstrapLogger();
 
         builder.UseEnvironment("Development");
@@ -117,25 +139,32 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
             ReplaceSingleton<IPipelineRunHistoryService>(services, _historyService);
 
             // No real GitHub / Kiro CLI / Kubernetes in the harness.
-            ReplaceSingleton(services, new Mock<IProviderFactory>().Object);
+            // Use the same FakeProviderFactory instance as the Blazor host so AgentHub's issue
+            // operations (RequestCreateIssue, RequestCreateEpicIssue etc.) call through to the
+            // in-memory fake rather than a null mock.CreateIssueProvider → NullReferenceException.
+            ReplaceSingleton<IProviderFactory>(services, _fakeProviders);
             ReplaceSingleton(services, new Mock<IQualityGateValidator>().Object);
+
+            // The *same* fake cluster the Blazor host writes to. ChatJobDispatcher moved to this
+            // host, so its Jobs land in whichever fake this registration names — and the tests
+            // assert against the Blazor host's instance via Fixture.K8sClient. A second instance
+            // here meant every chat Job was created into a fake nobody read, which reads as
+            // "no Job was created" in every chat assertion.
             services.RemoveAll<IKubernetesJobClient>();
-            services.AddSingleton<IKubernetesJobClient>(new FakeKubernetesJobClient());
+            services.AddSingleton<IKubernetesJobClient>(_fakeK8sClient);
             E2ETestDefaults.InstallKubernetesStub(services);
 
-            // Spec 043 moved JobTemplateStore into the API too. It loads
-            // /app/config/job-templates.yaml, which exists only in-cluster from the ConfigMap.
-            services.RemoveAll<JobTemplateStore>();
-            services.AddSingleton(JobTemplateStore.LoadFromYaml("""
-                - labels: "kiro,dotnet"
-                  image: "chemsorly/coding-agent:kiro-dotnet10-latest"
-                  providerType: "kiro"
-                  maxConcurrent: 5
-                - labels: "kiro,python"
-                  image: "chemsorly/coding-agent:kiro-python-latest"
-                  providerType: "kiro"
-                  maxConcurrent: 5
-                """));
+            // Spec 043 moved JobTemplateStore into the API too.
+            E2ETestDefaults.InstallJobTemplates(services);
+
+            // ChatJobDispatcher refuses to dispatch unless this replica holds the leader lease, and
+            // the real LeaderElectionService is a hosted service that RemoveAll<IHostedService>()
+            // above has just deleted — so without this every chat dispatch throws "this
+            // orchestrator replica is not the leader". A single test process is exactly the case
+            // the production always-leader implementation exists for, so this is that type, not a
+            // test double.
+            services.RemoveAll<ILeaderElectionService>();
+            services.AddSingleton<ILeaderElectionService>(new AlwaysLeaderElectionService());
         });
     }
 

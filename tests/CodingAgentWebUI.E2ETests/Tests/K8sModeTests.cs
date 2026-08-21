@@ -26,7 +26,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "K8sMode")]
-public sealed class K8sModeTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class K8sModeTests : HeadlessE2ETestBase
 {
     public K8sModeTests(E2EFixture fixture) : base(fixture) { }
 

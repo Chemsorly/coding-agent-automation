@@ -19,7 +19,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
 [Trait("Feature", "UnhappyPath")]
-public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
 {
     public DbModeUnhappyPathTests(E2EFixture fixture) : base(fixture) { }
 
@@ -246,9 +247,23 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase, IClassFixture<
             workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(20));
         Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
 
-        // Assert: agent is removed or marked Disconnected in registry
+        // Assert: agent is removed or marked Disconnected in registry.
+        //
+        // Polled rather than read once. Disposing the client closes the socket; the hub's
+        // OnDisconnectedAsync — which is what writes Disconnected — runs on the server afterwards,
+        // and the work item above can reach Failed before it does. Reading the status immediately
+        // caught the agent still Idle, which looked like the registry never learned about the
+        // disconnect at all.
         var registry = Fixture.AgentRegistry;
-        var agentEntry = registry.GetByAgentId("unhappy-disconnect-agent");
+        AgentEntry? agentEntry = null;
+        await WaitUntilAsync(
+            () =>
+            {
+                agentEntry = registry.GetByAgentId("unhappy-disconnect-agent");
+                return agentEntry is null || agentEntry.Status == AgentStatus.Disconnected;
+            },
+            TimeSpan.FromSeconds(10));
+
         Assert.True(
             agentEntry is null || agentEntry.Status == AgentStatus.Disconnected,
             $"Agent should be null or Disconnected, got: {agentEntry?.Status}");

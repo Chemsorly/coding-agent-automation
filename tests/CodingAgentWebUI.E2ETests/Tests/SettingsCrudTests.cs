@@ -8,7 +8,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Validates: navigate → view pre-seeded provider → add new provider → verify in list → delete → verify removed.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class SettingsCrudTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class SettingsCrudTests : E2ETestBase
 {
     public SettingsCrudTests(E2EFixture fixture) : base(fixture) { }
 

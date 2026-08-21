@@ -7,6 +7,6 @@ namespace CodingAgentWebUI.Api.Client;
 /// </summary>
 public interface IPipelineApiRunHistoryClient
 {
-    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page = 1, int pageSize = 50, bool feedbackOnly = false, CancellationToken ct = default);
+    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page = 1, int pageSize = 50, bool feedbackOnly = false, bool includeActive = false, CancellationToken ct = default);
     Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default);
 }

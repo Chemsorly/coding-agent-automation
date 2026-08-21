@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -34,16 +35,21 @@ public sealed class FakeJobController : IAsyncDisposable
 {
     private readonly IPipelineApiWorkItemClient _workItems;
     private readonly AgentRegistryService _registry;
+    private readonly InMemoryConfigurationStore _configStore;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
 
     /// <summary>Work item ids this controller has claimed, for test assertions.</summary>
     public List<Guid> ClaimedWorkItemIds { get; } = [];
 
-    public FakeJobController(IPipelineApiWorkItemClient workItems, AgentRegistryService registry)
+    public FakeJobController(
+        IPipelineApiWorkItemClient workItems,
+        AgentRegistryService registry,
+        InMemoryConfigurationStore configStore)
     {
         _workItems = workItems;
         _registry = registry;
+        _configStore = configStore;
         _loop = Task.Run(() => PollAsync(_cts.Token));
     }
 
@@ -109,6 +115,21 @@ public sealed class FakeJobController : IAsyncDisposable
             ClaimedWorkItemIds.Add(item.Id);
             _inFlight[item.Id] = agent.AgentId.Value;
 
+            // The in-progress label, exactly as DispatchLoop posts it once the Job exists. It is
+            // the only signal an operator has on the issue tracker that work has started, and the
+            // terminal swap the agent posts later replaces it rather than appending — so a harness
+            // that skips this step shows the issue going straight from untouched to done, and the
+            // epic-decomposition tests that assert on the transition fail on the label they never
+            // saw. Non-fatal here for the same reason it is there: the work is already running.
+            try
+            {
+                await _workItems.PostLabelSwapAsync(item.Id, "agent:in-progress", ct);
+            }
+            catch
+            {
+                // Swallowed deliberately — see above.
+            }
+
             if (FakeAgentClient.TryGetConnected(agent.AgentId.Value, out var fakeAgent))
                 await fakeAgent.StartAssignedWorkItemAsync(item.Id, ct);
         }
@@ -125,10 +146,20 @@ public sealed class FakeJobController : IAsyncDisposable
     ///
     /// Without this, a work item whose agent disconnects sits in <c>Running</c> forever and every
     /// test asserting the disconnect path times out.
+    ///
+    /// <para>
+    /// A disconnect is not immediately fatal. <c>AgentDisconnectGracePeriod</c> is what lets a pod
+    /// survive a dropped websocket and re-register with its job intact, so this waits it out before
+    /// declaring the pod dead — reading the same configured value the product does. Failing on the
+    /// first Disconnected sighting made the reconnection path untestable: the work item was already
+    /// Failed by the time the agent came back, so there was no orphan left to restore.
+    /// </para>
     /// </summary>
     private async Task ReconcileOnceAsync(CancellationToken ct)
     {
         if (_inFlight.IsEmpty) return;
+
+        var gracePeriod = (await _configStore.LoadPipelineConfigAsync(ct)).AgentDisconnectGracePeriod;
 
         foreach (var (workItemId, agentId) in _inFlight.ToArray())
         {
@@ -137,8 +168,17 @@ public sealed class FakeJobController : IAsyncDisposable
             // missing entry as "the pod is gone".
             var entry = _registry.GetByAgentId(new AgentId(agentId));
             if (entry is not null && entry.Status != AgentStatus.Disconnected)
-                continue; // still connected — nothing to reconcile
+            {
+                // Back, or never left. Any earlier absence no longer counts against it.
+                _goneSince.TryRemove(workItemId, out _);
+                continue;
+            }
 
+            var goneSince = _goneSince.GetOrAdd(workItemId, _ => DateTimeOffset.UtcNow);
+            if (DateTimeOffset.UtcNow - goneSince < gracePeriod)
+                continue; // inside the grace period — give it a chance to come back
+
+            _goneSince.TryRemove(workItemId, out _);
             _inFlight.TryRemove(workItemId, out _);
 
             await _workItems.PostStatusAsync(
@@ -157,12 +197,26 @@ public sealed class FakeJobController : IAsyncDisposable
     /// <summary>Claimed work items still believed to be running, keyed by work item id.</summary>
     private readonly ConcurrentDictionary<Guid, string> _inFlight = new();
 
+    /// <summary>
+    /// When each in-flight item's agent was first seen gone, so the disconnect grace period is
+    /// measured from the disconnect rather than from the poll that noticed it.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _goneSince = new();
+
     /// <summary>Stops tracking a work item, so a completed job is not reconciled as a dead pod.</summary>
-    internal void ForgetInFlight(Guid workItemId) => _inFlight.TryRemove(workItemId, out _);
+    internal void ForgetInFlight(Guid workItemId)
+    {
+        _inFlight.TryRemove(workItemId, out _);
+        _goneSince.TryRemove(workItemId, out _);
+    }
 
     /// <summary>Drops all in-flight tracking. Called between tests so a work item from a
     /// previous test cannot be reconciled into a failure during the next one.</summary>
-    internal void ForgetAllInFlight() => _inFlight.Clear();
+    internal void ForgetAllInFlight()
+    {
+        _inFlight.Clear();
+        _goneSince.Clear();
+    }
 
     /// <summary>
     /// Picks an idle agent whose labels satisfy the selector. The real controller matches a

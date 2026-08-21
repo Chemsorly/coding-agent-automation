@@ -1,6 +1,7 @@
 using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
 using Moq;

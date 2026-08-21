@@ -1,4 +1,4 @@
-using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 using System.Text.Json;
 using k8s.Models;
 using Serilog;

@@ -393,6 +393,27 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<ModelFetchService>(),
                 Logger: Log.Logger)));
 
+        // ── ChatJobDispatcher — on-demand ephemeral chat pod dispatch ────────────────────────
+        // Moved from the Blazor monolith to the API host (Spec 044/045 follow-up).
+        // The monolith no longer maps AgentHub, so IHubContext<AgentHub> on the monolith was
+        // disconnected from any real agents. The API host owns the hub and the AgentRegistryService,
+        // making it the correct process for chat dispatch and the registry poll loop.
+        services.AddSingleton<ChatJobDispatcher>(sp =>
+        {
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            options.ValidateAndClamp(Log.Logger);
+            return new ChatJobDispatcher(
+                sp.GetRequiredService<IKubernetesJobClient>(),
+                sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub, IAgentHubClient>>(),
+                sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<AgentRegistryService>(),
+                options,
+                sp.GetRequiredService<ILeaderElectionService>(),
+                Log.Logger);
+        });
+        services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());
+        services.AddSingleton<IChatJobDispatcher>(sp => sp.GetRequiredService<ChatJobDispatcher>());
+
         return services;
     }
 }

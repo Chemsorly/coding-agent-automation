@@ -27,7 +27,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
-public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
 {
     public DbModeEdgeCaseTests(E2EFixture fixture) : base(fixture) { }
 

@@ -1,4 +1,4 @@
-namespace CodingAgentWebUI.Agent;
+namespace CodingAgentWebUI.Pipeline;
 
 /// <summary>
 /// Default values and constants for agent worker configuration.
