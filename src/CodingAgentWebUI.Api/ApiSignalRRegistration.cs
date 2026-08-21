@@ -57,19 +57,24 @@ internal static class ApiSignalRRegistration
             config.ConnectRetry = 5;
             config.ReconnectRetryPolicy = new ExponentialRetry(5000, 55000);
 
+            // Create the multiplexer once and share it between SignalR's backplane and
+            // the /readyz probe. A single shared instance means the probe checks the exact
+            // connection that serves hub messages — no second connection to maintain.
+            var multiplexer = ConnectionMultiplexer.Connect(config);
+            multiplexer.ConnectionFailed += (_, e) =>
+                Log.Warning("Redis backplane connection failed: {FailureType} — {Exception}",
+                    e.FailureType, e.Exception?.Message);
+            multiplexer.ConnectionRestored += (_, e) =>
+                Log.Information("Redis backplane connection restored: {EndPoint}", e.EndPoint);
+
+            // Register as IConnectionMultiplexer so /readyz can resolve it conditionally.
+            services.AddSingleton<IConnectionMultiplexer>(multiplexer);
+
             signalR.AddStackExchangeRedis(options =>
             {
                 options.Configuration = config;
-                options.ConnectionFactory = async writer =>
-                {
-                    var connection = await ConnectionMultiplexer.ConnectAsync(config, writer);
-                    connection.ConnectionFailed += (_, e) =>
-                        Log.Warning("Redis backplane connection failed: {FailureType} — {Exception}",
-                            e.FailureType, e.Exception?.Message);
-                    connection.ConnectionRestored += (_, e) =>
-                        Log.Information("Redis backplane connection restored: {EndPoint}", e.EndPoint);
-                    return connection;
-                };
+                // Reuse the shared multiplexer instead of creating a second connection.
+                options.ConnectionFactory = _ => Task.FromResult<IConnectionMultiplexer>(multiplexer);
             });
 
             Log.Information("Pipeline API: SignalR Redis backplane configured");

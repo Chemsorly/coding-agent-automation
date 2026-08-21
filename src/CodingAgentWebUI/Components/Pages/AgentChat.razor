@@ -8,15 +8,13 @@
 @using CodingAgentWebUI.Orchestration.Dispatch
 @using CodingAgentWebUI.Kubernetes
 @using CodingAgentWebUI.Orchestration.Health
-@using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
-@using Microsoft.AspNetCore.SignalR
+@using CodingAgentWebUI.Api.Client
 @using Microsoft.Extensions.Configuration
 @using Serilog
-@inject AgentRegistryService Registry
 @inject IConfigurationStore ConfigStore
 @inject PipelineRunLifecycleService PipelineLifecycle
-@inject IHubContext<CodingAgentWebUI.Hub.AgentHub, IAgentHubClient> HubContext
+@inject IPipelineApiAgentClient AgentClient
 @inject IJSRuntime JS
 @inject IChatJobDispatcher ChatDispatcher
 @inject JobTemplateStore? TemplateStore
@@ -354,19 +352,10 @@
         _streamingContent.Clear();
         _activeSessionId = Guid.NewGuid().ToString();
 
-        var agent = Registry.GetByAgentId(_selectedAgentId);
-        if (agent is null || agent.Status == AgentStatus.Disconnected)
-        {
-            _messages.Add(new ChatMessage
-            {
-                Role = ChatRole.System,
-                Content = "❌ Agent disconnected",
-                Timestamp = DateTime.UtcNow
-            });
-            _isWaitingForResponse = false;
-            _isChatActive = false;
-            return;
-        }
+        // Agent existence / connectivity is validated server-side by POST /api/agents/{agentId}/chat-prompt.
+        // The API resolves the agent from its live registry (written by the hub in the same process),
+        // so there is no stale-snapshot race. A 404 or 409 response surfaces as HttpRequestException
+        // and is caught below.
 
         var mergedMcpServers = _selectedProject is not null
             ? DispatchOrchestrationService.MergeMcpServers(
@@ -395,8 +384,10 @@
 
         try
         {
-            agent.ActiveChatSessionId = _activeSessionId;
-            await HubContext.Clients.Client(agent.ConnectionId).AssignChatPrompt(message);
+            // ActiveChatSessionId is stamped server-side by POST /api/agents/{agentId}/chat-prompt
+            // on the first prompt (UseResume = false). The API owns the live AgentEntry, so
+            // mutating the local snapshot here had no effect.
+            await AgentClient.AssignChatPromptAsync(_selectedAgentId, message, CancellationToken.None);
             _isFirstPrompt = false;
         }
         catch (Exception ex)

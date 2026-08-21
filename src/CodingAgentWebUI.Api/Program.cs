@@ -88,12 +88,15 @@ builder.Services.AddOpenTelemetry()
     {
         m.AddAspNetCoreInstrumentation()
          .AddHttpClientInstrumentation()
-         // The API owns the work-distribution instruments; this AddMeter ensures they are exported.
-         // WorkItemMetricsBackgroundService feeds the workitems-by-status gauges here, and
-         // WorkItemEndpoints/DispatchStateBuilder record terminal statuses and dispatch
-         // latency. Without this AddMeter the measurements are taken but never exported, and
-         // the WorkItemsPendingTooLong / WorkItemFailureRateHigh / CredentialPoolExhausted
-         // alerts have no series to evaluate.
+         // WorkDistributionTelemetry.MeterName is exported here because the API owns some
+         // work-distribution instruments: WorkItemEndpoints records terminal statuses and
+         // dispatch latency via LogTerminalStatus/RecordDispatchLatency, and
+         // WorkItemMetricsBackgroundService feeds the workitems-by-status gauges.
+         // NOTE: The epoch/credential-pool gauges (DispatcherLastPollEpoch, CredentialPoolAvailable,
+         // CredentialPoolClaimed) are written ONLY by the Job Controller's DispatchService — the
+         // API's DispatchStateBuilder does NOT call RecordLastPollEpoch or UpdateCredentialPoolMetrics.
+         // This ensures the DispatcherStalled / CredentialPoolExhausted Helm alert rules evaluate
+         // a single authoritative series from the Job Controller, not a conflicting API series.
          .AddMeter(WorkDistributionTelemetry.MeterName)
          // The API hosts AgentRegistryService and registers agent.jobs.active /
          // agent.connections.total ObservableGauges on PipelineTelemetry.Meter via

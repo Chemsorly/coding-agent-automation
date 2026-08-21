@@ -1,23 +1,27 @@
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.SignalR;
 
 namespace CodingAgentWebUI.Api;
 
 /// <summary>
-/// Read-only minimal API endpoints exposing the agent registry.
+/// Minimal API endpoints exposing the agent registry and agent-directed commands.
 ///
 /// <para>
 /// Spec 044 moved <c>MapHub&lt;AgentHub&gt;</c> into this process, and <c>AgentHub.RegisterAgent</c>
 /// is the only writer of <see cref="IAgentRegistryService"/>. That leaves the API as the sole
 /// owner of agent presence, and every other process — the Blazor monolith above all — with no way
-/// to see which agents are connected. This group is that window.
+/// to see which agents are connected or send them messages. This group is that window.
 /// </para>
 ///
 /// <para>
 /// Guarded by <see cref="ApiAuthPolicies.Operator"/>, not <see cref="ApiAuthPolicies.Agent"/>:
 /// the response is cluster-wide agent state (hostnames, labels, connection IDs, active job IDs)
-/// and an agent pod holding a derived per-pod key has no business enumerating its peers.
+/// and an agent pod holding a derived per-pod key has no business enumerating its peers or
+/// sending chat prompts to other agents.
 /// </para>
 /// </summary>
 public static class AgentEndpoints
@@ -31,6 +35,7 @@ public static class AgentEndpoints
             .RequireAuthorization(ApiAuthPolicies.Operator);
 
         group.MapGet("/", GetAllAgents);
+        group.MapPost("/{agentId}/chat-prompt", SendChatPrompt);
     }
 
     // ── GET /api/agents ────────────────────────────────────────────────────
@@ -51,5 +56,58 @@ public static class AgentEndpoints
     internal static Ok<IReadOnlyList<AgentEntry>> GetAllAgents(IAgentRegistryService registry)
     {
         return TypedResults.Ok(registry.GetAllAgents());
+    }
+
+    // ── POST /api/agents/{agentId}/chat-prompt ─────────────────────────────
+
+    /// <summary>
+    /// POST /api/agents/{agentId}/chat-prompt
+    ///
+    /// Delivers a <see cref="ChatPromptMessage"/> to the agent identified by <paramref name="agentId"/>
+    /// over the SignalR hub hosted in this process.
+    ///
+    /// <para>
+    /// The monolith's <c>IHubContext&lt;AgentHub&gt;</c> has no connected clients after Spec 044
+    /// moved <c>MapHub</c> here — all agent connections live in this process. This endpoint is the
+    /// bridge that lets <c>AgentChat.razor</c> send prompts without holding a hub context.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Session ownership:</b> on the first prompt (<c>UseResume = false</c>) this endpoint sets
+    /// <c>ActiveChatSessionId</c> on the agent entry so downstream hub methods
+    /// (<c>ReportChatResponse</c>, <c>ReportChatCompleted</c>) can validate session ownership.
+    /// Subsequent prompts (<c>UseResume = true</c>) skip the assignment — the session ID is already
+    /// stamped and changing it mid-session would orphan in-flight streaming responses.
+    /// </para>
+    /// </summary>
+    /// <returns>
+    /// 200 OK on success.
+    /// 404 Not Found when no agent with <paramref name="agentId"/> is registered.
+    /// 409 Conflict when the agent is <see cref="AgentStatus.Disconnected"/>.
+    /// </returns>
+    internal static async Task<Results<Ok, NotFound<string>, Conflict<string>>> SendChatPrompt(
+        string agentId,
+        ChatPromptMessage message,
+        IAgentRegistryService registry,
+        IHubContext<AgentHub, IAgentHubClient> hub)
+    {
+        var entry = registry.GetByAgentId(agentId);
+        if (entry is null)
+            return TypedResults.NotFound($"Agent '{agentId}' not found.");
+
+        if (entry.Status == AgentStatus.Disconnected)
+            return TypedResults.Conflict($"Agent '{agentId}' is disconnected.");
+
+        // Stamp session ownership on the first prompt so hub callbacks can validate it.
+        // Resume prompts carry the same SessionId the client already stamped — skip reassignment
+        // to avoid invalidating concurrent streaming responses.
+        if (!message.UseResume)
+        {
+            lock (entry.SyncRoot)
+                entry.ActiveChatSessionId = message.SessionId;
+        }
+
+        await hub.Clients.Client(entry.ConnectionId).AssignChatPrompt(message);
+        return TypedResults.Ok();
     }
 }

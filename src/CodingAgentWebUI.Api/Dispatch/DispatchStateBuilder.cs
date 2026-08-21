@@ -78,12 +78,20 @@ internal sealed class DispatchStateBuilder
                 .ToListAsync(ct);
 
             if (recordTelemetry)
-                WorkDistributionTelemetry.RecordLastPollEpoch();
+            {
+                // NOTE: RecordLastPollEpoch and DispatcherPollCount are intentionally NOT called here.
+                // WorkDistributionTelemetry uses process-static backing fields — both the API and the
+                // Job Controller export the same metric names (workdistribution.dispatcher_last_poll_epoch_seconds,
+                // workdistribution.credential_pool_available, etc.). The Helm PrometheusRules for
+                // DispatcherStalled / CredentialPoolExhausted designate the Job Controller as the sole
+                // authoritative source. Writing from the API's consolidation path produces a second
+                // conflicting series that causes spurious alerts and masks real stalls.
+                // The Job Controller's DispatchService.cs is the only caller of RecordLastPollEpoch /
+                // UpdateCredentialPoolMetrics.
+            }
 
             if (pendingItems.Count == 0)
             {
-                if (recordTelemetry)
-                    WorkDistributionTelemetry.DispatcherPollCount.Add(1);
                 await db.DisposeAsync();
                 return null;
             }
@@ -102,7 +110,11 @@ internal sealed class DispatchStateBuilder
             var availablePvcs = pvcResult.AvailablePvcs;
 
             if (recordTelemetry)
-                WorkDistributionTelemetry.UpdateCredentialPoolMetrics(availablePvcs.Count, pvcResult.ClaimedCount);
+            {
+                // NOTE: UpdateCredentialPoolMetrics is intentionally NOT called here.
+                // See the comment on RecordLastPollEpoch above — same reasoning applies.
+                // The Job Controller's DispatchService.cs is the authoritative writer.
+            }
 
             return new DispatchState
             {

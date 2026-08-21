@@ -29,4 +29,15 @@ internal sealed class PipelineApiAgentClient : IPipelineApiAgentClient
         // into an IReadOnlyList the callers dereference without checking.
         return agents ?? [];
     }
+
+    public async Task AssignChatPromptAsync(string agentId, ChatPromptMessage message, CancellationToken ct = default)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/agents/{Uri.EscapeDataString(agentId)}/chat-prompt",
+            message,
+            PipelineJsonOptions.Default,
+            ct);
+
+        response.EnsureSuccessStatusCode();
+    }
 }

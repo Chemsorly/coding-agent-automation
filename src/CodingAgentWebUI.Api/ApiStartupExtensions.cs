@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
+using StackExchange.Redis;
 
 namespace CodingAgentWebUI.Api;
 
@@ -61,12 +62,27 @@ internal static class ApiStartupExtensions
             Results.Ok(new { status = "ok" })).AllowAnonymous();
 
         // Readiness: Can this pod serve traffic?
-        // Returns 503 when the database connectivity monitor detects DB is unreachable.
-        endpoints.MapGet("/readyz", (DatabaseHealthState dbHealth) =>
-            dbHealth.IsDatabaseHealthy
-                ? Results.Ok(new { status = "ready" })
-                : Results.Json(new { status = "unhealthy", reason = "database_unreachable" },
-                    statusCode: StatusCodes.Status503ServiceUnavailable))
+        // Returns 503 when:
+        //   • DatabaseHealthState reports DB unreachable, OR
+        //   • An IConnectionMultiplexer is registered (Redis backplane configured) and it is
+        //     not currently connected. A disconnected backplane causes silent message loss in
+        //     multi-replica deployments — hub broadcasts succeed locally but are never fanned out.
+        endpoints.MapGet("/readyz", (
+                DatabaseHealthState dbHealth,
+                IConnectionMultiplexer? redis) =>
+            {
+                if (!dbHealth.IsDatabaseHealthy)
+                    return Results.Json(
+                        new { status = "unhealthy", reason = "database_unreachable" },
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+
+                if (redis is not null && !redis.IsConnected)
+                    return Results.Json(
+                        new { status = "unhealthy", reason = "redis_backplane_disconnected" },
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+
+                return Results.Ok(new { status = "ready" });
+            })
             .AllowAnonymous();
 
         return endpoints;
