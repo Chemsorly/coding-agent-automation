@@ -54,7 +54,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
             .AddInMemoryCollection(configData)
             .Build();
 
-        return new InfrastructureHealthService(sp, configuration);
+        return new InfrastructureHealthService(sp, configuration, Mock.Of<CodingAgentWebUI.Api.Client.IPipelineApiHealthClient>());
     }
 
     private AgentRegistryService CreateRegistry()

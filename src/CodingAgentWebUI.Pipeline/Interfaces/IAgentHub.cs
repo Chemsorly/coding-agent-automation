@@ -15,6 +15,8 @@ public interface IAgentHub
     // UI group subscriptions (called by UI circuits, not agents)
     Task SubscribeToRun(string jobId);
     Task UnsubscribeFromRun(string jobId);
+    Task SubscribeToChatSession(string sessionId);
+    Task UnsubscribeFromChatSession(string sessionId);
 
     // Job lifecycle
     Task JobAccepted(JobId jobId);
@@ -72,6 +74,8 @@ public interface IAgentHubUiClient
     Task OnChatEntry(string jobId, ChatRole role, string content);
     Task OnQualityGateResult(string jobId, QualityGateReport report);
     Task OnBrainSyncResult(string jobId, bool contextLoaded, int fileCount);
+    Task OnChatResponse(string sessionId, IReadOnlyList<string> lines);
+    Task OnChatCompleted(string sessionId, int exitCode, string? error);
 }
 
 /// <summary>

@@ -33,7 +33,7 @@ public class InfrastructureHealthServiceTests
             .AddInMemoryCollection(configData)
             .Build();
 
-        return new InfrastructureHealthService(sp, configuration);
+        return new InfrastructureHealthService(sp, configuration, Mock.Of<CodingAgentWebUI.Api.Client.IPipelineApiHealthClient>());
     }
 
     [Fact]

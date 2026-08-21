@@ -11,6 +11,7 @@
 @using CodingAgentWebUI.Services
 @using CodingAgentWebUI.Api.Client
 @using Microsoft.Extensions.Configuration
+@using Microsoft.AspNetCore.SignalR.Client
 @using Serilog
 @inject IConfigurationStore ConfigStore
 @inject PipelineRunLifecycleService PipelineLifecycle
@@ -19,6 +20,7 @@
 @inject IChatJobDispatcher ChatDispatcher
 @inject JobTemplateStore? TemplateStore
 @inject IConfiguration Configuration
+@inject IAgentHubConnection HubConnection
 
 <PageTitle>Agent Chat - Coding Agent</PageTitle>
 
@@ -144,6 +146,10 @@
     // Per-chat-window stable ID (generated once in StartChat, included in every prompt)
     private string _chatWindowId = "";
 
+    // ── Hub event subscriptions ──────────────────────────────────────────────
+    private IDisposable? _chatResponseSub;
+    private IDisposable? _chatCompletedSub;
+
     // ── Project context (optional) ───────────────────────────────────────────
     private IReadOnlyList<PipelineProject> _projects = [];
     private string _selectedProjectId = "";  // empty = no project selected
@@ -167,8 +173,6 @@
 
     protected override void OnInitialized()
     {
-        PipelineLifecycle.OnChatResponse += HandleChatResponse;
-        PipelineLifecycle.OnChatCompleted += HandleChatCompleted;
         PipelineLifecycle.OnChange += HandleStateChange;
 
         _options_connectTimeout = Configuration.GetValue<int>(
@@ -182,6 +186,67 @@
         // Load available projects for the optional project context dropdown.
         // Runs after OnInitialized so the synchronous setup (agents, templates) completes first.
         _projects = await ConfigStore.LoadProjectsAsync(CancellationToken.None);
+
+        // Start hub connection if not already connected.
+        if (HubConnection.State == HubConnectionState.Disconnected)
+        {
+            try { await HubConnection.StartAsync(CancellationToken.None); }
+            catch (Exception ex) { Log.Warning(ex, "AgentChat: hub connection start failed — responses will not stream"); }
+        }
+
+        // Register hub push handlers.
+        // OnChatResponse: accumulate streaming lines into _streamingContent.
+        _chatResponseSub = HubConnection.On<string, IReadOnlyList<string>>(
+            HubMethodNames.OnChatResponse,
+            (sessionId, lines) =>
+            {
+                if (sessionId != _activeSessionId) return;
+                InvokeAsync(() =>
+                {
+                    foreach (var line in lines)
+                    {
+                        if (_streamingContent.Length > 0) _streamingContent.AppendLine();
+                        _streamingContent.Append(line);
+                    }
+                    StateHasChanged();
+                    _ = ScrollToBottom();
+                });
+            });
+
+        // OnChatCompleted: finalise the message, release the waiting state.
+        _chatCompletedSub = HubConnection.On<string, int, string?>(
+            HubMethodNames.OnChatCompleted,
+            (sessionId, exitCode, error) =>
+            {
+                if (sessionId != _activeSessionId) return;
+                InvokeAsync(() =>
+                {
+                    var content = _streamingContent.ToString();
+                    if (!string.IsNullOrWhiteSpace(content))
+                    {
+                        _messages.Add(new ChatMessage
+                        {
+                            Role = ChatRole.Agent,
+                            Content = content,
+                            Timestamp = DateTime.UtcNow
+                        });
+                    }
+                    if (!string.IsNullOrEmpty(error))
+                    {
+                        _messages.Add(new ChatMessage
+                        {
+                            Role = ChatRole.System,
+                            Content = $"⚠️ {error} (exit code: {exitCode})",
+                            Timestamp = DateTime.UtcNow
+                        });
+                    }
+                    _streamingContent.Clear();
+                    _isWaitingForResponse = false;
+                    _activeSessionId = null;
+                    StateHasChanged();
+                    _ = ScrollToBottom();
+                });
+            });
     }
 
     // ── Project selection handler (shared by both modes) ─────────────────────
@@ -384,6 +449,14 @@
 
         try
         {
+            // Subscribe to the hub chat-session group so OnChatResponse/OnChatCompleted
+            // events are pushed to this circuit by the API hub.
+            if (HubConnection.State == HubConnectionState.Connected)
+            {
+                await HubConnection.InvokeAsync(
+                    HubMethodNames.SubscribeToChatSession, _activeSessionId, CancellationToken.None);
+            }
+
             // ActiveChatSessionId is stamped server-side by POST /api/agents/{agentId}/chat-prompt
             // on the first prompt (UseResume = false). The API owns the live AgentEntry, so
             // mutating the local snapshot here had no effect.
@@ -406,58 +479,6 @@
 
     // ── Response handlers ─────────────────────────────────────────────────────
 
-    private void HandleChatResponse(string sessionId, IReadOnlyList<string> lines)
-    {
-        if (sessionId != _activeSessionId) return;
-
-        InvokeAsync(() =>
-        {
-            foreach (var line in lines)
-            {
-                if (_streamingContent.Length > 0)
-                    _streamingContent.AppendLine();
-                _streamingContent.Append(line);
-            }
-            StateHasChanged();
-            _ = ScrollToBottom();
-        });
-    }
-
-    private void HandleChatCompleted(string sessionId, int exitCode, string? error)
-    {
-        if (sessionId != _activeSessionId) return;
-
-        InvokeAsync(() =>
-        {
-            var content = _streamingContent.ToString();
-            if (!string.IsNullOrWhiteSpace(content))
-            {
-                _messages.Add(new ChatMessage
-                {
-                    Role = ChatRole.Agent,
-                    Content = content,
-                    Timestamp = DateTime.UtcNow
-                });
-            }
-
-            if (!string.IsNullOrEmpty(error))
-            {
-                _messages.Add(new ChatMessage
-                {
-                    Role = ChatRole.System,
-                    Content = $"⚠️ {error} (exit code: {exitCode})",
-                    Timestamp = DateTime.UtcNow
-                });
-            }
-
-            _streamingContent.Clear();
-            _isWaitingForResponse = false;
-            _activeSessionId = null;
-            StateHasChanged();
-            _ = ScrollToBottom();
-        });
-    }
-
     private void HandleStateChange()
     {
         InvokeAsync(StateHasChanged);
@@ -469,6 +490,13 @@
     {
         // Set inactive first to prevent concurrent DisposeAsync double-terminate
         _isChatActive = false;
+
+        // Unsubscribe from the hub group for the current session before terminating
+        if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
+        {
+            try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
+            catch (Exception ex) { Log.Warning(ex, "AgentChat: hub UnsubscribeFromChatSession failed"); }
+        }
 
         await EndChatK8sModeAsync();
 
@@ -526,14 +554,22 @@
 
     public async ValueTask DisposeAsync()
     {
-        PipelineLifecycle.OnChatResponse -= HandleChatResponse;
-        PipelineLifecycle.OnChatCompleted -= HandleChatCompleted;
         PipelineLifecycle.OnChange -= HandleStateChange;
+
+        _chatResponseSub?.Dispose();
+        _chatCompletedSub?.Dispose();
 
         if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
         if (_cts is not null)
             await _cts.CancelAsync();
         _cts?.Dispose();
+
+        // Unsubscribe from the active session group if still active
+        if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
+        {
+            try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
+            catch (Exception ex) { Log.Debug(ex, "AgentChat: hub UnsubscribeFromChatSession failed on dispose"); }
+        }
 
         if (_isChatActive && !string.IsNullOrEmpty(_selectedAgentId))
         {

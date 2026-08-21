@@ -36,12 +36,15 @@ public sealed class AgentAuthorizationFilter : IHubFilter
 {
     /// <summary>
     /// Hub methods an operator-authenticated (non-agent) connection may invoke.
-    /// The Blazor UI subscribes to <c>run-{jobId}</c> groups through these.
+    /// The Blazor UI subscribes to <c>run-{jobId}</c> groups through these,
+    /// and to <c>chat-session-{sessionId}</c> groups for interactive chat streaming.
     /// </summary>
     private static readonly HashSet<string> OperatorAllowedMethods = new(StringComparer.Ordinal)
     {
         nameof(AgentHub.SubscribeToRun),
-        nameof(AgentHub.UnsubscribeFromRun)
+        nameof(AgentHub.UnsubscribeFromRun),
+        nameof(AgentHub.SubscribeToChatSession),
+        nameof(AgentHub.UnsubscribeFromChatSession)
     };
 
     private readonly IAgentRegistryService _registry;

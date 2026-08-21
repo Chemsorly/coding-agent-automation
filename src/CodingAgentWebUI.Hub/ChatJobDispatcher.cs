@@ -219,6 +219,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         container.Env ??= new List<V1EnvVar>();
         container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatMode, Value = "true" });
         container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatSessionId, Value = dispatchId.ToString() });
+        container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvAgentProviderType, Value = template.ProviderType });
 
         if (!string.IsNullOrEmpty(model) && !model.Equals("auto", StringComparison.OrdinalIgnoreCase))
             container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatModel, Value = model });
@@ -397,6 +398,16 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             var job = await _jobClient.ReadJobAsync(jobName, _options.Namespace, CancellationToken.None);
             return (job, false);
         }
+        catch (Exception ex) when (IsNotFound(ex))
+        {
+            // Job was deleted from K8s — treat as terminal (job gone), not a transient error.
+            // Without this guard the watcher loops forever on 404, and its orphaned session blocks
+            // new dispatches and eventually kills a newly-connected agent via ForceDeleteAndCleanupAsync.
+            _logger.Information(
+                "ChatJobDispatcher: job {JobName} no longer exists in K8s — treating as terminal",
+                jobName);
+            return (null, false);
+        }
         catch (Exception ex)
         {
             _logger.Warning(
@@ -405,6 +416,17 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             return (null, true);
         }
     }
+
+    /// <summary>
+    /// Returns true when the exception indicates the K8s job was not found (HTTP 404).
+    /// The k8s SDK throws <c>k8s.Autorest.HttpOperationException</c> with a message containing
+    /// <c>'NotFound'</c> or status code text; we match on that string to avoid a hard compile-time
+    /// dependency on the Autorest exception type.
+    /// </summary>
+    internal static bool IsNotFound(Exception ex)
+        => ex.Message.Contains("NotFound", StringComparison.OrdinalIgnoreCase)
+           || ex.Message.Contains("404", StringComparison.Ordinal)
+           || ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase);
 
     private void LogJobTermination(V1Job? job, string jobName, string? claimedPvc)
     {
@@ -701,6 +723,40 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     internal static bool IsOpencodeAgent(string providerType)
         => string.Equals(providerType, "opencode", StringComparison.OrdinalIgnoreCase);
+
+    // ─── Test helpers (internal) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns true if there is an active session associated with the given agentId.
+    /// Used by unit tests to verify session cleanup after watcher exit.
+    /// </summary>
+    internal bool HasActiveSession(string agentId)
+        => _agentIdToJobName.TryGetValue(agentId, out var jobName)
+           && _sessions.ContainsKey(jobName);
+
+    /// <summary>
+    /// Waits for the watcher task associated with the given agentId to complete within the timeout.
+    /// Returns true if the watcher finished, false if it timed out (still running).
+    /// Used by unit tests to verify the watcher exits cleanly on 404 rather than looping forever.
+    /// </summary>
+    internal async Task<bool> WaitForWatcherAsync(string agentId, TimeSpan timeout)
+    {
+        if (!_agentIdToJobName.TryGetValue(agentId, out var jobName))
+            return true; // Session already cleaned up — watcher is done
+
+        if (!_sessions.TryGetValue(jobName, out var session))
+            return true; // Session already cleaned up — watcher is done
+
+        try
+        {
+            await session.WatcherTask.WaitAsync(timeout);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+    }
 
     private static readonly HashSet<string> ValidEffortValues =
         new(["high", "medium", "low"], StringComparer.OrdinalIgnoreCase);

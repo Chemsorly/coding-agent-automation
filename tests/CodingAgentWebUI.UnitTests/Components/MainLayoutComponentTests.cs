@@ -64,7 +64,7 @@ public class MainLayoutComponentTests : BunitContext
         // Health indicators component dependencies
         var emptyConfig = new ConfigurationBuilder().Build();
         var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
-        Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig));
+        Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig, Mock.Of<CodingAgentWebUI.Api.Client.IPipelineApiHealthClient>()));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
 
         // FirstRunBanner.razor requires IPipelineApiConfigClient (Spec 045 Task 3)

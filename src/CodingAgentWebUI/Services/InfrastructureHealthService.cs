@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Api.Client;
 using StackExchange.Redis;
 
 namespace CodingAgentWebUI.Services;
@@ -8,29 +9,56 @@ namespace CodingAgentWebUI.Services;
 /// Returns null for services that are not configured.
 /// </summary>
 /// <remarks>
-/// DB health monitoring removed in Spec 045 Task 10 (Req 1.5): the monolith no longer
-/// has a direct Postgres connection. Only Redis health is tracked.
+/// DB health is proxied via the Pipeline API's /readyz endpoint (which checks Postgres).
+/// Redis health is tracked when SignalR:Redis:ConnectionString is configured.
 /// </remarks>
 public sealed class InfrastructureHealthService
 {
+    private readonly IPipelineApiHealthClient _apiHealth;
     private readonly IConnectionMultiplexer? _redis;
     private readonly bool _redisConfigured;
 
-    public InfrastructureHealthService(IServiceProvider serviceProvider, IConfiguration configuration)
+    private volatile int _dbConnectedFlag = -1; // -1=unknown, 0=false, 1=true
+
+    public InfrastructureHealthService(
+        IServiceProvider serviceProvider,
+        IConfiguration configuration,
+        IPipelineApiHealthClient apiHealth)
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(apiHealth);
 
+        _apiHealth = apiHealth;
         _redis = serviceProvider.GetService<IConnectionMultiplexer>();
-
-        // Redis is configured when SignalR:Redis:ConnectionString is set
         _redisConfigured = !string.IsNullOrEmpty(configuration.GetValue<string>("SignalR:Redis:ConnectionString"));
     }
 
     /// <summary>
-    /// Database connection status. Always null — the monolith no longer has a direct DB connection.
+    /// Triggers a non-blocking background refresh of the DB health status via the API.
+    /// Called by the sidebar timer — result is available on the next read via DatabaseConnected.
     /// </summary>
-    public bool? DatabaseConnected => null;
+    public void RefreshDbHealthBackground()
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await _apiHealth.IsReadyAsync();
+                _dbConnectedFlag = result ? 1 : 0;
+            }
+            catch
+            {
+                _dbConnectedFlag = 0;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Database connection status proxied from the Pipeline API's /readyz endpoint.
+    /// null = not yet polled, true = healthy, false = unhealthy/unreachable.
+    /// </summary>
+    public bool? DatabaseConnected => _dbConnectedFlag < 0 ? null : _dbConnectedFlag == 1;
 
     /// <summary>
     /// Redis connection status. null = not configured, true = connected, false = disconnected.

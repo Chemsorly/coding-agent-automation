@@ -1,5 +1,6 @@
 using Bunit;
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
@@ -11,6 +12,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 
@@ -56,6 +58,19 @@ public class AgentChatComponentTests : BunitContext
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(JobTemplateStore.CreateEmpty());
         Services.AddSingleton<IChatJobDispatcher, NullChatJobDispatcher>();
+
+        // IAgentHubConnection — no-op mock (chat component starts the hub and registers event handlers)
+        var mockHub = new Mock<IAgentHubConnection>();
+        mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
+        mockHub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockHub.Setup(h => h.InvokeAsync(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockHub.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>())).Returns(Mock.Of<IDisposable>());
+        mockHub.Setup(h => h.On<string, IReadOnlyList<string>>(It.IsAny<string>(), It.IsAny<Action<string, IReadOnlyList<string>>>())).Returns(Mock.Of<IDisposable>());
+        mockHub.Setup(h => h.On<string, int, string?>(It.IsAny<string>(), It.IsAny<Action<string, int, string?>>())).Returns(Mock.Of<IDisposable>());
+        Services.AddSingleton(mockHub.Object);
+
+        // IPipelineApiAgentClient — no-op mock for bUnit rendering
+        Services.AddSingleton(Mock.Of<IPipelineApiAgentClient>());
 
         // IConfiguration required by AgentChat for ChatPodConnectTimeoutSeconds
         Services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(

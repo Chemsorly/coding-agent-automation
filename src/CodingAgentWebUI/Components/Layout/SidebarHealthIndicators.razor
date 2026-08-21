@@ -16,15 +16,18 @@
                 <span class="sidebar-health-label">Database</span>
             </span>
         }
+        @if (_redisStatus is not null)
+        {
         <span class="sidebar-health-item" title="@RedisTooltip">
             <span class="infra-health-dot @RedisDotClass"></span>
             <span class="sidebar-health-label">Redis</span>
         </span>
-        @if (_totalCount > 0 || _dbStatus is not null || _redisStatus is not null)
+        }
+        @if (_connectedCount > 0 || _dbStatus is not null || _redisStatus is not null)
         {
             <span class="sidebar-health-item" title="@AgentTooltip">
                 <span class="infra-health-dot @AgentDotClass"></span>
-                <span class="sidebar-health-label">Agents: @_connectedCount/@_totalCount</span>
+                <span class="sidebar-health-label">Agents: @_connectedCount</span>
             </span>
         }
     </div>
@@ -93,11 +96,14 @@
             _dbStatus = InfraHealth.DatabaseConnected;
             _redisStatus = InfraHealth.RedisConnected;
 
+            // Trigger non-blocking API health poll so next render has fresh DB status
+            InfraHealth.RefreshDbHealthBackground();
+
             var agents = Registry.GetAllAgents();
             _totalCount = agents.Count;
             _connectedCount = agents.Count(a => a.Status != AgentStatus.Disconnected);
 
-            _sectionVisible = _dbStatus is not null || _redisStatus is not null || _totalCount > 0;
+            _sectionVisible = _dbStatus is not null || _redisStatus is not null || _connectedCount > 0;
         }
         catch
         {
