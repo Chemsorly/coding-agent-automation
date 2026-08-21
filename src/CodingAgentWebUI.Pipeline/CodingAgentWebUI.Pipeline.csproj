@@ -27,14 +27,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- ARCHITECTURE NOTE: KubernetesClient lives in the Pipeline domain layer because
-         LeaderElectionService (src/CodingAgentWebUI.Pipeline/LeaderElection/LeaderElectionService.cs)
-         implements ILeaderElectionService using a Kubernetes Lease resource. This violates the
-         principle that domain/pipeline layers should not depend on infrastructure SDKs.
-         The correct fix is to move LeaderElectionService to CodingAgentWebUI.Kubernetes (or a
-         dedicated CodingAgentWebUI.LeaderElection project) and inject ILeaderElectionService
-         into the pipeline layer from outside. Tracked for future refactor. -->
-    <PackageReference Include="KubernetesClient" />
     <PackageReference Include="MessagePack" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Resilience" />

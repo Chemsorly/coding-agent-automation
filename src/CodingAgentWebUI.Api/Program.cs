@@ -78,6 +78,10 @@ builder.Services.AddOpenTelemetry()
     {
         t.AddAspNetCoreInstrumentation()
          .AddHttpClientInstrumentation()
+         // AgentHub lives in the API process (moved from monolith in Spec 041).
+         // Without this source, RegisterAgent / JobAccepted / JobCompleted hub invocations
+         // produce no spans — agent lifecycle events are invisible in traces.
+         .AddSource("Microsoft.AspNetCore.SignalR.Server")
          .AddOtlpExporter();
     })
     .WithMetrics(m =>
@@ -91,6 +95,11 @@ builder.Services.AddOpenTelemetry()
          // the WorkItemsPendingTooLong / WorkItemFailureRateHigh / CredentialPoolExhausted
          // alerts have no series to evaluate.
          .AddMeter(WorkDistributionTelemetry.MeterName)
+         // The API hosts AgentRegistryService and registers agent.jobs.active /
+         // agent.connections.total ObservableGauges on PipelineTelemetry.Meter via
+         // RegisterApiObservableGauges(). Without this AddMeter those gauges are created
+         // on the meter but the meter is not subscribed — measurements are silently dropped.
+         .AddMeter(PipelineTelemetry.SourceName)
          // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
          // histograms and counters, which Grafana Cloud silently drops. Matches the monolith.
          .AddOtlpExporter((_, readerOptions) =>

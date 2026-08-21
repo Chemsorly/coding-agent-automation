@@ -46,8 +46,27 @@
        ChatJobDispatcher — large Hub chat-session service requiring real SignalR + agent lifecycle,
        testable only via E2E infrastructure already excluded from coverage;
        DatabaseStartupService — startup-only service requiring real DB connectivity, same category
-       as ReconciliationService. -->
-  <Property Name="sonar.coverage.exclusions">**/Program.cs,**/*.razor,**/Dispatch/ReconciliationService*.cs,**/AgentK8sModeRegistration.cs,**/AgentSignalRModeRegistration.cs,**/Executors/HarnessSuggestionExecutor.cs,**/Executors/BrainConsolidationExecutor.cs,**/Git/SharedRepositoryOperations.cs,src/CodingAgentWebUI.Api/Dispatch/ConsolidationWorkItemDispatchService.cs,src/CodingAgentWebUI.Api/Dispatch/DispatchLifecycleService.cs,src/CodingAgentWebUI.Api/Dispatch/DispatchStateBuilder.cs,src/CodingAgentWebUI.Api/Dispatch/DispatchTemplateResolver.cs,src/CodingAgentWebUI.Hub/ChatJobDispatcher.cs,src/CodingAgentWebUI.Infrastructure/DatabaseStartupService.cs</Property>
+       as ReconciliationService.
+
+       Thin SDK wrappers / HTTP clients: make live HTTP or SignalR calls; no logic testable in
+       isolation (AgentHubConnection, PipelineApi*Client, KubernetesJobClient).
+
+       DI registration / infrastructure wiring: pure service-collection configuration, no
+       testable business logic (DispatchServiceRegistration, ReconciliationServiceRegistration,
+       JobControllerServiceCollectionExtensions, JobControllerSerilogExtensions,
+       KubernetesClientRegistration, PipelineApiClientServiceCollectionExtensions).
+
+       BackgroundService shells requiring live K8s + API context
+       (JobController DispatchService, JobController ReconciliationService).
+
+       Trivial marker types, interfaces with default impls, constant bags, and null-object
+       implementations: no logic to assert on (ApiHostMarker, WebUiHostMarker,
+       AlwaysLeaderElectionService, IWorkDistributor, DispatchPreparationRequests,
+       HubMethodNames, NoOpJobCleanup).
+
+       Telemetry-only files: OTel instrument declarations and Serilog config, no branching logic
+       (ChatTelemetry, AgentSerilogConfiguration, NullPipelineRunHistoryService). -->
+  <Property Name="sonar.coverage.exclusions">**/Program.cs,**/*.razor,**/Dispatch/ReconciliationService*.cs,**/AgentK8sModeRegistration.cs,**/AgentSignalRModeRegistration.cs,**/Executors/HarnessSuggestionExecutor.cs,**/Executors/BrainConsolidationExecutor.cs,**/Git/SharedRepositoryOperations.cs,src/CodingAgentWebUI.Api/Dispatch/ConsolidationWorkItemDispatchService.cs,src/CodingAgentWebUI.Api/Dispatch/DispatchLifecycleService.cs,src/CodingAgentWebUI.Api/Dispatch/DispatchStateBuilder.cs,src/CodingAgentWebUI.Api/Dispatch/DispatchTemplateResolver.cs,src/CodingAgentWebUI.Hub/ChatJobDispatcher.cs,src/CodingAgentWebUI.Infrastructure/DatabaseStartupService.cs,src/CodingAgentWebUI.Api.Client/AgentHubConnection.cs,src/CodingAgentWebUI.Api.Client/PipelineApiAgentClient.cs,src/CodingAgentWebUI.Api.Client/PipelineApiHealthClient.cs,src/CodingAgentWebUI.Api.Client/PipelineApiRunHistoryClient.cs,src/CodingAgentWebUI.Api.Client/PipelineApiConsolidationRunClient.cs,src/CodingAgentWebUI.Api.Client/PipelineApiHarnessSuggestionClient.cs,src/CodingAgentWebUI.Kubernetes/KubernetesJobClient.cs,src/CodingAgentWebUI.JobController/Dispatch/DispatchServiceRegistration.cs,src/CodingAgentWebUI.JobController/Reconciliation/ReconciliationServiceRegistration.cs,src/CodingAgentWebUI.JobController/JobControllerServiceCollectionExtensions.cs,src/CodingAgentWebUI.JobController/JobControllerSerilogExtensions.cs,src/CodingAgentWebUI.Kubernetes/KubernetesClientRegistration.cs,src/CodingAgentWebUI.Api.Client/PipelineApiClientServiceCollectionExtensions.cs,src/CodingAgentWebUI.JobController/Dispatch/DispatchService.cs,src/CodingAgentWebUI.JobController/Reconciliation/ReconciliationService.cs,src/CodingAgentWebUI.Api/ApiHostMarker.cs,src/CodingAgentWebUI/WebUiHostMarker.cs,src/CodingAgentWebUI.Pipeline/LeaderElection/AlwaysLeaderElectionService.cs,src/CodingAgentWebUI.Pipeline/Interfaces/IWorkDistributor.cs,src/CodingAgentWebUI.Orchestration/Dispatch/DispatchPreparationRequests.cs,src/CodingAgentWebUI.Pipeline/Interfaces/HubMethodNames.cs,src/CodingAgentWebUI.Kubernetes/NoOpJobCleanup.cs,src/CodingAgentWebUI.Pipeline/Telemetry/ChatTelemetry.cs,src/CodingAgentWebUI.Agent/AgentSerilogConfiguration.cs,src/CodingAgentWebUI.Agent/NullPipelineRunHistoryService.cs</Property>
 
   <!-- Exclude ReconciliationService partials from CPD: pre-existing duplication from structural split.
        Exclude GitHub/GitLab repository provider files from CPD: both implement IRepositoryProvider

@@ -1393,9 +1393,13 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
 
         var hub = CreateHubWithOrchestration();
+        var before = DateTimeOffset.UtcNow;
         await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow.AddHours(24));
 
-        run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        run.LastStepChangeAt.Should().BeOnOrAfter(before,
+            because: "clamped timestamp must not be earlier than when the call was made");
+        run.LastStepChangeAt.Should().BeOnOrBefore(before.AddSeconds(10),
+            because: "clamped timestamp must not be set to a future time");
     }
 
     [Fact]
@@ -1625,10 +1629,13 @@ public sealed class AgentHubBehaviorTests : IDisposable
             MemoryUsageMb = 512
         };
 
+        var before = DateTimeOffset.UtcNow;
         await hub.Heartbeat(heartbeat);
 
         // LastStepChangeAt should be refreshed (close to now, not -50min)
-        run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        run.LastStepChangeAt.Should().BeOnOrAfter(before,
+            because: "LastStepChangeAt must be refreshed to the time of the heartbeat, not remain at -50min");
+        run.LastStepChangeAt.Should().BeOnOrBefore(before.AddSeconds(10));
     }
 
     [Fact]
@@ -1711,10 +1718,14 @@ public sealed class AgentHubBehaviorTests : IDisposable
             MemoryUsageMb = 512
         };
 
+        var before = DateTimeOffset.UtcNow;
         await hub.Heartbeat(heartbeat);
 
         // Should be clamped to approximately now, not the future timestamp
-        run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        run.LastStepChangeAt.Should().BeOnOrAfter(before,
+            because: "clamped timestamp must not be earlier than when the call was made");
+        run.LastStepChangeAt.Should().BeOnOrBefore(before.AddSeconds(10),
+            because: "clamped timestamp must not be set to a future time");
     }
 
     [Fact]

@@ -217,6 +217,7 @@ public class AgentHubFacadeConcurrencyTests
 
         const int iterations = 200;
         var exceptions = new List<Exception>();
+        var before = DateTimeOffset.UtcNow;
 
         var tasks = Enumerable.Range(0, iterations).Select(i => Task.Run(() =>
         {
@@ -232,6 +233,7 @@ public class AgentHubFacadeConcurrencyTests
         })).ToArray();
 
         await Task.WhenAll(tasks);
+        var after = DateTimeOffset.UtcNow;
 
         exceptions.Should().BeEmpty("Concurrent heartbeat updates should never throw");
 
@@ -240,7 +242,10 @@ public class AgentHubFacadeConcurrencyTests
         {
             var agent = _facade.GetByAgentId($"agent-{i}");
             agent.Should().NotBeNull();
-            agent!.LastHeartbeatAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+            agent!.LastHeartbeatAt.Should().BeOnOrAfter(before,
+                because: "LastHeartbeatAt must be set during the concurrent heartbeat window");
+            agent.LastHeartbeatAt.Should().BeOnOrBefore(after.AddSeconds(1),
+                because: "LastHeartbeatAt must not be set to a future time");
         }
     }
 

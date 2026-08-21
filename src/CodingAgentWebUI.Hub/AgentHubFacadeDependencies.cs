@@ -19,10 +19,11 @@ public sealed record AgentHubFacadeDependencies(
     OrchestratorRunService RunService,
     JobDeduplicationGuardService Dispatcher,
     IPipelineRunHistoryService HistoryService,
-    IConfigurationStore ConfigStore,
+    IProviderConfigStore ConfigStore,
     IProviderFactory ProviderFactory,
     ILogger<AgentHubFacadeDependencies> Logger,
     WorkItemTransitionService? WorkItemTransition = null,
     IDbContextFactory<PipelineDbContext>? DbFactory = null,
     IProjectStore? ProjectStore = null,
-    IWorkItemFallbackTransitionService? WorkItemFallbackTransition = null);
+    IWorkItemFallbackTransitionService? WorkItemFallbackTransition = null,
+    TimeProvider? TimeProvider = null);

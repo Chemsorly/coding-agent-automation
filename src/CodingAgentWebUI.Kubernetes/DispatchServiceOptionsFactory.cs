@@ -31,11 +31,6 @@ public static class DispatchServiceOptionsFactory
             ?? "default";
         options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
 
-        // Master API key for HMAC key derivation (Spec 043 Req 8a.1).
-        // Comes from the AGENT_API_KEY env var (same secret as the orchestrator uses).
-        // IConfiguration exposes env vars directly.
-        options.AgentMasterApiKey = configuration.GetValue<string>("AGENT_API_KEY") ?? "";
-
         return options;
     }
 }

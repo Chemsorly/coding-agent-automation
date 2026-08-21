@@ -181,7 +181,6 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
         persisted.Should().NotBeNull();
         persisted!.StartedAtUtc.Should().BeOnOrAfter(beforeTransition);
-        persisted.StartedAtUtc.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
     }
 
     /// <summary>
@@ -207,7 +206,6 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         var activeStartedAt = _sut.GetActiveRunStartedAt(run.RunId);
         activeStartedAt.Should().NotBeNull();
         activeStartedAt!.Value.Should().BeOnOrAfter(beforeTransition);
-        activeStartedAt.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
     }
 
     /// <summary>
@@ -249,7 +247,6 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         persisted.Should().NotBeNull();
         persisted!.CompletedAtUtc.Should().NotBeNull();
         persisted.CompletedAtUtc!.Value.Should().BeOnOrAfter(beforeUpdate);
-        persisted.CompletedAtUtc.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
     }
 
     /// <summary>

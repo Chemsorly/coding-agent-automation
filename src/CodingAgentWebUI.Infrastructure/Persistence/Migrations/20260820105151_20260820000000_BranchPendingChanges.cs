@@ -4,7 +4,13 @@
 
 namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
 {
-    /// <inheritdoc />
+    /// <summary>
+    /// Drops two partial-index retention indexes that were added in the previous migration
+    /// (<c>20260816000000_AddRetentionIndexes</c>) but caused query-planner regressions.
+    /// The indexes are no longer needed because the pruning service now uses filtered scans
+    /// without relying on these indexes. Rolling back (Down) recreates them with their
+    /// original partial-index filters.
+    /// </summary>
     public partial class _20260820000000_BranchPendingChanges : Migration
     {
         /// <inheritdoc />

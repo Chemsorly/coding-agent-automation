@@ -114,56 +114,66 @@ public partial class AgentMonitoring : IAsyncDisposable
         // OnOutputLines(jobId, lines) — append lines to the active modal output buffer
         _outputLinesSub = HubConnection.On<string, IReadOnlyList<string>>(
             HubMethodNames.OnOutputLines,
-            (jobId, lines) =>
-            {
-                if (_disposed || jobId != _selectedRunId) return;
-                _ = InvokeAsync(() =>
-                {
-                    if (_disposed) return;
-                    _activeModalOutputLines.AddRange(lines);
-                    _scrollModalOnNextRender = true;
-                    StateHasChanged();
-                });
-            });
+            (jobId, lines) => HandleOutputLines(jobId, lines));
 
         // OnStepTransition(jobId, step, timestamp) — update current step indicator
         _stepTransitionSub = HubConnection.On<string, PipelineStep, DateTimeOffset>(
             HubMethodNames.OnStepTransition,
-            (jobId, step, timestamp) =>
-            {
-                if (_disposed || jobId != _selectedRunId) return;
-                _ = InvokeAsync(() =>
-                {
-                    if (_disposed) return;
-                    _activeModalCurrentStep = step;
-                    StateHasChanged();
-                });
-            });
+            (jobId, step, timestamp) => HandleStepTransition(jobId, step));
 
         // OnRunCompleted(jobId, payload) — reload run state from API for final metadata
         _runCompletedSub = HubConnection.On<string, JobCompletionPayload>(
             HubMethodNames.OnRunCompleted,
-            (jobId, payload) =>
+            (jobId, payload) => HandleRunCompleted(jobId));
+    }
+
+    private void HandleOutputLines(string jobId, IReadOnlyList<string> lines)
+    {
+        if (_disposed || jobId != _selectedRunId) return;
+        _ = InvokeAsync(() =>
+        {
+            if (_disposed) return;
+            _activeModalOutputLines.AddRange(lines);
+            _scrollModalOnNextRender = true;
+            StateHasChanged();
+        });
+    }
+
+    private void HandleStepTransition(string jobId, PipelineStep step)
+    {
+        if (_disposed || jobId != _selectedRunId) return;
+        _ = InvokeAsync(() =>
+        {
+            if (_disposed) return;
+            _activeModalCurrentStep = step;
+            StateHasChanged();
+        });
+    }
+
+    private void HandleRunCompleted(string jobId)
+    {
+        if (_disposed || jobId != _selectedRunId) return;
+        _ = InvokeAsync(async () =>
+        {
+            if (_disposed) return;
+            if (Guid.TryParse(jobId, out var runGuid))
             {
-                if (_disposed || jobId != _selectedRunId) return;
-                _ = InvokeAsync(async () =>
-                {
-                    if (_disposed) return;
-                    // Reload from API for authoritative final state
-                    if (Guid.TryParse(jobId, out var runGuid))
-                    {
-                        try
-                        {
-                            _activeModalRun = await RunHistoryClient.GetRunAsync(runGuid, CancellationToken.None);
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.Warning(ex, "AgentMonitoring: failed to reload completed run {RunId}", jobId);
-                        }
-                    }
-                    StateHasChanged();
-                });
-            });
+                await ReloadCompletedRunAsync(jobId, runGuid);
+            }
+            StateHasChanged();
+        });
+    }
+
+    private async Task ReloadCompletedRunAsync(string jobId, Guid runGuid)
+    {
+        try
+        {
+            _activeModalRun = await RunHistoryClient.GetRunAsync(runGuid, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "AgentMonitoring: failed to reload completed run {RunId}", jobId);
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

@@ -24,13 +24,14 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<OrchestratorRunService>(),
             sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IProviderConfigStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILogger<AgentHubFacadeDependencies>>(),
             sp.GetService<WorkItemTransitionService>(),
             sp.GetService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<IProjectStore>(),
-            sp.GetService<IWorkItemFallbackTransitionService>()));
+            sp.GetService<IProjectStore>(),
+            sp.GetService<IWorkItemFallbackTransitionService>(),
+            sp.GetRequiredService<TimeProvider>()));
 
         services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(
             sp.GetRequiredService<AgentHubFacadeDependencies>()));

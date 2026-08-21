@@ -110,8 +110,7 @@ public sealed class DispatchServiceOptionsFactoryTests
             ["WorkDistribution:AgentApiKeySecretName"] = "my-secret",
             ["WorkDistribution:AgentServiceAccountName"] = "my-sa",
             ["WorkDistribution:Namespace"] = "production",
-            ["WorkDistribution:OpencodeConfigSecretName"] = "oc-secret",
-            ["AGENT_API_KEY"] = "master-key"
+            ["WorkDistribution:OpencodeConfigSecretName"] = "oc-secret"
         });
 
         var opts = DispatchServiceOptionsFactory.Create(config);
@@ -123,7 +122,6 @@ public sealed class DispatchServiceOptionsFactoryTests
         opts.AgentServiceAccountName.Should().Be("my-sa");
         opts.Namespace.Should().Be("production");
         opts.OpencodeConfigSecretName.Should().Be("oc-secret");
-        opts.AgentMasterApiKey.Should().Be("master-key");
     }
 
     [Fact]
@@ -137,7 +135,6 @@ public sealed class DispatchServiceOptionsFactoryTests
         opts.AgentApiKeySecretName.Should().Be("");
         opts.AgentServiceAccountName.Should().Be("");
         opts.OpencodeConfigSecretName.Should().Be("");
-        opts.AgentMasterApiKey.Should().Be("");
         // Namespace falls back to "default" when neither config nor env is set
         opts.Namespace.Should().BeOneOf("default", Environment.GetEnvironmentVariable("POD_NAMESPACE") ?? "default");
     }

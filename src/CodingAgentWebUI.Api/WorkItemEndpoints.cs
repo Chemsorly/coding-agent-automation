@@ -143,14 +143,15 @@ public static class WorkItemEndpoints
     internal static async Task<IResult> GetAssignment(
         Guid id,
         IDbContextFactory<PipelineDbContext> dbFactory,
-        IProjectStore projectStore)
+        IProjectStore projectStore,
+        CancellationToken ct = default)
     {
-        await using var db = await dbFactory.CreateDbContextAsync();
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
         var item = await db.WorkItems
             .AsNoTracking()
             .Where(w => w.Id == id)
             .Select(w => new { w.Status, w.Payload })
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(ct);
 
         if (item is null)
             return TypedResults.NotFound();
@@ -171,7 +172,7 @@ public static class WorkItemEndpoints
         // Inject project secrets at delivery time (not serialized in payload for security)
         if (!string.IsNullOrEmpty(request.ProjectId))
         {
-            var project = await projectStore.GetProjectByIdAsync(request.ProjectId, CancellationToken.None);
+            var project = await projectStore.GetProjectByIdAsync(request.ProjectId, ct);
             if (project?.Secrets is { Count: > 0 })
                 message = message with { ProjectSecrets = project.Secrets };
         }
@@ -232,9 +233,10 @@ public static class WorkItemEndpoints
             await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
         }
 
-        // Emit telemetry for terminal transitions
+        // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
+        // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
         if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-            await EmitTerminalStatusTelemetryAsync(id, request, dbFactory);
+            _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, ct);
 
         return TypedResults.Ok();
     }
@@ -251,7 +253,8 @@ public static class WorkItemEndpoints
     internal static async Task<IResult> CreateWorkItem(
         [FromBody] JobDistributionRequest request,
         IDbContextFactory<PipelineDbContext> dbFactory,
-        IOrchestratorRunService runService)
+        IOrchestratorRunService runService,
+        CancellationToken ct = default)
     {
         // Use RunId from request if provided (ensures WorkItem.Id == PipelineRun.RunId for hub routing).
         // Fall back to a new GUID when no RunId is set (e.g., direct API calls without orchestration).
@@ -276,9 +279,9 @@ public static class WorkItemEndpoints
 
         try
         {
-            await using var db = await dbFactory.CreateDbContextAsync();
+            await using var db = await dbFactory.CreateDbContextAsync(ct);
             db.WorkItems.Add(entity);
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(ct);
         }
         catch (DbUpdateException ex) when (IsUniqueViolation(ex))
         {
@@ -304,9 +307,10 @@ public static class WorkItemEndpoints
     /// </summary>
     internal static async Task<IResult> GetPendingWorkItems(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        int maxResults = 50)
+        int maxResults = 50,
+        CancellationToken ct = default)
     {
-        await using var db = await dbFactory.CreateDbContextAsync();
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
         var items = await db.WorkItems
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending
@@ -323,7 +327,7 @@ public static class WorkItemEndpoints
                 AgentSelector = w.AgentSelector,
                 RetryCount = w.RetryCount
             })
-            .ToListAsync();
+            .ToListAsync(ct);
 
         return TypedResults.Ok((IReadOnlyList<PendingWorkItemDto>)items);
     }
@@ -751,12 +755,18 @@ public static class WorkItemEndpoints
 
         var result = activePairs
             .Concat(recentTerminalPairs)
+            .Select(p => new ActiveIdentifierDto(p.IssueIdentifier, p.IssueProviderConfigId))
             .Distinct()
-            .Select(p => (object)new { issueIdentifier = p.IssueIdentifier, issueProviderConfigId = p.IssueProviderConfigId })
             .ToList();
 
-        return TypedResults.Ok((IReadOnlyList<object>)result);
+        return TypedResults.Ok((IReadOnlyList<ActiveIdentifierDto>)result);
     }
+
+    /// <summary>
+    /// DTO returned by <see cref="GetActiveIdentifiers"/>. Named type eliminates the
+    /// S1944 suspicious-cast warning and preserves field-name stability on the wire.
+    /// </summary>
+    internal sealed record ActiveIdentifierDto(string IssueIdentifier, string IssueProviderConfigId);
 
     // ── Private helpers ───────────────────────────────────────────────────
 
@@ -793,22 +803,31 @@ public static class WorkItemEndpoints
     private static async Task EmitTerminalStatusTelemetryAsync(
         Guid id,
         WorkItemStatusRequest request,
-        IDbContextFactory<PipelineDbContext>? dbFactory)
+        IDbContextFactory<PipelineDbContext>? dbFactory,
+        CancellationToken ct = default)
     {
-        TimeSpan? duration = null;
-        if (dbFactory is not null)
+        try
         {
-            await using var db = await dbFactory.CreateDbContextAsync();
-            var item = await db.WorkItems.AsNoTracking()
-                .Where(w => w.Id == id)
-                .Select(w => new { w.DispatchedAt, w.CompletedAt })
-                .FirstOrDefaultAsync();
-            if (item?.DispatchedAt is not null && item.CompletedAt is not null)
-                duration = item.CompletedAt.Value - item.DispatchedAt.Value;
-        }
+            TimeSpan? duration = null;
+            if (dbFactory is not null)
+            {
+                await using var db = await dbFactory.CreateDbContextAsync(ct);
+                var item = await db.WorkItems.AsNoTracking()
+                    .Where(w => w.Id == id)
+                    .Select(w => new { w.DispatchedAt, w.CompletedAt })
+                    .FirstOrDefaultAsync(ct);
+                if (item?.DispatchedAt is not null && item.CompletedAt is not null)
+                    duration = item.CompletedAt.Value - item.DispatchedAt.Value;
+            }
 
-        WorkDistributionTelemetry.LogTerminalStatus(
-            id, request.Status, duration, request.AgentId, failureReason: null);
+            WorkDistributionTelemetry.LogTerminalStatus(
+                id, request.Status, duration, request.AgentId, failureReason: null);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.ForContext("SourceContext", nameof(WorkItemEndpoints))
+                .Warning(ex, "Failed to emit terminal status telemetry for WorkItem {Id}", id);
+        }
     }
 
     private static bool IsUniqueViolation(DbUpdateException ex)

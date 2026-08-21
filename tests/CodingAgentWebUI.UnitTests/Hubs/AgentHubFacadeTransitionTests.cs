@@ -188,6 +188,7 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
     public async Task TransitionWorkItemAsync_TerminalStatus_SetsCompletedAt()
     {
         var id = await SeedWorkItem(WorkItemStatus.Running);
+        var before = DateTimeOffset.UtcNow;
 
         await _facade.TransitionWorkItemAsync(id.ToString(), WorkItemStatus.Failed, CancellationToken.None);
 
@@ -195,7 +196,10 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         var item = await db.WorkItems.FindAsync(id);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.CompletedAt.Should().NotBeNull();
-        item.CompletedAt!.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        item.CompletedAt!.Value.Should().BeOnOrAfter(before,
+            because: "CompletedAt must be set to a time at or after the transition was initiated");
+        item.CompletedAt.Value.Should().BeOnOrBefore(before.AddSeconds(10),
+            because: "CompletedAt must not be set to a future time");
     }
 
     // ── Infrastructure-failure recovery ─────────────────────────────────

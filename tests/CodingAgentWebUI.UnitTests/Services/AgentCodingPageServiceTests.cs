@@ -546,9 +546,12 @@ public class AgentCodingPageServiceTests
     // ── IssueDrawer CancellationToken (forwarded via DrawerState accessor) ──
 
     [Fact]
-    public void IssueDrawer_CancellationToken_ReturnsNone_WhenNoDrawerOpen()
+    public void IssueDrawer_CancellationToken_IsNotNone_BeforeDrawerOpen()
     {
-        Assert.Equal(CancellationToken.None, _service.IssueDrawer.CancellationToken);
+        // CTS is pre-initialized at construction so public load methods get a real token
+        // even before OpenAsync is called. CancellationToken.None is no longer returned.
+        Assert.NotEqual(CancellationToken.None, _service.IssueDrawer.CancellationToken);
+        Assert.False(_service.IssueDrawer.CancellationToken.IsCancellationRequested);
     }
 
     // ── Helper ──

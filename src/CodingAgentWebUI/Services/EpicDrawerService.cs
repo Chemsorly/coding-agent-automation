@@ -61,6 +61,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     {
         _epicDrawer.Loading = true;
         _epicDrawer.Page = page;
+        var ct = _epicDrawer.CancellationToken;
         try
         {
             var parentProject = GetParentProject(template.Id);
@@ -79,8 +80,8 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
             if (_epicDrawer.SelectedLabels.Count > 0)
                 approvedLabels.AddRange(_epicDrawer.SelectedLabels);
 
-            var epicResult = await provider.ListOpenIssuesAsync(page, 8, epicLabels, CancellationToken.None);
-            var approvedResult = await provider.ListOpenIssuesAsync(page, 8, approvedLabels, CancellationToken.None);
+            var epicResult = await provider.ListOpenIssuesAsync(page, 8, epicLabels, ct);
+            var approvedResult = await provider.ListOpenIssuesAsync(page, 8, approvedLabels, ct);
 
             _epicDrawer.Items = epicResult.Items.Concat(approvedResult.Items)
                 .GroupBy(i => i.Identifier)
@@ -89,12 +90,18 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
             _epicDrawer.HasMore = epicResult.HasMore || approvedResult.HasMore;
             return null;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _epicDrawer.Items.Clear();
+            return null;
+        }
         catch (Exception ex) { _epicDrawer.Items.Clear(); return $"Failed to load epics: {ex.Message}"; }
         finally { _epicDrawer.Loading = false; }
     }
 
     private async Task<string?> LoadEpicDrawerLabelsAsync(PipelineJobTemplate template)
     {
+        var ct = _epicDrawer.CancellationToken;
         try
         {
             var parentProject = GetParentProject(template.Id);
@@ -104,8 +111,13 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
             var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == epicProviderId);
             if (providerConfig == null) return null;
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
+            var labels = await provider.ListRepositoryLabelsAsync(ct);
             _epicDrawer.Labels = labels.Where(l => !l.StartsWith(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)).ToList();
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _epicDrawer.Labels.Clear();
             return null;
         }
         catch (Exception ex) { Logger.Warning(ex, "Failed to load epic drawer labels"); _epicDrawer.Labels.Clear(); return null; }

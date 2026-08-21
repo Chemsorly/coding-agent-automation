@@ -55,15 +55,21 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
     {
         _prDrawer.Loading = true;
         _prDrawer.Page = page;
+        var ct = _prDrawer.CancellationToken;
         try
         {
             var repoConfig = _cachedRepoProviders?.FirstOrDefault(p => p.Id == template.RepoProviderId);
             if (repoConfig == null) { _prDrawer.Items = new(); _prDrawer.Loading = false; return null; }
             await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
             var labels = _prDrawer.SelectedLabels.Count > 0 ? _prDrawer.SelectedLabels : null;
-            var result = await repoProvider.ListOpenPullRequestsAsync(page, 15, labels, CancellationToken.None);
+            var result = await repoProvider.ListOpenPullRequestsAsync(page, 15, labels, ct);
             _prDrawer.Items = result.Items.ToList();
             _prDrawer.HasMore = result.HasMore;
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _prDrawer.Items = new();
             return null;
         }
         catch (Exception ex) { _prDrawer.Items = new(); return $"Failed to load pull requests: {ex.Message}"; }
@@ -72,13 +78,19 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
 
     private async Task<string?> LoadPrDrawerLabelsAsync(PipelineJobTemplate template)
     {
+        var ct = _prDrawer.CancellationToken;
         try
         {
             var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
             if (providerConfig == null) return null;
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
+            var labels = await provider.ListRepositoryLabelsAsync(ct);
             _prDrawer.Labels = labels.ToList();
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _prDrawer.Labels.Clear();
             return null;
         }
         catch (Exception ex) { Logger.Warning(ex, "Failed to load PR drawer labels"); _prDrawer.Labels.Clear(); return null; }

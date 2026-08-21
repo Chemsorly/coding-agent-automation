@@ -270,6 +270,9 @@ public sealed class ReconciliationLoop
         string? errorMessage,
         CancellationToken ct)
     {
+        // Release the PVC outside the try block so a transient PostStatusAsync failure
+        // does not leak the claim until the next leadership acquisition rebuilds the pool.
+        var pvcName = GetPvcFromJob(job);
         try
         {
             await _workItemClient.PostStatusAsync(workItemId, new WorkItemStatusUpdate
@@ -278,11 +281,6 @@ public sealed class ReconciliationLoop
                 FailureReason = failureReason,
                 ErrorMessage = errorMessage
             }, ct);
-
-            // Release PVC if any
-            var pvcName = GetPvcFromJob(job);
-            if (pvcName is not null)
-                _pvcPool.Release(pvcName);
 
             // Record terminal metrics
             var workItemStatus = status == JobPhaseSucceeded ? WorkItemStatus.Succeeded : WorkItemStatus.Failed;
@@ -302,6 +300,13 @@ public sealed class ReconciliationLoop
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to post status {Status} for WorkItem {Id}", status, workItemId);
+        }
+        finally
+        {
+            // Release PVC unconditionally — idempotent on unknown names, ensures the pool slot
+            // is freed even when PostStatusAsync throws a transient error.
+            if (pvcName is not null)
+                _pvcPool.Release(pvcName);
         }
     }
 

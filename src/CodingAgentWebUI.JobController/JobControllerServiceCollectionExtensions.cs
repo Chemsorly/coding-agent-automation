@@ -35,10 +35,16 @@ public static class JobControllerServiceCollectionExtensions
             ?? "/app/config/job-templates.yaml";
         services.AddSingleton(_ =>
         {
-            // Graceful fallback when path doesn't exist (e.g., integration test environments)
+            // Fatal misconfiguration: if the templates file is missing in production, the controller
+            // will start but dispatch nothing — every work item will be silently skipped. Log at
+            // Error so monitoring alerts fire. Use Log.Warning only in intentional test environments
+            // (e.g., integration tests) where the empty store is deliberate.
             if (!File.Exists(templatesPath))
             {
-                Serilog.Log.Warning("Job templates file not found at {Path}; starting with empty template store", templatesPath);
+                Serilog.Log.Error(
+                    "Job templates file not found at {Path}. The Job Controller will start but " +
+                    "dispatch NO work items until this is resolved. Check WorkDistribution:JobTemplatesPath " +
+                    "and the ConfigMap mount.", templatesPath);
                 return JobTemplateStore.CreateEmpty();
             }
             return JobTemplateStore.LoadFromFile(templatesPath);

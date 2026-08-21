@@ -21,16 +21,6 @@ public sealed class DispatchServiceOptions
     /// <summary>K8s Secret name containing the master agent API key (for OTEL headers mount only; NOT vended to agent pods).</summary>
     public string AgentApiKeySecretName { get; set; } = "";
 
-    /// <summary>
-    /// Master API key used to derive per-agent keys via HMAC-SHA256.
-    /// Read from AGENT_API_KEY env var and stored here so DispatchLoop can compute
-    /// HMAC-SHA256(master, agentId) without accessing IConfiguration at dispatch time.
-    /// Never emitted to Job specs directly.
-    /// MUST NOT be logged — contains the master credential for agent authentication.
-    /// </summary>
-    [System.Text.Json.Serialization.JsonIgnore]
-    public string AgentMasterApiKey { get; set; } = "";
-
     /// <summary>ServiceAccount name for agent Job pods (zero RBAC).</summary>
     public string AgentServiceAccountName { get; set; } = "";
 

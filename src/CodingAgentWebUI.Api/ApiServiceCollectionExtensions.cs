@@ -338,13 +338,6 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(sp =>
         {
             var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
-            if (string.IsNullOrEmpty(options.AgentMasterApiKey))
-            {
-                Serilog.Log.Warning(
-                    "AddApiOrchestration: AGENT_API_KEY is not configured. " +
-                    "ModelFetchJobService and ConsolidationWorkItemDispatchService will use an empty master key " +
-                    "for HMAC derivation — this is a security misconfiguration.");
-            }
             return new CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService(
                 sp.GetRequiredService<IKubernetesJobClient>(),
                 sp.GetRequiredService<WorkItemTransitionService>(),

@@ -362,9 +362,12 @@ public class IssueDrawerServiceTests
     // ── CancellationToken lifecycle ──
 
     [Fact]
-    public void IssueDrawer_CancellationToken_ReturnsNone_WhenNoDrawerOpen()
+    public void IssueDrawer_CancellationToken_IsNotNone_BeforeDrawerOpen()
     {
-        Assert.Equal(CancellationToken.None, _service.DrawerState.CancellationToken);
+        // CTS pre-initialized at construction — returns a valid (non-None) token
+        // so public load methods work correctly before the first OpenAsync.
+        Assert.NotEqual(CancellationToken.None, _service.DrawerState.CancellationToken);
+        Assert.False(_service.DrawerState.CancellationToken.IsCancellationRequested);
     }
 
     [Fact]

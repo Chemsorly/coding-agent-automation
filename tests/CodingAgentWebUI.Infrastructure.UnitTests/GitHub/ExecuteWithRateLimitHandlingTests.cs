@@ -61,6 +61,7 @@ public class ExecuteWithRateLimitHandlingTests
     {
         var response = CreateForbiddenResponse(retryAfterSeconds: 120);
         var abuseException = new AbuseException(response.Object);
+        var before = DateTimeOffset.UtcNow;
 
         var act = () => _provider.InvokeWithRateLimitHandlingAsync<string>(
             () => throw abuseException);
@@ -68,7 +69,8 @@ public class ExecuteWithRateLimitHandlingTests
         var ex = await act.Should().ThrowAsync<PipelineRateLimitExceededException>();
         ex.Which.InnerException.Should().BeSameAs(abuseException);
         // ResetAt should be approximately now + 120 seconds
-        ex.Which.ResetAt.Should().BeCloseTo(DateTimeOffset.UtcNow.AddSeconds(120), TimeSpan.FromSeconds(5));
+        ex.Which.ResetAt.Should().BeOnOrAfter(before.AddSeconds(120));
+        ex.Which.ResetAt.Should().BeOnOrBefore(before.AddSeconds(130));
     }
 
     /// <summary>
@@ -79,6 +81,7 @@ public class ExecuteWithRateLimitHandlingTests
     {
         var response = CreateForbiddenResponse(retryAfterSeconds: null);
         var abuseException = new AbuseException(response.Object);
+        var before = DateTimeOffset.UtcNow;
 
         var act = () => _provider.InvokeWithRateLimitHandlingAsync<string>(
             () => throw abuseException);
@@ -86,7 +89,8 @@ public class ExecuteWithRateLimitHandlingTests
         var ex = await act.Should().ThrowAsync<PipelineRateLimitExceededException>();
         ex.Which.InnerException.Should().BeSameAs(abuseException);
         // Default wait is 60 seconds
-        ex.Which.ResetAt.Should().BeCloseTo(DateTimeOffset.UtcNow.AddSeconds(60), TimeSpan.FromSeconds(5));
+        ex.Which.ResetAt.Should().BeOnOrAfter(before.AddSeconds(60));
+        ex.Which.ResetAt.Should().BeOnOrBefore(before.AddSeconds(70));
     }
 
     #endregion
@@ -134,13 +138,15 @@ public class ExecuteWithRateLimitHandlingTests
     {
         var response = CreateForbiddenResponse(retryAfterSeconds: 90);
         var abuseException = new AbuseException(response.Object);
+        var before = DateTimeOffset.UtcNow;
 
         var act = () => _provider.InvokeWithRateLimitHandlingAsync(
             () => throw abuseException);
 
         var ex = await act.Should().ThrowAsync<PipelineRateLimitExceededException>();
         ex.Which.InnerException.Should().BeSameAs(abuseException);
-        ex.Which.ResetAt.Should().BeCloseTo(DateTimeOffset.UtcNow.AddSeconds(90), TimeSpan.FromSeconds(5));
+        ex.Which.ResetAt.Should().BeOnOrAfter(before.AddSeconds(90));
+        ex.Which.ResetAt.Should().BeOnOrBefore(before.AddSeconds(100));
     }
 
     /// <summary>
@@ -151,13 +157,15 @@ public class ExecuteWithRateLimitHandlingTests
     {
         var response = CreateForbiddenResponse(retryAfterSeconds: null);
         var abuseException = new AbuseException(response.Object);
+        var before = DateTimeOffset.UtcNow;
 
         var act = () => _provider.InvokeWithRateLimitHandlingAsync(
             () => throw abuseException);
 
         var ex = await act.Should().ThrowAsync<PipelineRateLimitExceededException>();
         ex.Which.InnerException.Should().BeSameAs(abuseException);
-        ex.Which.ResetAt.Should().BeCloseTo(DateTimeOffset.UtcNow.AddSeconds(60), TimeSpan.FromSeconds(5));
+        ex.Which.ResetAt.Should().BeOnOrAfter(before.AddSeconds(60));
+        ex.Which.ResetAt.Should().BeOnOrBefore(before.AddSeconds(70));
     }
 
     #endregion

@@ -24,7 +24,8 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
             "/api/config/pipeline",
             PipelineJsonOptions.Default,
             ct);
-        return result!;
+        return result ?? throw new InvalidOperationException(
+            "GET /api/config/pipeline returned null — the API returned a non-JSON or empty response.");
     }
 
     public async Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct = default)

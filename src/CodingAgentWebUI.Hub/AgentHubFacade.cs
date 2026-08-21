@@ -22,13 +22,14 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly OrchestratorRunService _runService;
     private readonly JobDeduplicationGuardService _dispatcher;
     private readonly IPipelineRunHistoryService _historyService;
-    private readonly IConfigurationStore _configStore;
+    private readonly IProviderConfigStore _configStore;
     private readonly IProviderFactory _providerFactory;
     private readonly WorkItemTransitionService? _workItemTransition;
     private readonly IWorkItemFallbackTransitionService? _workItemFallbackTransition;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
     private readonly IProjectStore? _projectStore;
     private readonly ILogger<AgentHubFacadeDependencies> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public AgentHubFacade(AgentHubFacadeDependencies deps)
     {
@@ -52,6 +53,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _workItemFallbackTransition = deps.WorkItemFallbackTransition;
         _dbFactory = deps.DbFactory;
         _projectStore = deps.ProjectStore;
+        _timeProvider = deps.TimeProvider ?? TimeProvider.System;
     }
 
     // ── Registry operations ─────────────────────────────────────────────
@@ -118,7 +120,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
                     "WorkItem {WorkItemId} transition to {Status} failed on attempt {Attempt}, retrying",
                     workItemId, status, attempt + 1);
                 // Wait 2s before final retry — gives brief recovery window after Polly exhaustion
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                await Task.Delay(TimeSpan.FromSeconds(2), _timeProvider, ct);
             }
         }
 

@@ -33,25 +33,7 @@ public static partial class WorkDistributionRegistration
         // This block is a fallback for tests that call AddWorkDistribution directly without Program.cs.
         if (!services.Any(sd => sd.ServiceType == typeof(PipelineApiClientOptions)))
         {
-            var pipelineApiBaseUrl = configuration.GetValue<string>("PipelineApi:BaseUrl") ?? "";
-            var agentApiKey = configuration.GetValue<string>("AGENT_API_KEY")
-                ?? Environment.GetEnvironmentVariable("AGENT_API_KEY")
-                ?? "";
-            if (!string.IsNullOrEmpty(pipelineApiBaseUrl) && !string.IsNullOrEmpty(agentApiKey))
-            {
-                services.AddPipelineApiClient(new PipelineApiClientOptions
-                {
-                    BaseUrl = pipelineApiBaseUrl,
-                    AgentApiKey = agentApiKey
-                });
-                Log.Information("WorkDistribution: Pipeline API client registered (BaseUrl={BaseUrl})", pipelineApiBaseUrl);
-            }
-            else
-            {
-                Log.Warning("WorkDistribution: PipelineApi:BaseUrl or AGENT_API_KEY not configured — " +
-                            "IPipelineApiWorkItemClient will not be registered. " +
-                            "KubernetesWorkDistributor will fail at startup if PipelineApi is required.");
-            }
+            RegisterPipelineApiClientFallback(services, configuration);
         }
 
         // ── K8s client — in-cluster-first with kubeconfig fallback for local dev ──
@@ -136,5 +118,29 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<IChatJobDispatcher>(new NullChatJobDispatcher());
 
         Log.Information("WorkDistribution: Kubernetes infrastructure registered (LeaderElection, K8s client)");
+    }
+
+    private static void RegisterPipelineApiClientFallback(IServiceCollection services, IConfiguration configuration)
+    {
+        var pipelineApiBaseUrl = configuration.GetValue<string>("PipelineApi:BaseUrl") ?? "";
+        var agentApiKey = configuration.GetValue<string>("AGENT_API_KEY")
+            ?? Environment.GetEnvironmentVariable("AGENT_API_KEY")
+            ?? "";
+        bool hasRequiredConfig = !string.IsNullOrEmpty(pipelineApiBaseUrl) && !string.IsNullOrEmpty(agentApiKey);
+        if (hasRequiredConfig)
+        {
+            services.AddPipelineApiClient(new PipelineApiClientOptions
+            {
+                BaseUrl = pipelineApiBaseUrl,
+                AgentApiKey = agentApiKey
+            });
+            Log.Information("WorkDistribution: Pipeline API client registered (BaseUrl={BaseUrl})", pipelineApiBaseUrl);
+        }
+        else
+        {
+            Log.Warning("WorkDistribution: PipelineApi:BaseUrl or AGENT_API_KEY not configured — " +
+                        "IPipelineApiWorkItemClient will not be registered. " +
+                        "KubernetesWorkDistributor will fail at startup if PipelineApi is required.");
+        }
     }
 }

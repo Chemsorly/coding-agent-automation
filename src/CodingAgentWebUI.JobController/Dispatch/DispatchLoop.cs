@@ -57,7 +57,17 @@ public sealed class DispatchLoop
     {
         await RunStartupValidationAsync(ct);
 
-        var pending = await _workItemClient.GetPendingAsync(maxResults: 50, ct);
+        IReadOnlyList<PendingWorkItemDto> pending;
+        try
+        {
+            pending = await _workItemClient.GetPendingAsync(maxResults: 50, ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to fetch pending work items from Pipeline API; skipping cycle");
+            return;
+        }
+
         if (pending.Count == 0)
             return;
 
@@ -136,7 +146,11 @@ public sealed class DispatchLoop
         var template = _templateStore.Resolve(selector);
         if (template is null)
         {
-            Log.Warning("No JobTemplate for selector '{Selector}', skipping {Id}", selector, item.Id);
+            Log.Error(
+                "No JobTemplate for selector '{Selector}' (WorkItem {Id}). " +
+                "The Job Controller cannot dispatch this item until a matching template is added. " +
+                "Verify WorkDistribution:JobTemplatesPath and the ConfigMap mount.",
+                selector, item.Id);
             return;
         }
 

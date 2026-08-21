@@ -3,6 +3,10 @@ namespace CodingAgentWebUI.Pipeline.LeaderElection;
 /// <summary>
 /// Configuration options for K8s Lease-based leader election.
 /// Bound from configuration section "LeaderElection".
+///
+/// Intentionally keeps the namespace <c>CodingAgentWebUI.Pipeline.LeaderElection</c> even
+/// though the class lives in <c>CodingAgentWebUI.Orchestration</c>. This avoids touching
+/// the ~50 files that import that namespace for types that remain in Pipeline.
 /// </summary>
 public sealed class LeaderElectionOptions
 {

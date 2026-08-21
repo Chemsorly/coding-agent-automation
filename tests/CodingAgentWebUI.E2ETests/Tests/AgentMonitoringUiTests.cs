@@ -70,6 +70,9 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         // Assert: agent ID appears on the page. Waited for rather than sampled after a fixed
         // delay — the page redraws every 5s, so a 3s sleep landed before the first redraw.
         await Page.GetByText("ui-monitor-agent-1").First.WaitForAsync(new() { Timeout = 15_000 });
+
+        var agentText = Page.GetByText("ui-monitor-agent-1").First;
+        await Assertions.Expect(agentText).ToBeVisibleAsync();
     }
 
     // ═══════════════════════════════════════════════════════════════════════

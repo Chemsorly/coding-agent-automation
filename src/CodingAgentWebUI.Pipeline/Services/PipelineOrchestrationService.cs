@@ -28,7 +28,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     protected readonly PipelineProviderManager _providerManager;
 
     public PipelineOrchestrationService(
-        IConfigurationStore configurationStore,
+        IProviderConfigStore configurationStore,
         IProviderFactory providerFactory,
         IPipelineCancellationFacade cancellationFacade,
         PipelineRunLifecycleService lifecycle,

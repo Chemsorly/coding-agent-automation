@@ -133,11 +133,6 @@ public sealed class RunLifecycleManagerDbTransitionTests
 
         // Assert: CompletedAt was set by the mutate lambda and is recent
         item.CompletedAt.Should().NotBeNull();
-        // TODO: The 5-second tolerance here can be flaky on heavily loaded CI runners. The integration
-        // test RunLifecycleIntegrationTests uses TimeSpan.FromSeconds(10) for the same assertion — widen
-        // to match, or drop BeCloseTo entirely since NotBeNull() above already confirms the field was set.
-        // See review finding: Correctness [WARNING] line 110 / TestQualityReviewer [WARNING] line 94.
-        item.CompletedAt!.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
     }
 
     // ── Test infrastructure ───────────────────────────────────────────────

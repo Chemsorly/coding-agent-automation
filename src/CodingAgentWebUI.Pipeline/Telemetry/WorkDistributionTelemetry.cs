@@ -21,21 +21,34 @@ public static class WorkDistributionTelemetry
     /// </summary>
     public static readonly Histogram<double> DispatchLatency =
         Meter.CreateHistogram<double>("workdistribution.dispatch_latency_seconds", "s",
-            "Time from work item creation to dispatch");
+            "Time from work item creation to dispatch",
+            advice: new InstrumentAdvice<double>
+            {
+                HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600]
+            });
 
     /// <summary>
     /// Histogram: time spent in Pending status before being dispatched.
     /// </summary>
     public static readonly Histogram<double> PendingDuration =
         Meter.CreateHistogram<double>("workdistribution.workitems_pending_duration_seconds", "s",
-            "Duration work items spend in Pending status");
+            "Duration work items spend in Pending status",
+            advice: new InstrumentAdvice<double>
+            {
+                HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600]
+            });
 
     /// <summary>
     /// Histogram: total execution duration of dispatched jobs (Dispatched → terminal).
+    /// Matches PipelineTelemetry.JobDuration buckets — same underlying job lifecycle.
     /// </summary>
     public static readonly Histogram<double> JobExecutionDuration =
         Meter.CreateHistogram<double>("workdistribution.job_execution_duration_seconds", "s",
-            "Total execution duration of dispatched jobs");
+            "Total execution duration of dispatched jobs",
+            advice: new InstrumentAdvice<double>
+            {
+                HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
+            });
 
     /// <summary>
     /// Histogram: execution age (seconds since dispatch) at the moment a timeout is enforced.
@@ -44,7 +57,11 @@ public static class WorkDistributionTelemetry
     /// </summary>
     public static readonly Histogram<double> TimeoutExecutionAge =
         Meter.CreateHistogram<double>("workdistribution.timeout_execution_age_seconds", "s",
-            "Execution age at timeout enforcement — canary for anchor correctness");
+            "Execution age at timeout enforcement — canary for anchor correctness",
+            advice: new InstrumentAdvice<double>
+            {
+                HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
+            });
 
     /// <summary>
     /// Counter: timeout enforcement skipped due to canary invariant violation.

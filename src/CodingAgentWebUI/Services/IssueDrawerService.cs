@@ -69,22 +69,21 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     {
         _issueDrawer.Loading = true;
         _issueDrawer.Page = page;
+        var ct = _issueDrawer.CancellationToken;
         try
         {
             var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
             if (providerConfig == null) { _issueDrawer.Loading = false; return "Issue provider not found for this template."; }
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
             var labels = _issueDrawer.SelectedLabels.Count > 0 ? _issueDrawer.SelectedLabels : null;
-            // TODO: [WARNING] CancellationToken.None is passed to all provider calls in the load methods
-            // (LoadDrawerIssuesAsync, LoadDrawerLabelsCallbackAsync). The drawer's own CancellationToken
-            // is available via _issueDrawer.CancellationToken but is not threaded into the load callbacks
-            // because DrawerStateService's load delegates take only PipelineJobTemplate. A user closing the
-            // drawer mid-load will not cancel the in-flight HTTP call to the issue provider, holding a
-            // connection pool slot. Fix: either pass the drawer's CancellationToken through the load
-            // callback signature, or capture it at callback invocation time.
-            var result = await provider.ListOpenIssuesAsync(_issueDrawer.Page, 15, labels, CancellationToken.None);
+            var result = await provider.ListOpenIssuesAsync(_issueDrawer.Page, 15, labels, ct);
             _issueDrawer.Items = result.Items.ToList();
             _issueDrawer.HasMore = result.HasMore;
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _issueDrawer.Items.Clear();
             return null;
         }
         catch (Exception ex) { _issueDrawer.Items.Clear(); return $"Failed to load issues: {ex.Message}"; }
@@ -96,13 +95,19 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 
     private async Task<string?> LoadDrawerLabelsCallbackAsync(PipelineJobTemplate template)
     {
+        var ct = _issueDrawer.CancellationToken;
         try
         {
             var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
             if (providerConfig == null) return null;
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
+            var labels = await provider.ListRepositoryLabelsAsync(ct);
             _issueDrawer.Labels = labels.ToList();
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _issueDrawer.Labels.Clear();
             return null;
         }
         catch
@@ -145,12 +150,11 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         }
     }
 
-    private async Task CheckDrawerDependenciesInBackgroundAsync(PipelineJobTemplate template)
+    private async Task CheckDrawerDependenciesInBackgroundAsync(PipelineJobTemplate template, CancellationToken ct)
     {
-        var token = _issueDrawer.CancellationToken;
         try
         {
-            await CheckDrawerDependenciesAsync(template, null, token);
+            await CheckDrawerDependenciesAsync(template, null, ct);
         }
         catch (OperationCanceledException) { /* expected on drawer close */ }
     }

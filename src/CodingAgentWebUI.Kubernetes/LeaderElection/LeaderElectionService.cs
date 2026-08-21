@@ -14,6 +14,10 @@ namespace CodingAgentWebUI.Pipeline.LeaderElection;
 /// 
 /// Exposes <see cref="IsLeader"/> property and <see cref="LeaderToken"/> which is cancelled
 /// when leadership is lost, allowing dependent services to stop gracefully.
+///
+/// Intentionally keeps the namespace <c>CodingAgentWebUI.Pipeline.LeaderElection</c> even
+/// though the class lives in <c>CodingAgentWebUI.Orchestration</c>. This avoids touching
+/// the ~50 files that import that namespace for types that remain in Pipeline.
 /// </summary>
 public sealed class LeaderElectionService : ILeaderElectionService, IHostedService, IDisposable
 {
