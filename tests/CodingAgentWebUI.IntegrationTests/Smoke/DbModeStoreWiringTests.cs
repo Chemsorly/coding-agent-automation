@@ -1,21 +1,18 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
-using CodingAgentWebUI.Infrastructure.Persistence.Stores;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;
 
 /// <summary>
-/// Validates that DB-mode services use correct implementations after Spec 045.
+/// Validates that DB-mode services use correct implementations after Spec 045 / 041-045 refactoring.
 ///
-/// Post-Spec 045 architecture:
+/// Post-Spec 041-045 architecture:
 ///   - IConfigurationStore, IAgentProfileStore, IQualityGateConfigStore, IReviewerConfigStore
 ///     → ApiConfigurationStore (backed by IPipelineApiConfigClient with TTL cache)
 ///   - IPipelineConfigStore → ApiPipelineConfigStore
@@ -23,9 +20,9 @@ namespace CodingAgentWebUI.IntegrationTests.Smoke;
 ///   - IProjectStore        → ApiProjectStore
 ///   - ILoopStateStore      → REMOVED (Option B: ClosedLoopAutoStart in PipelineConfiguration)
 ///   - IActiveRunQueryService → REMOVED (active runs via IPipelineApiRunHistoryClient)
-///   - IConsolidationRunStore → PostgresConsolidationRunStore (still DB-backed)
+///   - IConsolidationRunStore → ApiBackedConsolidationRunStore (migrated in Spec 041-045)
 ///   - IPipelineRunHistoryService → PostgresPipelineRunHistoryService (still DB-backed)
-///   - IHarnessSuggestionStore   → PostgresHarnessSuggestionStore (still DB-backed)
+///   - IHarnessSuggestionStore   → ApiBackedHarnessSuggestionStore (migrated in Spec 041-045)
 /// </summary>
 [Collection("SmokeTests")]
 public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
@@ -80,22 +77,22 @@ public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
             "IAgentProfileStore resolves to the shared ApiConfigurationStore instance");
     }
 
-    // ── Still Postgres-backed ─────────────────────────────────────────────
+    // ── API-backed (migrated in Spec 041-045) ────────────────────────────
 
     [Fact]
-    public void IConsolidationRunStore_IsPostgres_InDbMode()
+    public void IConsolidationRunStore_IsApiBacked_PostSpec041()
     {
         var store = _factory.Services.GetRequiredService<IConsolidationRunStore>();
-        store.Should().BeOfType<PostgresConsolidationRunStore>(
-            "IConsolidationRunStore is still Postgres-backed (consolidation services not yet migrated)");
+        store.Should().BeOfType<ApiBackedConsolidationRunStore>(
+            "IConsolidationRunStore was migrated to API-backed in Spec 041-045 to eliminate dual-write race conditions");
     }
 
     [Fact]
-    public void IHarnessSuggestionStore_IsPostgres_InDbMode()
+    public void IHarnessSuggestionStore_IsApiBacked_PostSpec041()
     {
         var store = _factory.Services.GetRequiredService<IHarnessSuggestionStore>();
-        store.Should().BeOfType<PostgresHarnessSuggestionStore>(
-            "IHarnessSuggestionStore is still Postgres-backed");
+        store.Should().BeOfType<ApiBackedHarnessSuggestionStore>(
+            "IHarnessSuggestionStore was migrated to API-backed in Spec 041-045");
     }
 
     [Fact]
@@ -168,8 +165,10 @@ public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
     // ── Behavioral Validation ─────────────────────────────────────────────
 
     [Fact]
-    public async Task HarnessSuggestionStore_PersistsToDatabase()
+    public async Task HarnessSuggestionStore_DelegatesToApiClient()
     {
+        // ApiBackedHarnessSuggestionStore delegates to IPipelineApiHarnessSuggestionClient.
+        // The mock in DbModeWebApplicationFactory captures the call and returns the saved value.
         var store = _factory.Services.GetRequiredService<IHarnessSuggestionStore>();
         var suggestions = new HarnessSuggestions
         {
@@ -182,7 +181,7 @@ public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
         await store.SaveAsync(suggestions, CancellationToken.None);
         var loaded = await store.GetAsync(CancellationToken.None);
 
-        loaded.Should().NotBeNull("HarnessSuggestions must persist to database, not filesystem");
+        loaded.Should().NotBeNull("mock client must return the saved suggestions");
         loaded!.Suggestions.Should().HaveCount(1);
         loaded.Suggestions[0].Text.Should().Be("Use structured logging");
     }

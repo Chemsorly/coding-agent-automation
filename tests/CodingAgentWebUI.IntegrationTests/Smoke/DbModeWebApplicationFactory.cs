@@ -177,6 +177,25 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IPipelineApiWorkItemClient>();
             services.AddSingleton(workItemClientMock.Object);
 
+            // ApiBackedHarnessSuggestionStore delegates to IPipelineApiHarnessSuggestionClient.
+            // Use an in-memory store backed mock so the save+get roundtrip test can pass.
+            HarnessSuggestions? capturedSuggestions = null;
+            var harnessMock = new Mock<IPipelineApiHarnessSuggestionClient>();
+            harnessMock.Setup(s => s.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
+                .Callback<HarnessSuggestions, CancellationToken>((s, _) => capturedSuggestions = s)
+                .Returns(Task.CompletedTask);
+            harnessMock.Setup(s => s.GetAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() => capturedSuggestions);
+            services.RemoveAll<IPipelineApiHarnessSuggestionClient>();
+            services.AddSingleton(harnessMock.Object);
+
+            // ApiBackedConsolidationRunStore delegates to IPipelineApiConsolidationRunClient.
+            var consolidationRunClientMock = new Mock<IPipelineApiConsolidationRunClient>();
+            consolidationRunClientMock.Setup(s => s.LoadAllRunsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ConsolidationRun>());
+            services.RemoveAll<IPipelineApiConsolidationRunClient>();
+            services.AddSingleton(consolidationRunClientMock.Object);
+
             // Replace IConsolidationService — Program.cs calls CleanupOrphanedRunsAsync
             // and RehydrateQueuedRunsAsync during startup, which hit the database directly
             // (not via a hosted service), so RemoveAll<IHostedService> doesn't prevent it.

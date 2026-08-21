@@ -115,13 +115,13 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
         result.Should().BeFalse();
     }
 
-    // ── Consolidation Store Is DB-Backed ─────────────────────────────────
+    // ── Consolidation Store Is API-Backed (Spec 041-045) ─────────────────
 
     [Fact]
-    public void ConsolidationRunStore_IsPostgresImplementation()
+    public void ConsolidationRunStore_IsApiBackedImplementation()
     {
         var store = _factory.Services.GetRequiredService<IConsolidationRunStore>();
-        store.GetType().Name.Should().Contain("Postgres");
+        store.GetType().Name.Should().Contain("ApiBacked");
     }
 
     // ── Blazor Pages Load Without Server Error ─────────────────────────
