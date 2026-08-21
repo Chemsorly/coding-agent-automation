@@ -108,31 +108,15 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
             return;
         }
 
-        // No matching profile — use first compatible agent config as fallback.
-        // Check RequiredLabels on config to avoid dispatching with wrong provider
-        // (e.g., OpenCode config to a Kiro agent).
-        var agentLabelSet = new HashSet<string>(agentLabels, StringComparer.OrdinalIgnoreCase);
-        var fallback = agentConfigs.FirstOrDefault(c =>
-            c.RequiredLabels is not { Count: > 0 } ||
-            c.RequiredLabels.All(l => agentLabelSet.Contains(l)));
-
-        if (fallback is not null)
-        {
-            rawConfigs.Add(fallback);
-        }
-        else if (agentConfigs.Count > 0)
-        {
-            _logger.Warning(
-                "ConsolidationJobPreparationService: no compatible agent config for labels [{Labels}] — skipping agent provider",
-                string.Join(", ", agentLabels));
-        }
-
-        if (profiles.Count > 0)
-        {
-            _logger.Warning(
-                "ConsolidationJobPreparationService: no profile matches labels [{Labels}], using fallback agent config",
-                string.Join(", ", agentLabels));
-        }
+        // No matching profile — in Kubernetes mode the dispatched pod's provider type must
+        // match the resolved agent config. Without a matching profile we cannot know which
+        // provider to use, so we log a warning and skip adding an agent config. The dispatch
+        // will fail with a provider-resolution error rather than silently using the wrong provider.
+        _logger.Warning(
+            "ConsolidationJobPreparationService: no profile matches labels [{Labels}] — " +
+            "no agent provider config will be injected. Ensure an AgentProfile with matchLabels " +
+            "matching the job's AgentSelector exists.",
+            string.Join(", ", agentLabels));
     }
 
     /// <summary>

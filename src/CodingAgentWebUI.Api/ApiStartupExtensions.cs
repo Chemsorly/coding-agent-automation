@@ -4,6 +4,7 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using StackExchange.Redis;
@@ -68,8 +69,8 @@ internal static class ApiStartupExtensions
         //     not currently connected. A disconnected backplane causes silent message loss in
         //     multi-replica deployments — hub broadcasts succeed locally but are never fanned out.
         endpoints.MapGet("/readyz", (
-                DatabaseHealthState dbHealth,
-                IConnectionMultiplexer? redis) =>
+                [FromServices] DatabaseHealthState dbHealth,
+                [FromServices] IConnectionMultiplexer? redis) =>
             {
                 if (!dbHealth.IsDatabaseHealthy)
                     return Results.Json(

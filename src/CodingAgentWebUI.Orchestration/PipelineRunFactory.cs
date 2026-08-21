@@ -16,9 +16,15 @@ public static class PipelineRunFactory
     /// </summary>
     /// <param name="workItemId">The newly-persisted WorkItem GUID, used as the RunId.</param>
     /// <param name="request">The <see cref="JobDistributionRequest"/> payload from the WorkItem.</param>
-    public static PipelineRun CreateFromWorkItem(Guid workItemId, JobDistributionRequest request)
+    public static PipelineRun? CreateFromWorkItem(Guid workItemId, JobDistributionRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        // Consolidation runs are tracked via ConsolidationRun, not PipelineRun.
+        // Return null so the caller skips AddRun and avoids ghost "Impl" entries in Active Runs.
+        if (request.TaskType == WorkItemTaskType.Consolidation ||
+            request.RunType == PipelineRunType.Consolidation)
+            return null;
 
         // Stamp the workItemId onto the request as RunId so FromDistributionRequest uses it.
         var requestWithRunId = request with { RunId = workItemId.ToString() };

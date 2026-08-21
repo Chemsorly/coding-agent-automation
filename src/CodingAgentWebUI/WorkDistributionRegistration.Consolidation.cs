@@ -105,17 +105,11 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<JobTemplateStore>(sp =>
             DispatchService.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
 
-        // ── IChatJobDispatcher — placeholder ─────────────────────────────────
-        // ChatJobDispatcher moved to the Pipeline API, which owns AgentHub and the registry it
-        // polls. AgentChat.razor still injects IChatJobDispatcher, and with nothing bound here the
-        // page threw on first render — an operator opening Agent Chat got a blank page.
-        //
-        // This binds the null object so the page renders and says the feature is unavailable
-        // instead of failing to load. Chat is genuinely not operable from this process yet: the
-        // prompt/response path is SignalR between the pod and the API hub, so restoring it needs a
-        // REST surface on the API and a client here, not just a dispatcher.
-        // TODO(Spec 046): replace with a client for the API's chat endpoints.
-        services.AddSingleton<IChatJobDispatcher>(new NullChatJobDispatcher());
+        // ── IChatJobDispatcher — API-backed client ────────────────────────────
+        // ChatJobDispatcher lives in the Pipeline API alongside AgentHub and the registry it polls.
+        // ApiChatJobDispatcher delegates to POST /api/chat/dispatch and /terminate, re-mapping
+        // HTTP status codes back to the domain exceptions AgentChat.razor expects.
+        services.AddSingleton<IChatJobDispatcher, ApiChatJobDispatcher>();
 
         Log.Information("WorkDistribution: Kubernetes infrastructure registered (LeaderElection, K8s client)");
     }

@@ -292,8 +292,10 @@ public static class WorkItemEndpoints
         // Materialise in-memory PipelineRun in the API's IOrchestratorRunService so the UI
         // can subscribe to hub events and display the run immediately (Req 1a.1 Option A).
         // WorkItem.Id == PipelineRun.RunId for deterministic hub-group routing.
+        // Consolidation WorkItems return null — they are tracked via ConsolidationRun, not PipelineRun.
         var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
-        runService.AddRun(run);
+        if (run is not null)
+            runService.AddRun(run);
 
         return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
     }
