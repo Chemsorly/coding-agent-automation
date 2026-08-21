@@ -10,5 +10,5 @@ namespace CodingAgentWebUI.Api;
 /// </summary>
 public sealed class ApiHostMarker
 {
-    private ApiHostMarker() { }
+    public ApiHostMarker() { }
 }

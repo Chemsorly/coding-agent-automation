@@ -11,5 +11,5 @@ namespace CodingAgentWebUI;
 /// </summary>
 public sealed class WebUiHostMarker
 {
-    private WebUiHostMarker() { }
+    public WebUiHostMarker() { }
 }

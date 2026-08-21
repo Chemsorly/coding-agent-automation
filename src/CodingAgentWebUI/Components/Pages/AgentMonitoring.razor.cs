@@ -449,7 +449,7 @@ public partial class AgentMonitoring : IAsyncDisposable
         _stepTransitionSub?.Dispose();
         _runCompletedSub?.Dispose();
 
-        _refreshTimer?.Dispose();
+        _refreshTimer?.Dispose(); // NOSONAR — System.Threading.Timer has no DisposeAsync
         ConsolidationService.OnChange -= HandleStateChanged;
 
         // Unsubscribe from the run group if a modal is still open (circuit disconnect / tab close)

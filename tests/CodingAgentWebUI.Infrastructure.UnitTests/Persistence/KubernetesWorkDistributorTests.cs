@@ -222,3 +222,89 @@ public class KubernetesWorkDistributorTests
         RunType = PipelineRunType.Implementation
     };
 }
+
+
+// ── Additional coverage: MapStatus exhaustive, CancelJobAsync non-BadRequest ──────
+
+/// <summary>
+/// Additional tests extending <see cref="KubernetesWorkDistributorTests"/> to cover
+/// the remaining branches: the full <c>MapStatus</c> enum mapping and the
+/// non-BadRequest exception path in <c>CancelJobAsync</c>.
+/// </summary>
+public class KubernetesWorkDistributorAdditionalTests
+{
+    private readonly Mock<IPipelineApiWorkItemClient> _mockApiClient = new();
+    private readonly KubernetesWorkDistributor _distributor;
+
+    public KubernetesWorkDistributorAdditionalTests()
+    {
+        _distributor = new KubernetesWorkDistributor(
+            _mockApiClient.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<KubernetesWorkDistributor>.Instance);
+    }
+
+    // ── MapStatus — exhaustive coverage via GetJobStatusAsync ────────────
+
+    [Theory]
+    [InlineData(WorkItemStatus.Pending, JobDistributionStatus.Pending)]
+    [InlineData(WorkItemStatus.Dispatched, JobDistributionStatus.Dispatched)]
+    [InlineData(WorkItemStatus.Running, JobDistributionStatus.Running)]
+    [InlineData(WorkItemStatus.Succeeded, JobDistributionStatus.Succeeded)]
+    [InlineData(WorkItemStatus.Failed, JobDistributionStatus.Failed)]
+    [InlineData(WorkItemStatus.Cancelled, JobDistributionStatus.Cancelled)]
+    public async Task GetJobStatusAsync_MapsAllWorkItemStatuses(
+        WorkItemStatus apiStatus, JobDistributionStatus expectedDistributionStatus)
+    {
+        var workItemId = Guid.NewGuid();
+        _mockApiClient
+            .Setup(c => c.GetStatusAsync(workItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(apiStatus);
+
+        var result = await _distributor.GetJobStatusAsync(workItemId.ToString(), CancellationToken.None);
+
+        result.Should().Be(expectedDistributionStatus);
+    }
+
+    [Fact]
+    public async Task GetJobStatusAsync_UnknownEnumValue_ReturnsUnknown()
+    {
+        // Simulate an API returning an enum value not in our switch (future-proofing)
+        var workItemId = Guid.NewGuid();
+        _mockApiClient
+            .Setup(c => c.GetStatusAsync(workItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkItemStatus)999);
+
+        var result = await _distributor.GetJobStatusAsync(workItemId.ToString(), CancellationToken.None);
+
+        result.Should().Be(JobDistributionStatus.Unknown);
+    }
+
+    // ── CancelJobAsync — non-BadRequest HttpRequestException returns false ─
+
+    [Fact]
+    public async Task CancelJobAsync_ApiNonBadRequestHttpException_ReturnsFalse()
+    {
+        // A 500 or network error should also return false, not propagate the exception.
+        var workItemId = Guid.NewGuid();
+        _mockApiClient
+            .Setup(c => c.PostStatusAsync(workItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Server error", null, System.Net.HttpStatusCode.InternalServerError));
+
+        var result = await _distributor.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
+
+        result.Should().BeFalse("non-BadRequest HTTP errors must also be swallowed and return false");
+    }
+
+    [Fact]
+    public async Task CancelJobAsync_GenericException_ReturnsFalse()
+    {
+        var workItemId = Guid.NewGuid();
+        _mockApiClient
+            .Setup(c => c.PostStatusAsync(workItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TimeoutException("Request timed out"));
+
+        var result = await _distributor.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
+
+        result.Should().BeFalse("generic exceptions must also be swallowed and return false");
+    }
+}

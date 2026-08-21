@@ -267,13 +267,19 @@ public class ThrowLoggingTests : IDisposable
 
     /// <summary>
     /// Simple sink that collects log events for assertion.
+    /// Thread-safe: Emit/Clear are locked to prevent concurrent modification
+    /// when Serilog's async pipeline emits on a background thread while the test asserts.
     /// </summary>
     private sealed class CollectingSink : ILogEventSink
     {
+        private readonly object _lock = new();
         private readonly List<LogEvent> _events = new();
-        public IReadOnlyList<LogEvent> Events => _events;
-        public void Emit(LogEvent logEvent) => _events.Add(logEvent);
-        public void Clear() => _events.Clear();
+
+        /// <summary>Returns a snapshot of all collected events, safe to enumerate after the call.</summary>
+        public IReadOnlyList<LogEvent> Events { get { lock (_lock) { return _events.ToList(); } } }
+
+        public void Emit(LogEvent logEvent) { lock (_lock) { _events.Add(logEvent); } }
+        public void Clear() { lock (_lock) { _events.Clear(); } }
     }
 
     /// <summary>

@@ -491,4 +491,119 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         // a regression in LabelTargetKind derivation for PR-type runs would go undetected here. (#2015)
         _issueOps.Verify(i => i.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()), Times.Never);
     }
+
+    // ── Orphaned path: explicit FailureReason propagated ──────────────
+
+    [Fact]
+    public async Task Orphaned_failed_step_with_explicit_reason_propagates_reason_to_TransitionWorkItem()
+    {
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string, string)?)null);
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FailureReason = "explicit agent error message",
+            FailureCategory = FailureReason.AgentError
+        };
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _facade.Verify(f => f.TransitionWorkItemAsync(
+            "job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
+            "explicit agent error message", FailureReason.AgentError), Times.Once);
+    }
+
+    [Fact]
+    public async Task Orphaned_failed_step_calls_MarkIssueComplete_when_metadata_available()
+    {
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("org/repo#5", "prov-1"));
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FailureReason = "build error",
+            FailureCategory = FailureReason.AgentError
+        };
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _facade.Verify(f => f.MarkIssueComplete("org/repo#5", "prov-1"), Times.Once);
+    }
+
+    [Fact]
+    public async Task Orphaned_cancelled_step_calls_MarkIssueComplete_when_metadata_available()
+    {
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("org/repo#7", "prov-2"));
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Cancelled,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _facade.Verify(f => f.MarkIssueComplete("org/repo#7", "prov-2"), Times.Once);
+        _labelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Orphaned_completed_step_calls_LabelService_SwapLabel_with_Done_when_metadata_available()
+    {
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("org/repo#3", "prov-cfg-1"));
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _labelService.Verify(l => l.SwapLabelAsync(
+            "prov-cfg-1", "org/repo#3",
+            AgentLabels.Done, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Regular_completed_clears_agent_OrphanRestoredAt_and_sets_LastJobCompletedAt()
+    {
+        var run = MakeRun();
+        var agent = MakeAgent();
+        agent.OrphanRestoredAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var before = DateTimeOffset.UtcNow.AddSeconds(-1);
+
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(run);
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), agent, payload, CancellationToken.None);
+
+        agent.ActiveJobId.Should().BeNull();
+        agent.OrphanRestoredAt.Should().BeNull();
+        agent.LastJobCompletedAt.Should().BeAfter(before);
+        _facade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
+    }
 }

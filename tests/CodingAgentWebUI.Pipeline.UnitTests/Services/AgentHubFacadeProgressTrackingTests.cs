@@ -160,6 +160,36 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
         item.LastProgressAt!.Value.Should().BeCloseTo(now, TimeSpan.FromSeconds(2));
     }
 
+    // ── GetWorkItemIssueMetadataAsync ─────────────────────────────────
+
+    [Fact]
+    public async Task GetWorkItemIssueMetadataAsync_InvalidGuid_ReturnsNull()
+    {
+        var result = await _facade.GetWorkItemIssueMetadataAsync(new JobId("not-a-guid"), CancellationToken.None);
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetWorkItemIssueMetadataAsync_ItemNotFound_ReturnsNull()
+    {
+        var result = await _facade.GetWorkItemIssueMetadataAsync(
+            new JobId(Guid.NewGuid().ToString()), CancellationToken.None);
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetWorkItemIssueMetadataAsync_WithValidItem_ReturnsMetadata()
+    {
+        var workItemId = Guid.NewGuid();
+        await InsertWorkItemWithIssueIdentifier(workItemId, "owner/repo#42", "ip-provider-1");
+
+        var result = await _facade.GetWorkItemIssueMetadataAsync(new JobId(workItemId.ToString()), CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Value.IssueIdentifier.Should().Be("owner/repo#42");
+        result.Value.IssueProviderConfigId.Should().Be("ip-provider-1");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private async Task InsertWorkItem(Guid id, DateTimeOffset? lastProgressAt = null)
@@ -176,6 +206,24 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
             DispatchedAt = DateTimeOffset.UtcNow.AddHours(-1),
             TimeoutSeconds = 7200,
             LastProgressAt = lastProgressAt,
+            Payload = "{}"
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task InsertWorkItemWithIssueIdentifier(Guid id, string issueIdentifier, string issueProviderConfigId)
+    {
+        await using var db = _dbFactory.CreateDbContext();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = id,
+            IssueIdentifier = issueIdentifier,
+            IssueProviderConfigId = issueProviderConfigId,
+            Status = WorkItemStatus.Running,
+            AgentSelector = "kiro,dotnet",
+            CreatedAt = DateTimeOffset.UtcNow.AddHours(-1),
+            DispatchedAt = DateTimeOffset.UtcNow.AddHours(-1),
+            TimeoutSeconds = 7200,
             Payload = "{}"
         });
         await db.SaveChangesAsync();

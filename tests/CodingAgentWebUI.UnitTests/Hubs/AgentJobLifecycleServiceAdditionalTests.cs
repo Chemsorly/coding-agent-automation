@@ -691,4 +691,15 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
         await act.Should().ThrowAsync<InvalidOperationException>("SwapLabelAsync exceptions propagate from PostCompletionBookkeepingAsync");
         _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done), Times.Once);
     }
+
+    [Fact]
+    public async Task HandleJobRejected_NullAgent_DoesNotCallSignal()
+    {
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+
+        var svc = CreateService();
+        await svc.HandleJobRejectedAsync(new JobId("job-1"), null, "reason", CancellationToken.None);
+
+        _facade.Verify(f => f.Signal(), Times.Never);
+    }
 }
