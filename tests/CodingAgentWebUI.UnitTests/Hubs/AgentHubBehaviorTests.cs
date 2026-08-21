@@ -1629,13 +1629,15 @@ public sealed class AgentHubBehaviorTests : IDisposable
             MemoryUsageMb = 512
         };
 
-        var before = DateTimeOffset.UtcNow;
+        // Capture before heartbeat.Timestamp to ensure the assertion baseline
+        // is earlier than the timestamp the hub will apply (fixes timing race).
         await hub.Heartbeat(heartbeat);
+        var after = DateTimeOffset.UtcNow;
 
         // LastStepChangeAt should be refreshed (close to now, not -50min)
-        run.LastStepChangeAt.Should().BeOnOrAfter(before,
+        run.LastStepChangeAt.Should().BeOnOrAfter(heartbeat.Timestamp,
             because: "LastStepChangeAt must be refreshed to the time of the heartbeat, not remain at -50min");
-        run.LastStepChangeAt.Should().BeOnOrBefore(before.AddSeconds(10));
+        run.LastStepChangeAt.Should().BeOnOrBefore(after.AddSeconds(10));
     }
 
     [Fact]
