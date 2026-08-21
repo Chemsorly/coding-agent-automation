@@ -197,14 +197,15 @@ public static class WorkItemEndpoints
     {
         var success = await transitionService.TransitionAsync(
             id, request.Status,
-            mutate: entity => ApplyStatusMutation(entity, request));
+            mutate: entity => ApplyStatusMutation(entity, request),
+            ct: ct);
 
         if (!success)
         {
             if (dbFactory is not null)
             {
-                await using var db = await dbFactory.CreateDbContextAsync();
-                var exists = await db.WorkItems.AnyAsync(w => w.Id == id);
+                await using var db = await dbFactory.CreateDbContextAsync(ct);
+                var exists = await db.WorkItems.AnyAsync(w => w.Id == id, ct);
                 if (!exists)
                     return TypedResults.NotFound();
             }
@@ -751,7 +752,7 @@ public static class WorkItemEndpoints
         var result = activePairs
             .Concat(recentTerminalPairs)
             .Distinct()
-            .Select(p => new { issueIdentifier = p.IssueIdentifier, issueProviderConfigId = p.IssueProviderConfigId })
+            .Select(p => (object)new { issueIdentifier = p.IssueIdentifier, issueProviderConfigId = p.IssueProviderConfigId })
             .ToList();
 
         return TypedResults.Ok((IReadOnlyList<object>)result);
