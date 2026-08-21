@@ -594,7 +594,16 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         if (!_agentIdToJobName.TryGetValue(agentId.Value, out var jobName))
         {
-            activity?.SetTag(TagOutcome, "not_found");
+            // No registered session for this agent. The pod may still be in the connect-timeout
+            // polling window (dispatched but not yet connected). For chat pods the agentId is the
+            // same as the jobName — attempt a best-effort direct delete so the job doesn't linger
+            // until the 120s connect timeout fires.
+            var inferredJobName = agentId.Value;
+            _logger.Information(
+                "ChatJobDispatcher: TerminateChatSessionAsync — no session for {AgentId}, attempting direct job delete",
+                agentId);
+            await TryCleanupFailedDispatch(inferredJobName, cancellationToken);
+            activity?.SetTag(TagOutcome, "not_found_direct_delete");
             return;
         }
 

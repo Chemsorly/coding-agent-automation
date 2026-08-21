@@ -242,7 +242,9 @@
                     }
                     _streamingContent.Clear();
                     _isWaitingForResponse = false;
-                    _activeSessionId = null;
+                    // Do NOT clear _activeSessionId here — the chat session is still active and
+                    // waiting for the next prompt. Clearing it would prevent EndChat/DisposeAsync
+                    // from unsubscribing from the correct hub group. It is only cleared in EndChat.
                     StateHasChanged();
                     _ = ScrollToBottom();
                 });
@@ -415,7 +417,6 @@
 
         _isWaitingForResponse = true;
         _streamingContent.Clear();
-        _activeSessionId = Guid.NewGuid().ToString();
 
         // Agent existence / connectivity is validated server-side by POST /api/agents/{agentId}/chat-prompt.
         // The API resolves the agent from its live registry (written by the hub in the same process),
@@ -433,22 +434,34 @@
         // re-injection on resume, but limiting wire exposure is the primary reason.
         // SteeringContent and ProjectId/Name are harmless to repeat but are also gated to first
         // prompt for consistency — the agent ignores them on resume anyway.
-        var message = new ChatPromptMessage
-        {
-            SessionId = _activeSessionId,
-            Prompt = prompt,
-            UseResume = !_isFirstPrompt,
-            McpServers = mergedMcpServers,
-            McpConfigPath = _resolvedMcpConfigPath,
-            ChatWindowId = _chatWindowId,
-            ProjectSecrets = _isFirstPrompt ? _selectedProject?.Secrets : null,
-            ProjectSteeringContent = _isFirstPrompt ? _selectedProject?.SteeringContent : null,
-            ProjectId = _isFirstPrompt ? _selectedProject?.Id : null,
-            ProjectName = _isFirstPrompt ? _selectedProject?.Name : null
-        };
 
         try
         {
+            // Unsubscribe from the previous prompt's hub group before subscribing to the new one.
+            // Each prompt has its own session ID and group; leaving old subscriptions open would
+            // cause duplicate events if the server re-uses a group name (unlikely but defensive).
+            if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
+            {
+                try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
+                catch (Exception ex) { Log.Warning(ex, "AgentChat: failed to unsubscribe previous session {SessionId}", _activeSessionId); }
+            }
+
+            _activeSessionId = Guid.NewGuid().ToString();
+
+            var message = new ChatPromptMessage
+            {
+                SessionId = _activeSessionId,
+                Prompt = prompt,
+                UseResume = !_isFirstPrompt,
+                McpServers = mergedMcpServers,
+                McpConfigPath = _resolvedMcpConfigPath,
+                ChatWindowId = _chatWindowId,
+                ProjectSecrets = _isFirstPrompt ? _selectedProject?.Secrets : null,
+                ProjectSteeringContent = _isFirstPrompt ? _selectedProject?.SteeringContent : null,
+                ProjectId = _isFirstPrompt ? _selectedProject?.Id : null,
+                ProjectName = _isFirstPrompt ? _selectedProject?.Name : null
+            };
+
             // Subscribe to the hub chat-session group so OnChatResponse/OnChatCompleted
             // events are pushed to this circuit by the API hub.
             if (HubConnection.State == HubConnectionState.Connected)
@@ -457,14 +470,22 @@
                     HubMethodNames.SubscribeToChatSession, _activeSessionId, CancellationToken.None);
             }
 
-            // ActiveChatSessionId is stamped server-side by POST /api/agents/{agentId}/chat-prompt
-            // on the first prompt (UseResume = false). The API owns the live AgentEntry, so
-            // mutating the local snapshot here had no effect.
+            // ActiveChatSessionId is stamped server-side by POST /api/agents/{agentId}/chat-prompt.
+            // The API always stamps ActiveChatSessionId = message.SessionId regardless of UseResume.
             await AgentClient.AssignChatPromptAsync(_selectedAgentId, message, CancellationToken.None);
             _isFirstPrompt = false;
         }
         catch (Exception ex)
         {
+            // Unsubscribe from the hub group we just subscribed to — the prompt never reached
+            // the agent so there will be no OnChatResponse/OnChatCompleted for this session.
+            if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
+            {
+                try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
+                catch (Exception unsubEx) { Log.Warning(unsubEx, "AgentChat: failed to unsubscribe after send failure for session {SessionId}", _activeSessionId); }
+            }
+            _activeSessionId = null;
+
             _messages.Add(new ChatMessage
             {
                 Role = ChatRole.System,
@@ -570,6 +591,7 @@
             try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
             catch (Exception ex) { Log.Debug(ex, "AgentChat: hub UnsubscribeFromChatSession failed on dispose"); }
         }
+        _activeSessionId = null; // prevent stale OnChatCompleted callbacks from passing the session-ID guard
 
         if (_isChatActive && !string.IsNullOrEmpty(_selectedAgentId))
         {

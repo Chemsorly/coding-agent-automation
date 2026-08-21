@@ -410,6 +410,21 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { repoConfig, brainConfig });
 
+        // Add a matching profile so the agent config is resolved
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "default-profile",
+                    DisplayName = "Default",
+                    Enabled = true,
+                    MatchLabels = Array.Empty<string>(),
+                    AgentProviderConfigId = "agent-cfg",
+                    Priority = 1
+                }
+            });
+
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>((configs, _, _, _) => capturedConfigs = configs)
@@ -475,11 +490,26 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     {
         RegisterIdleAgent(labels: KiroDotnetDotnet10Labels);
 
-        // No profiles configured — empty list (default mock)
+        // New behavior (spec 041-045): a matching AgentProfile is required for agent config resolution.
+        // Add a profile that covers the agent's labels so the agent config is injected.
         var kiroConfig = new ProviderConfig { Id = "kiro-agent-cfg", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "KiroCli", RequiredLabels = new List<string> { "kiro" } };
 
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { kiroConfig });
+
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "profile-kiro",
+                    DisplayName = "Kiro",
+                    Enabled = true,
+                    MatchLabels = Array.Empty<string>(),
+                    AgentProviderConfigId = "kiro-agent-cfg",
+                    Priority = 1
+                }
+            });
 
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))

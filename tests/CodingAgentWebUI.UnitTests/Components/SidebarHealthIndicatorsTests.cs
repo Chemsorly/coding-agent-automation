@@ -218,7 +218,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
         var agentItem = items.First(i => i.TextContent.Contains("Agents"));
         var dot = agentItem.QuerySelector(".infra-health-dot")!;
         Assert.Contains("dot-healthy", dot.ClassList.ToString());
-        Assert.Contains("2/2", agentItem.TextContent);
+        Assert.Contains("Agents: 2", agentItem.TextContent);
     }
 
     [Fact]
@@ -247,7 +247,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
         var agentItem = items.First(i => i.TextContent.Contains("Agents"));
         var dot = agentItem.QuerySelector(".infra-health-dot")!;
         Assert.Contains("dot-warning", dot.ClassList.ToString());
-        Assert.Contains("1/2", agentItem.TextContent);
+        Assert.Contains("Agents: 1", agentItem.TextContent);
     }
 
     [Fact]
@@ -262,7 +262,9 @@ public class SidebarHealthIndicatorsTests : BunitContext
         }, "conn-1");
         registry.TransitionStatus("agent-1", AgentStatus.Disconnected);
 
-        RegisterServices(CreateHealthService(dbConfigured: true), registry);
+        // Use Redis to keep section visible when all agents are disconnected
+        // (section requires connectedCount>0 OR dbStatus!=null OR redisStatus!=null)
+        RegisterServices(CreateHealthService(redisConfigured: true), registry);
 
         var cut = Render<SidebarHealthIndicators>();
 
@@ -270,7 +272,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
         var agentItem = items.First(i => i.TextContent.Contains("Agents"));
         var dot = agentItem.QuerySelector(".infra-health-dot")!;
         Assert.Contains("dot-unhealthy", dot.ClassList.ToString());
-        Assert.Contains("0/1", agentItem.TextContent);
+        Assert.Contains("Agents: 0", agentItem.TextContent);
     }
 
     [Fact]
@@ -353,6 +355,6 @@ public class SidebarHealthIndicatorsTests : BunitContext
         var agentItem = items.First(i => i.TextContent.Contains("Agents"));
         var dot = agentItem.QuerySelector(".infra-health-dot")!;
         Assert.Contains("dot-inactive", dot.ClassList.ToString());
-        Assert.Contains("0/0", agentItem.TextContent);
+        Assert.Contains("Agents: 0", agentItem.TextContent);
     }
 }

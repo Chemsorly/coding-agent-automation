@@ -261,6 +261,73 @@ public sealed class ReconciliationLoopTests
         };
     }
 
+    // ─── Chat job protection ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CleanupOrphans_WhenJobIsChatJob_ShouldNotDelete()
+    {
+        // Chat jobs have caa/chat-session-id but NO caa/work-item-id.
+        // CleanupOrphansAsync must not delete them — they are managed by ChatJobDispatcher.
+        var chatJob = MakeChatJob("caa-chat-6469b528", sessionId: Guid.NewGuid());
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [chatJob] });
+
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CleanupOrphans_WhenMixedChatAndOrphanJobs_ShouldOnlyDeleteOrphan()
+    {
+        // One chat job (must survive) + one orphaned impl job (must be deleted)
+        var chatJob = MakeChatJob("caa-chat-aabbccdd", sessionId: Guid.NewGuid());
+        var orphanJob = MakeJob("caa-agent-orphan000000", workItemId: null, active: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [chatJob, orphanJob] });
+
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        // Only the orphan impl job should be deleted
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            "caa-agent-orphan000000", _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            "caa-chat-aabbccdd", It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    private static V1Job MakeChatJob(string name, Guid sessionId)
+    {
+        var labels = new Dictionary<string, string>
+        {
+            ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+            ["app.kubernetes.io/component"] = "agent-job",
+            ["caa/chat-session-id"] = sessionId.ToString(),
+            ["caa/chat-selector"] = "dotnet10.opencode"
+            // intentionally NO caa/work-item-id — this is what distinguishes chat jobs
+        };
+
+        return new V1Job
+        {
+            Metadata = new V1ObjectMeta { Name = name, Labels = labels },
+            Spec = new V1JobSpec
+            {
+                Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } }
+            },
+            Status = new V1JobStatus { Active = 1 }
+        };
+    }
+
     // ─── Dispatched timeout lower-boundary guard ──────────────────────────────
 
     [Fact]

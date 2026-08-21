@@ -16,13 +16,10 @@
                 <span class="sidebar-health-label">Database</span>
             </span>
         }
-        @if (_redisStatus is not null)
-        {
         <span class="sidebar-health-item" title="@RedisTooltip">
             <span class="infra-health-dot @RedisDotClass"></span>
             <span class="sidebar-health-label">Redis</span>
         </span>
-        }
         @if (_connectedCount > 0 || _dbStatus is not null || _redisStatus is not null)
         {
             <span class="sidebar-health-item" title="@AgentTooltip">

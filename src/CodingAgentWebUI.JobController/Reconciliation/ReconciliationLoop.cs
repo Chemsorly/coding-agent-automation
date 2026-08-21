@@ -227,6 +227,11 @@ public sealed class ReconciliationLoop
         {
             if (ct.IsCancellationRequested) break;
 
+            // Chat jobs are managed by ChatJobDispatcher, not by work items.
+            // They carry caa/chat-session-id and must never be deleted by orphan cleanup.
+            if (job.Metadata?.Labels?.ContainsKey("caa/chat-session-id") == true)
+                continue;
+
             var workItemId = ParseWorkItemId(job);
             if (workItemId.HasValue && activeIds.Contains(workItemId.Value))
                 continue; // job has a live work item — skip
