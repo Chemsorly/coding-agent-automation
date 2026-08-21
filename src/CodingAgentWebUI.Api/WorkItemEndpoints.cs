@@ -556,7 +556,7 @@ public static class WorkItemEndpoints
         var item = await db.WorkItems
             .AsNoTracking()
             .Where(w => w.Id == id)
-            .Select(w => new { w.IssueProviderConfigId, w.IssueIdentifier, w.TaskType })
+            .Select(w => new { w.IssueProviderConfigId, w.IssueIdentifier, w.TaskType, w.Payload })
             .FirstOrDefaultAsync(ct);
 
         if (item is null)
@@ -564,14 +564,30 @@ public static class WorkItemEndpoints
 
         if (labelSwapService is not null)
         {
-            var providerConfigId = new ProviderConfigId(item.IssueProviderConfigId);
-            var issueIdentifier = new IssueIdentifier(item.IssueIdentifier);
-            var targetKind = item.TaskType == WorkItemTaskType.Review
-                ? LabelTargetKind.PullRequest
-                : LabelTargetKind.Issue;
+            var isReview = item.TaskType == WorkItemTaskType.Review;
+            var targetKind = isReview ? LabelTargetKind.PullRequest : LabelTargetKind.Issue;
+
+            // A PR label swap must go through the *repository* provider — SwapPrLabelAsync resolves
+            // the config as ProviderKind.Repository — but the work item only stores its issue
+            // provider config as a column. For a review the repo provider lives in the serialized
+            // JobDistributionRequest payload (same source the assignment endpoint reads), so pull
+            // it from there. Passing the issue config id would make the repo lookup miss and the
+            // swap silently no-op, which is why review PRs never got the in-progress marker.
+            var providerConfigIdValue = item.IssueProviderConfigId;
+            if (isReview && item.Payload is not null)
+            {
+                var payload = JsonSerializer.Deserialize<JobDistributionRequest>(
+                    item.Payload, PipelineJsonOptions.Default);
+                if (!string.IsNullOrEmpty(payload?.RepoProviderConfigId))
+                    providerConfigIdValue = payload.RepoProviderConfigId;
+            }
 
             await labelSwapService.SwapLabelWithRetryAsync(
-                id, providerConfigId, issueIdentifier, targetKind, ct);
+                id,
+                new ProviderConfigId(providerConfigIdValue),
+                new IssueIdentifier(item.IssueIdentifier),
+                targetKind,
+                ct);
         }
 
         return TypedResults.Ok();

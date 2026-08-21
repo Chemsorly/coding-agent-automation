@@ -138,15 +138,18 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
         await monitoringPage.NavigateAsync();
 
-        // Click the row for *this run*, addressed by its id.
+        // Click this run's row in the Active Runs table.
         //
-        // Three tables on this page use tr.monitoring-row-clickable — agents, active runs, recent
-        // runs — so the bare selector resolves to whichever renders first, the agents table. That
-        // used to be reliably empty (the monolith's agent registry had no writer), which is the
-        // only reason clicking the first match ever hit a run; now that the page shows real agents
-        // it clicks one of them, which opens no modal.
+        // Three tables on this page share tr.monitoring-row-clickable — active runs, agents, recent
+        // runs — and only the active-runs row's click opens the run-detail modal (the agent row's
+        // opens an agent modal). Worse, the run's own GUID appears in both the active-runs RUN ID
+        // cell and the agent row's ACTIVE JOB cell, so filtering by run id alone still matches the
+        // agent row. Scope to the Active Runs <section> so neither the agents table nor the id
+        // collision can misdirect the click. This used to "work" only because the agents table was
+        // always empty (the monolith registry had no writer); now it renders real agents.
         var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "71").RunId;
-        var runRow = Page.Locator("tr.monitoring-row-clickable", new() { HasTextString = runId });
+        var runRow = Page.Locator("section:has(h2:has-text('Active Runs')) tr.monitoring-row-clickable")
+            .Filter(new() { HasTextString = runId });
         await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
         await runRow.First.ClickAsync();
 
@@ -212,13 +215,13 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "72" && r.CurrentStep == PipelineStep.GeneratingCode));
 
-        // Navigate to monitoring and open the modal for this run. Addressed by run id because the
-        // agents table shares the row class and renders first — see the note in
-        // Monitoring_RunDetailModal_OpensOnRowClick.
+        // Navigate to monitoring and open the modal for this run, scoped to the Active Runs
+        // section — see the note in Monitoring_RunDetailModal_OpensOnRowClick.
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
         await monitoringPage.NavigateAsync();
         var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "72").RunId;
-        var runRow = Page.Locator("tr.monitoring-row-clickable", new() { HasTextString = runId });
+        var runRow = Page.Locator("section:has(h2:has-text('Active Runs')) tr.monitoring-row-clickable")
+            .Filter(new() { HasTextString = runId });
         await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
         await runRow.First.ClickAsync();
         await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });

@@ -61,7 +61,14 @@ internal static class E2ETestDefaults
         Environment.SetEnvironmentVariable("WorkDistribution__CredentialPools__Kiro__0", "fake-pvc-0");
         Environment.SetEnvironmentVariable("WorkDistribution__CredentialPools__Kiro__1", "fake-pvc-1");
         Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds", "7200");
-        Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds", "30");
+        // 10s, not the production 30s. In the harness the fake agent connects within one 2s poll
+        // of the Job being created, so a working dispatch never approaches this — but a *broken*
+        // one waits it out, and at ten chat tests that is the difference between 100s and 300s of
+        // pure timeout. A run where chat regresses should fail the pod-connect assertions well
+        // inside the 15-minute CI budget rather than blowing it, which is exactly what happened
+        // (the cancelled CI runs were still grinding through 30s ChatPodTimeoutExceptions at 12
+        // minutes). ChatJobDispatcher clamps this to a floor, so it cannot be set uselessly low.
+        Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds", "10");
         Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds", "10");
     }
 

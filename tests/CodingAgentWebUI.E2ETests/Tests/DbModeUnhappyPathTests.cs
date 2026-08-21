@@ -241,19 +241,15 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         // Disconnect IMMEDIATELY without accepting
         await agent.DisposeAsync();
 
-        // Assert: eventually the run is failed (heartbeat timeout + grace period)
-        // HeartbeatSweepIntervalSeconds=5 (set in InMemoryConfigurationStore defaults).
-        var failedItem = await WaitForWorkItemStatusAsync(
-            workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(20));
-        Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
-
-        // Assert: agent is removed or marked Disconnected in registry.
-        //
-        // Polled rather than read once. Disposing the client closes the socket; the hub's
-        // OnDisconnectedAsync — which is what writes Disconnected — runs on the server afterwards,
-        // and the work item above can reach Failed before it does. Reading the status immediately
-        // caught the agent still Idle, which looked like the registry never learned about the
-        // disconnect at all.
+        // Assert the disconnect reaches the registry — and check this BEFORE the run fails, not
+        // after. The two events are causally linked and the ordering is the whole subtlety here:
+        // the hub's OnDisconnectedAsync marks the agent Disconnected, the fake job controller sees
+        // that and (after the grace period) fails the work item, and failing it runs through
+        // RunLifecycleManager, which clears the agent's registry entry back to Idle. So the
+        // Disconnected state exists only in the window between the disconnect and the failure.
+        // The original test waited for Failed first and then looked for Disconnected — by which
+        // point the failure cleanup had already reset the agent to Idle, which is exactly the
+        // "got: Idle" it kept reporting.
         var registry = Fixture.AgentRegistry;
         AgentEntry? agentEntry = null;
         await WaitUntilAsync(
@@ -267,6 +263,12 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         Assert.True(
             agentEntry is null || agentEntry.Status == AgentStatus.Disconnected,
             $"Agent should be null or Disconnected, got: {agentEntry?.Status}");
+
+        // And the run eventually fails (the fake job controller reconciles the dead pod after the
+        // grace period).
+        var failedItem = await WaitForWorkItemStatusAsync(
+            workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(20));
+        Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
     }
 
 

@@ -135,9 +135,11 @@ public sealed class PipelineRunEndpointTests
     {
         SeedRun();
 
-        // Export is anonymous — no auth header needed
-        var anonClient = _factory.CreateClient();
-        var response = await anonClient.GetAsync("/api/export/runs.json");
+        // Export requires operator authentication — the payload carries issue identifiers and
+        // project names, so it is not exposed to unauthenticated callers (see the endpoint's
+        // RequireAuthorization(Operator)). This test used an anonymous client and asserted 200,
+        // which contradicted that guard; it now authenticates like the sibling export tests.
+        var response = await _client.GetAsync("/api/export/runs.json");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var contentDisposition = response.Content.Headers.ContentDisposition;

@@ -1,7 +1,7 @@
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.E2ETests.Tests;

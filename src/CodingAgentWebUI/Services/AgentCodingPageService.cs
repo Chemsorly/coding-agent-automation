@@ -390,16 +390,23 @@ public class AgentCodingPageService
     {
         PropagateProviderContext();
         HideOtherDrawers(DrawerTabPr);
+        // Refresh the active-work-item set before opening, exactly as OpenIssueDrawerAsync does.
+        // The PR drawer greys out and badges rows that already have an in-flight work item, and
+        // that check reads the same ActiveIssues set the issue drawer maintains — which starts
+        // empty on a fresh circuit. Without this refresh the PR drawer never shows a PR as already
+        // being processed until something else happens to populate the set.
+        await RefreshActiveIssuesAsync();
         return await _prReviewDrawerService.OpenPrDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
     public void ClosePrDrawer() => _prReviewDrawerService.ClosePrDrawer();
 
-    public Task<string?> SwitchToPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
+    public async Task<string?> SwitchToPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         PropagateProviderContext();
         HideOtherDrawers(DrawerTabPr);
-        return _prReviewDrawerService.SwitchToPrDrawerAsync(templateId, Templates, notifyStateChanged);
+        await RefreshActiveIssuesAsync();
+        return await _prReviewDrawerService.SwitchToPrDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)

@@ -6,7 +6,8 @@ namespace CodingAgentWebUI.Api;
 
 /// <summary>
 /// Minimal API endpoints for pipeline run history.
-/// All endpoints under /api/pipeline-runs require AgentApiKey except the anonymous export.
+/// Every endpoint here requires authentication: /api/pipeline-runs and the /api/export/runs.json
+/// download both carry issue identifiers and project names, so the export is operator-gated too.
 /// </summary>
 public static class PipelineRunEndpoints
 {
@@ -100,24 +101,40 @@ public static class PipelineRunEndpoints
     /// GET /api/pipeline-runs/{runId}
     /// Returns a single pipeline run summary by GUID.
     /// 200 or 404.
+    ///
+    /// <para>
+    /// Falls back to an in-flight run from <see cref="IOrchestratorRunService"/> when the id is not
+    /// in history, mirroring the <c>includeActive</c> path on the list endpoint above. Both must
+    /// agree: the monitoring page lists active runs from the merged list, and the run-detail modal
+    /// then fetches the clicked run through here. Without the fallback, clicking a running job 404s
+    /// and the modal — which only renders once it has a non-null summary — never opens.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> GetRunById(
         Guid runId,
         IPipelineRunHistoryService history,
+        IOrchestratorRunService runService,
         CancellationToken ct = default)
     {
         var summary = await history.GetRunAsync(runId, ct);
+
+        summary ??= runService.GetActiveRuns()
+            .FirstOrDefault(r => string.Equals(r.RunId, runId.ToString(), StringComparison.OrdinalIgnoreCase))
+            ?.ToSummary();
+
         if (summary is null)
             return TypedResults.NotFound();
 
         return TypedResults.Ok(summary);
     }
 
-    // ── GET /api/export/runs.json — anonymous, faithful port of monolith ───
+    // ── GET /api/export/runs.json — operator-authenticated download ───
 
     /// <summary>
     /// GET /api/export/runs.json
-    /// Anonymous file download of run history as JSON.
+    /// Operator-authenticated file download of run history as JSON. The monolith served this
+    /// behind its own login wall; the split API is separately reachable, so the export is gated on
+    /// <see cref="ApiAuthPolicies.Operator"/> (see the mapping) rather than left anonymous.
     /// Faithful port of src/CodingAgentWebUI/EndpointRegistration.cs:30.
     /// feedbackOnly filter applied in-memory AFTER paging (matches monolith behaviour).
     /// TODO(Spec 046): reconcile with GET /api/pipeline-runs which filters feedbackOnly DB-side.
