@@ -39,7 +39,7 @@ public sealed class FetchIssueStepTests
     {
         // FailRunAsync calls these Callbacks methods — set up default stubs
         _callbacks
-            .Setup(c => c.SwapAgentLabel(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _callbacks
             .Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()))
