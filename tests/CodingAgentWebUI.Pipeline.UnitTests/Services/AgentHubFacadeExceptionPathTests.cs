@@ -167,18 +167,6 @@ public sealed class AgentHubFacadeExceptionPathTests : IDisposable
         result.Should().BeNull();
     }
 
-    // ── Signal ────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void Signal_IsNoOp_DoesNotThrow()
-    {
-        var facade = BuildFacade();
-
-        var act = () => facade.Signal();
-
-        act.Should().NotThrow();
-    }
-
     // ── Test Infrastructure ─────────────────────────────────────────────
 
     /// <summary>

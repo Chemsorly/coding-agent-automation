@@ -69,8 +69,8 @@ public sealed class LeaderElectionServiceTests : IDisposable
     public async Task StopAsync_WhenNotStarted_DoesNotThrow()
     {
         using var sut = new LeaderElectionService(DefaultOptions());
-        // StopAsync before StartAsync — _serviceCts is null, should return early
-        await sut.StopAsync(CancellationToken.None);
+        var ex = await Record.ExceptionAsync(() => sut.StopAsync(CancellationToken.None));
+        ex.Should().BeNull("StopAsync before StartAsync must be a safe no-op");
     }
 
     [Fact]
@@ -78,7 +78,8 @@ public sealed class LeaderElectionServiceTests : IDisposable
     {
         using var sut = new LeaderElectionService(DefaultOptions());
         await sut.StartAsync(CancellationToken.None);
-        await sut.StopAsync(CancellationToken.None);
+        var ex = await Record.ExceptionAsync(() => sut.StopAsync(CancellationToken.None));
+        ex.Should().BeNull();
     }
 
     // ── Cancellation via CancellationToken ────────────────────────────────────
@@ -90,8 +91,8 @@ public sealed class LeaderElectionServiceTests : IDisposable
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
-        // Should complete without hanging even with a cancelled token
-        await sut.StartAsync(cts.Token);
+        var ex = await Record.ExceptionAsync(() => sut.StartAsync(cts.Token));
+        ex.Should().BeNull("non-K8s path must complete without hanging on a cancelled token");
     }
 
     // ── Events ────────────────────────────────────────────────────────────────
@@ -128,8 +129,8 @@ public sealed class LeaderElectionServiceTests : IDisposable
     {
         var sut = new LeaderElectionService(DefaultOptions());
         sut.Dispose();
-        // Second dispose should not throw (GC.SuppressFinalize and null CTS)
-        sut.Dispose();
+        var ex = Record.Exception(() => sut.Dispose());
+        ex.Should().BeNull("second Dispose must be a safe no-op");
     }
 
     [Fact]
@@ -137,7 +138,8 @@ public sealed class LeaderElectionServiceTests : IDisposable
     {
         var sut = new LeaderElectionService(DefaultOptions());
         await sut.StartAsync(CancellationToken.None);
-        sut.Dispose();
+        var ex = Record.Exception(() => sut.Dispose());
+        ex.Should().BeNull();
     }
 
     // ── Options / identity resolution ─────────────────────────────────────────
@@ -151,7 +153,8 @@ public sealed class LeaderElectionServiceTests : IDisposable
             o.Namespace = "custom-ns";
             o.Identity = "my-pod";
         }));
-        await sut.StartAsync(CancellationToken.None);
+        var ex = await Record.ExceptionAsync(() => sut.StartAsync(CancellationToken.None));
+        ex.Should().BeNull();
     }
 
     public void Dispose()

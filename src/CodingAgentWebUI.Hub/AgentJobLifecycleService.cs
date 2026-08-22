@@ -93,9 +93,6 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             agent.ActiveJobId = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-
-            // Signal drain service — agent is idle and may pick up a different job
-            _facade.Signal();
         }
     }
 

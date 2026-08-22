@@ -43,7 +43,9 @@ curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
   https://old-instance:8090/api/config/export
 ```
 
-The response is a JSON file download (`pipeline-config-export.json`) containing all configuration as a single bundle. **Provider secrets (Settings and Secrets dictionary values) are redacted in the export** — they appear as `"****"`. Credentials must be re-entered after import.
+The response is a JSON file download (`pipeline-config-export.json`) containing all configuration as a single bundle. **Provider secrets (Settings and Secrets dictionary values) are exported unredacted** — the bundle contains live credentials. This is intentional: the import endpoint writes the bundle verbatim, so a redacted export would restore every credential as `"****"` and silently break every provider. The endpoint is operator-tier gated; the UI warns before download.
+
+> **Security note:** Treat the export file as a secret. Delete it after a successful import. Do not commit it to version control. If you need to archive it, encrypt it at rest.
 
 ### Step 2 — Import into the new instance
 

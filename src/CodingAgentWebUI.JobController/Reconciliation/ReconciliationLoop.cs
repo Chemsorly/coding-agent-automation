@@ -252,7 +252,6 @@ public sealed class ReconciliationLoop
         if (!workItemId.HasValue) return;
 
         var phase = GetJobPhase(job);
-        var jobName = job.Metadata?.Name ?? "";
 
         switch (phase)
         {

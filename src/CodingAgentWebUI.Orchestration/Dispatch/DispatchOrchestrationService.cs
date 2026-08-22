@@ -86,10 +86,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var repoProviderId = request.RepoProviderId;
         var brainProviderId = request.BrainProviderId;
         var pipelineProviderId = request.PipelineProviderId;
-        var initiatedBy = request.InitiatedBy;
         var requiredLabels = request.RequiredLabels;
         var project = request.Project;
-        var runType = request.RunType;
         // Resolve profile using required labels (no agent entry — DB mode has no connected agents)
         var profile = await ResolveProfileByLabelsAsync(requiredLabels, ct);
         if (profile is null)

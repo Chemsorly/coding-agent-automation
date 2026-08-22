@@ -13,6 +13,21 @@ The first three workflows share the same dispatch mechanism, label lifecycle, an
 
 The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService` prepares each request (resolves providers, vends tokens), then `KubernetesWorkDistributor` creates a `WorkItem` row. The Job Controller polls for pending WorkItems, claims each one, and creates a K8s Job named `caa-agent-{11 hex chars}` (e.g. `caa-agent-7f3a9b2e1c4`) — the first 21 characters of `"caa-agent-" + workItemId.ToString("N")`. The PipelineRun is created by the Pipeline API's `POST /api/work-items` handler. The resulting ephemeral agent pod picks up the full assignment via `GET /api/work-items/{id}/assignment` and reports terminal status via `POST /api/work-items/{id}/status`.
 
+### Dispatch Priority
+
+When multiple WorkItems are pending and an agent becomes available, the Job Controller selects the highest-priority item first. Priority order (lowest number = dispatched first):
+
+| Priority | Run Type | Notes |
+|----------|----------|-------|
+| 0 (highest) | Review | PR review runs |
+| 1 | Decomposition / DecompositionAnalysis | Both epic decomposition phases |
+| 2 | Implementation | Standard issue implementation |
+| 3 (lowest) | Consolidation | Brain / refactoring / harness runs |
+
+Within the same priority tier, FIFO order is preserved (oldest enqueue time dispatched first).
+
+> **Note:** Consolidation `WorkItem` rows carry `PipelineRunType.Implementation` at the model level and are distinguished by `TaskType == Consolidation`. This is an internal data model detail — it has no effect on dispatch priority or querying from the UI.
+
 A single ID flows end-to-end:
 
 ```
@@ -104,7 +119,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **CloningRepository** | Repository cloned to a fresh workspace directory |
 | **RunningEnvironmentSetup** | Executes provider-defined setup steps (e.g., package restore, auth configuration) with injected secrets. Non-fatal steps abort the run on non-zero exit |
 | **SyncingBrainRepoPreRun** | Brain repository synced into workspace (if configured). Non-fatal on failure |
-| **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId}`) |
+| **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId[..8]}` — the run ID is truncated to its first 8 characters) |
 | **VerifyingBaseline** | Baseline health check — runs build/tests on the default branch before the agent writes code. Catches broken base branches early. Skipped when `BaselineHealthCheckEnabled` is false |
 | **AnalyzingCode** | Agent analyzes the issue and codebase, writes `analysis.md` and `analysis-assessment.json`. Before analysis begins, the pipeline downloads images from the issue/PR body (if `EnableIssueImageExtraction` is true and the agent model supports vision input) and checks for analysis staleness — if the issue body changed, the agent previously errored, or enough commits landed since the last analysis (`AnalysisCommitThreshold`), a fresh analysis is forced |
 | **ReviewingAnalysis** | Adversarial review of the analysis — validates completeness, flags gaps (when `AnalysisReviewEnabled` is true) |
@@ -410,9 +425,9 @@ The existing `Enabled` property acts as a master switch — when `false`, all wo
 
 Settings are read at the start of each poll cycle, allowing runtime changes via the configuration UI without restarting the loop.
 
-### Dispatch Priority
+### Poll-Cycle Scheduler Priority
 
-When multiple work types are active in the same cycle, the scheduler uses a fixed priority order — not round-robin — to decide which queue to serve first:
+When multiple work types are queued in the same poll cycle, the loop uses a fixed priority order — not round-robin — to decide which queue to serve first. This is distinct from the [WorkItem queue priority](#dispatch-priority) used by the Job Controller:
 
 | Priority | Work Type | Notes |
 |----------|-----------|-------|
@@ -420,7 +435,7 @@ When multiple work types are active in the same cycle, the scheduler uses a fixe
 | 2 | Decomposition | Phase 1 and Phase 2 epics |
 | 3 | Issues (Implementation) | Dispatched last |
 
-The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs (brain consolidation, refactoring detection, harness suggestions) are handled by a separate `ConsolidationWorkItemDispatchService` and do not participate in this scheduler.
+The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are handled by a separate `ConsolidationWorkItemDispatchService` and do not participate in this scheduler.
 
 ### Dispatch Budget Sharing
 

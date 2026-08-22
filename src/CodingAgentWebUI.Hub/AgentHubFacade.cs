@@ -152,12 +152,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _dispatcher.MarkIssueComplete(issueIdentifier, issueProviderConfigId);
 
     /// <inheritdoc />
-    public void Signal()
-    {
-        // Permanent no-op — queue dispatch was removed in Spec 041.
-    }
-
-    /// <inheritdoc />
     public async Task<int> GetWorkItemRetryCountAsync(JobId jobId, CancellationToken ct)
     {
         if (_workItemTransition is null || !Guid.TryParse(jobId.Value, out var workItemId))

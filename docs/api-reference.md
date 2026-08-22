@@ -144,6 +144,7 @@ Report a status transition for a work item. Agents call this to indicate progres
 | `AgentError` | Agent reported an error during execution |
 | `TokenRefreshFailure` | Token refresh failed, lost API access |
 | `ExitCodeFailure` | Agent process exited with non-zero code |
+| `QualityGateExhausted` | All quality gate retries exhausted — run finalized as a draft PR |
 
 If `status` is `Failed` and no `failureReason` is provided, defaults to `AgentError`.
 
@@ -307,7 +308,7 @@ Download pipeline run history as a JSON file.
 
 | Property | Value |
 |----------|-------|
-| **Auth** | None (anonymous) |
+| **Auth** | `OperatorApiKey` (required — agent-derived keys are rejected with 403) |
 | **Response Content-Type** | `application/json` |
 | **Response filename** | `pipeline-runs-{date}.json` (e.g., `pipeline-runs-2026-07-15.json`) |
 
@@ -418,6 +419,6 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST | `/api/work-items/{id}/status` | AgentApiKey | Report status transition |
 | GET | `/api/config/export` | OperatorApiKey | Download config bundle |
 | POST | `/api/config/import` | OperatorApiKey | Upload config bundle (destructive) |
-| GET | `/api/export/runs.json` | Anonymous | Download run history |
+| GET | `/api/export/runs.json` | OperatorApiKey | Download run history |
 | GET | `/healthz` | Anonymous | Liveness probe |
 | GET | `/readyz` | Anonymous | Readiness probe |

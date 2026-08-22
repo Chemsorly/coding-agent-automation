@@ -223,7 +223,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         // Signal is NOT called — agent sends AgentReady after clearing its local slot
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -242,7 +241,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         // Signal is NOT called — agent sends AgentReady after clearing its local slot
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -336,7 +334,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
         await hub.JobRejected("job-1", "workspace full");
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
-        _mockFacade.Verify(f => f.Signal(), Times.Once);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -514,7 +511,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockConsolidation.Verify(s => s.UpdateRunAsync((RunId)"crun-1", ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None), Times.Once);
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
-        _mockFacade.Verify(f => f.Signal(), Times.Once);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -1855,7 +1851,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHub("conn-1");
         var result = hub.AgentReady((AgentId)"agent-1");
 
-        _mockFacade.Verify(f => f.Signal(), Times.Once);
         return result;
     }
 
@@ -1869,7 +1864,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHub("conn-1");
         var result = hub.AgentReady((AgentId)"agent-2");
 
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
         return result;
     }
 
@@ -1881,7 +1875,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHub("conn-1");
         var result = hub.AgentReady((AgentId)"agent-1");
 
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
         return result;
     }
 
@@ -2104,9 +2097,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         // Agent should still transition to Idle (orchestrator-side registry)
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
-
-        // Signal MUST NOT be called — the agent will send AgentReady after clearing its slot
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
     }
 
     #endregion

@@ -383,6 +383,13 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// counter. Messages exceeding max drain attempts are dropped. After drain,
     /// the job slot is released if the buffer is empty.
     /// </remarks>
+    /// <summary>
+    /// Returns <c>true</c> when a buffered message has exhausted its retry budget
+    /// and should be dropped rather than re-buffered.
+    /// </summary>
+    internal static bool ShouldDropBufferedMessage(BufferedCriticalMessage msg, int maxDrainAttempts)
+        => msg.DrainAttempts >= maxDrainAttempts;
+
     internal async Task DrainBufferAsync()
     {
         if (!_completionReporter.HasPendingMessages)
@@ -396,7 +403,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         for (var i = 0; i < messages.Count; i++)
         {
             var msg = messages[i];
-            if (msg.DrainAttempts >= maxDrainAttempts)
+            if (ShouldDropBufferedMessage(msg, maxDrainAttempts))
             {
                 _logger.Warning(
                     "Dropping buffered message after {MaxAttempts} drain attempts: {MessageType} for job {JobId}",

@@ -142,7 +142,6 @@ public sealed class AgentHubConsolidationTests
         await hub.ReportConsolidationComplete(result);
 
         _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
     }
 
     [Fact]
@@ -242,7 +241,6 @@ public sealed class AgentHubConsolidationTests
         await hub.ReportConsolidationComplete(result);
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
-        _mockFacade.Verify(f => f.Signal(), Times.Once);
         agent.ActiveJobId.Should().BeNull();
     }
 

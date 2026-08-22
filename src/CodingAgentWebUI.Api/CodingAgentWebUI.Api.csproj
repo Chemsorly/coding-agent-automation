@@ -5,6 +5,12 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgentWebUI.Orchestration.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\CodingAgentWebUI.Hub\CodingAgentWebUI.Hub.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.Orchestration\CodingAgentWebUI.Orchestration.csproj" />

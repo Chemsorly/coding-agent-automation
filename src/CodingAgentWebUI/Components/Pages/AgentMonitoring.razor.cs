@@ -378,12 +378,6 @@ public partial class AgentMonitoring : IAsyncDisposable
         StateHasChanged();
     }
 
-    private async Task CancelAgentRun(PipelineRun run)
-    {
-        await PageService.CancelAgentRunAsync(run);
-        StateHasChanged();
-    }
-
     private async Task RemoveFromQueue(string issueIdentifier, string issueProviderId)
     {
         await PageService.RemoveFromQueueAsync(issueIdentifier, issueProviderId);
@@ -422,10 +416,6 @@ public partial class AgentMonitoring : IAsyncDisposable
     // ── Resolvers (delegate to PageService) ──
 
     private ProviderConfig? ResolveProvider(string? configId) => PageService.ResolveProvider(configId);
-
-    private string ResolveProfileName(string profileId) => PageService.ResolveProfileName(profileId);
-
-    private string ResolveQgcName(string qgcId) => PageService.ResolveQgcName(qgcId);
 
     // ── Sub-component callback adapters ──
 

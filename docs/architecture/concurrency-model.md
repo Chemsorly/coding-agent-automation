@@ -38,6 +38,7 @@ boundaries.
 │  WorkItemEndpoints, ConfigEndpoints, PipelineRunEndpoints                  │
 │  DatabaseMaintenanceService, WorkItemMetricsBackgroundService              │
 │  ConsolidationWorkItemDispatchService                                       │
+│  LeaderElection (Lease: caa-{release}-api-lock)                            │
 └─────────────────────────────────────────────────────────────────────────────┘
          │  POST /api/work-items (claim)   ▲ hub: ReportOutputLines etc.
          ▼                                 │

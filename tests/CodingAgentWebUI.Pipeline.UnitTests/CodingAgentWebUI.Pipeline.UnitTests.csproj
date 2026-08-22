@@ -37,6 +37,7 @@
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Agent\CodingAgentWebUI.Agent.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Agent.KiroCli\CodingAgentWebUI.Agent.KiroCli.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Agent.OpenCode\CodingAgentWebUI.Agent.OpenCode.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.Api\CodingAgentWebUI.Api.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Api.Client\CodingAgentWebUI.Api.Client.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />

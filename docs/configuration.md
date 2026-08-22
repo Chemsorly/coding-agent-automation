@@ -76,6 +76,18 @@ These control in-memory bounded data structures for each pipeline run. Rarely ne
 | `decompositionTimeout` | 00:15:00 | Timeout for decomposition phases (separate from `agentTimeout`) |
 | `maxOpenIssuesForContext` | 50 | Maximum open issues downloaded for deduplication context |
 
+### Consolidation Dispatch
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxConsolidationDispatchRetries` | 5 | Maximum attempts the drain service will make to dispatch a consolidation job to an agent before marking the run as `Failed`. Consolidation jobs are not subject to the standard quality gate retry budget. Configurable per project. |
+
+### Kubernetes
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `modelFetchTimeoutSeconds` | 120 | Timeout in seconds for the model-fetch K8s Job (`caa-models-*`). Increase on slow setups where image pull or pod scheduling takes longer than the default. Range: 30–600. |
+
 ## Quality Gate Settings
 
 Quality gates are configured per-stack via Quality Gate Configurations (see [Label Routing](label-routing.md#quality-gate-configurations)). Each QGC has these fields:
@@ -87,6 +99,7 @@ Quality gates are configured per-stack via Quality Gate Configurations (see [Lab
 | `coverageThreshold` | Minimum code coverage percentage (0-100). Set to `null` or `0` to disable coverage checks. |
 | `coverageReportFormat` | `cobertura` or `jacoco` — determines how coverage reports are parsed |
 | `coverageReportPaths` | Explicit file globs for coverage reports. When not specified, convention-based discovery is used. |
+| `processTimeoutSeconds` | Maximum execution time in seconds for quality gate processes (compilation, tests). Default: `600` (10 minutes). Processes exceeding this limit are killed (entire process tree) and the gate is reported as failed. |
 
 ## Code Review Settings
 
@@ -173,6 +186,7 @@ Templates are managed in the **Agent Coding** page. When creating or viewing a t
 | ReviewEnabled | No | Whether this template processes PRs for code review (default: true) |
 | DecompositionEnabled | No | Whether this template processes epics for decomposition (default: false) |
 | HousekeepingEnabled | No | Whether this template manages agent:done PRs for branch updates and stale cleanup (default: false) |
+| BrainReadOnly | No | When `true`, forces brain read-only mode for this template regardless of global and project-level settings. **One-directional override** — can only be set to `true`; a template cannot re-enable brain writes if the project has disabled them. Default: `false`. |
 
 ## Environment Variables
 
@@ -234,7 +248,7 @@ A background `DatabaseMaintenanceService` periodically deletes terminal records 
 | `DbRetentionSweepInterval` | `24h` | Interval between maintenance cycles. Minimum 1 minute. |
 | `WorkDistribution:Reconciliation:StaleRetentionDays` | `7` | Days to retain terminal `WorkItems` (`Succeeded`, `Failed`, `Cancelled`) before deletion. Set via env var. |
 
-> **Note:** The `WorkDistribution:Reconciliation:PipelineRunRetentionDays`, `ConsolidationRunRetentionDays`, and `MaintenanceIntervalHours` config keys no longer exist. They were replaced by `PipelineRunRetentionCount`, `WorkItemRetentionCount`, and `DbRetentionSweepInterval` in `PipelineConfiguration`.
+> **Note:** The `WorkDistribution:Reconciliation:PipelineRunRetentionDays`, and `MaintenanceIntervalHours` config keys no longer exist. They were replaced by `PipelineRunRetentionCount`, `WorkItemRetentionCount`, and `DbRetentionSweepInterval` in `PipelineConfiguration`. `ConsolidationRunRetentionDays` still exists on `ReconciliationServiceOptions` (default: 90 days) and controls how long consolidation run history is kept.
 
 The maintenance service runs on first startup and then on the configured interval. In multi-replica deployments it gates behind leader election so only one replica runs cleanup at a time.
 

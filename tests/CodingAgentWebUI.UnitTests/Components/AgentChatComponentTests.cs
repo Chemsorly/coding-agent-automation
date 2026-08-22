@@ -10,6 +10,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -71,6 +72,9 @@ public class AgentChatComponentTests : BunitContext
 
         // IPipelineApiAgentClient — no-op mock for bUnit rendering
         Services.AddSingleton(Mock.Of<IPipelineApiAgentClient>());
+
+        // IChatPromptBuilder — required after ChatPromptBuilder extraction
+        Services.AddSingleton<IChatPromptBuilder>(new ChatPromptBuilder());
 
         // IConfiguration required by AgentChat for ChatPodConnectTimeoutSeconds
         Services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(

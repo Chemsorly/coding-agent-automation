@@ -5,16 +5,16 @@
 The application runs on Kubernetes as four distinct processes:
 
 - **Orchestrator** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI and `PipelineLoopService`. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (scoped per circuit) subscribes to the API hub for live run streaming.
-- **Pipeline API** (`CodingAgentWebUI.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `JobDeduplicationGuardService`, `ConsolidationWorkItemDispatchService`, `DatabaseMaintenanceService`, and `WorkItemMetricsBackgroundService`.
+- **Pipeline API** (`CodingAgentWebUI.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `JobDeduplicationGuardService`, `ConsolidationWorkItemDispatchService`, `DatabaseMaintenanceService`, `WorkItemMetricsBackgroundService`, and `ChatJobDispatcher`.
 - **Job Controller** (`CodingAgentWebUI.JobController`) — Kubernetes Job dispatch. Claims `WorkItem` rows from the API and creates K8s Jobs. Leader-elected via `caa-{release}-dispatch-lock` Lease. Stateless between dispatches; all state lives in Postgres via the API.
 - **Agent Host** (`CodingAgentWebUI.Agent`) — Ephemeral K8s Job pod. Connects to the Pipeline API hub using `AGENT_API_KEY` as a Bearer token. Picks up assignments via `GET /api/work-items/{id}/assignment`, reports progress and terminal status via hub methods and `POST /api/work-items/{id}/status`. Two execution modes: _work-item pods_ (spawned with `--work-item-id`) and _chat pods_.
 
 Supporting libraries (shared, not deployed independently):
 
 - **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API.
-- **Infrastructure** (`CodingAgentWebUI.Infrastructure`) — Provider implementations (GitHub, GitLab, filesystem), EF Core context, config store. Linked into the Pipeline API only — the Orchestrator has no reference to this library.
+- **Infrastructure** (`CodingAgentWebUI.Infrastructure`) — Provider implementations (GitHub, GitLab, filesystem), EF Core context, config store. Linked into the Pipeline API, Orchestration, and Agent. The Blazor Orchestrator (`CodingAgentWebUI`) has no direct reference.
 - **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, interfaces, constants. Linked into the Orchestrator and Pipeline API.
-- **Hub** (`CodingAgentWebUI.Hub`) — `AgentHub` definition and client contracts. Linked into the Pipeline API and Orchestrator.
+- **Hub** (`CodingAgentWebUI.Hub`) — Full hub implementation: `AgentHub` (split across partial classes), authentication handlers (`AgentApiKeyAuthHandler`), `ChatJobDispatcher` (ephemeral chat pod dispatch), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), completion strategies, `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
 
 ## Authentication
 
@@ -158,12 +158,18 @@ Two independent leases are used — one per process:
 | `DispatchService` | Polls for pending WorkItems and dispatches K8s Jobs | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 | `ReconciliationService` | Runs startup reconciliation, watches K8s Jobs, enforces timeouts | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 
-**Pipeline API** (`caa-{release}-pipeline-loop-lock` lease):
+**Pipeline API** (`caa-{release}-api-lock` lease):
 
 | Service | Behavior When Leader | Behavior When Non-Leader |
 |---------|---------------------|--------------------------|
 | `ConsolidationWorkItemDispatchService` | Dispatches consolidation K8s Jobs | Waits |
 | `DatabaseMaintenanceService` | Runs retention sweep | Waits |
+
+**Orchestrator** (`caa-{release}-pipeline-loop-lock` lease):
+
+| Service | Behavior When Leader | Behavior When Non-Leader |
+|---------|---------------------|--------------------------|
+| `PipelineLoopService` | Dispatches pipeline runs | Pauses (leader gate blocks loop entry) |
 
 #### Configuration
 
@@ -179,7 +185,7 @@ Bound from the `LeaderElection` configuration section:
 | `Identity` | *(auto-detected)* | Pod identity. Auto-reads from `POD_NAME` → `HOSTNAME` → `MachineName` |
 | `FailOnNonKubernetesEnvironment` | false | If true, startup fails outside K8s. If false, logs a warning and remains non-leader (graceful degradation for local dev) |
 
-Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller) and `orchestrator.leaderElection.pipelineLoopLeaseName` (Orchestrator / API) — both default to a release-scoped name to prevent collisions in shared namespaces.
+Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller, defaults to `caa-{release}-dispatch-lock`), `orchestrator.leaderElection.pipelineLoopLeaseName` (Orchestrator, defaults to `caa-{release}-pipeline-loop-lock`), and the API lease (`caa-{release}-api-lock`) which is hardcoded in the API Helm template with no `values.yaml` override. The Orchestrator and API leases use different names to prevent competition.
 
 #### RBAC Requirements
 
@@ -200,7 +206,7 @@ rules:
     verbs: ["get", "list"]
 ```
 
-> **Note:** The Orchestrator retains `batch/jobs` for `ChatJobDispatcher` (chat pods dispatched by the Orchestrator). Work-item dispatch was moved to the Job Controller.
+> **Note:** The Orchestrator retains `batch/jobs` RBAC for backwards compatibility with `ChatJobDispatcher`, which now runs in the Pipeline API (Hub library). Work-item dispatch was moved to the Job Controller.
 
 **Pipeline API** (`CodingAgentWebUI.Api`) ServiceAccount:
 
@@ -212,6 +218,9 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "create", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]   # per-Job derived-key Secrets (GC'd via ownerReference)
   - apiGroups: [""]
     resources: ["pods", "configmaps"]
     verbs: ["get", "list"]

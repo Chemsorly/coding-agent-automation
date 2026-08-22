@@ -149,10 +149,10 @@ public sealed class PostgresPipelineRunHistoryServiceWorkspaceTests : IDisposabl
             FailedWorkspaceRetentionDays = -1
         };
 
-        // Should return immediately without querying the DB or touching the filesystem
+        // No exception, no DB query side-effects — assert the config was not modified
         _sut.CleanupExpiredWorkspaces(config);
 
-        // No exception, no DB query side-effects
+        config.FailedWorkspaceRetentionDays.Should().Be(-1, "negative retention must not be mutated");
     }
 
     [Fact]

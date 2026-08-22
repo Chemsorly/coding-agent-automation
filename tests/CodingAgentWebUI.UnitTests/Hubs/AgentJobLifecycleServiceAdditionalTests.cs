@@ -128,19 +128,6 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
     }
 
     [Fact]
-    public async Task HandleJobRejected_NoRunInMemory_SignalsDrainService()
-    {
-        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
-
-        var agent = MakeAgent();
-        var svc = CreateService();
-
-        await svc.HandleJobRejectedAsync(new JobId("job-1"), agent, "rejected", CancellationToken.None);
-
-        _facade.Verify(f => f.Signal(), Times.Once);
-    }
-
-    [Fact]
     public async Task HandleJobRejected_NullAgent_DoesNotThrow()
     {
         _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
@@ -699,7 +686,5 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
 
         var svc = CreateService();
         await svc.HandleJobRejectedAsync(new JobId("job-1"), null, "reason", CancellationToken.None);
-
-        _facade.Verify(f => f.Signal(), Times.Never);
     }
 }

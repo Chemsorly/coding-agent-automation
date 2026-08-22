@@ -36,6 +36,18 @@ public sealed partial class AgentHub
     }
 
     /// <summary>
+    /// Returns the agent's display ID and whether it owns the given chat session.
+    /// Pure logic — no I/O, no side effects.
+    /// </summary>
+    internal static (bool IsValid, string AgentId) ValidateChatSessionOwnership(
+        AgentEntry? agent, string sessionId)
+    {
+        var agentId = agent?.AgentId.Value ?? "unknown";
+        var isValid = agent?.ActiveChatSessionId == sessionId;
+        return (isValid, agentId);
+    }
+
+    /// <summary>
     /// Receives streamed chat response lines from an agent during interactive chat.
     /// Validates that the calling agent owns the session before broadcasting to UI circuits.
     /// </summary>
@@ -44,8 +56,8 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(message);
 
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
-        var agentId = agent?.AgentId ?? "unknown";
-        if (agent?.ActiveChatSessionId != message.SessionId)
+        var (isValid, agentId) = ValidateChatSessionOwnership(agent, message.SessionId);
+        if (!isValid)
         {
             _logger.Warning("ReportChatResponse rejected — session {SessionId} not assigned to agent {AgentId}",
                 message.SessionId, agentId);
@@ -72,15 +84,15 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(message);
 
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
-        var agentId = agent?.AgentId ?? "unknown";
-        if (agent?.ActiveChatSessionId != message.SessionId)
+        var (isValid, agentId) = ValidateChatSessionOwnership(agent, message.SessionId);
+        if (!isValid)
         {
             _logger.Warning("ReportChatCompleted rejected — session {SessionId} not assigned to agent {AgentId}",
                 message.SessionId, agentId);
             throw new HubException($"Session {message.SessionId} not assigned to agent {agentId}");
         }
 
-        agent.ActiveChatSessionId = null;
+        agent!.ActiveChatSessionId = null;
 
         _logger.Information("Chat prompt completed for session {SessionId} on agent {AgentId} (exit={ExitCode})",
             message.SessionId, agent.AgentId, message.ExitCode);

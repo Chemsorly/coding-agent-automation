@@ -12,7 +12,7 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 |--------|------|------|------|-------------|
 | `pipeline.jobs.dispatched` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Incremented when a pipeline job starts |
 | `pipeline.jobs.completed` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Incremented when a job completes successfully |
-| `pipeline.jobs.failed` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Incremented when a job fails |
+| `pipeline.jobs.failed` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name`, `failure_reason` | Incremented when a job fails |
 | `pipeline.jobs.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Duration of the entire pipeline job |
 | `pipeline.loop.polls` | Counter | — | `result` | Incremented on each poll cycle (`success` or `failure`) |
 | `pipeline.loop.issues_found` | Counter | — | — | Incremented by the number of issues/PRs/epics discovered per poll cycle |
@@ -37,7 +37,7 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `dispatch.queue.depth` | ObservableGauge | — | — | Jobs waiting for available agent |
 | `agent.jobs.active` | ObservableGauge | — | — | Currently executing agent jobs |
 | `agent.connections.total` | ObservableGauge | — | — | Total registered agents |
-| `consolidation.jobs.expired` | Counter | — | — | Consolidation jobs expired from queue |
+| `consolidation.jobs.expired` | Counter | — | — | Consolidation jobs expired from queue (not currently emitted) |
 | `brain.syncs.completed` | Counter | — | — | Successful brain pre-run sync operations |
 | `brain.updates.committed` | Counter | — | — | Brain post-run commits pushed |
 | `brain.updates.empty` | Counter | — | — | Runs where agent produced no brain changes |
@@ -46,7 +46,14 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `agent.signalr.failures` | Counter | — | — | Failed or dropped SignalR messages from agent |
 | `pipeline.decomposition.sub_issues.created` | Counter | — | — | Sub-issues created by decomposition |
 | `pipeline.decomposition.sub_issues.failed` | Counter | — | — | Sub-issue creation failures |
-| `pipeline.decomposition.duration` | Histogram | seconds | — | Duration of decomposition phases |
+| `pipeline.decomposition.duration` | Histogram | seconds | `pipeline.project_id`, `pipeline.project_name`, `phase` | Duration of decomposition phases (`phase`: `analysis` or `creation`) |
+| `pipeline.housekeeping.triggered` | Counter | — | `repo_provider_id` | Server-side branch updates triggered |
+| `pipeline.housekeeping.succeeded` | Counter | — | `repo_provider_id` | Server-side branch updates completed successfully |
+| `pipeline.housekeeping.failed` | Counter | — | `repo_provider_id` | Server-side branch updates that threw an exception |
+| `pipeline.housekeeping.skipped` | Counter | — | `repo_provider_id` | PRs skipped during candidate selection (not behind, null, draft, active rework, or already in-flight) |
+| `pipeline.housekeeping.evicted` | Counter | — | `repo_provider_id` | In-flight entries removed (CI resolved or PR merged/label removed) |
+| `pipeline.housekeeping.conflict_rework_triggered` | Counter | — | `repo_provider_id` | Issues re-queued for rework due to PR merge conflict |
+| `pipeline.housekeeping.branch_deleted` | Counter | — | `repo_provider_id` | Stale agent branches deleted (no open PR, inactive issue label) |
 
 ### Tag Schema
 
@@ -56,6 +63,8 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `result` | `success`, `failure` | Poll cycle outcome |
 | `decision` | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` | Dispatch decision reason |
 | `reason` | `busy`, `shutting_down`, `unknown` | Agent job rejection reason |
+| `failure_reason` | `quality_gate_exhausted`, `agent_error`, `timeout`, `infrastructure_failure`, `token_refresh_failure`, `exit_code_failure`, `unknown` | Job failure classification — only present on `pipeline.jobs.failed` |
+| `repo_provider_id` | provider config UUID | Repository provider config ID — only present on `pipeline.housekeeping.*` metrics |
 
 ### Histogram Bucket Boundaries
 
@@ -66,6 +75,10 @@ Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instru
 | `pipeline.jobs.duration` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 | `pipeline.step.duration` | 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 | `dispatch.queue.wait_time` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
+| `workdistribution.dispatch_latency_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
+| `workdistribution.workitems_pending_duration_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
+| `workdistribution.job_execution_duration_seconds` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
+| `workdistribution.timeout_execution_age_seconds` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 
 Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use the OpenTelemetry SDK's default bucket boundaries.
 

@@ -1,4 +1,8 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Dispatch;
+using DispatchLifecycleService = CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService;
+using DispatchStateBuilder = CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder;
+using DispatchTemplateResolver = CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;

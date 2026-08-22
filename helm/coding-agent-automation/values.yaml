@@ -161,7 +161,6 @@ workDistribution:
   # ReconciliationService settings
   reconciliation:
     intervalSeconds: 30
-    timeoutEnforcementEnabled: true
     staleRetentionDays: 7
 
 # ── Credential Pools ─────────────────────────────────────────────────────────

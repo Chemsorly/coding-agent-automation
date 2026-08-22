@@ -21,6 +21,7 @@
 @inject JobTemplateStore? TemplateStore
 @inject IConfiguration Configuration
 @inject IAgentHubConnection HubConnection
+@inject IChatPromptBuilder ChatPromptBuilder
 
 <PageTitle>Agent Chat - Coding Agent</PageTitle>
 
@@ -423,18 +424,6 @@
         // so there is no stale-snapshot race. A 404 or 409 response surfaces as HttpRequestException
         // and is caught below.
 
-        var mergedMcpServers = _selectedProject is not null
-            ? DispatchOrchestrationService.MergeMcpServers(
-                _resolvedProfile?.McpServers ?? [],
-                _selectedProject.McpServers)
-            : (_resolvedProfile?.McpServers ?? []);
-
-        // Secrets are only sent on the first prompt (UseResume = false) to avoid transmitting
-        // sensitive values on every subsequent wire message. The agent-side guard also prevents
-        // re-injection on resume, but limiting wire exposure is the primary reason.
-        // SteeringContent and ProjectId/Name are harmless to repeat but are also gated to first
-        // prompt for consistency — the agent ignores them on resume anyway.
-
         try
         {
             // Unsubscribe from the previous prompt's hub group before subscribing to the new one.
@@ -448,19 +437,15 @@
 
             _activeSessionId = Guid.NewGuid().ToString();
 
-            var message = new ChatPromptMessage
-            {
-                SessionId = _activeSessionId,
-                Prompt = prompt,
-                UseResume = !_isFirstPrompt,
-                McpServers = mergedMcpServers,
-                McpConfigPath = _resolvedMcpConfigPath,
-                ChatWindowId = _chatWindowId,
-                ProjectSecrets = _isFirstPrompt ? _selectedProject?.Secrets : null,
-                ProjectSteeringContent = _isFirstPrompt ? _selectedProject?.SteeringContent : null,
-                ProjectId = _isFirstPrompt ? _selectedProject?.Id : null,
-                ProjectName = _isFirstPrompt ? _selectedProject?.Name : null
-            };
+            var message = ChatPromptBuilder.Build(new ChatPromptParameters(
+                SessionId: _activeSessionId,
+                Prompt: prompt,
+                IsFirstPrompt: _isFirstPrompt,
+                ChatWindowId: _chatWindowId,
+                ResolvedProfile: _resolvedProfile,
+                SelectedProject: _selectedProject,
+                ResolvedMcpConfigPath: _resolvedMcpConfigPath
+            ));
 
             // Subscribe to the hub chat-session group so OnChatResponse/OnChatCompleted
             // events are pushed to this circuit by the API hub.

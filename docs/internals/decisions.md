@@ -6,7 +6,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 <!-- Intent Extraction Sessions -->
 <!-- Session: 12 | Last run: 2026-08-14 | Decisions captured: 64 -->
-<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService decomposition execution -->
+<!-- Session: 13 | Last run: 2026-08-22 | Updates: leader-election registration correction, LocalPipelineExecutor marked complete, AgentCodingPageService status updated, Signal() removal noted -->
+<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition -->
 
 ---
 
@@ -24,7 +25,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Date:** 2026-08-14
 **Category:** architecture
 
-**Decision:** In K8s multi-replica deployments, `PipelineLoopService` MUST only run its poll loop when `ILeaderElectionService.IsLeader` is true. This applies to the entire loop — not just the housekeeping sub-step. The rationale: `LoopStatePersistenceService` auto-resumes the loop on pod restart, meaning all replicas would independently start polling if the loop were not leader-gated. Operations that bypass the WorkItem dedup pipeline (most immediately, the housekeeping auto-branch-updater calling `UpdatePullRequestBranchAsync` directly) have no dedup at all and WILL fire concurrently on non-gated replicas. In Legacy and SignalR modes (single-replica by design), `ILeaderElectionService` is not registered; the loop runs unconditionally.
+**Decision:** In K8s multi-replica deployments, `PipelineLoopService` MUST only run its poll loop when `ILeaderElectionService.IsLeader` is true. This applies to the entire loop — not just the housekeeping sub-step. The rationale: `LoopStatePersistenceService` auto-resumes the loop on pod restart, meaning all replicas would independently start polling if the loop were not leader-gated. Operations that bypass the WorkItem dedup pipeline (most immediately, the housekeeping auto-branch-updater calling `UpdatePullRequestBranchAsync` directly) have no dedup at all and WILL fire concurrently on non-gated replicas. `ILeaderElectionService` is registered unconditionally at `WorkDistributionRegistration.Consolidation.cs:70`; when the gate resolves to null (test environments with no DI registration), the loop runs unconditionally as before.
 
 **Status (2026-08-20):** Implemented. `PipelineLoopService` uses a `_leaderGate` field (`ILeaderGate?`) sourced from `deps.LeaderElection` (= `sp.GetService<ILeaderElectionService>()`). On startup, the loop spins on `_leaderGate is { IsLeader: false }` before entering the activation loop, and links `_leaderGate.LeaderToken` into the run's `CancellationTokenSource` so the loop stops immediately on leadership loss. When `ILeaderElectionService` is not registered (test environments), `_leaderGate` is null and the loop runs unconditionally as before. Issue #1987 is complete.
 
@@ -63,6 +64,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Alternatives considered:** Keep as-is (coherent vertical slices are readable, ~750 lines is not yet blocking), dispatch-path extraction only (removes mode branching but leaves drawer methods dense).
 
 **Reassess when:** After extraction, if the sub-services are harder to navigate than the original monolith, reconsider granularity.
+
+**Status (2026-08-22):** Partially completed. `AgentCodingPageService` is now 449 lines (down from ~747). However, `AgentCoding.razor.cs` grew to 572 lines (was ~501, target was timer/dismiss-only) — logic landed in the component rather than leaving it. The razor component is now the higher-priority decomposition target: business logic should be extracted back into services on the next touch.
 
 ---
 
@@ -472,6 +475,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Alternatives considered:** Keep as-is (reduces navigation across files), full decomposition into partial classes (fragments the narrative), split into separate step executor classes (too many files for coordination logic).
 
 **Reassess when:** After #975 is implemented (extract records), reassess if further decomposition is needed. Target: core file under 600 lines.
+
+**Status (2026-08-22):** Completed. `LocalPipelineExecutor` is now 334 lines — well under the 600-line target. Decomposition is complete; no further action needed.
 
 ---
 

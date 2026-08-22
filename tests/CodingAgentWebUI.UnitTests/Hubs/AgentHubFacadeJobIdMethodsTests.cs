@@ -354,17 +354,6 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
         result.Value.IssueProviderConfigId.Should().Be("ip-77");
     }
 
-    // ── Signal ────────────────────────────────────────────────────────────
-
-    [Fact]
-    public void Signal_WithNoPendingDrainService_DoesNotThrow()
-    {
-        // Exercises the _pendingDrainService?.Signal() null-conditional path.
-        // _facade has no pending drain service (null), so this tests the null branch.
-        var act = () => _facade.Signal();
-        act.Should().NotThrow();
-    }
-
     // ── Helper ────────────────────────────────────────────────────────────
 
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>

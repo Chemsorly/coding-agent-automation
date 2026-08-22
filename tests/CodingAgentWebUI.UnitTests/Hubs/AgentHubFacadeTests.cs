@@ -192,26 +192,6 @@ public sealed class AgentHubFacadeTests
         _dispatcher.IsIssueQueued("org/repo#1").Should().BeFalse("MarkIssueComplete should clear the dedup entry");
     }
 
-    [Fact]
-    public void Signal_IsNoOp_AfterSpec044()
-    {
-        // Signal() is a no-op after Spec 044 — JobQueueDrainService was removed.
-        // Verify it does not throw and does not mutate the queue.
-        _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = "org/repo#99",
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1",
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            InitiatedBy = "test"
-        });
-        var queueLengthBefore = _dispatcher.QueueLength;
-
-        _facade.Signal();
-
-        _dispatcher.QueueLength.Should().Be(queueLengthBefore, "Signal() must not modify the queue itself");
-    }
-
     #endregion
 
     #region History delegation

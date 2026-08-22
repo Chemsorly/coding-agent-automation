@@ -55,7 +55,6 @@ public sealed partial class AgentHub
         {
             agent.ActiveJobId = null;
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-            _facade.Signal();
         }
 
         _changeNotifier.NotifyChange();

@@ -101,13 +101,6 @@ public interface IAgentHubFacade
     void MarkIssueComplete(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
 
     /// <summary>
-    /// Signals that an agent may now be available to pick up pending work.
-    /// Permanent no-op — queue dispatch was removed in Spec 041. Retained for interface compatibility.
-    /// TODO(Spec 046): remove this member and its call sites.
-    /// </summary>
-    void Signal();
-
-    /// <summary>
     /// Gets the current retry count for a work item (how many times it has been rejected and re-queued).
     /// Returns 0 if the work item doesn't exist or has no retries.
     /// </summary>

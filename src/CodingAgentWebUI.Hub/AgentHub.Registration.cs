@@ -122,7 +122,6 @@ public sealed partial class AgentHub
         }
 
         _logger.Information("Agent {AgentId} signaled ready", agentId.Value);
-        _facade.Signal();
         return Task.CompletedTask;
     }
 }
