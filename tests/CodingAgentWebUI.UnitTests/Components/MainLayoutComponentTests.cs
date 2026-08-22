@@ -53,7 +53,7 @@ public class MainLayoutComponentTests : BunitContext
             ProjectStore = mockStore.Object,
             Logger = mockLogger.Object,
             WorkDistributor = null,
-            DispatchOrchestration = null,
+            DispatchOrchestration = new CodingAgentWebUI.TestUtilities.NullDispatchOrchestrationService(),
             DependencyChecker = null,
             HousekeepingService = null,
             LeaderElection = null

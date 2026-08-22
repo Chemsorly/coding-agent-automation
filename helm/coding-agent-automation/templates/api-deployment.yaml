@@ -10,6 +10,9 @@ spec:
   # api.replicas MUST remain 1 — Redis backplane handles message delivery but not
   # in-memory singleton state (AgentRegistryService, OrchestratorRunService, etc.).
   # See Req 9.8a. Do NOT increase without completing Spec 045 Task 13a.
+  {{- if gt (int .Values.api.replicas) 1 }}
+  {{- fail "api.replicas must be 1. AgentRegistryService, OrchestratorRunService and JobDeduplicationGuardService are in-memory singletons; a second replica gets a divergent copy of each. See docs/architecture/concurrency-model.md." }}
+  {{- end }}
   replicas: {{ .Values.api.replicas }}
   selector:
     matchLabels:

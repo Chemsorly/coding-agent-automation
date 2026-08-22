@@ -685,6 +685,8 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
         _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
 
         var svc = CreateService();
-        await svc.HandleJobRejectedAsync(new JobId("job-1"), null, "reason", CancellationToken.None);
+        var act = () => svc.HandleJobRejectedAsync(new JobId("job-1"), null, "reason", CancellationToken.None);
+
+        await act.Should().NotThrowAsync("null run must be handled gracefully without throwing");
     }
 }

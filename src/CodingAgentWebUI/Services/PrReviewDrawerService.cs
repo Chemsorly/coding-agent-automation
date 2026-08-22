@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
@@ -17,21 +16,15 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
     private static readonly ILogger Logger = Log.ForContext<PrReviewDrawerService>();
 
     private readonly IProviderFactory _providerFactory;
-    private readonly IWorkDistributor _workDistributor;
-    private readonly IAgentRegistryService _agentRegistry;
     private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<PullRequestSummary> _prDrawer;
 
     public PrReviewDrawerService(
         IProviderFactory providerFactory,
-        IWorkDistributor workDistributor,
-        IAgentRegistryService agentRegistry,
         IDispatchOrchestrationService dispatchOrchestration)
     {
         _providerFactory = providerFactory;
-        _workDistributor = workDistributor;
-        _agentRegistry = agentRegistry;
         _dispatchOrchestration = dispatchOrchestration;
 
         _prDrawer = new DrawerStateService<PullRequestSummary>(
@@ -122,9 +115,6 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
         IReadOnlyList<ProviderConfig> repoProviders,
         PipelineProject? parentProject)
     {
-        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
-            return (false, "Could not dispatch — no agents are currently connected.", null);
-
         return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
             _dispatchOrchestration,
             project =>

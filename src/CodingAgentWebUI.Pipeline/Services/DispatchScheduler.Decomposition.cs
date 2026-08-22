@@ -51,8 +51,8 @@ internal sealed partial class DispatchScheduler
             ctx.NotifyChange();
 
             var decompProject = ctx.TemplateProjectLookup.GetValueOrDefault(template.Id);
-            var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
-                async ct => await _dispatchOrchestration!.PrepareDecompositionDistributionRequestAsync(
+            var dispatched = await DispatchViaOrchestrationAsync(
+                async ct => await _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
                     new DecompositionDispatchOrchestrationRequest
                     {
                         EpicIdentifier = epicItem.Issue.Identifier,
@@ -67,9 +67,6 @@ internal sealed partial class DispatchScheduler
                         Project = decompProject ?? new PipelineProject { Id = "", Name = UnknownProjectName }
                     },
                     ct),
-                () => JobDistributionRequest.FromTemplate(
-                    template, epicItem.Issue, epicItem.Phase, initiatedBy: "loop",
-                    projectId: decompProject?.Id, projectName: decompProject?.Name),
                 stopToken);
 
             if (dispatched)
@@ -256,8 +253,8 @@ internal sealed partial class DispatchScheduler
         try
         {
             var projLevelProject = ctx.TemplateProjectLookup.GetValueOrDefault(candidate.Template.Id);
-            var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
-                async ct => await _dispatchOrchestration!.PrepareDecompositionDistributionRequestAsync(
+            var dispatched = await DispatchViaOrchestrationAsync(
+                async ct => await _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
                     new DecompositionDispatchOrchestrationRequest
                     {
                         EpicIdentifier = candidate.Issue.Identifier,
@@ -271,10 +268,6 @@ internal sealed partial class DispatchScheduler
                         DecompositionSource = "project-level"
                     },
                     ct),
-                () => JobDistributionRequest.FromTemplate(
-                    candidate.Template, candidate.Issue, candidate.Phase,
-                    initiatedBy: "loop", decompositionSource: "project-level",
-                    projectId: projLevelProject?.Id, projectName: projLevelProject?.Name),
                 stoppingToken);
 
             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",

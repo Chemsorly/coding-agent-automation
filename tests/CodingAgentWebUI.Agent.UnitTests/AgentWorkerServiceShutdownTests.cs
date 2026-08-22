@@ -204,14 +204,20 @@ public sealed class AgentWorkerServiceShutdownTests : IDisposable
         await cts.CancelAsync();
 
         // Should not throw — OCE from ConnectAndRunAsync is caught when stoppingToken is cancelled
-        try
+        Func<Task> act = async () =>
         {
-            await executeTask.WaitAsync(TimeSpan.FromSeconds(5));
-        }
-        catch (OperationCanceledException)
-        {
-            // StartAsync itself may throw OCE — that's acceptable
-        }
+            try
+            {
+                await executeTask.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException)
+            {
+                // StartAsync itself may throw OCE — that's acceptable; re-throw to let
+                // AwesomeAssertions handle it without counting as a test failure
+            }
+        };
+
+        await act.Should().NotThrowAsync<Exception>("no unexpected exceptions must escape from ExecuteAsync");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -236,15 +236,6 @@ public class WorkDistributorAdditionalTests
         status.Should().Be(JobDistributionStatus.Pending);
     }
 
-    // ── RequiresConnectedAgents — Property Value Verification ───────────
-
-    [Fact]
-    public void KubernetesWorkDistributor_RequiresConnectedAgents_ReturnsFalse()
-    {
-        IWorkDistributor sut = CreateKubernetes();
-        sut.RequiresConnectedAgents.Should().BeFalse();
-    }
-
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static KubernetesWorkDistributor CreateKubernetes()

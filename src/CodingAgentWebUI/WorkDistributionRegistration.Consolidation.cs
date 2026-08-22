@@ -90,14 +90,9 @@ public static partial class WorkDistributionRegistration
         // route through IPipelineApiWorkItemClient.
         services.AddSingleton<IWorkDistributor>(sp =>
         {
-            var apiClient = sp.GetService<IPipelineApiWorkItemClient>();
-            if (apiClient is null)
-            {
-                Log.Warning("WorkDistribution: IPipelineApiWorkItemClient not registered — KubernetesWorkDistributor cannot function. " +
-                            "This is expected in test environments without PipelineApi configured.");
-            }
+            var apiClient = sp.GetRequiredService<IPipelineApiWorkItemClient>();
             return new KubernetesWorkDistributor(
-                apiClient!,
+                apiClient,
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<KubernetesWorkDistributor>>());
         });
 

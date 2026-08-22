@@ -57,7 +57,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             _changeNotifier.NotifyChange();
         }
 
-        // Transition WorkItem from Dispatched → Running (DB+SignalR mode).
+        // Transition WorkItem from Dispatched → Running (K8s DB-backed mode).
         // This is critical: without it, ReportJobCompleted cannot transition to Succeeded
         // because Dispatched → Succeeded is not a valid state transition.
         try

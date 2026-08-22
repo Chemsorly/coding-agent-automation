@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
@@ -17,21 +16,15 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     private static readonly ILogger Logger = Log.ForContext<EpicDrawerService>();
 
     private readonly IProviderFactory _providerFactory;
-    private readonly IWorkDistributor _workDistributor;
-    private readonly IAgentRegistryService _agentRegistry;
     private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<IssueSummary> _epicDrawer;
 
     public EpicDrawerService(
         IProviderFactory providerFactory,
-        IWorkDistributor workDistributor,
-        IAgentRegistryService agentRegistry,
         IDispatchOrchestrationService dispatchOrchestration)
     {
         _providerFactory = providerFactory;
-        _workDistributor = workDistributor;
-        _agentRegistry = agentRegistry;
         _dispatchOrchestration = dispatchOrchestration;
 
         _epicDrawer = new DrawerStateService<IssueSummary>(
@@ -145,8 +138,6 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     {
         if (!issueProviders.Any(p => p.Id == template.IssueProviderId) || !repoProviders.Any(p => p.Id == template.RepoProviderId))
             return (false, "Template references providers that no longer exist.", null);
-        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
-            return (false, "Could not dispatch — no agents are currently connected.", null);
 
         var phaseType = issue.Labels.Contains(AgentLabels.EpicApproved, StringComparer.OrdinalIgnoreCase)
             ? PipelineRunType.Decomposition : PipelineRunType.DecompositionAnalysis;

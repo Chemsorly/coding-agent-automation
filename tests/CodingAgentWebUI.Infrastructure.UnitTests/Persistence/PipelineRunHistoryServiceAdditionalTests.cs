@@ -319,7 +319,8 @@ public class PipelineRunHistoryServiceAdditionalTests : IDisposable
         var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
 
         // Must not throw
-        svc.TryDeleteWorkspace(null, "run-1", dir);
+        var act = () => svc.TryDeleteWorkspace(null, "run-1", dir);
+        act.Should().NotThrow("null workspace path must be silently ignored");
     }
 
     [Fact]
@@ -329,8 +330,8 @@ public class PipelineRunHistoryServiceAdditionalTests : IDisposable
         var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
         var fakePath = Path.Combine(dir, "nonexistent-workspace");
 
-        svc.TryDeleteWorkspace(fakePath, "run-1", dir);
-        // Should not throw
+        var act = () => svc.TryDeleteWorkspace(fakePath, "run-1", dir);
+        act.Should().NotThrow("non-existent workspace path must be silently ignored");
     }
 
     [Fact]

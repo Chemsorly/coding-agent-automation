@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.JobController.Reconciliation;
 using k8s.Models;
@@ -833,7 +834,8 @@ public sealed class ReconciliationLoopErrorTests
         var loop = CreateLoop();
 
         // Should not throw — delete exception is swallowed
-        await loop.CleanupOrphansAsync(CancellationToken.None);
+        var act = async () => await loop.CleanupOrphansAsync(CancellationToken.None);
+        await act.Should().NotThrowAsync("delete exceptions must be swallowed per the resilience contract");
     }
 
     [Fact]

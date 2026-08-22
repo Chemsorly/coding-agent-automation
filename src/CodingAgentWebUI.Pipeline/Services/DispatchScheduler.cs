@@ -24,23 +24,20 @@ internal sealed partial class DispatchScheduler
 {
     private const string UnknownProjectName = "Unknown";
     private readonly IDispatchRunCreator _orchestration;
-    private readonly IDispatchOrchestrationService? _dispatchOrchestration;
-    private readonly IWorkDistributor? _workDistributor;
+    private readonly IDispatchOrchestrationService _dispatchOrchestration;
     private readonly IDependencyChecker? _dependencyChecker;
     private readonly ProviderCacheManager _cacheManager;
     private readonly Serilog.ILogger _logger;
 
     internal DispatchScheduler(
         IDispatchRunCreator orchestration,
-        IDispatchOrchestrationService? dispatchOrchestration,
-        IWorkDistributor? workDistributor,
+        IDispatchOrchestrationService dispatchOrchestration,
         IDependencyChecker? dependencyChecker,
         ProviderCacheManager cacheManager,
         Serilog.ILogger logger)
     {
         _orchestration = orchestration;
         _dispatchOrchestration = dispatchOrchestration;
-        _workDistributor = workDistributor;
         _dependencyChecker = dependencyChecker;
         _cacheManager = cacheManager;
         _logger = logger;

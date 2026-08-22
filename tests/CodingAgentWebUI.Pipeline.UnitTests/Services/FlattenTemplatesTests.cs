@@ -50,7 +50,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
             ProjectStore = _mockStore.Object,
             Logger = _mockLogger.Object,
             WorkDistributor = null,
-            DispatchOrchestration = null,
+            DispatchOrchestration = new NullDispatchOrchestrationService(),
             DependencyChecker = null,
             HousekeepingService = null,
             LeaderElection = null

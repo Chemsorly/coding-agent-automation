@@ -1,5 +1,4 @@
 using Moq;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
@@ -17,7 +16,6 @@ public class IssueDrawerServiceTests
     private readonly Mock<IProviderFactory> _mockProviderFactory;
     private readonly Mock<IDependencyChecker> _mockDependencyChecker;
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
-    private readonly Mock<IAgentRegistryService> _mockAgentRegistry;
     private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
     private readonly IssueDrawerService _service;
 
@@ -26,14 +24,12 @@ public class IssueDrawerServiceTests
         _mockProviderFactory = new Mock<IProviderFactory>();
         _mockDependencyChecker = new Mock<IDependencyChecker>();
         _mockWorkDistributor = new Mock<IWorkDistributor>();
-        _mockAgentRegistry = new Mock<IAgentRegistryService>();
         _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
 
         _service = new IssueDrawerService(
             _mockProviderFactory.Object,
             _mockDependencyChecker.Object,
             _mockWorkDistributor.Object,
-            _mockAgentRegistry.Object,
             _mockDispatchOrchestration.Object);
     }
 
@@ -62,7 +58,6 @@ public class IssueDrawerServiceTests
             new Mock<IProviderFactory>().Object,
             new Mock<IDependencyChecker>().Object,
             new Mock<IWorkDistributor>().Object,
-            new Mock<IAgentRegistryService>().Object,
             new Mock<IDispatchOrchestrationService>().Object);
         Assert.NotNull(svc);
         svc.Dispose();
@@ -201,19 +196,6 @@ public class IssueDrawerServiceTests
     }
 
     [Fact]
-    public async Task DispatchIssueAsync_ReturnsError_WhenRequiresConnectedAgentsAndNoneConnected()
-    {
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(true);
-        _mockAgentRegistry.Setup(r => r.GetAllAgents()).Returns(new List<AgentEntry>());
-        var template = MakeTemplate();
-
-        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template, IssueProviders, RepoProviders, null);
-
-        Assert.False(success);
-        Assert.Contains("no agents are currently connected", error);
-    }
-
-    [Fact]
     public async Task DispatchIssueAsync_DbMode_DispatchedMessage_WhenNotQueued()
     {
         // TODO: [WARNING] This test does not verify that DistributeAndFinalizeAsync was called with the
@@ -221,7 +203,6 @@ public class IssueDrawerServiceTests
         // DispatchWithOrchestrationAsync is refactored to use a different request, the test still passes.
         // Strengthen by adding: _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(request, ...), Times.Once).
         SetupDependencyCheckerReady();
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
 
         var request = CreateMinimalRequest();
         _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
@@ -240,7 +221,6 @@ public class IssueDrawerServiceTests
     public async Task DispatchIssueAsync_DbMode_QueuedMessage_WhenQueued()
     {
         SetupDependencyCheckerReady();
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
 
         var request = CreateMinimalRequest();
         _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
@@ -258,7 +238,6 @@ public class IssueDrawerServiceTests
     public async Task DispatchIssueAsync_DbMode_DistributionFailed_ReturnsError()
     {
         SetupDependencyCheckerReady();
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
 
         var request = CreateMinimalRequest();
         _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
@@ -279,7 +258,6 @@ public class IssueDrawerServiceTests
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(mockProvider.Object);
         _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DependencyCheckResult { IsReady = false, BlockedBy = [5], TotalDependencies = 1 });
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
 
         var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), MakeTemplate(), IssueProviders, RepoProviders, null);
 
@@ -310,7 +288,6 @@ public class IssueDrawerServiceTests
         // Fix: add _mockWorkDistributor.Setup(w => w.GetActiveIssueIdentifiersAsync(...)).ReturnsAsync(new HashSet<...>())
         // to this test (and any other test that calls OpenIssueDrawerAsync).
         SetupDependencyCheckerReady();
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
 
         var template = MakeTemplate();
         _service.SetProviderContext(IssueProviders, RepoProviders);

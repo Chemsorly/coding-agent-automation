@@ -29,7 +29,7 @@ public sealed partial class ReconciliationService
     /// <summary>
     /// Timeout enforcement with progress awareness.
     /// Uses DB-persisted LastProgressAt as the timeout anchor when available,
-    /// matching the HeartbeatMonitor behavior in SignalR/Legacy mode.
+    /// matching the HeartbeatMonitor behavior for in-progress agent jobs.
     /// Falls back to DispatchedAt when LastProgressAt is null.
     /// </summary>
     internal async Task EnforceTimeoutsAsync(CancellationToken ct)

@@ -67,7 +67,7 @@ public class DispatchFeedbackComponentTests : BunitContext
             ProjectStore = _mockStore.Object,
             Logger = mockLogger.Object,
             WorkDistributor = null,
-            DispatchOrchestration = null,
+            DispatchOrchestration = new CodingAgentWebUI.TestUtilities.NullDispatchOrchestrationService(),
             DependencyChecker = null,
             HousekeepingService = null,
             LeaderElection = null

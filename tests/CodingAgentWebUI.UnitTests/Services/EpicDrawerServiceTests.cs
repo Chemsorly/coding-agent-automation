@@ -1,5 +1,4 @@
 using Moq;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
@@ -14,8 +13,6 @@ namespace CodingAgentWebUI.UnitTests.Services;
 public class EpicDrawerServiceTests
 {
     private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IWorkDistributor> _mockWorkDistributor;
-    private readonly Mock<IAgentRegistryService> _mockAgentRegistry;
     private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
     private readonly EpicDrawerService _service;
 
@@ -28,14 +25,10 @@ public class EpicDrawerServiceTests
     public EpicDrawerServiceTests()
     {
         _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockWorkDistributor = new Mock<IWorkDistributor>();
-        _mockAgentRegistry = new Mock<IAgentRegistryService>();
         _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
 
         _service = new EpicDrawerService(
             _mockProviderFactory.Object,
-            _mockWorkDistributor.Object,
-            _mockAgentRegistry.Object,
             _mockDispatchOrchestration.Object);
     }
 
@@ -52,8 +45,6 @@ public class EpicDrawerServiceTests
     {
         var svc = new EpicDrawerService(
             new Mock<IProviderFactory>().Object,
-            new Mock<IWorkDistributor>().Object,
-            new Mock<IAgentRegistryService>().Object,
             new Mock<IDispatchOrchestrationService>().Object);
         Assert.NotNull(svc);
         svc.Dispose();
@@ -151,8 +142,6 @@ public class EpicDrawerServiceTests
     [Fact]
     public async Task DispatchDecompositionAsync_UsesDecompositionAnalysis_ForRegularEpic()
     {
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
-
         DecompositionDispatchOrchestrationRequest? capturedRequest = null;
         _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(It.IsAny<DecompositionDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
             .Callback<DecompositionDispatchOrchestrationRequest, CancellationToken>((r, _) => capturedRequest = r)
@@ -171,8 +160,6 @@ public class EpicDrawerServiceTests
     [Fact]
     public async Task DispatchDecompositionAsync_UsesDecomposition_ForApprovedEpic()
     {
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
-
         DecompositionDispatchOrchestrationRequest? capturedRequest = null;
         _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(It.IsAny<DecompositionDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
             .Callback<DecompositionDispatchOrchestrationRequest, CancellationToken>((r, _) => capturedRequest = r)
@@ -203,7 +190,6 @@ public class EpicDrawerServiceTests
     [Fact]
     public async Task DispatchFromEpicDrawerAsync_ClosesDrawer_OnSuccess()
     {
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
         _service.SetProviderContext(IssueProviders);
 
         var template = MakeTemplate();

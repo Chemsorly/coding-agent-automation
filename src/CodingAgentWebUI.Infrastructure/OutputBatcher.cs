@@ -1,21 +1,9 @@
 namespace CodingAgentWebUI.Infrastructure;
 
 /// <summary>
-/// Controls when the <see cref="OutputBatcher"/> flush loop wakes up.
-/// Production: real <see cref="PeriodicTimer"/>. Tests: <see cref="ManualFlushTrigger"/>.
+/// Production flush trigger — wraps <see cref="PeriodicTimer"/>.
 /// </summary>
-public interface IFlushTrigger : IAsyncDisposable
-{
-    /// <summary>
-    /// Wait until the next flush tick. Returns <c>false</c> when the trigger is stopped.
-    /// </summary>
-    ValueTask<bool> WaitForNextTickAsync(CancellationToken ct);
-}
-
-/// <summary>
-/// Production implementation — wraps <see cref="PeriodicTimer"/>.
-/// </summary>
-internal sealed class PeriodicTimerFlushTrigger : IFlushTrigger
+internal sealed class PeriodicTimerFlushTrigger : IAsyncDisposable
 {
     private readonly PeriodicTimer _timer;
 
@@ -32,11 +20,11 @@ internal sealed class PeriodicTimerFlushTrigger : IFlushTrigger
 }
 
 /// <summary>
-/// Test implementation — each call to <see cref="Tick"/> unblocks one
+/// Test flush trigger — each call to <see cref="Tick"/> unblocks one
 /// <see cref="WaitForNextTickAsync"/> waiter. No real time passes.
 /// Call <see cref="Stop"/> to make the flush loop exit cleanly.
 /// </summary>
-public sealed class ManualFlushTrigger : IFlushTrigger
+public sealed class ManualFlushTrigger : IAsyncDisposable
 {
     // Each Tick() releases one permit; WaitForNextTickAsync() consumes one.
     private readonly SemaphoreSlim _gate = new(0);
@@ -93,7 +81,8 @@ public sealed class OutputBatcher : IAsyncDisposable
     private readonly List<string> _buffer = [];
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly SemaphoreSlim _flushGate = new(1, 1);
-    private readonly IFlushTrigger _trigger;
+    private readonly IAsyncDisposable _triggerDisposable;
+    private readonly Func<CancellationToken, ValueTask<bool>> _waitForNextTick;
     private readonly Task _flushLoop;
     private readonly CancellationTokenSource _cts = new();
     private readonly TimeSpan _flushTimeout;
@@ -122,17 +111,22 @@ public sealed class OutputBatcher : IAsyncDisposable
     /// to disable the timeout (legacy behavior, not recommended for production).
     /// </param>
     public OutputBatcher(TimeSpan? flushTimeout = null)
-        : this(new PeriodicTimerFlushTrigger(DefaultFlushInterval), flushTimeout)
     {
+        var trigger = new PeriodicTimerFlushTrigger(DefaultFlushInterval);
+        _triggerDisposable = trigger;
+        _waitForNextTick = trigger.WaitForNextTickAsync;
+        _flushTimeout = flushTimeout ?? DefaultFlushTimeout;
+        _flushLoop = Task.Run(FlushLoopAsync, _cts.Token);
     }
 
     /// <summary>
-    /// Creates an <see cref="OutputBatcher"/> with an explicit flush trigger.
-    /// Use <see cref="ManualFlushTrigger"/> in tests to avoid real-time waits.
+    /// Creates an <see cref="OutputBatcher"/> with a <see cref="ManualFlushTrigger"/> for tests.
+    /// Avoids real-time delays — ticks fire only when <see cref="ManualFlushTrigger.Tick"/> is called.
     /// </summary>
-    public OutputBatcher(IFlushTrigger trigger, TimeSpan? flushTimeout = null)
+    public OutputBatcher(ManualFlushTrigger trigger, TimeSpan? flushTimeout = null)
     {
-        _trigger = trigger;
+        _triggerDisposable = trigger;
+        _waitForNextTick = trigger.WaitForNextTickAsync;
         _flushTimeout = flushTimeout ?? DefaultFlushTimeout;
         _flushLoop = Task.Run(FlushLoopAsync, _cts.Token);
     }
@@ -168,7 +162,7 @@ public sealed class OutputBatcher : IAsyncDisposable
     {
         try
         {
-            while (await _trigger.WaitForNextTickAsync(_cts.Token))
+            while (await _waitForNextTick(_cts.Token))
             {
                 List<string>? batch = null;
 
@@ -249,7 +243,7 @@ public sealed class OutputBatcher : IAsyncDisposable
         try { await _flushLoop; }
         catch (OperationCanceledException e) { _ = e; /* expected during disposal */ }
 
-        await _trigger.DisposeAsync();
+        await _triggerDisposable.DisposeAsync();
 
         // Final flush of remaining lines
         List<string>? batch = null;

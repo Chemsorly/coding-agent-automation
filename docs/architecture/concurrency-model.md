@@ -166,6 +166,11 @@ across process boundaries.
 | `JobDeduplicationGuardService` | `Orchestration/Dispatch/JobDeduplicationGuardService.cs` | `SelectAgent()` — nested inside `_selectionLock` |
 | `HeartbeatMonitorService` | `Orchestration/Registry/HeartbeatMonitorService.cs` | Delegates status transitions and orphan cleanup to `IRunLifecycleManager` sweep phases, which acquire `SyncRoot` internally |
 | `RunLifecycleManager` | `Orchestration/RunLifecycleManager.cs` | `ActiveJobId` mutation on job assignment/completion |
+| `DisconnectedAgentSweepPhase` | `Orchestration/Registry/SweepPhases/DisconnectedAgentSweepPhase.cs` | Reads `DisconnectedAt`; clears `ActiveJobId` on orphan cleanup |
+| `ProgressTimeoutSweepPhase` | `Orchestration/Registry/SweepPhases/ProgressTimeoutSweepPhase.cs` | Reads `BusySince`; clears `ActiveJobId` on timeout/race-lost cleanup |
+| `OrphanRestoredJobSweepPhase` | `Orchestration/Registry/SweepPhases/OrphanRestoredJobSweepPhase.cs` | Reads `OrphanRestoredAt`; clears `ActiveJobId` on race-lost cleanup |
+| `AgentOrphanRecoveryService` | `Hub/AgentOrphanRecoveryService.cs` | Check-and-set `ActiveJobId` on reconnect; sets `OrphanRestoredAt` when no active job reported |
+| `AgentEndpoints` | `Api/AgentEndpoints.cs` | Sets `ActiveChatSessionId` on chat-resume path |
 
 ### Key invariant
 

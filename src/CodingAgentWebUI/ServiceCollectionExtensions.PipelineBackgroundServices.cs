@@ -108,9 +108,10 @@ public static partial class ServiceCollectionExtensions
             DispatchOrchestration = sp.GetService<IDispatchOrchestrationService>(),
             DependencyChecker = sp.GetRequiredService<IDependencyChecker>(),
             HousekeepingService = sp.GetRequiredService<IHousekeepingService>(),
-            // GetService returns null when ILeaderElectionService is not registered (Legacy mode),
-            // which causes the loop to run unconditionally as before. In K8s and SignalR+DB modes
-            // ILeaderElectionService implements ILeaderGate and the loop is leader-gated.
+            // GetService returns null when ILeaderElectionService is not registered (test
+            // environments without leader election configured), causing the loop to run
+            // unconditionally. In production K8s deployments ILeaderElectionService implements
+            // ILeaderGate and the loop is leader-gated.
             LeaderElection = sp.GetService<ILeaderElectionService>()
         });
         services.AddSingleton<PipelineLoopService>();

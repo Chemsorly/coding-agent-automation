@@ -297,7 +297,8 @@ public sealed class AgentHubRegistrationBranchTests
         var hub = CreateHub(ctx);
 
         // Should not throw; calls base.OnConnectedAsync
-        await hub.OnConnectedAsync();
+        var act = () => hub.OnConnectedAsync();
+        await act.Should().NotThrowAsync("agent connection with valid agentId must be accepted");
     }
 
     // ── OnConnectedAsync — no agentId, not operator → aborts ─────────────

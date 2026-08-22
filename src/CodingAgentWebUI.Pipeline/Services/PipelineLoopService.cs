@@ -30,7 +30,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     // test-seeding method or constructor overload to restore the field to private readonly.
     internal readonly ProviderCacheManager _cacheManager;
     private readonly TemplatePoller _poller;
-    private readonly DispatchScheduler _dispatcher;
+    private readonly DispatchScheduler? _dispatcher;
 
     private volatile bool _stopRequested;
     private CancellationTokenSource? _loopCts;
@@ -105,7 +105,9 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
 
         _cacheManager = new ProviderCacheManager(deps.ProviderFactory, deps.Logger);
         _poller = new TemplatePoller(_cacheManager, deps.Logger);
-        _dispatcher = new DispatchScheduler(deps.Orchestration, deps.DispatchOrchestration, deps.WorkDistributor, deps.DependencyChecker, _cacheManager, deps.Logger);
+        _dispatcher = deps.DispatchOrchestration is not null
+            ? new DispatchScheduler(deps.Orchestration, deps.DispatchOrchestration, deps.DependencyChecker, _cacheManager, deps.Logger)
+            : null;
     }
 
     /// <summary>

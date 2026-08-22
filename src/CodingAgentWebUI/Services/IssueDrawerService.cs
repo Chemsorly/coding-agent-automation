@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -20,7 +19,6 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     private readonly IProviderFactory _providerFactory;
     private readonly IDependencyChecker _dependencyChecker;
     private readonly IWorkDistributor _workDistributor;
-    private readonly IAgentRegistryService _agentRegistry;
     private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<IssueSummary> _issueDrawer;
@@ -29,13 +27,11 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         IProviderFactory providerFactory,
         IDependencyChecker dependencyChecker,
         IWorkDistributor workDistributor,
-        IAgentRegistryService agentRegistry,
         IDispatchOrchestrationService dispatchOrchestration)
     {
         _providerFactory = providerFactory;
         _dependencyChecker = dependencyChecker;
         _workDistributor = workDistributor;
-        _agentRegistry = agentRegistry;
         _dispatchOrchestration = dispatchOrchestration;
 
         _issueDrawer = new DrawerStateService<IssueSummary>(
@@ -184,8 +180,6 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     {
         if (!issueProviders.Any(p => p.Id == template.IssueProviderId) || !repoProviders.Any(p => p.Id == template.RepoProviderId))
             return (false, "Template references providers that no longer exist.", null);
-        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
-            return (false, "Could not dispatch — no agents are currently connected.", null);
 
         var depProviderConfig = issueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
         if (depProviderConfig != null)

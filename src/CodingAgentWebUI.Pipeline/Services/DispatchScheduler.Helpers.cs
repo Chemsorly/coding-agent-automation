@@ -63,26 +63,16 @@ internal sealed partial class DispatchScheduler
     }
 
     /// <summary>
-    /// Shared helper that encapsulates the DB-vs-legacy dispatch branching.
+    /// Shared helper: prepares and dispatches a job distribution request via the orchestration service.
     /// </summary>
-    private async Task<bool> DispatchViaOrchestrationOrLegacyAsync(
+    private async Task<bool> DispatchViaOrchestrationAsync(
         Func<CancellationToken, Task<JobDistributionRequest?>> prepareDbRequest,
-        Func<JobDistributionRequest> buildLegacyRequest,
         CancellationToken ct)
     {
-        if (_dispatchOrchestration is not null)
-        {
-            var request = await prepareDbRequest(ct);
-            if (request is null) return false;
-            var outcome = await _dispatchOrchestration.DistributeAndFinalizeAsync(request, ct);
-            return outcome.Success;
-        }
-        else
-        {
-            var minimalRequest = buildLegacyRequest();
-            var result = await _workDistributor!.DistributeAsync(minimalRequest, ct);
-            return result.Success;
-        }
+        var request = await prepareDbRequest(ct);
+        if (request is null) return false;
+        var outcome = await _dispatchOrchestration.DistributeAndFinalizeAsync(request, ct);
+        return outcome.Success;
     }
 
     /// <summary>

@@ -74,7 +74,6 @@ public class DispatchSchedulerTests
         _scheduler = new DispatchScheduler(
             _mockOrchestration.Object,
             _mockDispatchOrchestration.Object,
-            workDistributor: null,
             dependencyChecker: null,
             _cacheManager,
             Serilog.Core.Logger.None);

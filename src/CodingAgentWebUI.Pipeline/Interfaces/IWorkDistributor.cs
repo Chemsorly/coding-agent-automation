@@ -60,18 +60,6 @@ public interface IWorkDistributor
     Task<HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct);
 
     /// <summary>
-    /// Whether this distributor requires at least one connected agent before dispatch can proceed.
-    /// <para>
-    /// Always <c>false</c> since Spec 041: it existed for the in-memory distributor, which pushed
-    /// straight to a connected agent. Work is now queued as a row and a pod is started for it, so
-    /// there is nothing to be connected in advance. The three call sites that still test it
-    /// (<c>EpicDrawerService</c>, <c>IssueDrawerService</c>, <c>PrReviewDrawerService</c>) are
-    /// consequently dead branches. TODO(Spec 046): remove the member and those branches.
-    /// </para>
-    /// </summary>
-    bool RequiresConnectedAgents => false;
-
-    /// <summary>
     /// Detects and transitions work items stuck in non-terminal states beyond expected thresholds.
     /// Called once per dispatch cycle before issue polling.
     /// <para>
