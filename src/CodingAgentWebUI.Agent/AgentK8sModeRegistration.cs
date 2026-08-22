@@ -63,8 +63,8 @@ internal static class AgentK8SModeRegistration
             sp.GetRequiredService<WorkItemHttpClient>());
 
         services.AddSingleton<IAgentConnectionManager>(sp => new AgentConnectionManager(
-            sp.GetRequiredService<HubConnectionManager>(),
-            sp.GetRequiredService<HubConnectionManagerFactory>(),
+            sp.GetRequiredService<IHubConnectionManager>(),
+            sp.GetRequiredService<IHubConnectionManagerFactory>(),
             sp.GetRequiredService<AgentId>(),
             logger));
 

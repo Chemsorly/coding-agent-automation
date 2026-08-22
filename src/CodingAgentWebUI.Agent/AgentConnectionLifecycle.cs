@@ -30,8 +30,8 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class AgentConnectionLifecycle : IAsyncDisposable
 {
-    private volatile HubConnectionManager? _hubManager;
-    private readonly HubConnectionManagerFactory _hubManagerFactory;
+    private volatile IHubConnectionManager? _hubManager;
+    private readonly IHubConnectionManagerFactory _hubManagerFactory;
     private readonly SignalRCompletionReporter _completionReporter;
     private readonly AgentJobSlotManager _slotManager;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
@@ -80,8 +80,8 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     public event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
 
     public AgentConnectionLifecycle(
-        HubConnectionManager hubManager,
-        HubConnectionManagerFactory hubManagerFactory,
+        IHubConnectionManager hubManager,
+        IHubConnectionManagerFactory hubManagerFactory,
         SignalRCompletionReporter completionReporter,
         AgentJobSlotManager slotManager,
         AgentId agentId,
@@ -239,7 +239,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     // TODO: Event handlers on old HubConnectionManager instances are never unwired before disposal.
     // While disposal should prevent further event firings, explicitly unsubscribing before
     // SafeDisposeAsync would be more defensive and prevent potential GC reference leaks.
-    private void WireEventHandlers(HubConnectionManager hubManager)
+    private void WireEventHandlers(IHubConnectionManager hubManager)
     {
         hubManager.OnAssignJob += msg => OnAssignJob?.Invoke(msg) ?? Task.CompletedTask;
         hubManager.OnCancelJob += jobId => OnCancelJob?.Invoke(jobId) ?? Task.CompletedTask;
@@ -248,22 +248,21 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         hubManager.OnFetchModels += request => OnFetchModels?.Invoke(request) ?? Task.CompletedTask;
         hubManager.OnAssignConsolidationJob += msg => OnAssignConsolidationJob?.Invoke(msg) ?? Task.CompletedTask;
         hubManager.OnReconnected += HandleReconnectedAsync;
-        hubManager.OnClosed += HandleTerminalClosedAsync;
+        hubManager.OnClosed += error => HandleTerminalClosedAsync(error);
     }
 
-    private async Task HandleTerminalClosedAsync(Exception? error)
+    internal async Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10)
     {
         _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
 
         var ct = _hostApplicationLifetime.ApplicationStopping;
-        const int maxAttempts = 10;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             var delay = ReconnectionHelper.CalculateReconnectionDelay(attempt);
             _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
                 attempt, maxAttempts, delay.TotalSeconds);
 
-            HubConnectionManager? newManager = null;
+            IHubConnectionManager? newManager = null;
             try
             {
                 await Task.Delay(delay, ct);
@@ -319,7 +318,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// This is critical when the orchestrator pod rolls over — the new pod has no
     /// prior state and won't recognize heartbeats from unregistered agents.
     /// </summary>
-    private async Task HandleReconnectedAsync(string? connectionId)
+    internal async Task HandleReconnectedAsync(string? connectionId)
     {
         PipelineTelemetry.AgentReconnections.Add(1);
         _logger.Information("Re-registering agent {AgentId} after reconnection (connectionId={ConnectionId})",
@@ -457,7 +456,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             _logger.Warning("Buffer still has pending messages after drain — job slot remains held");
     }
 
-    private async ValueTask SafeDisposeAsync(HubConnectionManager? manager)
+    private async ValueTask SafeDisposeAsync(IHubConnectionManager? manager)
     {
         if (manager is null) return;
         try

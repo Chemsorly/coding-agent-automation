@@ -104,10 +104,10 @@ try
     builder.Services.Add(ServiceDescriptor.Singleton(typeof(AgentId), startupConfig.AgentId));
 
     // ── Hub connection manager ──
-    builder.Services.AddSingleton(sp =>
+    builder.Services.AddSingleton<IHubConnectionManagerFactory>(sp =>
         new HubConnectionManagerFactory(startupConfig.OrchestratorUrl, startupConfig.AgentId, startupConfig.AgentApiKey, Log.Logger));
-    builder.Services.AddSingleton(sp =>
-        sp.GetRequiredService<HubConnectionManagerFactory>().Create());
+    builder.Services.AddSingleton<IHubConnectionManager>(sp =>
+        sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 
     // ── Pipeline executor ──
     builder.Services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));

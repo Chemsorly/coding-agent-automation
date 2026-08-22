@@ -15,13 +15,13 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 public sealed class SignalRCompletionReporter : IJobCompletionReporter
 {
-    private readonly HubConnectionManager _hubManager;
+    private readonly IHubConnectionManager _hubManager;
     private readonly ResiliencePipeline _signalRPipeline;
     private readonly CriticalMessageBuffer _criticalMessageBuffer;
     private readonly Serilog.ILogger _logger;
 
     public SignalRCompletionReporter(
-        HubConnectionManager hubManager,
+        IHubConnectionManager hubManager,
         ResiliencePipeline signalRPipeline,
         CriticalMessageBuffer criticalMessageBuffer,
         Serilog.ILogger logger)

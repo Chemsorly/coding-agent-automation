@@ -25,7 +25,7 @@ internal static class AgentSignalRModeRegistration
     {
         services.AddSingleton<CriticalMessageBuffer>();
         services.AddSingleton<SignalRCompletionReporter>(sp => new SignalRCompletionReporter(
-            sp.GetRequiredService<HubConnectionManager>(),
+            sp.GetRequiredService<IHubConnectionManager>(),
             ResiliencePipelineFactory.CreateSignalRPipeline(logger),
             sp.GetRequiredService<CriticalMessageBuffer>(),
             logger));
@@ -53,8 +53,8 @@ internal static class AgentSignalRModeRegistration
             });
         });
         services.AddSingleton<AgentConnectionLifecycle>(sp => new AgentConnectionLifecycle(
-            sp.GetRequiredService<HubConnectionManager>(),
-            sp.GetRequiredService<HubConnectionManagerFactory>(),
+            sp.GetRequiredService<IHubConnectionManager>(),
+            sp.GetRequiredService<IHubConnectionManagerFactory>(),
             sp.GetRequiredService<SignalRCompletionReporter>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
             sp.GetRequiredService<AgentId>(),

@@ -25,8 +25,8 @@ internal static class TestAgentWorkerServiceFactory
             IJobCompletionReporter? completionReporter = null,
             KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
             Serilog.ILogger? logger = null,
-            HubConnectionManager? hubManager = null,
-            HubConnectionManagerFactory? hubManagerFactory = null)
+            IHubConnectionManager? hubManager = null,
+            IHubConnectionManagerFactory? hubManagerFactory = null)
     {
         var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
         var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
