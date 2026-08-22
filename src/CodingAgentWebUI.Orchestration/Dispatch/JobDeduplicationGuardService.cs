@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -8,23 +7,22 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Manages the job queue and agent selection for dispatching pipeline runs.
-/// Uses a <see cref="ConcurrentQueue{T}"/> for FIFO job ordering and a
-/// <see cref="ConcurrentDictionary{TKey,TValue}"/> for duplicate issue detection.
-/// Registered as a singleton in DI.
+/// Atomically reserves an idle agent for dispatch, preventing two dispatch paths from
+/// double-booking the same agent. Registered as a singleton in DI.
 /// </summary>
-public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
+/// <remarks>
+/// The name is historical. This type no longer performs deduplication — the in-memory job queue
+/// and processing tracker were removed once the work-distribution modes collapsed to Kubernetes-only.
+/// Deduplication is now owned by the partial unique index on
+/// <c>WorkItems (IssueIdentifier, IssueProviderConfigId)</c> filtered to non-terminal statuses,
+/// plus the <c>IsIssueBeingProcessed</c> check at dispatch time. Consider renaming to
+/// <c>AgentReservationService</c>.
+/// </remarks>
+public sealed class JobDeduplicationGuardService
 {
     private readonly IAgentRegistryService _registry;
 
-    private readonly ConcurrentQueue<PendingJob> _jobQueue = new();
-
-    private readonly ConcurrentDictionary<string, bool> _processingIssues = new();
-
     private readonly ILogger _logger;
-
-    /// <summary>Guards compound queue operations (scan-and-re-enqueue). See docs/architecture/concurrency-model.md</summary>
-    private readonly object _queueLock = new();
 
     /// <summary>Serializes agent selection to prevent double-booking. See docs/architecture/concurrency-model.md</summary>
     private readonly object _selectionLock = new();
@@ -75,7 +73,8 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
 
             // Iterate compatible agents with double-check pattern:
             // Lock the entry and verify status is still Idle before transitioning.
-            // HeartbeatMonitor may have marked the agent Disconnected between GetIdleAgents() and now.
+            // A concurrent status change (reconciliation, disconnect, manual disable) may have
+            // marked the agent non-Idle between GetIdleAgents() and now.
             // Lock ordering: _selectionLock (already held) → entry.SyncRoot (no deadlock risk).
             foreach (var candidate in compatible)
             {
@@ -83,7 +82,7 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
                 {
                     if (candidate.Status != AgentStatus.Idle)
                     {
-                        // Race: HeartbeatMonitor changed status between snapshot and lock acquisition — skip
+                        // Race: concurrent status change (reconciliation, disconnect) between snapshot and lock — skip
                         _logger.Debug("SelectAgent: skipping agent {AgentId} — status changed to {Status} before reservation",
                             candidate.AgentId, candidate.Status);
                         continue;
@@ -107,229 +106,6 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
     }
 
     /// <summary>
-    /// Enqueues a job for later dispatch. Rejects duplicates (same issue identifier).
-    /// </summary>
-    /// <returns><c>true</c> if the job was enqueued; <c>false</c> if the issue is already queued or being processed.</returns>
-    public bool EnqueueJob(PendingJob job)
-    {
-        ArgumentNullException.ThrowIfNull(job);
-
-        var compositeKey = $"{job.IssueProviderId}:{job.IssueIdentifier}";
-        if (!_processingIssues.TryAdd(compositeKey, true))
-        {
-            _logger.Warning(
-                "Job for issue {IssueIdentifier} rejected — already queued or processing",
-                job.IssueIdentifier);
-            return false;
-        }
-
-        _jobQueue.Enqueue(job);
-        _logger.Information(
-            "Job enqueued for issue {IssueIdentifier} (initiated by {InitiatedBy})",
-            job.IssueIdentifier, job.InitiatedBy);
-        return true;
-    }
-
-    /// <summary>
-    /// Dequeues the highest-priority compatible job for the given agent.
-    /// Collects all jobs under <c>_queueLock</c>, selects the compatible job with the lowest
-    /// priority number (Review=0 &gt; Decomposition=1 &gt; Implementation=2 &gt; Consolidation=3),
-    /// breaking ties by <see cref="PendingJob.EnqueuedAt"/> to preserve FIFO within the same tier.
-    /// Non-selected jobs are re-enqueued in their original order to preserve within-tier FIFO for
-    /// subsequent calls.
-    /// </summary>
-    /// <returns>The highest-priority compatible job, or <c>null</c> if no compatible jobs are queued.</returns>
-    public PendingJob? DequeueForAgent(AgentEntry agent)
-    {
-        ArgumentNullException.ThrowIfNull(agent);
-
-        lock (_queueLock)
-        {
-            var count = _jobQueue.Count;
-            if (count == 0) return null;
-
-            // Step 1: Collect all jobs in FIFO order
-            // TODO: Using _jobQueue.Count as a snapshot before the drain loop means items
-            // concurrently enqueued (by EnqueueJob or ReEnqueue outside this lock) between the
-            // Count read and the loop completing will not be included in `all`. Those items stay
-            // at the back of ConcurrentQueue and are considered on the next call — no job is lost,
-            // but a high-priority job enqueued during this window will not be promoted in the
-            // current cycle. A tighter implementation would drain until TryDequeue returns false
-            // rather than relying on a Count snapshot.
-            var all = new List<PendingJob>(count);
-            for (var i = 0; i < count; i++)
-            {
-                if (_jobQueue.TryDequeue(out var j))
-                    all.Add(j);
-            }
-
-            // Step 2: Find the highest-priority label-compatible job
-            PendingJob? selected = null;
-            int selectedIndex = -1;
-            int bestPriority = int.MaxValue;
-            DateTimeOffset bestEnqueuedAt = DateTimeOffset.MaxValue;
-
-            for (var i = 0; i < all.Count; i++)
-            {
-                var job = all[i];
-                if (!LabelMatchHelper.IsLabelMatch(agent.Labels, job.RequiredLabels))
-                    continue;
-
-                var p = GetJobPriority(job);
-                if (p < bestPriority || (p == bestPriority && job.EnqueuedAt < bestEnqueuedAt))
-                {
-                    bestPriority = p;
-                    bestEnqueuedAt = job.EnqueuedAt;
-                    selected = job;
-                    selectedIndex = i;
-                }
-            }
-
-            // Step 3: Re-enqueue all non-selected jobs in their original collected order
-            // (not sorted by priority) to preserve within-tier FIFO for subsequent calls.
-            for (var i = 0; i < all.Count; i++)
-            {
-                if (i != selectedIndex)
-                    _jobQueue.Enqueue(all[i]);
-            }
-
-            if (selected is not null)
-                _logger.Information(
-                    "Dequeued job for issue {IssueIdentifier} → agent {AgentId}",
-                    selected.IssueIdentifier, agent.AgentId);
-
-            return selected;
-        }
-    }
-
-    /// <summary>
-    /// Returns the dispatch priority for a job. Lower values are dispatched first.
-    /// Priority order: Review (0) &gt; Decomposition (1) &gt; Implementation (2) &gt; Consolidation (3).
-    /// Consolidation is detected via <see cref="PendingJob.IsConsolidation"/> because
-    /// <see cref="PipelineRunType"/> has no Consolidation value — consolidation jobs have
-    /// <see cref="PipelineRunType.Implementation"/> as their RunType.
-    /// The default arm (<c>_ =&gt; 2</c>) is unreachable with the current enum but acts as a
-    /// safe fallback for any future values.
-    /// </summary>
-    private static int GetJobPriority(PendingJob job) => job.IsConsolidation
-        ? 3
-        : job.RunType switch
-        {
-            PipelineRunType.Review                => 0,
-            PipelineRunType.DecompositionAnalysis => 1,
-            PipelineRunType.Decomposition         => 1,
-            PipelineRunType.Implementation        => 2,
-            _                                     => 2
-        };
-
-    /// <summary>
-    /// Checks whether the given issue identifier is already queued for processing.
-    /// </summary>
-    public bool IsIssueQueued(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(issueProviderConfigId.Value);
-        var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
-        return _processingIssues.ContainsKey(compositeKey);
-    }
-
-    /// <summary>
-    /// Checks whether the given issue identifier is queued with any provider.
-    /// Intended for test convenience where provider context is implicit.
-    /// WARNING: O(n) enumeration of all keys — do not use on hot paths.
-    /// </summary>
-    internal bool IsIssueQueued(string issueIdentifier)
-    {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
-        var suffix = $":{issueIdentifier}";
-        return _processingIssues.Keys.Any(k => k.EndsWith(suffix, StringComparison.Ordinal));
-    }
-
-    /// <summary>
-    /// Removes a queued issue (e.g., when the UI cancels a pending job).
-    /// Removes from both the dedup dictionary and the queue.
-    /// </summary>
-    public bool RemoveFromQueue(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(issueProviderConfigId.Value);
-
-        var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
-        if (!_processingIssues.TryRemove(compositeKey, out _))
-            return false;
-
-        lock (_queueLock)
-        {
-            var count = _jobQueue.Count;
-            for (var i = 0; i < count; i++)
-            {
-                if (!_jobQueue.TryDequeue(out var job))
-                    break;
-
-                if (!(job.IssueIdentifier == issueIdentifier && job.IssueProviderId == issueProviderConfigId.Value))
-                {
-                    _jobQueue.Enqueue(job);
-                }
-            }
-        }
-
-        _logger.Information("Removed queued job for issue {IssueIdentifier}", issueIdentifier);
-        return true;
-    }
-
-    /// <summary>
-    /// Removes a queued job by its RunId (IssueIdentifier for consolidation jobs).
-    /// Used when a consolidation run is cancelled while queued.
-    /// </summary>
-    // TODO: This method still accepts a raw string. Callers (e.g., ConsolidationDispatchService.NotifyRunCancelledAsync)
-    // must unwrap RunId.Value before calling here, which is a string boundary crossing that the RunId adoption
-    // effort (#2069) aims to eliminate. Updating this signature to accept RunId would close the remaining
-    // string crossing at ConsolidationDispatchService.cs NotifyRunCancelledAsync.
-    public bool RemoveJob(string runId)
-    {
-        ArgumentNullException.ThrowIfNull(runId);
-        return RemoveFromQueue(runId, "consolidation");
-    }
-
-    /// <summary>
-    /// Marks an issue as no longer being processed (call after job completion or failure).
-    /// </summary>
-    public void MarkIssueComplete(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
-        ArgumentException.ThrowIfNullOrEmpty(issueProviderConfigId.Value);
-        var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
-        _processingIssues.TryRemove(compositeKey, out _);
-    }
-
-    /// <summary>
-    /// Re-enqueues a job that was previously dequeued but could not be dispatched.
-    /// Bypasses the <c>_processingIssues.TryAdd</c> check because the entry is still
-    /// active in the dedup dictionary (caller guarantees this).
-    /// </summary>
-    public void ReEnqueue(PendingJob job)
-    {
-        ArgumentNullException.ThrowIfNull(job);
-        _jobQueue.Enqueue(job);
-        _logger.Debug(
-            "Re-enqueued job for issue {IssueIdentifier} (dedup entry retained)",
-            job.IssueIdentifier);
-    }
-
-    /// <summary>
-    /// Returns the current number of jobs in the queue.
-    /// </summary>
-    public int QueueLength => _jobQueue.Count;
-
-    /// <summary>
-    /// Returns all currently queued jobs as a snapshot.
-    /// </summary>
-    public IReadOnlyList<PendingJob> GetQueuedJobs()
-    {
-        return _jobQueue.ToArray().ToList().AsReadOnly();
-    }
-
-    /// <summary>
     /// Resolves the required agent labels for a repository provider config.
     /// Delegates to <see cref="Pipeline.Services.LabelResolver.ResolveRequiredLabels"/> for the actual logic.
     /// Resolution order: <see cref="ProviderConfig.RequiredLabels"/> property →
@@ -342,15 +118,4 @@ public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
         return Pipeline.Services.LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 
-    /// <summary>
-    /// Clears the job queue and processing tracker. Used by E2E tests for state isolation.
-    /// </summary>
-    internal void Reset()
-    {
-        lock (_queueLock)
-        {
-            while (_jobQueue.TryDequeue(out _)) { }
-        }
-        _processingIssues.Clear();
-    }
 }

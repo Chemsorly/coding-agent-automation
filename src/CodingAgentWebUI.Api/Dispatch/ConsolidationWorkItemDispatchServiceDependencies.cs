@@ -22,6 +22,9 @@ internal sealed record ConsolidationWorkItemDispatchServiceDependencies(
     JobTemplateStore TemplateProvider,
     IConfiguration Configuration,
     WorkItemTransitionService TransitionService,
+    // StateBuilder has a null-guard in the ConsolidationWorkItemDispatchService constructor.
+    // Production always provides it via GetRequiredService. Optional only for legacy test paths
+    // that test pre-StateBuilder behavior.
     IConsolidationRunStore? ConsolidationRunStore = null,
     IConsolidationService? ConsolidationService = null,
     IConsolidationJobPreparationService? ConsolidationJobPreparer = null,

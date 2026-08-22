@@ -134,7 +134,7 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
         // ArgumentNullException.ThrowIfNull(issueIdentifier) (catches null only) to
         // ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value) (catches null AND empty string).
         // Add a test case using new IssueIdentifier("") (empty Value) to cover the empty-string path
-        // across all migrated entry points (TryDispatchAsync, IsIssueQueued, MarkIssueComplete, etc.).
+        // across all migrated entry points (TryDispatchAsync, etc.).
         await Assert.ThrowsAnyAsync<ArgumentException>(() =>
             _service.CreateDispatchedRunAsync(
                 new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = default, AgentProviderId = "agent-1", AgentId = "agent-container-1" },

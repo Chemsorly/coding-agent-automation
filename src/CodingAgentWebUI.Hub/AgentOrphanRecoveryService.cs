@@ -44,8 +44,8 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
 
         // Detect orphaned runs: if the orchestrator tracks active runs for this agent
         // but the agent registered without an active job, restore the ActiveJobId on the
-        // registry entry so the HeartbeatMonitor grace period logic can handle cleanup.
-        // This avoids immediately failing runs when an agent has a brief network blip.
+        // registry entry. This avoids immediately failing runs when an agent has a brief network blip.
+        // The ReconciliationService (JobController) enforces work-item timeouts.
         var entry = _facade.GetByAgentId(agentId);
         if (entry is { ActiveJobId: null })
         {
@@ -253,7 +253,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         {
             // Restore the most recent orphaned run as the active job so the
             // disconnect grace period timer applies. If the agent truly lost the job,
-            // the HeartbeatMonitor will fail it after the grace period expires.
+            // ReconciliationService (JobController) will time out the run after the grace period.
             var mostRecent = orphanedRuns[^1];
             lock (entry.SyncRoot)
             {
@@ -278,7 +278,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
 
                 _logger.Warning(
                     "Agent {AgentId} re-registered without active job but orchestrator tracks {OrphanCount} orphaned run(s). " +
-                    "Restoring run {RunId} (issue {IssueIdentifier}) as active — HeartbeatMonitor will clean up if agent does not resume.",
+                    "Restoring run {RunId} (issue {IssueIdentifier}) as active — ReconciliationService will time out the run if agent does not resume.",
                     agentId, orphanedRuns.Count, mostRecent.RunId, mostRecent.IssueIdentifier);
             }
         }
@@ -295,8 +295,8 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         // Crash recovery detection: agent registered without an active job but the
         // registry already restored ActiveJobId (from its own prior state in the update factory).
         // This means the agent lost its in-memory state (container restart) while the orchestrator
-        // still thinks it's working. Set OrphanRestoredAt so HeartbeatMonitor Phase 1.5 will
-        // fail the run after the grace period if the agent doesn't report progress.
+        // still thinks it's working. ReconciliationService (JobController) will time out the run
+        // if the agent does not report progress within the configured timeout.
         if (message.ActiveJob is null && entry.OrphanRestoredAt is null)
         {
             lock (entry.SyncRoot)
@@ -305,7 +305,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             }
             _logger.Warning(
                 "Agent {AgentId} re-registered without active job but orchestrator has {JobId} assigned (crash recovery). " +
-                "Setting OrphanRestoredAt — HeartbeatMonitor will fail run after grace period if agent does not resume.",
+                "ReconciliationService will time out the run if agent does not resume.",
                 agentId, entry.ActiveJobId);
         }
         else

@@ -3,7 +3,6 @@ using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
@@ -16,15 +15,23 @@ namespace CodingAgentWebUI.UnitTests.Hubs;
 /// Tests for AgentHub.Consolidation.cs paths not covered by AgentHubBehaviorTests.
 /// Covers: job-id mismatch → REJECTED, agent null (no status transition),
 /// no HarnessSuggestions (skip save), no CreatedIssues (skip badge increment).
-/// ReportFetchModelsResult is excluded because ModelFetchService is a sealed type — null! is passed.
+/// T10: ModelFetchService and ConsolidationService now behind IHubConsolidationOperations —
+/// the sealed-type null! workaround is no longer needed.
 /// </summary>
 public sealed class AgentHubConsolidationTests
 {
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
-    private readonly Mock<IConsolidationService> _mockConsolidation = new();
-    private readonly ConsolidationBadgeService _badgeService = new();
+    private readonly Mock<IHubConsolidationOperations> _mockConsolidationOps = new();
     private readonly Mock<IChangeNotifier> _mockChangeNotifier = new();
     private readonly Mock<ILogger> _mockLogger = new();
+
+    public AgentHubConsolidationTests()
+    {
+        // Default: HandleConsolidationCompleteAsync returns an empty debug string
+        _mockConsolidationOps
+            .Setup(c => c.HandleConsolidationCompleteAsync(It.IsAny<ConsolidationJobResult>(), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("");
+    }
 
     private AgentHub CreateHub(string connectionId = "conn-1")
     {
@@ -32,9 +39,7 @@ public sealed class AgentHubConsolidationTests
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
-            null!,  // ModelFetchService — sealed, cannot mock
-            _mockConsolidation.Object,
-            _badgeService,
+            _mockConsolidationOps.Object,
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
@@ -89,9 +94,8 @@ public sealed class AgentHubConsolidationTests
 
         await hub.ReportConsolidationComplete(result);
 
-        _mockConsolidation.Verify(s =>
-            s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.IsAny<ConsolidationJobResult>(), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -125,9 +129,8 @@ public sealed class AgentHubConsolidationTests
 
         // Run status must still be updated even when agent is not found.
         // No token data available (null result fields) → totalTokens must be 0.
-        _mockConsolidation.Verify(s => s.UpdateRunAsync(
-            (RunId)"crun-1", ConsolidationRunStatus.Succeeded, "Done",
-            It.IsAny<CancellationToken>(), 0L),
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "crun-1"), (AgentEntry?)null, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -178,10 +181,10 @@ public sealed class AgentHubConsolidationTests
 
         await hub.ReportConsolidationComplete(result);
 
-        _mockConsolidation.Verify(s =>
-            s.SaveHarnessSuggestionsAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        _badgeService.BadgeCount.Should().Be(0, "no suggestions → no badge increment");
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.IsAny<ConsolidationJobResult>(), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        // Badge counting is now inside HandleConsolidationCompleteAsync — no suggestions means badge count not incremented
     }
 
     // ── ReportConsolidationComplete — no CreatedIssues ───────────────────
@@ -203,7 +206,10 @@ public sealed class AgentHubConsolidationTests
 
         await hub.ReportConsolidationComplete(result);
 
-        _badgeService.BadgeCount.Should().Be(0, "null CreatedIssues → no badge increment");
+        // Badge counting is now inside HandleConsolidationCompleteAsync — null CreatedIssues means no badge increment
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.CreatedIssues == null), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -223,7 +229,10 @@ public sealed class AgentHubConsolidationTests
 
         await hub.ReportConsolidationComplete(result);
 
-        _badgeService.BadgeCount.Should().Be(0, "empty CreatedIssues → no badge increment");
+        // Badge counting is now inside HandleConsolidationCompleteAsync — empty CreatedIssues means no badge increment
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.CreatedIssues != null && r.CreatedIssues.Count == 0), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     // ── ReportConsolidationComplete — matching job id proceeds normally ───
@@ -259,9 +268,8 @@ public sealed class AgentHubConsolidationTests
 
         // Must not start with REJECTED
         returnValue.Should().NotStartWith("REJECTED");
-        _mockConsolidation.Verify(s => s.UpdateRunAsync(
-            It.IsAny<RunId>(), ConsolidationRunStatus.Succeeded, "Done",
-            It.IsAny<CancellationToken>(), 0L),
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "crun-1"), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -287,10 +295,10 @@ public sealed class AgentHubConsolidationTests
 
         await hub.ReportConsolidationComplete(result);
 
+        // Token summation is now inside HandleConsolidationCompleteAsync; verify it was called with the right result
         // Total = (100+50+10) + (200+80+0) + (30+20+5) = 160 + 280 + 55 = 495
-        _mockConsolidation.Verify(s => s.UpdateRunAsync(
-            (RunId)"crun-tok", ConsolidationRunStatus.Succeeded, "OK",
-            CancellationToken.None, 495L),
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "crun-tok"), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -314,9 +322,8 @@ public sealed class AgentHubConsolidationTests
 
         await hub.ReportConsolidationComplete(result);
 
-        _mockConsolidation.Verify(s => s.UpdateRunAsync(
-            (RunId)"crun-notok", ConsolidationRunStatus.Succeeded, "OK",
-            CancellationToken.None, 0L),
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "crun-notok"), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 }

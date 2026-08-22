@@ -94,36 +94,10 @@ spec:
                   key: otel-headers
                   optional: true
             # KubernetesWorkDistributor and KubernetesJobCleanup have been migrated to
-            # IPipelineApiWorkItemClient. IDbContextFactory is still registered in the monolith
-            # for: IPipelineRunHistoryService, IConsolidationRunStore, IHarnessSuggestionStore,
-            # and WorkItemTransitionService (consolidation services). These env vars are required
-            # until those remaining consumers are migrated to API calls.
-            # Note Database__MigrateOnStartup=false: the API owns schema migrations (Req 9.5a).
-            - name: Database__Host
-              value: {{ required "database.host is required" .Values.database.host | quote }}
-            - name: Database__Port
-              value: {{ .Values.database.port | default 5432 | quote }}
-            - name: Database__Name
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "database.auth.existingSecret is required" .Values.database.auth.existingSecret }}
-                  key: {{ .Values.database.auth.keys.database | default "POSTGRES_DB" }}
-            - name: Database__Username
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.database.auth.existingSecret }}
-                  key: {{ .Values.database.auth.keys.username | default "POSTGRES_USER" }}
-            - name: Database__Password
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.database.auth.existingSecret }}
-                  key: {{ .Values.database.auth.keys.password | default "POSTGRES_PASSWORD" }}
-            {{- if .Values.database.sslMode }}
-            - name: Database__SslMode
-              value: {{ .Values.database.sslMode | quote }}
-            {{- end }}
-            - name: Database__MigrateOnStartup
-              value: "false"
+            # IPipelineApiWorkItemClient. IPipelineRunHistoryService, IConsolidationRunStore,
+            # IHarnessSuggestionStore, and IWorkItemFallbackTransitionService are all API-backed
+            # as of arch-audit 2026-08-22 (T8 complete). The orchestrator no longer holds a
+            # Postgres connection. Database env vars removed.
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}

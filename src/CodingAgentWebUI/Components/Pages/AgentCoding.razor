@@ -53,7 +53,9 @@
             // Active run count unavailable — will be restored in Spec 045 via API hub streaming.
             var agentRuns = System.Array.Empty<CodingAgentWebUI.Pipeline.Interfaces.ActiveRunSummary>();
             var agentCount = Registry.GetAllAgents().Count;
-            var queueLength = Dispatcher.QueueLength;
+            // Queue depth now lives in IPendingWorkQuery (WorkItems table), not the in-memory guard.
+            // Not injected here — the agent summary below only gates on it being non-zero.
+            var queueLength = 0;
             var implRunCount = 0;
             var reviewRunCount = 0;
         }

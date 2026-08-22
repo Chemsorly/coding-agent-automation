@@ -8,7 +8,6 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.EntityFrameworkCore;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -34,6 +33,29 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 });
+
+// ── Monolith runtime options (T11: replaces scattered env reads) ─────────────────────────────
+// Binds READINESS_DRAIN_DELAY_SECONDS, PIPELINE_LOOP_STARTUP_DELAY_SECONDS from IConfiguration.
+// ValidateDataAnnotations ensures startup fails fast with a named error if values are out of range.
+// Note: AgentApiKey is set from builder.Configuration (read below) — options registration deferred.
+builder.Services.AddOptions<MonolithRuntimeOptions>()
+    .Configure<IConfiguration>((opts, cfg) =>
+    {
+        var drainDelay = Environment.GetEnvironmentVariable("READINESS_DRAIN_DELAY_SECONDS");
+        if (!string.IsNullOrWhiteSpace(drainDelay) && int.TryParse(drainDelay, out var d))
+            opts.ReadinessDrainDelaySeconds = d;
+
+        var loopDelay = cfg.GetValue<int?>("Orchestrator:PipelineLoopStartupDelaySeconds")
+            ?? cfg.GetValue<int?>("Env:PipelineLoopStartupDelaySeconds");
+        if (loopDelay.HasValue)
+            opts.PipelineLoopStartupDelaySeconds = loopDelay.Value;
+
+        opts.AgentApiKey = cfg.GetValue<string>("AGENT_API_KEY")
+            ?? Environment.GetEnvironmentVariable("AGENT_API_KEY")
+            ?? "";
+    })
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 // Host shutdown timeout: drain delay (15s) + ShutdownService timeout (15s) = 30s used, 10s headroom remaining.
 // ShutdownBudgetValidation warns if headroom drops below 5s (i.e., drain + shutdown > 35s).

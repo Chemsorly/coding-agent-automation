@@ -1,6 +1,5 @@
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -21,9 +20,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly IAgentHubFacade _facade;
     private readonly IChatNotifier _chatNotifier;
     private readonly IChangeNotifier _changeNotifier;
-    private readonly ModelFetchService _modelFetchService;
-    private readonly IConsolidationService _consolidationService;
-    private readonly ConsolidationBadgeService _badgeService;
+    private readonly IHubConsolidationOperations _consolidationOps;
     private readonly IHubIssueOperations _issueOps;
     private readonly IAgentJobLifecycleService _lifecycleService;
     private readonly IAgentTokenRefreshService _tokenRefreshService;
@@ -43,9 +40,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _facade = deps.Facade;
         _chatNotifier = deps.ChatNotifier;
         _changeNotifier = deps.ChangeNotifier;
-        _modelFetchService = deps.ModelFetchService;
-        _consolidationService = deps.ConsolidationService;
-        _badgeService = deps.BadgeService;
+        _consolidationOps = deps.ConsolidationOps;
         _issueOps = deps.IssueOps;
         _lifecycleService = deps.LifecycleService;
         _tokenRefreshService = deps.TokenRefreshService;

@@ -34,8 +34,7 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<ITokenVendingService>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<DispatchResolutionService>(),
-        sp.GetService<AnalysisStalenessDetector>()));  // null — not registered in monolith DI
+            sp.GetRequiredService<DispatchResolutionService>()));
 
         services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
             sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));

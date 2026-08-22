@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Services;
 /// Delegates all persistence calls to the Pipeline API instead of the database,
 /// ensuring the API remains the single authoritative writer for consolidation runs.
 /// </summary>
-internal sealed class ApiBackedConsolidationRunStore : IConsolidationRunStore
+public sealed class ApiBackedConsolidationRunStore : IConsolidationRunStore
 {
     private readonly IPipelineApiConsolidationRunClient _client;
 
@@ -35,7 +35,7 @@ internal sealed class ApiBackedConsolidationRunStore : IConsolidationRunStore
 /// API-backed implementation of <see cref="IHarnessSuggestionStore"/>.
 /// Delegates all persistence calls to the Pipeline API instead of the database.
 /// </summary>
-internal sealed class ApiBackedHarnessSuggestionStore : IHarnessSuggestionStore
+public sealed class ApiBackedHarnessSuggestionStore : IHarnessSuggestionStore
 {
     private readonly IPipelineApiHarnessSuggestionClient _client;
 

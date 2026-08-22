@@ -85,8 +85,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Error(ex, "FailRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
         }
 
-        // 4. Mark issue complete in dedup tracker
-        _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         // 5. Clear agent state
         ClearAgentState(run.AgentId);
@@ -144,8 +142,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Error(ex, "CompleteRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
         }
 
-        // 3. Mark issue complete in dedup tracker
-        _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         _logger.Information(
             "RunLifecycleManager.CompleteRunAsync: run {RunId} completed (status={Status})",
@@ -188,8 +184,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Error(ex, "CancelRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
         }
 
-        // 4. Mark issue complete in dedup tracker
-        _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         // 5. Clear agent state
         ClearAgentState(run.AgentId);
@@ -295,7 +289,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         lock (agent.SyncRoot)
         {
             agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null;
+            agent.OrphanRestoredAt = null; // cleared on successful completion
         }
 
         _registry.TransitionStatus(agentId, AgentStatus.Idle);

@@ -1,16 +1,11 @@
-using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Infrastructure.Persistence.Stores;
-using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Services;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
-using Polly.Registry;
 using Serilog;
 using StackExchange.Redis;
 
@@ -18,69 +13,36 @@ namespace CodingAgentWebUI;
 
 /// <summary>
 /// Registers work distribution services for Kubernetes deployment.
-/// KubernetesWorkDistributor and KubernetesJobCleanup are now fully API-backed
-/// (no direct DB access). Remaining IDbContextFactory consumers:
-/// IPipelineRunHistoryService, IConsolidationRunStore, IHarnessSuggestionStore,
-/// and WorkItemTransitionService (used by consolidation services).
+/// All persistence routes through the Pipeline API — no direct Postgres access in the orchestrator.
+/// T8 complete (arch-audit 2026-08-22): IDbContextFactory removed from orchestrator registration.
 /// </summary>
 public static partial class WorkDistributionRegistration
 {
     /// <summary>
     /// Registers work distribution services: K8s infrastructure, leader election,
     /// work distributor, and SignalR backplane.
-    /// IDbContextFactory retained for KubernetesWorkDistributor and consolidation services.
-    /// TODO(Spec 046): migrate those to API calls to remove the last DB dependency from the monolith.
+    /// All persistence routes through Pipeline API — no IDbContextFactory in this method.
     /// </summary>
     public static IServiceCollection AddWorkDistribution(
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = DatabaseConnectionResolver.Resolve(configuration);
-        if (string.IsNullOrEmpty(connectionString))
-        {
-            Log.Fatal("Database__Host is not configured. Kubernetes deployment requires PostgreSQL.");
-            throw new InvalidOperationException("Database__Host is not configured.");
-        }
+        // ── IPipelineRunHistoryService — API-backed (T8 item 2) ─────────────
+        // Orchestrator no longer writes run history directly to Postgres.
+        // ApiBackedPipelineRunHistoryService routes AddRunToHistoryAsync/GetRunHistoryAsync
+        // through POST|GET /api/pipeline-runs.
+        services.AddSingleton<IPipelineRunHistoryService>(sp =>
+            new CodingAgentWebUI.Services.ApiBackedPipelineRunHistoryService(
+                sp.GetRequiredService<IPipelineApiRunHistoryClient>(),
+                Log.Logger));
 
-        // ── Normalize connection string (Timeout=15, SslMode=Require for production) ──
-        var isProduction = !string.Equals(
-            Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
-            "Development",
-            StringComparison.OrdinalIgnoreCase);
-        var normalizedConnectionString = CodingAgentWebUI.Infrastructure.DatabaseReadinessMonitor.NormalizeConnectionString(
-            connectionString, isProduction);
-
-        // ── EF Core DbContext Factory + scoped accessor ─────────────────────
-        // Still required by:
-        // - IPipelineRunHistoryService (PostgresPipelineRunHistoryService)
-        // - IConsolidationRunStore (PostgresConsolidationRunStore)
-        // - IHarnessSuggestionStore (PostgresHarnessSuggestionStore)
-        // KubernetesWorkDistributor and KubernetesJobCleanup have been migrated to
-        // IPipelineApiWorkItemClient and no longer require IDbContextFactory.
-        services.AddPooledDbContextFactory<PipelineDbContext>(opts =>
-            opts.UseNpgsql(normalizedConnectionString));
-        services.AddScoped(sp =>
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>().CreateDbContext());
-
-        // ── Distributed lock provider (Postgres advisory locks) ─────────────
-        services.AddDistributedLockProvider(connectionString);
-
-        // ── WorkItemTransitionService — used by consolidation services via IWorkItemFallbackTransitionService ──
-        // No longer consumed by KubernetesWorkDistributor (fully API-backed).
-        services.AddSingleton<WorkItemTransitionService>(sp => new WorkItemTransitionService(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemTransitionService>(),
-            sp.GetService<ResiliencePipelineProvider<string>>()));
-
-        // ── WorkItemFallbackTransitionService (singleton — wraps WorkItemTransitionService) ──
-        services.AddSingleton<IWorkItemFallbackTransitionService>(sp => new WorkItemFallbackTransitionService(
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemFallbackTransitionService>()));
-
-        // ── IPipelineRunHistoryService — still needed by consolidation services and PipelineRunLifecycleService ──
-        services.AddSingleton<IPipelineRunHistoryService>(sp => new PostgresPipelineRunHistoryService(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            Log.Logger));
+        // ── IWorkItemFallbackTransitionService — API-backed (T8 item 3) ─────
+        // WorkItem status transitions route through POST /api/work-items/{id}/status.
+        // IWorkItemFallbackTransitionService is no longer backed by direct EF Core access.
+        services.AddSingleton<IWorkItemFallbackTransitionService>(sp =>
+            new CodingAgentWebUI.Services.ApiBackedWorkItemFallbackTransitionService(
+                sp.GetRequiredService<IPipelineApiWorkItemClient>(),
+                Log.Logger));
 
         // ── Consolidation run persistence — API-backed ──────────────────────────────────────────
         // The API is the sole owner of the ConsolidationRuns table. The orchestrator must not
@@ -95,7 +57,7 @@ public static partial class WorkDistributionRegistration
 
         // The following services were removed — registrations live in CodingAgentWebUI.Api:
         //   IActiveRunQueryService → IPipelineApiRunHistoryClient
-        //   AnalysisStalenessDetector → not registered (GetService returns null)
+        //   AnalysisStalenessDetector → deleted (B6, arch-audit 2026-08-22); was never registered
         //   PostgresConfigurationStore → API-backed adapters in ServiceCollectionExtensions.PipelineBackgroundServices
         //   ILoopStateStore → ClosedLoopAutoStart in PipelineConfiguration
         //   IKeyValueStore → IPipelineApiConfigClient
@@ -111,8 +73,8 @@ public static partial class WorkDistributionRegistration
         // ── SignalR Redis backplane (optional) ────────────────────────────────
         ConfigureSignalRRedisBackplane(services, configuration);
 
-        Log.Information("WorkDistribution: Kubernetes mode — all config stores and consolidation stores are API-backed; " +
-                        "IDbContextFactory retained for WorkItemTransitionService and IPipelineRunHistoryService");
+        Log.Information("WorkDistribution: Kubernetes mode — all persistence routes through Pipeline API. " +
+                        "No direct Postgres access in orchestrator. T8 complete.");
 
         return services;
     }

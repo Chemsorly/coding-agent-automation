@@ -14,6 +14,14 @@ spec:
   {{- fail "api.replicas must be 1. AgentRegistryService, OrchestratorRunService and JobDeduplicationGuardService are in-memory singletons; a second replica gets a divergent copy of each. See docs/architecture/concurrency-model.md." }}
   {{- end }}
   replicas: {{ .Values.api.replicas }}
+  # Recreate avoids a ~20-30s incorrect two-pod overlap during rollout.
+  # At replicas=1 the Kubernetes default RollingUpdate would surge to 2 pods,
+  # giving two API processes a divergent view of AgentRegistryService,
+  # OrchestratorRunService and JobDeduplicationGuardService.
+  # Recreate trades the overlap for a clean ~20-30s outage, which is correct for
+  # a batch system with infinitely-reconnecting agents and durable Postgres work items.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}

@@ -1,6 +1,4 @@
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Services;
@@ -8,7 +6,6 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using k8s;
-using Microsoft.EntityFrameworkCore;
 using Serilog;
 
 namespace CodingAgentWebUI;
@@ -98,7 +95,7 @@ public static partial class WorkDistributionRegistration
 
         // ── JobTemplateStore ─────────────────────────────────────────────────
         services.AddSingleton<JobTemplateStore>(sp =>
-            DispatchService.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
+            JobTemplateProviderLoader.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
 
         // ── IChatJobDispatcher — API-backed client ────────────────────────────
         // ChatJobDispatcher lives in the Pipeline API alongside AgentHub and the registry it polls.

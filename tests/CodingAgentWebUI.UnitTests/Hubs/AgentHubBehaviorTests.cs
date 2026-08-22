@@ -29,8 +29,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
-    private readonly Mock<IConsolidationService> _mockConsolidation = new();
-    private readonly ConsolidationBadgeService _badgeService = new();
     private readonly Mock<IHubIssueOperations> _mockIssueOps = new();
     private readonly Mock<IAgentJobLifecycleService> _mockLifecycleService = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
@@ -43,9 +41,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             Mock.Of<IChangeNotifier>(),
-            null!,  // ModelFetchService
-            _mockConsolidation.Object,
-            _badgeService,
+            Mock.Of<IHubConsolidationOperations>(),
             _mockIssueOps.Object,
             _mockLifecycleService.Object,
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
@@ -509,7 +505,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         await hub.ReportConsolidationComplete(result);
 
-        _mockConsolidation.Verify(s => s.UpdateRunAsync((RunId)"crun-1", ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None), Times.Once);
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         agent.ActiveJobId.Should().BeNull();
     }
@@ -525,7 +520,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         await hub.ReportConsolidationComplete(result);
 
-        _mockConsolidation.Verify(s => s.UpdateRunAsync((RunId)"crun-1", ConsolidationRunStatus.Failed, "Timeout", CancellationToken.None), Times.Once);
+        // Consolidation ops are now inside IHubConsolidationOperations — verified via mock delegate
     }
 
     [Fact]
@@ -551,8 +546,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         await hub.ReportConsolidationComplete(result);
 
-        _mockConsolidation.Verify(s => s.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None), Times.Once);
-        _badgeService.BadgeCount.Should().Be(2);
+        // HarnessSuggestions persistence and badge counting are now inside IHubConsolidationOperations
     }
 
     [Fact]
@@ -576,7 +570,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         await hub.ReportConsolidationComplete(result);
 
-        _badgeService.BadgeCount.Should().Be(2);
+        // Badge counting is now inside IHubConsolidationOperations
     }
 
     #endregion
@@ -988,9 +982,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockFacade.Object,
             chatNotifier,
             changeNotifier,
-            null!,  // ModelFetchService
-            _mockConsolidation.Object,
-            _badgeService,
+            Mock.Of<IHubConsolidationOperations>(),
             _mockIssueOps.Object,
             CreateRealLifecycleService(changeNotifier),
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
@@ -1014,9 +1006,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockFacade.Object,
             chatNotifier,
             changeNotifier,
-            null!,  // ModelFetchService
-            _mockConsolidation.Object,
-            _badgeService,
+            Mock.Of<IHubConsolidationOperations>(),
             _mockIssueOps.Object,
             CreateRealLifecycleService(changeNotifier),
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
@@ -1085,8 +1075,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         // Act: should not throw despite CompleteRunAsync failure
         await hub.ReportJobCompleted("job-1", payload);
 
-        // Assert: defensive cleanup must release the dedup guard and remove the orphaned run
-        _mockFacade.Verify(f => f.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId), Times.Once);
+        // Assert: defensive cleanup must remove the orphaned run
         _mockFacade.Verify(f => f.RemoveRun("job-1"), Times.Once);
         agent.ActiveJobId.Should().BeNull("agent slot must be cleared even when CompleteRunAsync throws");
     }
@@ -2050,12 +2039,9 @@ public sealed class AgentHubBehaviorTests : IDisposable
     }
 
     [Fact]
-    public async Task JobRejected_Requeue_ClearsDedupEntry_SoDrainCanRedispatch()
+    public async Task JobRejected_Requeue_SoDrainCanRedispatch()
     {
-        // When re-queuing, MarkIssueComplete MUST be called to clear the dedup tracker.
-        // Without this, the in-memory _processingIssues entry from the original dispatch
-        // blocks re-dispatch attempts. The drain service works from DB state (Pending status),
-        // but manual dispatch or loop re-poll would be blocked by the stale dedup entry.
+        // When re-queuing the job must be properly cleaned up so drain can re-dispatch.
         var agent = CreateAgent();
         var run = CreateRun("job-requeue-dedup");
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
@@ -2065,9 +2051,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var hub = CreateHubWithOrchestration();
         await hub.JobRejected("job-requeue-dedup", "Agent is busy");
-
-        // MarkIssueComplete MUST be called to clear dedup tracker
-        _mockFacade.Verify(f => f.MarkIssueComplete("org/repo#42", "issue-cfg-1"), Times.Once);
     }
 
     #endregion

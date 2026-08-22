@@ -39,8 +39,7 @@ namespace CodingAgentWebUI.Agent;
 ///     the next job assignment or shutdown signal.</item>
 /// </list>
 /// <para>
-/// Heartbeats are sent every 30 seconds while idle. The orchestrator uses heartbeat absence
-/// to detect stale agents via <c>HeartbeatMonitorService</c>.
+/// Heartbeats are sent every 30 seconds while idle.
 /// </para>
 /// </remarks>
 public sealed class AgentWorkerService : BackgroundService, IAgentService
@@ -81,6 +80,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
         var isChatMode = string.Equals(
             Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
+        // T11: these env reads are also available via AgentRuntimeOptions (registered in DI).
+        // Consolidating to AgentRuntimeOptions requires injecting it into AgentWorkerServiceDependencies.
 
         // Wire business event handlers (unconditional)
         _connectionLifecycle.OnAssignChatPrompt += _chatJobHandler.HandleChatPromptAsync;

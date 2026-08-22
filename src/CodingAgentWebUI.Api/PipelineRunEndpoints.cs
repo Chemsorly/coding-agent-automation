@@ -25,8 +25,9 @@ public static class PipelineRunEndpoints
         // Single run by GUID
         group.MapGet("/{runId:guid}", GetRunById);
 
-        // No-op create (reserved, no caller in 042–045)
-        group.MapPost("/", () => Results.StatusCode(201));
+        // Create: persists a completed run summary. Called by the orchestrator (ApiBackedPipelineRunHistoryService)
+        // instead of writing to Postgres directly.
+        group.MapPost("/", CreateRunSummary);
 
         // Run history export — requires operator authentication.
         // Returns pipeline run summaries including issue identifiers and project names;
@@ -86,6 +87,25 @@ public static class PipelineRunEndpoints
             PageSize = result.PageSize,
             HasMore = result.HasMore
         });
+    }
+
+    // ── POST /api/pipeline-runs/ ────────────────────────────────────────────
+
+    /// <summary>
+    /// POST /api/pipeline-runs/
+    /// Persists a completed run summary sent by the orchestrator process.
+    /// The orchestrator (CodingAgentWebUI) calls this instead of writing directly to Postgres.
+    /// Idempotent: an existing run with the same RunId is updated, not duplicated.
+    /// 201 Created on success.
+    /// </summary>
+    internal static async Task<IResult> CreateRunSummary(
+        PipelineRunSummary summary,
+        IPipelineRunHistoryService history,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+        await history.AddRunSummaryAsync(summary, ct);
+        return Results.StatusCode(201);
     }
 
     private static readonly HashSet<PipelineStep> s_terminalSteps =

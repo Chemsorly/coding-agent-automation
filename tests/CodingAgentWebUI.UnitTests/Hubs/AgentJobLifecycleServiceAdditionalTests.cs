@@ -190,7 +190,6 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
 
         await svc.HandleJobRejectedAsync(new JobId("job-1"), null, "agent error", CancellationToken.None);
 
-        _facade.Verify(f => f.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId), Times.Once);
         _facade.Verify(f => f.RequeueWorkItemAsync("job-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 

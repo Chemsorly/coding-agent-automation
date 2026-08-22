@@ -72,6 +72,20 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
+    public async Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+        try
+        {
+            await AddRunToHistoryInternalAsync(summary, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to persist run summary {RunId} to database via direct-summary path", summary.RunId);
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
     {
         return await GetRunHistoryInternalAsync(ct).ConfigureAwait(false);

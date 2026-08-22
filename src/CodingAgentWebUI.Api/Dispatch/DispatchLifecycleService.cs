@@ -3,7 +3,6 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Kubernetes;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Autorest;
@@ -99,7 +98,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         var logPrefix = ctx.LogPrefix;
 
         // Generate deterministic job name
-        var jobName = DispatchService.GenerateJobName(item.Id);
+        var jobName = GenerateJobName(item.Id);
 
         // Select a PVC for kiro agents directly from the available pool (RWO makes label patching unnecessary).
         var claimedPvc = isKiroAgent ? await SelectPvcAsync(availablePvcs, item.Id, logPrefix, ct) : null;
@@ -485,6 +484,14 @@ internal sealed class DispatchLifecycleService : IDisposable
             return null;
         }
     }
+
+    /// <summary>
+    /// Generates a deterministic K8s Job name from a work item ID.
+    /// Format: <c>caa-{first-8-chars-of-guid-no-dashes}</c>.
+    /// Previously a static method on <c>DispatchService</c>; moved here (arch-audit 2026-08-22).
+    /// </summary>
+    internal static string GenerateJobName(Guid workItemId)
+        => $"caa-{workItemId.ToString("N")[..8]}";
 
     public void Dispose()
     {

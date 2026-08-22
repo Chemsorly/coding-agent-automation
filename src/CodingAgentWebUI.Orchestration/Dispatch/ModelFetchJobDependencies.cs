@@ -15,4 +15,6 @@ public sealed record ModelFetchJobDependencies(
     IModelFetchReceiver ModelFetchReceiver,
     int? PollTimeoutSecondsOverride = null,
     int PollIntervalMs = 2000,
+    // Logger is always provided by production via Log.Logger.
+    // Optional only for test paths that don't care about log output.
     Serilog.ILogger? Logger = null);

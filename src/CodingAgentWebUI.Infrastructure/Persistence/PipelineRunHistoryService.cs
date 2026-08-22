@@ -142,6 +142,20 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc />
+    public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+        lock (_lock)
+        {
+            _runHistory.Insert(0, summary);
+            if (_runHistory.Count > MaxHistorySize)
+                _runHistory.RemoveAt(_runHistory.Count - 1);
+        }
+        _ = PersistRunSummaryAsync(summary);
+        return Task.CompletedTask;
+    }
+
     private async Task PersistRunSummaryAsync(PipelineRunSummary summary)
     {
         try

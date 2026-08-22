@@ -14,7 +14,6 @@ public static partial class ServiceCollectionExtensions
     private static void RegisterPipelineFacades(IServiceCollection services)
     {
         services.AddSingleton<IPipelineCancellationFacade>(sp => new PipelineCancellationFacade(
-            sp.GetRequiredService<IJobDeduplicationGuard>(),
             sp.GetRequiredService<IAgentCancellationSender>()));
 
         services.AddSingleton(sp => new PipelineOrchestrationService(

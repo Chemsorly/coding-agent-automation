@@ -31,9 +31,7 @@ public sealed class AgentHubChatPartialTests
             Facade: _facade.Object,
             ChatNotifier: _chatNotifier.Object,
             ChangeNotifier: _changeNotifier.Object,
-            ModelFetchService: null!, // sealed type — not needed for chat tests
-            ConsolidationService: Mock.Of<IConsolidationService>(),
-            BadgeService: new ConsolidationBadgeService(),
+            ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
             IssueOps: Mock.Of<IHubIssueOperations>(),
             LifecycleService: Mock.Of<IAgentJobLifecycleService>(),
             TokenRefreshService: Mock.Of<IAgentTokenRefreshService>(),

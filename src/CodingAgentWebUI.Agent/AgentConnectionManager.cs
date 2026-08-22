@@ -4,6 +4,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.Hosting;
 using Polly;
 
 namespace CodingAgentWebUI.Agent;
@@ -24,6 +25,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     private readonly AgentId _agentId;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
+    private readonly IHostApplicationLifetime? _lifetime;
 
     private volatile AgentRegistrationMessage? _currentRegistration;
     private int _currentStep = NullStep;
@@ -45,7 +47,8 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         IHubConnectionManager hubManager,
         IHubConnectionManagerFactory hubManagerFactory,
         AgentId agentId,
-        Serilog.ILogger logger)
+        Serilog.ILogger logger,
+        IHostApplicationLifetime? lifetime = null)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(hubManagerFactory);
@@ -57,6 +60,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         // it cannot be null, but default(AgentId) silently propagates null strings to SignalR hub invocations.
         _agentId = agentId;
         _logger = logger;
+        _lifetime = lifetime;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
 
         WireEventHandlers(_hubManager);
@@ -274,7 +278,15 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
                         CancellationToken.None);
                 }
 
-                _hubManager = newManager;
+                // B4 fix: use CAS to transfer ownership atomically (matches AgentConnectionLifecycle pattern).
+                // If DisposeAsync ran concurrently and swapped _hubManager to a different instance,
+                // the CAS fails — dispose the orphaned newManager and abort.
+                if (Interlocked.CompareExchange(ref _hubManager, newManager, oldManager) != oldManager)
+                {
+                    await SafeDisposeAsync(newManager);
+                    newManager = null;
+                    return;
+                }
                 newManager = null; // Ownership transferred
 
                 await SafeDisposeAsync(oldManager);
@@ -289,7 +301,11 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
             }
         }
 
-        _logger.Error("All {MaxAttempts} reconnection attempts exhausted for agent {AgentId}", maxAttempts, _agentId.Value);
+        _logger.Error("All {MaxAttempts} reconnection attempts exhausted for agent {AgentId}, shutting down",
+            maxAttempts, _agentId.Value);
+        // B5 fix: stop the host so the pod is reaped and rescheduled — matches AgentConnectionLifecycle behaviour.
+        // If lifetime is null (test context), we log only.
+        _lifetime?.StopApplication();
     }
 
     // ── Private: Heartbeat ───────────────────────────────────────────────

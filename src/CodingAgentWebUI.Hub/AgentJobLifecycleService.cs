@@ -124,8 +124,6 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     {
         // Re-queue: transition back to Pending with incremented RetryCount.
         // The drain service will pick it up again on the next cycle.
-        // Clear the dedup tracker so the drain/loop doesn't consider it "already processing".
-        _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
         try
         {
             await _facade.RequeueWorkItemAsync(jobId, ct);
@@ -144,7 +142,6 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     private async Task PermanentlyFailRejectedRunAsync(JobId jobId, PipelineRun run, string reason, int maxRejectionRetries, CancellationToken ct)
     {
         // Max retries exhausted (or re-queue failed) — permanent failure. Human intervention needed.
-        _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         try
         {
@@ -237,16 +234,12 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         await _facade.TransitionWorkItemAsync(jobId, workItemStatus, ct, recoveryErrorMsg, recoveryFailureEnum);
 
-        // Fetch issue metadata once — used for both MarkIssueComplete and the label swap below.
-        // This is intentionally fetched for ALL terminal statuses (Succeeded, Failed, Cancelled)
-        // to prevent duplicate dispatch on any orphan recovery outcome. The label is currently
-        // agent:next (reverted by RevertFailedDistributionAsync), so without MarkIssueComplete
-        // the closed-loop poll would re-dispatch if the label swap below fails or is not attempted.
+        // Fetch issue metadata for the label swap below. Fetched for ALL terminal statuses
+        // (Succeeded, Failed, Cancelled) because the label is currently agent:next, reverted by
+        // RevertFailedDistributionAsync. Duplicate dispatch is prevented by the partial unique
+        // index on WorkItems (IssueIdentifier, IssueProviderConfigId) filtered to non-terminal
+        // statuses, plus the in-process IsIssueBeingProcessed check at dispatch time.
         var issueMetadata = await _facade.GetWorkItemIssueMetadataAsync(jobId, ct);
-        if (issueMetadata.HasValue)
-        {
-            _facade.MarkIssueComplete(issueMetadata.Value.IssueIdentifier, issueMetadata.Value.IssueProviderConfigId);
-        }
 
         // Best-effort label correction after recovery (label is currently agent:next from RevertFailedDistributionAsync)
         if (workItemStatus == WorkItemStatus.Succeeded)

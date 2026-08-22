@@ -173,24 +173,8 @@ public sealed class AgentHubFacadeTests
 
     #region Dispatch delegation
 
-    [Fact]
-    public void MarkIssueComplete_DelegatesToDispatcher()
-    {
-        // First enqueue the issue so we can verify it gets cleared by MarkIssueComplete
-        _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = "org/repo#1",
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1",
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            InitiatedBy = "test"
-        });
-        _dispatcher.IsIssueQueued("org/repo#1").Should().BeTrue("issue should be queued before MarkIssueComplete");
-
-        _facade.MarkIssueComplete("org/repo#1", "ip-1");
-
-        _dispatcher.IsIssueQueued("org/repo#1").Should().BeFalse("MarkIssueComplete should clear the dedup entry");
-    }
+    // MarkIssueComplete was removed from IAgentHubFacade and JobDeduplicationGuardService
+    // in T18 (arch-audit 2026-08-22) — the backing collections had no writers.
 
     #endregion
 

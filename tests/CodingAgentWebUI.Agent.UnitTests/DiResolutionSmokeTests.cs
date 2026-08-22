@@ -93,10 +93,10 @@ public class DiResolutionSmokeTests
             Log.Logger));
 
         // ── K8s-mode registrations (the critical path that had the bug) ──
-        // TODO: [WARNING] These K8s-mode registrations manually duplicate the wiring from AgentK8sModeRegistration.cs
+        // TODO: [WARNING] These K8s-mode registrations manually duplicate the wiring from AgentWorkItemModeRegistration.cs
         // instead of calling builder.Services.AddK8sModeServices(startupConfig, logger). Any future change to
         // AddK8sModeServices that diverges from the registrations below will go undetected by this smoke test.
-        // The canonical wiring now lives in AgentK8sModeRegistration.cs (extracted in #1790). Consider replacing
+        // The canonical wiring now lives in AgentWorkItemModeRegistration.cs (extracted in #1790). Consider replacing
         // the manual duplications here with a call to AddK8sModeServices so the smoke test exercises the actual
         // production code path.
         services.AddHttpClient<WorkItemHttpClient>(client =>

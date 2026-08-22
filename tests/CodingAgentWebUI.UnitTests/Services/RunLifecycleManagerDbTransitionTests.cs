@@ -67,7 +67,6 @@ public sealed class RunLifecycleManagerDbTransitionTests
             _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
-            WorkItemTransition: _transitionService,
             WorkItemFallbackTransition: fallbackService));
     }
 

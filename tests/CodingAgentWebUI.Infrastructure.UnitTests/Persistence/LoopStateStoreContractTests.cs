@@ -2,7 +2,6 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Pipeline.Interfaces;
-using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 
@@ -10,8 +9,9 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 
 /// <summary>
 /// Contract tests for <see cref="ILoopStateStore"/> implementations.
-/// Both FileSystem-backed and Postgres-backed stores must satisfy these behavioral contracts.
-/// Prevents behavioral drift between legacy (filesystem) and DB (Postgres) modes.
+/// The Postgres-backed store must satisfy these behavioral contracts.
+/// FileSystemLoopStateStore was deleted (T21, arch-audit 2026-08-22) — only PostgresLoopStateStore
+/// is the live implementation.
 ///
 /// Pattern follows <see cref="ConfigurationStoreContractTests"/>.
 /// </summary>
@@ -131,31 +131,6 @@ public abstract class LoopStateStoreContractTests : IDisposable
         var loaded = await store.ReadAsync(CancellationToken.None);
         loaded.Should().NotBeNull();
         loaded!.IsActive.Should().BeFalse();
-    }
-}
-
-// ── FileSystem-backed implementation ────────────────────────────────────────
-
-/// <summary>
-/// Runs the contract tests against <see cref="FileSystemLoopStateStore"/>.
-/// </summary>
-public class FileSystemLoopStateStoreContractTests : LoopStateStoreContractTests
-{
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), $"contract-loop-fs-{Guid.NewGuid()}");
-
-    public FileSystemLoopStateStoreContractTests()
-    {
-        Directory.CreateDirectory(_tempDir);
-    }
-
-    protected override ILoopStateStore CreateStore()
-        => new FileSystemLoopStateStore(Path.Combine(_tempDir, "loop-state.json"));
-
-    public override void Dispose()
-    {
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
-        base.Dispose();
     }
 }
 

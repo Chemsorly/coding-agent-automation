@@ -75,16 +75,23 @@ try
     // ── Shared pipeline services (IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor) ──
     builder.Services.AddPipelineServices(Log.Logger);
 
+    // ── Agent runtime options (replaces scattered Environment.GetEnvironmentVariable calls) ──
+    builder.Services.AddOptions<AgentRuntimeOptions>();
+    builder.Services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<AgentRuntimeOptions>, AgentRuntimeOptionsSetup>();
+    builder.Services.AddSingleton<AgentRuntimeOptions>(sp =>
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AgentRuntimeOptions>>().Value);
+
     // ── OpenCode named HttpClient (always registered — safe when OPENCODE_SERVER_PASSWORD is absent) ──
     var agentProviderType = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "";
     builder.Services.AddHttpClient(AgentDefaults.OpenCodeHttpClientName, (sp, client) =>
     {
-        var baseUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeBaseUrl) ?? AgentDefaults.OpenCodeBaseUrl;
+        var runtimeOpts = builder.Services.BuildServiceProvider().GetRequiredService<AgentRuntimeOptions>();
+        var baseUrl = runtimeOpts.OpenCodeBaseUrl ?? AgentDefaults.OpenCodeBaseUrl;
         client.BaseAddress = new Uri(baseUrl);
         // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
         client.Timeout = TimeSpan.FromMinutes(60);
 
-        var password = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword);
+        var password = runtimeOpts.OpenCodeServerPassword;
         if (!string.IsNullOrEmpty(password))
         {
             client.DefaultRequestHeaders.Authorization =

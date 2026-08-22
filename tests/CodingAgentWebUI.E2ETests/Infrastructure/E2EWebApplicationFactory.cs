@@ -238,7 +238,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         services.AddSingleton(_runService);
         services.AddSingleton<IOrchestratorRunService>(_runService);
 
-        // JobDeduplicationGuardService — sealed, uses internal Reset()
+        // JobDeduplicationGuardService — sealed; no mutable state to reset since the in-memory queue was removed
         _dispatcher = new JobDeduplicationGuardService(_registry, Serilog.Log.Logger);
         RemoveService<JobDeduplicationGuardService>(services);
         services.AddSingleton(_dispatcher);
@@ -248,7 +248,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         _orchestration = new ResettablePipelineOrchestrationService(
             ConfigStore,
             FakeProviders,
-            new PipelineCancellationFacade(null, null),
+            new PipelineCancellationFacade(null),
             lifecycle,
             TestOrchestrationFactory.NoOpLabelService.Instance,
             Serilog.Log.Logger);
@@ -287,7 +287,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         _orchestration?.Reset();
         _registry?.Reset();
         _runService?.Reset();
-        _dispatcher?.Reset();
 
         // Reset consolidation badge service
         var badgeService = Services.GetRequiredService<ConsolidationBadgeService>();

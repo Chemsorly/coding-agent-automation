@@ -240,10 +240,10 @@ api:
   image:
     repository: chemsorly/coding-agent
     tag: coding-agent-api
-  # api.replicas MUST remain 1. Redis backplane handles hub message delivery but does NOT
-  # make multiple API replicas safe — AgentRegistryService, OrchestratorRunService, and all
-  # in-memory locking state is per-process. Spec 045 Task 13a rewrites the concurrency model
-  # for multi-process topology. Do NOT increase replicas before that lands.
+  # api.replicas MUST remain 1. AgentRegistryService, OrchestratorRunService, and all
+  # in-memory locking state is per-process. A second replica gets a divergent copy of each.
+  # The deployment uses strategy: Recreate (not RollingUpdate) to prevent a ~20-30s
+  # two-pod overlap on rollout — see templates/api-deployment.yaml.
   replicas: 1
   service:
     type: ClusterIP

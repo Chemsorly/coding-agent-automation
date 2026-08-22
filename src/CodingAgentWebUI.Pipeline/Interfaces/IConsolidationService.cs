@@ -101,14 +101,14 @@ public interface IConsolidationService
 
     /// <summary>
     /// Returns true if the specified run ID is currently tracked as an active (Running or Queued) consolidation run.
-    /// Used by HeartbeatMonitor to avoid resetting agents working on consolidation jobs.
+    /// Used by ReconciliationService (JobController) to avoid resetting agents working on consolidation jobs.
     /// </summary>
     bool IsRunActive(RunId runId);
 
     /// <summary>
     /// Returns the <see cref="ConsolidationRun.StartedAtUtc"/> for the specified active run,
     /// or <c>null</c> if the run is not tracked as active.
-    /// Used by HeartbeatMonitor to detect stuck consolidation runs that exceed the progress timeout.
+    /// Used by ReconciliationService (JobController) to detect stuck consolidation runs that exceed the progress timeout.
     /// </summary>
     DateTimeOffset? GetActiveRunStartedAt(RunId runId);
 

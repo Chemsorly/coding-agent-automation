@@ -3,7 +3,6 @@ using CodingAgentWebUI.Api.Dispatch;
 using DispatchLifecycleService = CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService;
 using DispatchStateBuilder = CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder;
 using DispatchTemplateResolver = CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Moq;

@@ -228,7 +228,6 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<ILabelService>(),
                 sp.GetRequiredService<JobDeduplicationGuardService>(),
                 Log.Logger,
-                sp.GetRequiredService<WorkItemTransitionService>(),
                 sp.GetService<IJobCleanupStrategy>(),
                 sp.GetRequiredService<IWorkItemFallbackTransitionService>())));
 

@@ -37,7 +37,7 @@ public static class TestOrchestrationFactory
         return new PipelineOrchestrationService(
             store,
             o.ProviderFactory ?? throw new ArgumentNullException(nameof(options), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
-            o.CancellationFacade ?? new PipelineCancellationFacade(null, null),
+            o.CancellationFacade ?? new PipelineCancellationFacade(null),
             o.Lifecycle ?? new PipelineRunLifecycleService(historyService, o.RunService, logger),
             o.LabelService ?? NoOpLabelService.Instance,
             logger);
@@ -63,7 +63,7 @@ public static class TestOrchestrationFactory
         return new PipelineOrchestrationService(
             store,
             providerFactory ?? throw new ArgumentNullException(nameof(providerFactory), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
-            cancellationFacade ?? new PipelineCancellationFacade(null, null),
+            cancellationFacade ?? new PipelineCancellationFacade(null),
             lifecycle ?? new PipelineRunLifecycleService(historyService, runService, logger),
             labelService ?? NoOpLabelService.Instance,
             logger);
@@ -167,6 +167,11 @@ public static class TestOrchestrationFactory
         public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
         {
             _runs.Add(run.ToSummary());
+            return Task.CompletedTask;
+        }
+        public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
+        {
+            _runs.Add(summary);
             return Task.CompletedTask;
         }
         public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }

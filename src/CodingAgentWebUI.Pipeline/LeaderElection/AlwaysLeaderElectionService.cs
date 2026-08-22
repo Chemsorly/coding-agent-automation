@@ -28,18 +28,18 @@ public sealed class AlwaysLeaderElectionService : ILeaderElectionService
     // a token that is cancelled when the host stops (e.g. via IHostApplicationLifetime).
     public CancellationToken LeaderToken => CancellationToken.None;
 
-#pragma warning disable CS0067 // Event never used — intentional no-op
+#pragma warning disable CS0067 // Events never used — intentional no-op for always-leader implementation
     /// <inheritdoc />
-    // TODO: OnStartedLeading is never fired. The interface contract documents it as "fires when
-    // leadership is acquired." For this always-leader implementation there is no natural firing
-    // point (the instance is leader from construction). Since this class is deliberately not an
-    // IHostedService, there is no StartAsync in which to fire it. Any future consumer that
-    // subscribes to ILeaderElectionService.OnStartedLeading to trigger leader-only initialization
-    // will silently not run. If a new consumer depends on this event, convert this class to
-    // IHostedService and fire OnStartedLeading from StartAsync.
+    // OnStartedLeading is never fired by this implementation because AlwaysLeaderElectionService
+    // is leader from construction with no IHostedService lifecycle. Zero external subscribers
+    // exist in the codebase (verified 2026-08-22). The events are kept on the interface as
+    // a contract for implementations that do have a leadership transition (K8s Lease, Postgres).
+    // If a future consumer subscribes to OnStartedLeading, convert this class to IHostedService
+    // and fire the event from StartAsync.
     public event Action? OnStartedLeading;
 
     /// <inheritdoc />
+    // Same rationale as OnStartedLeading. Zero external subscribers.
     public event Action? OnStoppedLeading;
 #pragma warning restore CS0067
 }

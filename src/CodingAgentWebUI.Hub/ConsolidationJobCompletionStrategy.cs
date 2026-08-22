@@ -54,7 +54,6 @@ internal sealed class ConsolidationJobCompletionStrategy : IJobCompletionStrateg
                 "Consolidation run failed");
 
         _facade.RemoveRun(jobId.Value);
-        _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         try
         {

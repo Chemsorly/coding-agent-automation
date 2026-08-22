@@ -58,7 +58,5 @@ public static partial class ServiceCollectionExtensions
         services.AddSingleton(sp => new JobDeduplicationGuardService(
             sp.GetRequiredService<AgentRegistryService>(),
             Log.Logger));
-        services.AddSingleton<IJobDeduplicationGuard>(sp =>
-            sp.GetRequiredService<JobDeduplicationGuardService>());
     }
 }

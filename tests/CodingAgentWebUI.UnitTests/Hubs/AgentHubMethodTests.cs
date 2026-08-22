@@ -1,8 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Health;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
@@ -23,7 +21,7 @@ public sealed class AgentHubMethodTests
     private readonly Mock<IAgentHubFacade> _facade = new();
     private readonly Mock<IChatNotifier> _chatNotifier = new();
     private readonly Mock<IChangeNotifier> _changeNotifier = new();
-    private readonly Mock<IConsolidationService> _consolidationService = new();
+    private readonly Mock<IHubConsolidationOperations> _mockConsolidationOps = new();
     private readonly Mock<IHubIssueOperations> _issueOps = new();
     private readonly Mock<IAgentJobLifecycleService> _lifecycleService = new();
     private readonly Mock<IAgentTokenRefreshService> _tokenRefreshService = new();
@@ -34,16 +32,9 @@ public sealed class AgentHubMethodTests
     private readonly Mock<IHubClients> _uiClients = new();
     private readonly Mock<HubCallerContext> _hubCallerContext = new();
     private readonly Mock<IGroupManager> _groupManager = new();
-    private readonly ConsolidationBadgeService _badgeService = new();
-    private readonly ModelFetchService _modelFetchService;
 
     public AgentHubMethodTests()
     {
-        // ModelFetchService is sealed concrete — create with minimal real deps.
-        var registry = new AgentRegistryService(Log.Logger);
-        var agentComm = new Mock<IAgentCommunication>();
-        _modelFetchService = new ModelFetchService(registry, agentComm.Object, Log.Logger);
-
         // Wire up IHubContext broadcast chain: uiContext.Clients.Group(...) → uiClientProxy
         _uiClients.Setup(c => c.Group(It.IsAny<string>())).Returns(_uiClientProxy.Object);
         _uiContext.Setup(c => c.Clients).Returns(_uiClients.Object);
@@ -58,9 +49,7 @@ public sealed class AgentHubMethodTests
             Facade: _facade.Object,
             ChatNotifier: _chatNotifier.Object,
             ChangeNotifier: _changeNotifier.Object,
-            ModelFetchService: _modelFetchService,
-            ConsolidationService: _consolidationService.Object,
-            BadgeService: _badgeService,
+            ConsolidationOps: _mockConsolidationOps.Object,
             IssueOps: _issueOps.Object,
             LifecycleService: _lifecycleService.Object,
             TokenRefreshService: _tokenRefreshService.Object,
@@ -246,28 +235,18 @@ public sealed class AgentHubMethodTests
     [Fact]
     public async Task ReportFetchModelsResult_CompletesRequest()
     {
-        // Arrange: pre-register a pending request so CompleteRequest finds it
-        var tcs = new TaskCompletionSource<FetchModelsResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var requestId = Guid.NewGuid().ToString();
-
-        // Use reflection to inject the pending TCS into ModelFetchService._pending
-        var pendingField = typeof(ModelFetchService)
-            .GetField("_pending", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        var pending = (System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource<FetchModelsResponse>>)pendingField.GetValue(_modelFetchService)!;
-        pending[requestId] = tcs;
-
         var response = new FetchModelsResponse
         {
-            RequestId = requestId,
+            RequestId = Guid.NewGuid().ToString(),
             Models = [],
         };
 
         var hub = CreateHub();
         await hub.ReportFetchModelsResult(response);
 
-        // The TCS should have been completed (removed from _pending)
-        pending.Should().NotContainKey(requestId);
-        tcs.Task.IsCompleted.Should().BeTrue();
+        // Verify that CompleteModelFetchRequest was delegated to IHubConsolidationOperations
+        // (actual completion logic is tested in HubConsolidationOperations unit tests)
+        _mockConsolidationOps.Verify(c => c.CompleteModelFetchRequest(response), Times.Once);
     }
 
     [Fact]
@@ -275,9 +254,6 @@ public sealed class AgentHubMethodTests
     {
         var agent = CreateAgentEntry("agent-1", "agent-conn-1", activeJobId: "job-42");
         _facade.Setup(f => f.GetByConnectionId("agent-conn-1")).Returns(agent);
-        _consolidationService
-            .Setup(s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .Returns(Task.CompletedTask);
 
         var result = new ConsolidationJobResult
         {
@@ -293,8 +269,8 @@ public sealed class AgentHubMethodTests
         agent.ActiveJobId.Should().BeNull();
         _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), AgentStatus.Idle), Times.Once);
         _changeNotifier.Verify(n => n.NotifyChange(), Times.Once);
-        _consolidationService.Verify(
-            s => s.UpdateRunAsync(It.Is<RunId>(r => r.Value == "job-42"), ConsolidationRunStatus.Succeeded, "all good", It.IsAny<CancellationToken>(), It.IsAny<long>()),
+        _mockConsolidationOps.Verify(
+            c => c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "job-42"), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -302,9 +278,6 @@ public sealed class AgentHubMethodTests
     public async Task ReportConsolidationComplete_AgentNotFound_StillUpdatesRun()
     {
         _facade.Setup(f => f.GetByConnectionId(It.IsAny<string>())).Returns((AgentEntry?)null);
-        _consolidationService
-            .Setup(s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .Returns(Task.CompletedTask);
 
         var result = new ConsolidationJobResult
         {
@@ -316,10 +289,10 @@ public sealed class AgentHubMethodTests
         var hub = CreateHub();
         await hub.ReportConsolidationComplete(result);
 
-        // No agent → no transition, but UpdateRunAsync must still be called
+        // No agent → no transition, but HandleConsolidationCompleteAsync must still be called
         _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
-        _consolidationService.Verify(
-            s => s.UpdateRunAsync(It.Is<RunId>(r => r.Value == "job-99"), ConsolidationRunStatus.Failed, "agent crashed", It.IsAny<CancellationToken>(), It.IsAny<long>()),
+        _mockConsolidationOps.Verify(
+            c => c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "job-99"), (AgentEntry?)null, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -328,12 +301,6 @@ public sealed class AgentHubMethodTests
     {
         var agent = CreateAgentEntry("agent-1", "agent-conn-1", activeJobId: "job-55");
         _facade.Setup(f => f.GetByConnectionId("agent-conn-1")).Returns(agent);
-        _consolidationService
-            .Setup(s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .Returns(Task.CompletedTask);
-        _consolidationService
-            .Setup(s => s.SaveHarnessSuggestionsAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
 
         var suggestions = new HarnessSuggestions
         {
@@ -354,12 +321,13 @@ public sealed class AgentHubMethodTests
             HarnessSuggestions = suggestions,
         };
 
-        var initialBadge = _badgeService.BadgeCount;
         var hub = CreateHub();
         await hub.ReportConsolidationComplete(result);
 
-        _consolidationService.Verify(s => s.SaveHarnessSuggestionsAsync(suggestions, It.IsAny<CancellationToken>()), Times.Once);
-        _badgeService.BadgeCount.Should().Be(initialBadge + 2);
+        // HarnessSuggestions and badge count are now handled inside HandleConsolidationCompleteAsync
+        _mockConsolidationOps.Verify(c => c.HandleConsolidationCompleteAsync(
+            It.Is<ConsolidationJobResult>(r => r.HarnessSuggestions != null),
+            It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -367,9 +335,6 @@ public sealed class AgentHubMethodTests
     {
         var agent = CreateAgentEntry("agent-1", "agent-conn-1", activeJobId: "job-66");
         _facade.Setup(f => f.GetByConnectionId("agent-conn-1")).Returns(agent);
-        _consolidationService
-            .Setup(s => s.UpdateRunAsync(It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .Returns(Task.CompletedTask);
 
         var result = new ConsolidationJobResult
         {
@@ -383,11 +348,13 @@ public sealed class AgentHubMethodTests
             },
         };
 
-        var initialBadge = _badgeService.BadgeCount;
         var hub = CreateHub();
         await hub.ReportConsolidationComplete(result);
 
-        _badgeService.BadgeCount.Should().Be(initialBadge + 3);
+        // CreatedIssues badge counting is now handled inside HandleConsolidationCompleteAsync
+        _mockConsolidationOps.Verify(c => c.HandleConsolidationCompleteAsync(
+            It.Is<ConsolidationJobResult>(r => r.CreatedIssues != null && r.CreatedIssues.Count == 3),
+            It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── AgentHub.IssueOps ─────────────────────────────────────────────

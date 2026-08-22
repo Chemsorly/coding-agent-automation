@@ -119,13 +119,11 @@ public static partial class ServiceCollectionExtensions
         services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
 
         // Spec 045 Req 1.2 (F6 — LoopStatePersistenceService / ILoopStateStore):
-        // Option B chosen: ILoopStateStore (PostgresLoopStateStore) registration removed.
+        // Option B chosen: ILoopStateStore and LoopStatePersistenceService are not registered.
         // Loop auto-start state is persisted in PipelineConfiguration.ClosedLoopAutoStart,
         // which is loaded from the Pipeline API at startup via AutoStartPipelineLoopAsync()
-        // (Spec 045 Req 4.4). There is no per-pod loop-running state persistence —
-        // LoopStatePersistenceService and its ILoopStateStore dependency are not registered
-        // in the monolith. The LoopStatePersistenceService class and FileSystemLoopStateStore
-        // remain in the codebase for use in tests and potential future non-Postgres deployment.
+        // (Spec 045 Req 4.4). Both LoopStatePersistenceService and FileSystemLoopStateStore
+        // were deleted in T21 (arch-audit 2026-08-22).
 
         services.AddTransient<IssueDescriptionParser>();
     }

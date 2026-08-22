@@ -37,6 +37,9 @@ public sealed class NullPipelineRunHistoryService : IPipelineRunHistoryService
     public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
         => Task.CompletedTask;
 
+    public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
+        => Task.CompletedTask;
+
     public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }
 
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }

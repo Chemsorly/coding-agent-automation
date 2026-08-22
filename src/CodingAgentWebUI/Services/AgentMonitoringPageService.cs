@@ -42,7 +42,7 @@ public class AgentMonitoringPageService
     private readonly JobDeduplicationGuardService _dispatcher;
     private readonly IPipelineApiConfigClient _configClient;
     private readonly IConsolidationService _consolidationService;
-    private readonly IPendingWorkQuery? _pendingWorkQuery;
+    private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly IWorkDistributor _workDistributor;
     private readonly IPipelineApiRunHistoryClient _runHistoryClient;
 
@@ -141,9 +141,7 @@ public class AgentMonitoringPageService
             .Select(MapToActiveRunSummary)
             .ToList();
 
-        var allQueuedJobs = _pendingWorkQuery is not null
-            ? await _pendingWorkQuery.GetPendingJobsAsync()
-            : (IReadOnlyList<PendingJob>)Array.Empty<PendingJob>();
+        var allQueuedJobs = await _pendingWorkQuery.GetPendingJobsAsync();
         var consolidationJobs = allQueuedJobs.Where(j => j.IsConsolidation).ToList();
         QueuedJobs = allQueuedJobs.Where(j => !j.IsConsolidation).ToList();
 
@@ -256,7 +254,12 @@ public class AgentMonitoringPageService
         }
         else
         {
-            _dispatcher.RemoveFromQueue(issueIdentifier, issueProviderId);
+            // Pending jobs are WorkItem rows in K8s mode, so a queued job without a WorkItemId
+            // should not occur. The in-memory queue this used to fall back to has been removed —
+            // deduplication and queueing are owned by the WorkItems table.
+            Logger.Warning(
+                "Cannot cancel pending job for issue {IssueIdentifier} (provider {IssueProviderId}) — no WorkItem row found",
+                issueIdentifier, issueProviderId);
         }
 
         await RefreshDataAsync();
@@ -276,7 +279,7 @@ public class AgentMonitoringPageService
     {
         try
         {
-            // No hub context in monolith — ForceDisconnect signal not sent. Agent will be swept by HeartbeatMonitorService in the API.
+            // No hub context in monolith — ForceDisconnect signal not sent. Deregistering from local registry.
             Logger.Information("ForceDisconnect: deregistering agent {AgentId} from local registry", agent.AgentId);
             _registry.Deregister(agent.AgentId);
         }

@@ -18,8 +18,6 @@ public sealed class AgentHubPartialCoverageTests
 {
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
-    private readonly Mock<IConsolidationService> _mockConsolidation = new();
-    private readonly ConsolidationBadgeService _badgeService = new();
     private readonly Mock<ILogger> _mockLogger = new();
 
     private static AgentEntry CreateAgent(string agentId = "agent-1", string connectionId = "conn-1") => new()
@@ -38,9 +36,7 @@ public sealed class AgentHubPartialCoverageTests
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             Mock.Of<IChangeNotifier>(),
-            null!,  // ModelFetchService — not needed for these tests
-            _mockConsolidation.Object,
-            _badgeService,
+            Mock.Of<IHubConsolidationOperations>(),
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),

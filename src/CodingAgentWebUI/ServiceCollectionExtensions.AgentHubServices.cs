@@ -11,15 +11,20 @@ public static partial class ServiceCollectionExtensions
     /// <summary>
     /// Registers the scoped <see cref="AgentMonitoringPageServiceDependencies"/> record needed
     /// by <see cref="AgentMonitoringPageService"/>.
+    /// T19 (arch-audit 2026-08-22): ApiBackedPendingWorkQuery registered so the job-queue
+    /// panel on the Agent Monitoring page shows queued pipeline jobs.
     /// </summary>
     public static IServiceCollection AddAgentMonitoringPageServiceDependencies(this IServiceCollection services)
     {
+        services.AddSingleton<IPendingWorkQuery>(sp =>
+            new ApiBackedPendingWorkQuery(sp.GetRequiredService<IPipelineApiWorkItemClient>()));
+
         services.AddScoped(sp => new AgentMonitoringPageServiceDependencies(
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<IPipelineApiConfigClient>(),
             sp.GetRequiredService<IConsolidationService>(),
-            sp.GetService<IPendingWorkQuery>(),  // nullable — not registered in monolith DI
+            sp.GetRequiredService<IPendingWorkQuery>(),
             sp.GetRequiredService<IWorkDistributor>(),
             sp.GetRequiredService<IPipelineApiRunHistoryClient>()));
         return services;

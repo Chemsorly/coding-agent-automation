@@ -245,8 +245,8 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             if (stoppingToken.IsCancellationRequested) break;
 
             // Create a linked token: cancelled on host stop OR leadership loss.
-            // _leaderGate?.LeaderToken is CancellationToken.None when null (no-op token),
-            // so linking it has no effect in Legacy / no-gate mode.
+            // _leaderGate?.LeaderToken is CancellationToken.None when null (no-op token in test environments),
+            // so linking it has no effect when leader election is not configured.
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(
                 stoppingToken, _leaderGate?.LeaderToken ?? CancellationToken.None);
 

@@ -1,9 +1,9 @@
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
-/// Repository analytics and staleness detection.
-/// Consumed by <c>DispatchInfrastructure</c> (via <c>AnalysisStalenessDetector</c>) to
-/// determine whether the codebase has evolved significantly since the last analysis.
+/// Repository analytics — commit count queries used by staleness detection.
+/// Consumed by <c>DispatchInfrastructure</c> to determine whether the codebase has
+/// evolved significantly since the last analysis.
 /// </summary>
 public interface IRepositoryAnalyticsProvider : IAsyncDisposable
 {

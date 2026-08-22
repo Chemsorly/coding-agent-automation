@@ -70,7 +70,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockLabelService.Object,
                 _dispatcher,
                 _mockLogger.Object,
-                WorkItemTransition: _transitionService,
                 WorkItemFallbackTransition: fallbackTransitionService));
     }
 
@@ -350,7 +349,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockLabelService.Object,
                 _dispatcher,
                 _mockLogger.Object,
-                WorkItemTransition: _transitionService,
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
                     NullLogger<WorkItemFallbackTransitionService>.Instance),
@@ -420,7 +418,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockLabelService.Object,
                 _dispatcher,
                 _mockLogger.Object,
-                WorkItemTransition: _transitionService,
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
                     NullLogger<WorkItemFallbackTransitionService>.Instance),
@@ -494,7 +491,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockLabelService.Object,
                 _dispatcher,
                 _mockLogger.Object,
-                WorkItemTransition: _transitionService,
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
                     NullLogger<WorkItemFallbackTransitionService>.Instance),
@@ -571,7 +567,6 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 _mockLabelService.Object,
                 _dispatcher,
                 _mockLogger.Object,
-                WorkItemTransition: _transitionService,
                 WorkItemFallbackTransition: new WorkItemFallbackTransitionService(
                     _transitionService,
                     NullLogger<WorkItemFallbackTransitionService>.Instance),

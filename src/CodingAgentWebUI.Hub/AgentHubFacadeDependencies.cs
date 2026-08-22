@@ -26,4 +26,6 @@ public sealed record AgentHubFacadeDependencies(
     IDbContextFactory<PipelineDbContext>? DbFactory = null,
     IProjectStore? ProjectStore = null,
     IWorkItemFallbackTransitionService? WorkItemFallbackTransition = null,
+    // TimeProvider is always provided by production via GetRequiredService<TimeProvider>().
+    // Optional only for test paths that construct the record positionally without specifying it.
     TimeProvider? TimeProvider = null);

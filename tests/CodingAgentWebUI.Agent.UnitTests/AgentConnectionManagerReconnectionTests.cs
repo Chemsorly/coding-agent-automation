@@ -1,5 +1,7 @@
 using AwesomeAssertions;
+using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
+using Microsoft.Extensions.Hosting;
 using Moq;
 using Xunit;
 
@@ -330,4 +332,86 @@ public sealed class AgentConnectionManagerReconnectionTests
     // (events are only callable from within the type, so we use SimulateClosedAsync)
     private static Task fakeHub_SimulateClosed(FakeHubConnectionManager hub)
         => hub.SimulateClosedAsync(new InvalidOperationException("server down"));
+
+    // ── B4: CAS swap prevents double-ownership on concurrent DisposeAsync ───
+
+    /// <summary>
+    /// B4 regression test: <see cref="AgentConnectionManager.HandleTerminalClosedAsync"/> must
+    /// use <see cref="Interlocked.CompareExchange{T}"/> so a concurrent <see cref="AgentConnectionManager.DisposeAsync"/>
+    /// cannot race with the reconnect loop and leave two managers sharing one slot.
+    /// </summary>
+    [Fact]
+    public async Task TerminalClose_ConcurrentDispose_DoesNotLeakManagerReferences()
+    {
+        // Arrange: factory creates new managers that all fail StartAsync so reconnect loops infinitely
+        var factory = new FakeHubConnectionManagerFactory(() =>
+            new FakeHubConnectionManager { StartException = new InvalidOperationException("cannot connect") });
+        var hub = new FakeHubConnectionManager();
+        var manager = new AgentConnectionManager(hub, factory, new AgentId("agent-1"),
+            Mock.Of<Serilog.ILogger>());
+
+        // Act: fire terminal close and immediately dispose
+        _ = fakeHub_SimulateClosed(hub);
+        await Task.Delay(5); // let the loop start one attempt
+        await manager.DisposeAsync();
+
+        // Assert: DisposeAsync must complete without throwing (no ObjectDisposedException, no NRE)
+        // — the CAS in the reconnect loop ensures the orphaned manager is disposed cleanly
+    }
+
+    // ── B5: StopApplication called on reconnection exhaustion ─────────────
+
+    /// <summary>
+    /// B5 regression test: <see cref="AgentConnectionManager.HandleTerminalClosedAsync"/> must call
+    /// <see cref="IHostApplicationLifetime.StopApplication"/> when all reconnect attempts are exhausted,
+    /// matching the behaviour of <see cref="AgentConnectionLifecycle"/>.
+    /// Without this, a work-item pod keeps running with a dead connection for up to 7200s.
+    /// </summary>
+    [Fact]
+    public async Task TerminalClose_AllAttemptsExhausted_CallsStopApplication()
+    {
+        // Arrange: factory always fails → exhausts all 10 attempts quickly via StartException
+        var factory = new FakeHubConnectionManagerFactory(() =>
+            new FakeHubConnectionManager { StartException = new InvalidOperationException("cannot connect") });
+        var hub = new FakeHubConnectionManager();
+
+        var stopCalled = false;
+        var lifetimeMock = new Mock<Microsoft.Extensions.Hosting.IHostApplicationLifetime>();
+        lifetimeMock.Setup(l => l.StopApplication()).Callback(() => stopCalled = true);
+
+        var manager = new AgentConnectionManager(hub, factory, new AgentId("agent-1"),
+            Mock.Of<Serilog.ILogger>(), lifetimeMock.Object);
+
+        // Act: fire terminal close and wait for all 10 attempts to exhaust
+        // (FakeHubConnectionManager.StartAsync throws immediately so no real delays)
+        _ = fakeHub_SimulateClosed(hub);
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (!stopCalled && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(50);
+
+        // Assert
+        stopCalled.Should().BeTrue("StopApplication must be called after all 10 reconnection attempts fail");
+
+        await manager.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task TerminalClose_NullLifetime_ExhaustsWithoutThrowingOnStopApplication()
+    {
+        // When lifetime is not injected (test / non-K8s context), exhaustion must only log and not throw
+        var factory = new FakeHubConnectionManagerFactory(() =>
+            new FakeHubConnectionManager { StartException = new InvalidOperationException("cannot connect") });
+        var hub = new FakeHubConnectionManager();
+        var manager = new AgentConnectionManager(hub, factory, new AgentId("agent-1"),
+            Mock.Of<Serilog.ILogger>()); // no lifetime
+
+        var act = async () =>
+        {
+            _ = fakeHub_SimulateClosed(hub);
+            await Task.Delay(200); // let loop run briefly
+            await manager.DisposeAsync();
+        };
+        await act.Should().NotThrowAsync();
+    }
 }

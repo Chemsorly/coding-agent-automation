@@ -18,19 +18,11 @@ internal static class SerilogRegistration
         var orchestratorLogLevel = LogLevelParser.Parse(
             Environment.GetEnvironmentVariable("LOG_LEVEL"),
             Serilog.Events.LogEventLevel.Information);
-        var dbLogLevel = LogLevelParser.Parse(
-            Environment.GetEnvironmentVariable("DB_LOG_LEVEL"),
-            Serilog.Events.LogEventLevel.Warning);
 
         hostBuilder.UseSerilog((ctx, lc) => lc
             .MinimumLevel.Is(orchestratorLogLevel)
             // Suppress noisy ASP.NET Core framework logging (health checks, static files, Blazor negotiation, auth)
             .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-            // EF Core SQL command logging — controlled separately via DB_LOG_LEVEL env var
-            .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", dbLogLevel)
-            // Suppress noisy Npgsql connection open/close logging (Verbose/Trace only)
-            .MinimumLevel.Override("Npgsql", Serilog.Events.LogEventLevel.Warning)
-            .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
             .Enrich.FromLogContext()
             .Enrich.WithSpan()
             .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)

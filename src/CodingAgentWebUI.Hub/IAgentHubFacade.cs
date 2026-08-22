@@ -96,11 +96,6 @@ public interface IAgentHubFacade
     // ── Dispatch operations ─────────────────────────────────────────────
 
     /// <summary>
-    /// Marks an issue as no longer being processed in the dispatcher.
-    /// </summary>
-    void MarkIssueComplete(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
-
-    /// <summary>
     /// Gets the current retry count for a work item (how many times it has been rejected and re-queued).
     /// Returns 0 if the work item doesn't exist or has no retries.
     /// </summary>

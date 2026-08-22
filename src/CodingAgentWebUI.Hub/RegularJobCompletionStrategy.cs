@@ -84,7 +84,6 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         // the dedup guard and active runs list may not have been cleaned up.
         // Without this, the issue becomes permanently blocked from re-dispatch.
         _facade.RemoveRun(jobId.Value);
-        _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         var (_, errorMsg, failureEnum) =
             CompletionOutcomeResolver.Resolve(payload.FinalStep, run.FailureReason, payload.FailureCategory,

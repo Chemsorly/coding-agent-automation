@@ -4,7 +4,6 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Moq;
@@ -26,18 +25,6 @@ public class HubAuthorizationTests
 {
     private static AgentRegistryService CreateRegistry() =>
         new(new Mock<ILogger>().Object);
-
-    private static HeartbeatMonitorService CreateMonitor(
-        AgentRegistryService registry,
-        OrchestratorRunService runService,
-        Mock<IConfigurationStore> mockConfigStore) =>
-        new(new HeartbeatMonitorDependencies(
-            registry,
-            runService,
-            new Mock<IPipelineRunHistoryService>().Object,
-            mockConfigStore.Object,
-            new Mock<ILogger>().Object,
-            LifecycleManager: new Mock<IRunLifecycleManager>().Object));
 
     private static AgentEntry RegisterAgent(
         AgentRegistryService registry,
@@ -119,64 +106,6 @@ public class HubAuthorizationTests
         var removed = registry.Deregister("non-existent");
 
         removed.Should().BeFalse();
-    }
-
-    // ── Auto-Deregistration (HeartbeatMonitorService) ───────────────────
-
-    [Fact]
-    public async Task AutoDeregistration_RemovesIdleDisconnectedAgentAfterGracePeriod()
-    {
-        var registry = CreateRegistry();
-        var runService = new OrchestratorRunService(new Mock<ILogger>().Object);
-        var mockConfigStore = new Mock<Pipeline.Interfaces.IConfigurationStore>();
-        mockConfigStore
-            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration
-            {
-                AgentDisconnectGracePeriod = TimeSpan.Zero // Immediate expiry for testing
-            });
-
-        using var monitor = CreateMonitor(registry, runService, mockConfigStore);
-
-        // Register and disconnect an agent (no active job)
-        var entry = RegisterAgent(registry, "agent-1", "conn-1");
-        registry.TransitionStatus("agent-1", AgentStatus.Disconnected);
-
-        // Backdate DisconnectedAt to simulate grace period expiry
-        entry.DisconnectedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
-
-        // Run sweep
-        await monitor.SweepAsync(CancellationToken.None);
-
-        // Agent should be removed
-        registry.GetByAgentId("agent-1").Should().BeNull();
-    }
-
-    [Fact]
-    public async Task AutoDeregistration_DoesNotRemoveWithinGracePeriod()
-    {
-        var registry = CreateRegistry();
-        var runService = new OrchestratorRunService(new Mock<ILogger>().Object);
-        var mockConfigStore = new Mock<Pipeline.Interfaces.IConfigurationStore>();
-        mockConfigStore
-            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration
-            {
-                AgentDisconnectGracePeriod = TimeSpan.FromMinutes(5)
-            });
-
-        using var monitor = CreateMonitor(registry, runService, mockConfigStore);
-
-        // Register and disconnect an agent
-        RegisterAgent(registry, "agent-1", "conn-1");
-        registry.TransitionStatus("agent-1", AgentStatus.Disconnected);
-        // DisconnectedAt is set to now by TransitionStatus — within grace period
-
-        // Run sweep
-        await monitor.SweepAsync(CancellationToken.None);
-
-        // Agent should still be in registry
-        registry.GetByAgentId("agent-1").Should().NotBeNull();
     }
 
     // ── Failed Dispatch Label Revert ────────────────────────────────────
@@ -317,55 +246,4 @@ public class HubAuthorizationTests
         payload.AnalysisMarkdown.Should().BeNull();
     }
 
-    // ── Heartbeat Stale Detection ───────────────────────────────────────
-
-    [Fact]
-    public async Task HeartbeatMonitor_DetectsStaleHeartbeat()
-    {
-        var registry = CreateRegistry();
-        var runService = new OrchestratorRunService(new Mock<ILogger>().Object);
-        var mockConfigStore = new Mock<Pipeline.Interfaces.IConfigurationStore>();
-        mockConfigStore
-            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-
-        using var monitor = CreateMonitor(registry, runService, mockConfigStore);
-
-        // Register agent with stale heartbeat (>90 seconds ago)
-        var entry = RegisterAgent(registry, "agent-1", "conn-1");
-        entry.LastHeartbeatAt = DateTimeOffset.UtcNow.AddSeconds(-100);
-
-        // Run sweep
-        await monitor.SweepAsync(CancellationToken.None);
-
-        // Agent should be transitioned to Disconnected
-        var agent = registry.GetByAgentId("agent-1");
-        agent.Should().NotBeNull();
-        agent!.Status.Should().Be(AgentStatus.Disconnected);
-    }
-
-    [Fact]
-    public async Task HeartbeatMonitor_FreshHeartbeat_StaysConnected()
-    {
-        var registry = CreateRegistry();
-        var runService = new OrchestratorRunService(new Mock<ILogger>().Object);
-        var mockConfigStore = new Mock<Pipeline.Interfaces.IConfigurationStore>();
-        mockConfigStore
-            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-
-        using var monitor = CreateMonitor(registry, runService, mockConfigStore);
-
-        // Register agent with fresh heartbeat
-        RegisterAgent(registry, "agent-1", "conn-1");
-        // LastHeartbeatAt is set to now by Register
-
-        // Run sweep
-        await monitor.SweepAsync(CancellationToken.None);
-
-        // Agent should remain Idle
-        var agent = registry.GetByAgentId("agent-1");
-        agent.Should().NotBeNull();
-        agent!.Status.Should().Be(AgentStatus.Idle);
-    }
 }

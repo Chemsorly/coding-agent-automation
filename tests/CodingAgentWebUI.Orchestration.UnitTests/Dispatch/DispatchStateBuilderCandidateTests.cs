@@ -7,7 +7,6 @@ using DispatchTemplateResolver = CodingAgentWebUI.Api.Dispatch.DispatchTemplateR
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Kubernetes;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;

@@ -73,14 +73,14 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     }
 
     /// <summary>
-    /// Verifies that the signalAgentReady delegate in AgentSignalRModeRegistration passes
+    /// Verifies that the signalAgentReady delegate in AgentChatModeRegistration passes
     /// ApplicationStopping to InvokeAsync so the call is cancelled during application shutdown.
     /// </summary>
     [Fact]
     public void SourceCode_SignalAgentReady_PassesApplicationStopping()
     {
         var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentSignalRModeRegistration.cs"));
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentChatModeRegistration.cs"));
 
         // TODO: [WARNING] This assertion scans the entire file for "ApplicationStopping" and will pass as long
         // as the string appears anywhere — e.g. it is also present in the AgentReady hub invocation at the top

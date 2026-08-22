@@ -1,8 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Health;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Http;
@@ -28,21 +26,12 @@ public sealed class AgentHubRegistrationBranchTests
     private readonly Mock<IAgentHubFacade> _facade = new();
     private readonly Mock<IChatNotifier> _chatNotifier = new();
     private readonly Mock<IChangeNotifier> _changeNotifier = new();
-    private readonly Mock<IConsolidationService> _consolidationService = new();
     private readonly Mock<IHubIssueOperations> _issueOps = new();
     private readonly Mock<IAgentJobLifecycleService> _lifecycleService = new();
     private readonly Mock<IAgentTokenRefreshService> _tokenRefreshService = new();
     private readonly Mock<IGateCommentFormatter> _gateCommentFormatter = new();
     private readonly Mock<IAgentOrphanRecoveryService> _orphanRecoveryService = new();
-    private readonly ConsolidationBadgeService _badgeService = new();
-    private readonly ModelFetchService _modelFetchService;
 
-    public AgentHubRegistrationBranchTests()
-    {
-        var registry = new AgentRegistryService(Log.Logger);
-        var agentComm = new Mock<IAgentCommunication>();
-        _modelFetchService = new ModelFetchService(registry, agentComm.Object, Log.Logger);
-    }
 
     private AgentHub CreateHub(HubCallerContext context)
     {
@@ -50,9 +39,7 @@ public sealed class AgentHubRegistrationBranchTests
             Facade: _facade.Object,
             ChatNotifier: _chatNotifier.Object,
             ChangeNotifier: _changeNotifier.Object,
-            ModelFetchService: _modelFetchService,
-            ConsolidationService: _consolidationService.Object,
-            BadgeService: _badgeService,
+            ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
             IssueOps: _issueOps.Object,
             LifecycleService: _lifecycleService.Object,
             TokenRefreshService: _tokenRefreshService.Object,
@@ -223,9 +210,7 @@ public sealed class AgentHubRegistrationBranchTests
             Facade: _facade.Object,
             ChatNotifier: _chatNotifier.Object,
             ChangeNotifier: _changeNotifier.Object,
-            ModelFetchService: _modelFetchService,
-            ConsolidationService: _consolidationService.Object,
-            BadgeService: _badgeService,
+            ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
             IssueOps: _issueOps.Object,
             LifecycleService: _lifecycleService.Object,
             TokenRefreshService: _tokenRefreshService.Object,

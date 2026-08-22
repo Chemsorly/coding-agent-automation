@@ -13,6 +13,12 @@ public interface IPipelineRunHistoryService
     /// <summary>Persists a completed run to history.</summary>
     Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default);
 
+    /// <summary>
+    /// Persists a pre-serialized run summary directly, bypassing the <see cref="PipelineRun"/> wrapper.
+    /// Used by the API endpoint when the orchestrator sends a summary over HTTP rather than writing DB directly.
+    /// </summary>
+    Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default);
+
     /// <summary>Retrieves the run history.</summary>
     Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default);
 

@@ -7,28 +7,20 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 public class PipelineCancellationFacadeTests
 {
     [Fact]
-    public void Constructor_AcceptsNullDedupGuard()
+    public void Constructor_AcceptsAgentCancellation()
     {
-        var facade = new PipelineCancellationFacade(null, Mock.Of<IAgentCancellationSender>());
+        var sender = Mock.Of<IAgentCancellationSender>();
 
-        Assert.Null(facade.DedupGuard);
+        var facade = new PipelineCancellationFacade(sender);
+
+        Assert.Same(sender, facade.AgentCancellation);
     }
 
     [Fact]
     public void Constructor_AcceptsNullAgentCancellation()
     {
-        var facade = new PipelineCancellationFacade(Mock.Of<IJobDeduplicationGuard>(), null);
+        var facade = new PipelineCancellationFacade(null);
 
         Assert.Null(facade.AgentCancellation);
     }
-
-    [Fact]
-    public void Constructor_AcceptsBothNull()
-    {
-        var facade = new PipelineCancellationFacade(null, null);
-
-        Assert.Null(facade.DedupGuard);
-        Assert.Null(facade.AgentCancellation);
-    }
-
 }

@@ -32,9 +32,7 @@ public sealed class AgentHubIssueOpsTests
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             Mock.Of<IChangeNotifier>(),
-            null!,  // ModelFetchService — not needed for these tests
-            Mock.Of<IConsolidationService>(),
-            new ConsolidationBadgeService(),
+            Mock.Of<IHubConsolidationOperations>(),
             _mockIssueOps.Object,
             Mock.Of<IAgentJobLifecycleService>(),
             _mockTokenRefresh.Object,

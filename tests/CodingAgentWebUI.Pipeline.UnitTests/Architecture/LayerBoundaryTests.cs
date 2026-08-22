@@ -176,32 +176,26 @@ public class LayerBoundaryTests
     }
 
     // ── Dispatch duplication guard ──────────────────────────────────────
-    // Prevents finding 01 from recurring after the cleanup in the 041-045 arc.
-    // The Api copies of ConsolidationWorkItemDispatchService and its Dependencies
-    // record are canonical. This test tracks the *known* surviving duplicates (which
-    // serve the Orchestration DispatchService / Job Controller path) and fails if
-    // NEW duplicates are introduced.
+    // Prevents finding 01 from recurring after the cleanup lands.
+    // The Api copies of ConsolidationWorkItemDispatchService and the shared dispatch
+    // types (DispatchStateBuilder, DispatchLifecycleService, DispatchTemplateResolver,
+    // PvcAvailabilityResult) are canonical. K8sJobCreationContext is a private nested
+    // record inside DispatchLifecycleService — it appears in reflection but is not
+    // a public type and not a duplication concern.
     //
-    // Known survivors (Orchestration.DispatchService depends on these):
-    //   DispatchLifecycleService, DispatchStateBuilder, DispatchTemplateResolver,
-    //   K8sJobCreationContext, PvcAvailabilityResult
-    //
-    // Remediation: once the Job Controller is fully API-backed and DispatchService
-    // is removed from Orchestration, delete this allowlist and assert shared.Count == 0.
+    // All Orchestration copies have been deleted (arch-audit 2026-08-22).
+    // This allowlist should now be empty. The test fails if any type name appears
+    // in both Api.Dispatch and Orchestration.Dispatch simultaneously.
 
     [Fact]
     public void ApiDispatch_And_OrchestrationDispatch_ShouldNot_ShareTypeNames()
     {
-        // Types that are knowingly duplicated because Orchestration.DispatchService
-        // (Job Controller path) depends on the Orchestration copies.
-        // Do NOT add new entries here — fix the duplication instead.
+        // No known survivors — all duplicates have been removed.
+        // If a type name appears in both namespaces, it is a new unintentional duplication.
         var knownSurvivors = new HashSet<string>(StringComparer.Ordinal)
         {
-            "DispatchLifecycleService",
-            "DispatchStateBuilder",
-            "DispatchTemplateResolver",
-            "K8sJobCreationContext",
-            "PvcAvailabilityResult",
+            // Empty — all Orchestration.Dispatch copies were deleted in arch-audit 2026-08-22.
+            // Do NOT add new entries here — fix the duplication instead.
         };
 
         var api = Types.InAssembly(ApiAssembly)
@@ -217,10 +211,9 @@ public class LayerBoundaryTests
             .OrderBy(n => n).ToList();
 
         Assert.True(shared.Count == 0,
-            $"NEW dispatch types duplicated across Api and Orchestration: {string.Join(", ", shared)}. " +
-            "The Api copies are canonical (Spec 043 handoff). Delete the Orchestration copies " +
-            "and repoint tests rather than letting the two drift. " +
-            $"Known survivors (Job Controller path): {string.Join(", ", knownSurvivors)}");
+            $"Dispatch types duplicated across Api and Orchestration: {string.Join(", ", shared)}. " +
+            "The Api copies are canonical (Spec 043 handoff + arch-audit 2026-08-22). " +
+            "Delete the Orchestration copies and repoint tests.");
     }
 
     // ── SyncRoot authorized-consumer allowlist ──────────────────────────
@@ -237,11 +230,7 @@ public class LayerBoundaryTests
             "AgentEntry.cs",                        // declares SyncRoot
             "AgentRegistryService.cs",              // Register(), UpdateHeartbeat(), TransitionStatus()
             "JobDeduplicationGuardService.cs",      // SelectAgent() — nested inside _selectionLock
-            "HeartbeatMonitorService.cs",           // delegates to sweep phases
             "RunLifecycleManager.cs",               // ActiveJobId mutation on assignment/completion
-            "DisconnectedAgentSweepPhase.cs",       // reads DisconnectedAt; clears ActiveJobId
-            "ProgressTimeoutSweepPhase.cs",         // reads BusySince; clears ActiveJobId on timeout
-            "OrphanRestoredJobSweepPhase.cs",       // reads OrphanRestoredAt; clears ActiveJobId
             "AgentOrphanRecoveryService.cs",        // check-and-set ActiveJobId on reconnect
             "AgentEndpoints.cs",                    // sets ActiveChatSessionId on chat-resume
         };
@@ -267,5 +256,158 @@ public class LayerBoundaryTests
             return "(none)";
 
         return string.Join(", ", result.FailingTypes.Select(t => t.FullName));
+    }
+
+    // ── T4: Every BackgroundService is registered or explicitly retired ─
+    // Prevents a repeat of the HeartbeatMonitorService incident (moved between
+    // hosts, silently lost, nine tests kept it green while nothing ran).
+    // Source-scanning rather than NetArchTest: AddHostedService patterns vary.
+
+    [Fact]
+    public void AllBackgroundServices_AreRegisteredOrRetired()
+    {
+        // ── Step 1: discover all concrete BackgroundService/IHostedService types across src/ ──
+        var srcAssemblies = new[]
+        {
+            typeof(CodingAgentWebUI.Orchestration.RunLifecycleManager).Assembly,
+            typeof(CodingAgentWebUI.Api.ApiHostMarker).Assembly,
+            typeof(CodingAgentWebUI.Agent.WorkItemAgentService).Assembly,
+            typeof(CodingAgentWebUI.Infrastructure.GitHub.GitHubRepositoryProvider).Assembly,
+            typeof(Pipeline.Services.PipelineOrchestrationService).Assembly,
+        };
+
+        // Also source-scan the monolith and JobController assemblies
+        var srcDir = Path.Combine(RepoRoot, "src");
+
+        var registeredTypes = new HashSet<string>(StringComparer.Ordinal);
+
+        // Scan AddHostedService call sites in all production src files
+        foreach (var file in Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
+        {
+            var content = File.ReadAllText(file);
+            if (!content.Contains("AddHostedService")) continue;
+
+            // Extract type names from AddHostedService<T>() or AddHostedService(sp => new T(...))
+            // We look for the type name following AddHostedService< or new in the lambda
+            var lines = content.Split('\n');
+            foreach (var line in lines)
+            {
+                if (!line.Contains("AddHostedService")) continue;
+                // Extract from AddHostedService<TypeName>
+                var genericMatch = System.Text.RegularExpressions.Regex.Match(line, @"AddHostedService<([A-Za-z0-9_.]+)>");
+                if (genericMatch.Success)
+                    registeredTypes.Add(genericMatch.Groups[1].Value.Split('.')[^1]);
+                // Extract from sp.GetRequiredService<TypeName>() in lambda
+                var lambdaMatch = System.Text.RegularExpressions.Regex.Match(line, @"GetRequiredService<([A-Za-z0-9_.]+)>\s*\(\)");
+                if (lambdaMatch.Success)
+                    registeredTypes.Add(lambdaMatch.Groups[1].Value.Split('.')[^1]);
+                // Extract from new TypeName(
+                var newMatch = System.Text.RegularExpressions.Regex.Match(line, @"new ([A-Za-z0-9_.]+)\s*\(");
+                if (newMatch.Success)
+                    registeredTypes.Add(newMatch.Groups[1].Value.Split('.')[^1]);
+            }
+        }
+
+        // ── Step 2: explicitly retired types (deliberate non-registrations with reason) ──
+        var retired = new HashSet<string>(StringComparer.Ordinal)
+        {
+            // Removed in arch-audit wave 1 (2026-08-22). ReconciliationService (JobController)
+            // handles timeout enforcement.
+            // "HeartbeatMonitorService", // DELETED — do not add back
+        };
+
+        // ── Step 3: find all concrete BackgroundService subclasses in src assemblies ──
+        var backgroundServiceType = typeof(Microsoft.Extensions.Hosting.BackgroundService);
+        var hostedServiceType = typeof(Microsoft.Extensions.Hosting.IHostedService);
+
+        // Also scan for classes in source files that inherit BackgroundService
+        var unregistered = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
+        {
+            var content = File.ReadAllText(file);
+            if (!content.Contains(": BackgroundService") && !content.Contains(": LeaderElectedPollingService")) continue;
+
+            var classMatch = System.Text.RegularExpressions.Regex.Match(content,
+                @"(?:public|internal)\s+sealed?\s+(?:partial\s+)?class\s+([A-Za-z0-9_]+)");
+            if (!classMatch.Success) continue;
+
+            var typeName = classMatch.Groups[1].Value;
+            if (!registeredTypes.Contains(typeName) && !retired.Contains(typeName))
+                unregistered.Add($"{typeName} ({Path.GetFileName(file)})");
+        }
+
+        Assert.True(unregistered.Count == 0,
+            $"BackgroundService subclasses not registered in any DI container or retired allowlist: " +
+            $"{string.Join(", ", unregistered)}. " +
+            "Either register the service or add it to the 'retired' allowlist with a reason. " +
+            "See docs/architecture: the HeartbeatMonitorService incident.");
+    }
+
+    // ── Positive control for T4: proves the scanner finds a known-registered service ──
+    [Fact]
+    public void T4_PositiveControl_PipelineLoopService_IsDetectedByScanner()
+    {
+        // PipelineLoopService is registered with AddHostedService in
+        // ServiceCollectionExtensions.PipelineBackgroundServices.cs.
+        // If the scanner does not find it, the T4 test above is vacuous.
+        var srcDir = Path.Combine(RepoRoot, "src");
+        var registeredTypes = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var file in Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
+        {
+            var content = File.ReadAllText(file);
+            if (!content.Contains("AddHostedService")) continue;
+
+            var lines = content.Split('\n');
+            foreach (var line in lines)
+            {
+                if (!line.Contains("AddHostedService")) continue;
+                var match = System.Text.RegularExpressions.Regex.Match(line,
+                    @"GetRequiredService<([A-Za-z0-9_.]+)>\s*\(\)");
+                if (match.Success)
+                    registeredTypes.Add(match.Groups[1].Value.Split('.')[^1]);
+            }
+        }
+
+        Assert.Contains("PipelineLoopService", registeredTypes);
+    }
+
+    // ── T5: Monolith owns no database ──────────────────────────────────────
+    // Spec 045 end-state: CodingAgentWebUI has no EF Core, no PipelineDbContext, no Npgsql.
+    // Currently still failing (T8 not yet complete). Skipped until T8 lands.
+    // When T8 is done: unskip this test and remove the Skip attribute.
+
+    [Fact]
+    public void Monolith_ShouldNot_OwnDatabase()
+    {
+        // Load the monolith assembly by scanning for it in the test binary directory
+        var monolithPath = Path.Combine(
+            AppContext.BaseDirectory.Replace("Pipeline.UnitTests", "").TrimEnd(Path.DirectorySeparatorChar),
+            "..", "..", "..", "..", "..", "src", "CodingAgentWebUI", "bin", "Debug", "net10.0",
+            "CodingAgentWebUI.dll");
+
+        var srcDir = Path.Combine(RepoRoot, "src", "CodingAgentWebUI");
+        var violations = new List<string>();
+
+        foreach (var file in Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
+        {
+            var content = File.ReadAllText(file);
+            if (content.Contains("PipelineDbContext") ||
+                content.Contains("UseNpgsql") ||
+                content.Contains("EntityFrameworkCore"))
+            {
+                violations.Add(Path.GetRelativePath(srcDir, file));
+            }
+        }
+
+        Assert.True(violations.Count == 0,
+            $"Monolith (CodingAgentWebUI) must not own a database. " +
+            $"Files with EF Core / Npgsql / PipelineDbContext references: " +
+            $"{string.Join(", ", violations)}. " +
+            "Complete T8 to remove these references.");
     }
 }

@@ -51,15 +51,16 @@ public class WorkDistributionSmokeTests : IClassFixture<DbModeWebApplicationFact
     }
 
     /// <summary>
-    /// Verifies that IPendingWorkQuery is NOT registered after Spec 045 Req 1.2 (M1 gauge audit).
-    /// dispatch.queue.depth was backed by DbPendingWorkQuery and removed.
+    /// Verifies that IPendingWorkQuery IS registered as ApiBackedPendingWorkQuery after T19 (arch-audit 2026-08-22).
+    /// The job-queue panel on the Agent Monitoring page was silently showing an empty list (B3).
+    /// ApiBackedPendingWorkQuery calls GET /api/work-items/pending instead of hitting the DB directly.
     /// </summary>
     [Fact]
-    public void IPendingWorkQuery_IsNotRegistered_AfterSpec045Req12()
+    public void IPendingWorkQuery_IsRegistered_AsApiBackedImplementation_AfterT19()
     {
-        // IPendingWorkQuery was removed in Spec 045 Req 1.2 (M1 gauge audit) because
-        // dispatch.queue.depth backed by IDbContextFactory. No PrometheusRule references this metric.
+        // T19 (arch-audit 2026-08-22): ApiBackedPendingWorkQuery registered in monolith so the
+        // job-queue panel on the Agent Monitoring page is no longer permanently empty.
         var service = _factory.Services.GetService<IPendingWorkQuery>();
-        Assert.Null(service);
+        Assert.NotNull(service);
     }
 }

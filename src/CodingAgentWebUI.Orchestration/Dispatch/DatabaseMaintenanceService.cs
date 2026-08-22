@@ -26,7 +26,7 @@ public class DatabaseMaintenanceService : BackgroundService
     protected readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly IConsolidationService _consolidationService;
     private readonly IServiceProvider _serviceProvider;
-    private readonly ReconciliationServiceOptions _options;
+    private readonly DatabaseMaintenanceOptions _options;
     // Protected so test subclasses can inject SQLite-compatible SQL overrides
     protected readonly IPipelineConfigStore _configStore;
 
@@ -41,7 +41,7 @@ public class DatabaseMaintenanceService : BackgroundService
         _dbFactory = dbFactory;
         _consolidationService = consolidationService;
         _serviceProvider = serviceProvider;
-        _options = new ReconciliationServiceOptions();
+        _options = new DatabaseMaintenanceOptions();
         configuration.GetSection("WorkDistribution:Reconciliation").Bind(_options);
         _configStore = configStore;
     }

@@ -62,15 +62,22 @@ public static class AgentHubServiceCollectionExtensions
         services.AddSingleton<IGateCommentFormatter>(sp => new GateCommentFormatter(
             Log.Logger));
 
+        // ── IHubConsolidationOperations (T10: extracted from AgentHub) ──────────────
+        services.AddSingleton<IHubConsolidationOperations>(sp => new HubConsolidationOperations(
+            sp.GetRequiredService<ModelFetchService>(),
+            sp.GetRequiredService<IConsolidationService>(),
+            sp.GetRequiredService<ConsolidationBadgeService>(),
+            sp.GetRequiredService<IChangeNotifier>(),
+            Log.Logger));
+
         // AgentHubDependencies is scoped to match the Hub's per-connection lifetime.
-        // All 12 wrapped dependencies are singletons, so this is a safe downgrade.
+        // All wrapped dependencies are singletons, so this is a safe downgrade.
+        // T10: 13 → 10 members — consolidation cluster extracted into IHubConsolidationOperations.
         services.AddScoped(sp => new AgentHubDependencies(
             sp.GetRequiredService<IAgentHubFacade>(),
             sp.GetRequiredService<IChatNotifier>(),
             sp.GetRequiredService<IChangeNotifier>(),
-            sp.GetRequiredService<ModelFetchService>(),
-            sp.GetRequiredService<IConsolidationService>(),
-            sp.GetRequiredService<ConsolidationBadgeService>(),
+            sp.GetRequiredService<IHubConsolidationOperations>(),
             sp.GetRequiredService<IHubIssueOperations>(),
             sp.GetRequiredService<IAgentJobLifecycleService>(),
             sp.GetRequiredService<IAgentTokenRefreshService>(),

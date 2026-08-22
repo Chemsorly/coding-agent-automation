@@ -83,16 +83,15 @@ public class AgentMonitoringComponentTests : BunitContext
         Services.AddSingleton<IAgentHubConnection>(mockHubConnection.Object);
         Services.AddSingleton<IPipelineApiRunHistoryClient>(_mockRunHistoryClient.Object);
 
-        // Use a factory to create the mock so it can resolve JobDeduplicationGuardService lazily
-        // from the DI container — the mock delegates GetPendingJobsAsync to the real in-memory service.
-        Services.AddSingleton<IPendingWorkQuery>(sp =>
-        {
-            var dispatcherSvc = sp.GetRequiredService<JobDeduplicationGuardService>();
-            var mock = new Mock<IPendingWorkQuery>();
-            mock.Setup(q => q.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
-                .Returns(() => Task.FromResult<IReadOnlyList<PendingJob>>(dispatcherSvc.GetQueuedJobs().ToList()));
-            return mock.Object;
-        });
+        // Use a shared mutable list so individual tests can populate queued jobs
+        // directly without needing the now-deleted EnqueueJob/GetQueuedJobs methods.
+        var pendingJobsList = new List<PendingJob>();
+        var mockPendingQuery = new Mock<IPendingWorkQuery>();
+        mockPendingQuery.Setup(q => q.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult<IReadOnlyList<PendingJob>>(pendingJobsList.ToList()));
+        Services.AddSingleton<IPendingWorkQuery>(mockPendingQuery.Object);
+        // Expose the list for test use via a container tag
+        Services.AddSingleton(pendingJobsList);
 
         Services.AddSingleton(TimeProvider.System);
 
@@ -286,8 +285,8 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public void JobQueue_ProjectColumn_RendersNameWhenSet()
     {
-        var dispatcher = Services.GetRequiredService<JobDeduplicationGuardService>();
-        dispatcher.EnqueueJob(new PendingJob
+        var jobs = Services.GetRequiredService<List<PendingJob>>();
+        jobs.Add(new PendingJob
         {
             IssueIdentifier = "org/repo#99",
             IssueProviderId = "ip-1",
@@ -305,8 +304,8 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public void JobQueue_ProjectColumn_RendersDashWhenNull()
     {
-        var dispatcher = Services.GetRequiredService<JobDeduplicationGuardService>();
-        dispatcher.EnqueueJob(new PendingJob
+        var jobs = Services.GetRequiredService<List<PendingJob>>();
+        jobs.Add(new PendingJob
         {
             IssueIdentifier = "org/repo#99",
             IssueProviderId = "ip-1",
@@ -327,9 +326,9 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public void RemoveFromQueue_Button_RemovesJobAndUpdatesUI()
     {
-        // Arrange: enqueue a job
-        var dispatcher = Services.GetRequiredService<JobDeduplicationGuardService>();
-        dispatcher.EnqueueJob(new PendingJob
+        // Arrange: add a job via the shared pending jobs list
+        var jobs = Services.GetRequiredService<List<PendingJob>>();
+        jobs.Add(new PendingJob
         {
             IssueIdentifier = "org/repo#42",
             IssueProviderId = "ip-1",
@@ -360,9 +359,9 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public void RemoveFromQueue_Button_RemovesCorrectJob_WhenMultipleQueued()
     {
-        // Arrange: enqueue two jobs
-        var dispatcher = Services.GetRequiredService<JobDeduplicationGuardService>();
-        dispatcher.EnqueueJob(new PendingJob
+        // Arrange: add two jobs via the shared pending jobs list
+        var jobs = Services.GetRequiredService<List<PendingJob>>();
+        jobs.Add(new PendingJob
         {
             IssueIdentifier = "org/repo#10",
             IssueProviderId = "ip-1",
@@ -370,7 +369,7 @@ public class AgentMonitoringComponentTests : BunitContext
             EnqueuedAt = DateTimeOffset.UtcNow,
             InitiatedBy = "loop"
         });
-        dispatcher.EnqueueJob(new PendingJob
+        jobs.Add(new PendingJob
         {
             IssueIdentifier = "org/repo#20",
             IssueProviderId = "ip-1",

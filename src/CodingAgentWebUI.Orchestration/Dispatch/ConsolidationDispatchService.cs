@@ -258,10 +258,6 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         // Consider querying by IssueIdentifier instead of relying on ID equality. (#1084 follow-up)
         await _workDistributor.CancelJobAsync(runId.Value, ct);
 
-        // TODO: JobDeduplicationGuardService.RemoveJob still takes string — RunId.Value is unwrapped
-        // here at the JobDeduplicationGuardService boundary. Updating RemoveJob to accept RunId would
-        // close this remaining string crossing. (#2069 follow-up)
-        _jobDispatcher.RemoveJob(runId.Value);
     }
 
     /// <summary>

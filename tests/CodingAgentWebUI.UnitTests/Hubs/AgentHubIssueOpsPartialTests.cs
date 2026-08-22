@@ -31,15 +31,13 @@ public sealed class AgentHubIssueOpsPartialTests
             Facade: _facade.Object,
             ChatNotifier: Mock.Of<IChatNotifier>(),
             ChangeNotifier: Mock.Of<IChangeNotifier>(),
-            ModelFetchService: null!,  // ModelFetchService is sealed — pass null
-            ConsolidationService: Mock.Of<IConsolidationService>(),
-            BadgeService: new ConsolidationBadgeService(),
+            ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
             IssueOps: _issueOps.Object,
             LifecycleService: Mock.Of<IAgentJobLifecycleService>(),
             TokenRefreshService: _tokenRefreshService.Object,
             GateCommentFormatter: _gateCommentFormatter.Object,
-            OrphanRecoveryService: Mock.Of<IAgentOrphanRecoveryService>(),
             Logger: Log.Logger,
+            OrphanRecoveryService: Mock.Of<IAgentOrphanRecoveryService>(),
             UiContext: HubTestHelpers.CreateNoOpHubContext()));
 
         hub.Context = mockCtx.Object;

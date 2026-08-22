@@ -43,11 +43,16 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
     // ── Chat mode fields ──────────────────────────────────────────────────────
     /// <summary>True when the agent pod runs in chat-only mode (AGENT_CHAT_MODE=true).</summary>
-    internal bool _isChatMode = string.Equals(
-        Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
+    internal bool _isChatMode;
 
     /// <summary>Chat session identifier injected via AGENT_CHAT_SESSION_ID env var.</summary>
-    internal string _chatSessionId = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId) ?? "";
+    internal string _chatSessionId = "";
+
+    /// <summary>Chat model override injected via AGENT_CHAT_MODEL env var.</summary>
+    internal string? _chatModel;
+
+    /// <summary>Chat effort override injected via AGENT_CHAT_EFFORT env var.</summary>
+    internal string? _chatEffort;
 
     /// <summary>Resolved when SignalChatEnd() is called; unblocks the ConnectAndRunAsync wait.</summary>
     internal readonly TaskCompletionSource _chatEndSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -86,7 +91,8 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         AgentJobSlotManager slotManager,
         AgentId agentId,
         IHostApplicationLifetime hostApplicationLifetime,
-        Serilog.ILogger logger)
+        Serilog.ILogger logger,
+        AgentRuntimeOptions? runtimeOptions = null)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(hubManagerFactory);
@@ -107,11 +113,22 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         // to SignalR hub invocations (RegisterAgent, Heartbeat). See AgentConnectionManager for same pattern.
         _agentId = agentId.Value;
 
-        var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
+        var labelsEnv = runtimeOptions?.AgentLabels
+            ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels)
+            ?? string.Empty;
         _baseLabels = labelsEnv
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList()
             .AsReadOnly();
+
+        // Store chat mode flags for use in ConnectAndRunAsync
+        _isChatMode = runtimeOptions?.IsChatMode
+            ?? string.Equals(Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
+        _chatSessionId = runtimeOptions?.ChatSessionId
+            ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId)
+            ?? "";
+        _chatModel = runtimeOptions?.ChatModel ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatModel);
+        _chatEffort = runtimeOptions?.ChatEffort ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatEffort);
     }
 
     /// <summary>The underlying hub connection for business handlers to invoke server methods.</summary>
@@ -135,8 +152,8 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         // Chat mode: apply model/effort settings to ~/.kiro/settings/cli.json before connecting
         if (_isChatMode)
         {
-            var model = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatModel);
-            var effort = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatEffort);
+            var model = _chatModel;
+            var effort = _chatEffort;
             if (!string.IsNullOrEmpty(model) && !model.Equals("auto", StringComparison.OrdinalIgnoreCase))
                 await KiroCliSettingsApplyFunc(model, effort, stoppingToken);
         }

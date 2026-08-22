@@ -9,7 +9,10 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
-/// Extension methods for registering chat-pod agent services.
+/// Extension methods for registering chat-pod agent services (T23, arch-audit 2026-08-22).
+/// Previously named <c>AgentSignalRModeRegistration</c> — renamed because both modes use SignalR;
+/// the essential difference is that this mode owns no durable WorkItem row and serves interactive
+/// chat sessions and consolidation jobs.
 /// Reached when the agent pod is started without <c>--work-item-id</c> (chat mode).
 /// Registers <see cref="AgentWorkerService"/> and the full SignalR hub connection stack
 /// (<see cref="AgentConnectionLifecycle"/>, <see cref="AgentJobSlotManager"/>,
@@ -17,7 +20,7 @@ namespace CodingAgentWebUI.Agent;
 /// <see cref="SignalRCompletionReporter"/>, <see cref="CriticalMessageBuffer"/>)
 /// so the pod can serve interactive chat sessions and consolidation jobs.
 /// </summary>
-internal static class AgentSignalRModeRegistration
+internal static class AgentChatModeRegistration
 {
     internal static IServiceCollection AddSignalRModeServices(
         this IServiceCollection services,
@@ -59,14 +62,15 @@ internal static class AgentSignalRModeRegistration
             sp.GetRequiredService<AgentJobSlotManager>(),
             sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
-            logger));
+            logger,
+            sp.GetRequiredService<AgentRuntimeOptions>()));
         services.AddSingleton<ChatJobHandler>(sp =>
         {
             var agentId = sp.GetRequiredService<AgentId>().Value;
-            var isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
+            var runtimeOpts = sp.GetRequiredService<AgentRuntimeOptions>();
+            var isOpenCodeProvider = runtimeOpts.AgentProviderType
                 .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
-            var isChatMode = string.Equals(
-                Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
+            var isChatMode = runtimeOpts.IsChatMode;
             return new ChatJobHandler(new ChatJobHandlerDependencies(
                 sp.GetRequiredService<AgentConnectionLifecycle>(),
                 sp.GetRequiredService<AgentJobSlotManager>(),

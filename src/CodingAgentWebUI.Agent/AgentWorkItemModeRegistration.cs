@@ -8,10 +8,13 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
-/// Extension methods for registering K8s-mode agent services.
-/// Extracted from Program.cs to reduce top-level statement complexity.
+/// Extension methods for registering work-item-mode agent services.
+/// Reached when the agent pod is started with <c>--work-item-id</c> (work-item mode).
+/// Extracted from Program.cs to reduce top-level statement complexity (T23, arch-audit 2026-08-22).
+/// Previously named <c>AgentK8SModeRegistration</c> — renamed because both modes use K8s and SignalR;
+/// the essential difference is that this mode owns a durable WorkItem row.
 /// </summary>
-internal static class AgentK8SModeRegistration
+internal static class AgentWorkItemModeRegistration
 {
     internal static IServiceCollection AddK8sModeServices(
         this IServiceCollection services,
@@ -66,7 +69,8 @@ internal static class AgentK8SModeRegistration
             sp.GetRequiredService<IHubConnectionManager>(),
             sp.GetRequiredService<IHubConnectionManagerFactory>(),
             sp.GetRequiredService<AgentId>(),
-            logger));
+            logger,
+            sp.GetRequiredService<IHostApplicationLifetime>()));
 
         services.AddSingleton<IJobCompletionReporter>(sp => new HttpPrimaryCompletionReporter(
             config.WorkItemId!,

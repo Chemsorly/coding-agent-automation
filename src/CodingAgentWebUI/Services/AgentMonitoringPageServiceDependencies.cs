@@ -9,14 +9,14 @@ namespace CodingAgentWebUI.Services;
 /// <summary>
 /// Groups the core dependencies of <see cref="AgentMonitoringPageService"/> to reduce
 /// constructor parameter count (S107). All members are required.
+/// T19 (arch-audit 2026-08-22): PendingWorkQuery is no longer nullable — ApiBackedPendingWorkQuery
+/// is registered unconditionally so the job-queue panel is always populated.
 /// </summary>
 public sealed record AgentMonitoringPageServiceDependencies(
     IAgentRegistryService Registry,
     JobDeduplicationGuardService Dispatcher,
     IPipelineApiConfigClient ConfigClient,
     IConsolidationService ConsolidationService,
-    /// Optional — null when IPendingWorkQuery is not registered (no DB-backed pending work query available).
-    /// </summary>
-    IPendingWorkQuery? PendingWorkQuery,
+    IPendingWorkQuery PendingWorkQuery,
     IWorkDistributor WorkDistributor,
     IPipelineApiRunHistoryClient RunHistoryClient);

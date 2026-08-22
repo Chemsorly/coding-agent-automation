@@ -70,7 +70,6 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
-            WorkItemTransition: _transitionService,
             WorkItemFallbackTransition: fallbackTransitionService));
     }
 
@@ -162,7 +161,6 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
             It.Is<PipelineRun>(r => r.RunId == runId.ToString()),
             It.IsAny<CancellationToken>()), Times.Once);
-        _dispatcher.IsIssueQueued("owner/repo#1", "ip-1").Should().BeFalse();
     }
 
     [Fact]
@@ -431,11 +429,14 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         // Verify: OrchestratorRunService is empty (restart scenario)
         _runService.GetActiveRuns().Should().BeEmpty();
 
-        // Simulate drain: deserialize payload, create run, transition to Dispatched
-        var pendingQuery = new DbPendingWorkQuery(_dbFactory);
-        var pendingJobs = await pendingQuery.GetPendingJobsAsync(CancellationToken.None);
-        pendingJobs.Should().HaveCount(1);
-        pendingJobs[0].IssueIdentifier.Value.Should().Be("owner/repo#6");
+        // Simulate drain: query pending WorkItems directly from DB
+        await using var dbCtx = await _dbFactory.CreateDbContextAsync(CancellationToken.None);
+        var pendingWorkItems = await dbCtx.WorkItems
+            .Where(w => w.Status == WorkItemStatus.Pending)
+            .OrderBy(w => w.CreatedAt)
+            .ToListAsync(CancellationToken.None);
+        pendingWorkItems.Should().HaveCount(1);
+        pendingWorkItems[0].IssueIdentifier.Should().Be("owner/repo#6");
 
         // Simulate creating the run from drain
         var restoredRun = new PipelineRun
@@ -885,57 +886,8 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
 
     #region Group 7: Secrets and payload round-trip
 
-    [Fact]
-    public async Task DbPendingWorkQuery_RoundTrips_TitleAndRepoProviderFromPayload()
-    {
-        // Arrange: Insert WorkItem with full JobDistributionRequest payload
-        var runId = Guid.NewGuid();
-        var payload = JsonSerializer.Serialize(new JobDistributionRequest
-        {
-            IssueIdentifier = "owner/repo#17",
-            IssueProviderConfigId = "ip-17",
-            RepoProviderConfigId = "rp-17",
-            InitiatedBy = "test",
-            TaskType = WorkItemTaskType.Implementation,
-            AgentSelector = "dotnet",
-            TimeoutSeconds = 1800,
-            IssueDetail = new IssueDetail
-            {
-                Title = "Payload Round-Trip Title",
-                Description = "Description for payload test",
-                Identifier = "owner/repo#17",
-                Labels = new[] { "agent:next", "enhancement" }
-            }
-        }, PipelineJsonOptions.Default);
-
-        await using (var db = await _dbFactory.CreateDbContextAsync())
-        {
-            db.WorkItems.Add(new WorkItemEntity
-            {
-                Id = runId,
-                IssueIdentifier = "owner/repo#17",
-                IssueProviderConfigId = "ip-17",
-                Status = WorkItemStatus.Pending,
-                CreatedAt = DateTimeOffset.UtcNow,
-                TaskType = WorkItemTaskType.Implementation,
-                Payload = payload,
-                AgentSelector = "dotnet"
-            });
-            await db.SaveChangesAsync();
-        }
-
-        // Act
-        var pendingQuery = new DbPendingWorkQuery(_dbFactory);
-        var jobs = await pendingQuery.GetPendingJobsAsync(CancellationToken.None);
-
-        // Assert
-        jobs.Should().HaveCount(1);
-        jobs[0].IssueTitle.Should().Be("Payload Round-Trip Title");
-        jobs[0].RepoProviderId.Value.Should().Be("rp-17");
-        jobs[0].IssueIdentifier.Value.Should().Be("owner/repo#17");
-        jobs[0].IssueProviderId.Value.Should().Be("ip-17");
-        jobs[0].RequiredLabels.Should().Contain("dotnet");
-    }
+    // DbPendingWorkQuery_RoundTrips_TitleAndRepoProviderFromPayload was deleted (T19, arch-audit 2026-08-22)
+    // — DbPendingWorkQuery was removed and replaced by ApiBackedPendingWorkQuery.
 
     #endregion
 

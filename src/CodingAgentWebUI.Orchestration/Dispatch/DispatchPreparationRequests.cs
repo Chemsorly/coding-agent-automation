@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -20,32 +19,6 @@ internal sealed record DispatchCoreRequest(
     string? PipelineProviderId,
     PipelineProject Project,
     ILogger Logger);
-
-/// <summary>
-/// Parameter object for <see cref="AnalysisStalenessDetector.EvaluateAsync"/>.
-/// Groups the 8 evaluation parameters to satisfy S107.
-/// </summary>
-public sealed record StalenessEvaluationRequest(
-    IssueComment AnalysisComment,
-    IReadOnlyList<IssueComment> IssueComments,
-    string IssueBody,
-    IssueIdentifier IssueIdentifier,
-    ProviderConfigId IssueProviderConfigId,
-    int CommitThreshold,
-    Func<DateTimeOffset, CancellationToken, Task<int>>? GetCommitCount);
-
-/// <summary>
-/// Parameter object for <see cref="DispatchLifecycleService.ExecuteDispatchLifecycleAsync"/>.
-/// Groups the non-delegate parameters to satisfy S107.
-/// </summary>
-internal sealed record DispatchLifecycleContext(
-    PipelineDbContext Db,
-    PendingWorkItemProjection Item,
-    JobTemplate Template,
-    bool IsKiroAgent,
-    List<string> AvailablePvcs,
-    Dictionary<string, int> ConcurrencyBySelector,
-    string LogPrefix);
 
 /// <summary>
 /// Parameter object for <see cref="DispatchOrchestrationService.PrepareAsync"/>

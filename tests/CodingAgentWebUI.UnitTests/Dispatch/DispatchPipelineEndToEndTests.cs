@@ -299,17 +299,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         _runService.GetRun(request!.RunId!).Should().BeNull(
             "monolith no longer registers runs locally (Req 1a.1 Option A)");
 
-        // Step 2: HeartbeatMonitor sweep — nothing to sweep in the empty local registry
-        var registry = new AgentRegistryService(_mockLogger.Object);
-        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        var monitor = new HeartbeatMonitorService(new HeartbeatMonitorDependencies(
-            registry, _runService, mockHistoryService.Object,
-            _mockConfigStore.Object, _mockLogger.Object,
-            LifecycleManager: new Mock<IRunLifecycleManager>().Object));
-
-        await monitor.SweepAsync(CancellationToken.None);
-
-        // Step 3: Distribution still works
+        // Step 2: Distribution still works
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();
     }

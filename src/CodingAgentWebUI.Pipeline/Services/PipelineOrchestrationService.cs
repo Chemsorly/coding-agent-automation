@@ -83,17 +83,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     public Task ReleaseActiveAgentRunsAsync()
     {
         // Release all runs from in-memory tracking — includes sentinels (AgentId == null)
-        // so their dedup guards are always freed, even if agents haven't called JobAccepted yet.
-        var releasedIssues = _lifecycle.ReleaseAgentRunsForHandoff();
-
-        // Release dedup guards so the new pod can adopt / re-dispatch the issues
-        if (_cancellationFacade.DedupGuard is not null)
-        {
-            foreach (var (issueId, providerId) in releasedIssues)
-            {
-                _cancellationFacade.DedupGuard.MarkIssueComplete(issueId, providerId);
-            }
-        }
+        // so the new pod can adopt / re-dispatch them, even if agents haven't called JobAccepted yet.
+        // Re-dispatch safety no longer needs an in-memory guard release: the partial unique index on
+        // WorkItems (IssueIdentifier, IssueProviderConfigId) — filtered to non-terminal statuses —
+        // plus the IsIssueBeingProcessed check at dispatch time are the dedup mechanisms.
+        _lifecycle.ReleaseAgentRunsForHandoff();
 
         return Task.CompletedTask;
     }

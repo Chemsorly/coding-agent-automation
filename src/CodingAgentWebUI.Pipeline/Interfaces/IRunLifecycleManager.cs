@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// across the in-memory dictionary, database WorkItem rows, agent registry, label state,
 /// history persistence, and issue deduplication tracking.
 ///
-/// Every caller that terminates a run (HeartbeatMonitor, AgentHub.ReportJobCompleted,
+/// Every caller that terminates a run (ReconciliationService, AgentHub.ReportJobCompleted,
 /// CancelJob, RevertFailedDistribution) MUST use this interface rather than individually
 /// calling RemoveRun + TransitionWorkItem + SwapLabel + etc.
 /// </summary>

@@ -38,8 +38,7 @@ public sealed class RunLifecycleManagerTests
             _registry,
             _mockLabelService.Object,
             _dispatcher,
-            _mockLogger.Object,
-            WorkItemTransition: null)); // Legacy mode — no DB
+            _mockLogger.Object)); // Legacy mode — no DB
     }
 
     // ── AgentAcceptedRunAsync ────────────────────────────────────────────
@@ -448,29 +447,17 @@ public sealed class RunLifecycleManagerResilienceTests
             _registry,
             _mockLabelService.Object,
             _dispatcher,
-            _mockLogger.Object,
-            WorkItemTransition: null));
+            _mockLogger.Object));
     }
 
     [Fact]
-    public async Task FailRunAsync_WhenHistoryThrows_StillClearsDedupTracker()
+    public async Task FailRunAsync_WhenHistoryThrows_StillClearsAgentState()
     {
-        // Arrange: set up a run that's "in-progress" in the dedup tracker
+        // Arrange: set up a run that's "in-progress"
         var run = CreateRun("run-fail-history-err");
         run.AgentId = "agent-1";
         _runService.AddRun(run);
-        _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = "org/repo#1",
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1",
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            RequiredLabels = DotnetLabels,
-            InitiatedBy = "test"
-        });
-        // Dequeue to simulate "in processing" state
         var entry = RegisterAgent("agent-1");
-        _dispatcher.DequeueForAgent(entry);
 
         // Make history throw
         _mockHistoryService
@@ -483,32 +470,18 @@ public sealed class RunLifecycleManagerResilienceTests
         // Assert: run was still returned (claimed successfully)
         result.Should().NotBeNull();
 
-        // Dedup tracker was cleared despite the history exception
-        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
-
-        // Agent state was cleared
+        // Agent state was cleared despite the history exception
         var agent = _registry.GetByAgentId("agent-1");
         agent!.ActiveJobId.Should().BeNull();
         agent.Status.Should().Be(AgentStatus.Idle);
     }
 
     [Fact]
-    public async Task CompleteRunAsync_WhenHistoryThrows_StillClearsDedupTracker()
+    public async Task CompleteRunAsync_WhenHistoryThrows_StillReturnsRun()
     {
         // Arrange
         var run = CreateRun("run-complete-err");
         _runService.AddRun(run);
-        _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = "org/repo#1",
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1",
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            RequiredLabels = DotnetLabels,
-            InitiatedBy = "test"
-        });
-        var entry = RegisterAgent("agent-1");
-        _dispatcher.DequeueForAgent(entry);
 
         _mockHistoryService
             .Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
@@ -519,9 +492,6 @@ public sealed class RunLifecycleManagerResilienceTests
 
         // Assert: still returned the run
         result.Should().NotBeNull();
-
-        // Dedup tracker was cleared
-        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
     }
 
     private static PipelineRun CreateRun(string runId)
@@ -583,7 +553,6 @@ public sealed class RunLifecycleManagerJobCleanupTests
             _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
-            WorkItemTransition: null,
             JobCleanup: _mockJobCleanup.Object));
     }
 

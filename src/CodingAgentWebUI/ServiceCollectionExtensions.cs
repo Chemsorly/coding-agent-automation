@@ -58,7 +58,9 @@ public static partial class ServiceCollectionExtensions
 
     /// <summary>
     /// Registers multi-agent orchestration services: agent registry, job dispatch,
-    /// token vending, and dispatch infrastructure. HeartbeatMonitorService lives in the API.
+    /// token vending, and dispatch infrastructure.
+    /// HeartbeatMonitorService was deleted at Spec 041–045 arc close — agent timeouts
+    /// are enforced by ReconciliationService in JobController.
     /// </summary>
     public static IServiceCollection AddOrchestrationServices(
         this IServiceCollection services,

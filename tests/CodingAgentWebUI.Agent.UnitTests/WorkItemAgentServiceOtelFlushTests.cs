@@ -155,16 +155,16 @@ public class WorkItemAgentServiceOtelFlushTests
     /// ensuring the ForceFlush path is reachable at runtime.
     ///
     /// Note: the WorkItemAgentService DI factory was extracted from Program.cs into
-    /// AgentK8sModeRegistration.cs during the S3776 complexity-reduction refactoring (#1790).
+    /// AgentWorkItemModeRegistration.cs during the S3776 complexity-reduction refactoring (#1790).
     /// This test was updated to scan the new canonical location.
     /// </summary>
     [Fact]
     public void ProgramCs_K8sMode_PassesServiceProviderToWorkItemAgentService()
     {
-        // The WorkItemAgentService DI factory now lives in AgentK8sModeRegistration.cs (extracted
+        // The WorkItemAgentService DI factory now lives in AgentWorkItemModeRegistration.cs (extracted
         // from Program.cs to reduce cognitive complexity — see issue #1790). Scan that file instead.
         var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentK8sModeRegistration.cs"));
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkItemModeRegistration.cs"));
 
         // TODO: [WARNING] This is a source-text scan, not a behavioral test. It would produce a false failure
         // if the named-argument is renamed (e.g. 'provider: sp') or switched to positional syntax while the
@@ -174,7 +174,7 @@ public class WorkItemAgentServiceOtelFlushTests
         // The DI factory lambda for WorkItemAgentService must pass sp (serviceProvider) to the constructor.
         // This ensures the ForceFlush path in ExecuteAsync can resolve MeterProvider and TracerProvider.
         sourceCode.Should().Contain("ServiceProvider: sp",
-            "The WorkItemAgentService DI factory in AgentK8sModeRegistration.cs must pass 'ServiceProvider: sp' so that " +
+            "The WorkItemAgentService DI factory in AgentWorkItemModeRegistration.cs must pass 'ServiceProvider: sp' so that " +
             "WorkItemAgentService can call MeterProvider.ForceFlush before exit. Without this, " +
             "quality_gate.* metrics emitted during the QG phase are lost when the pod terminates.");
     }

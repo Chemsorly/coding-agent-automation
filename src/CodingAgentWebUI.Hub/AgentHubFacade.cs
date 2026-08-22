@@ -148,10 +148,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
     // ── Dispatch operations ─────────────────────────────────────────────
 
     /// <inheritdoc />
-    public void MarkIssueComplete(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
-        => _dispatcher.MarkIssueComplete(issueIdentifier, issueProviderConfigId);
-
-    /// <inheritdoc />
     public async Task<int> GetWorkItemRetryCountAsync(JobId jobId, CancellationToken ct)
     {
         if (_workItemTransition is null || !Guid.TryParse(jobId.Value, out var workItemId))

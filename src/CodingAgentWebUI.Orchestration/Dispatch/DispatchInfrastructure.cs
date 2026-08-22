@@ -14,7 +14,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// <para>
 /// Also hosts <see cref="PrepareDispatchCoreAsync"/> — the single consolidated method
 /// for the shared dispatch preparation sequence (QG/reviewer resolution, issue context,
-/// provider config preparation, pipeline config resolution, and staleness detection).
+/// provider config preparation, and pipeline config resolution).
 /// <see cref="DispatchOrchestrationService"/> delegates to this method.
 /// </para>
 /// <para>
@@ -28,18 +28,11 @@ public sealed class DispatchInfrastructure
     public ILabelService LabelService { get; }
     public DispatchResolutionService Resolution { get; }
 
-    /// <summary>
-    /// Optional staleness detector for evaluating analysis freshness.
-    /// Null when not registered (AnalysisStalenessDetector was removed in Spec 045 Req 1.2).
-    /// </summary>
-    public AnalysisStalenessDetector? StalenessDetector { get; }
-
     public DispatchInfrastructure(
         ITokenVendingService tokenVending,
         IProviderFactory providerFactory,
         ILabelService labelService,
-        DispatchResolutionService resolution,
-        AnalysisStalenessDetector? stalenessDetector = null)
+        DispatchResolutionService resolution)
     {
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -50,7 +43,6 @@ public sealed class DispatchInfrastructure
         ProviderFactory = providerFactory;
         LabelService = labelService;
         Resolution = resolution;
-        StalenessDetector = stalenessDetector;
     }
 
     // ── Config Resolution ──────────────────────────────────────────────────────────
@@ -213,14 +205,9 @@ public sealed class DispatchInfrastructure
     // ── Issue Context Building (inlined from IssueContextBuilder) ─────────────────
 
     /// <summary>
-    /// Pre-fetches issue details, comments, and detects existing analysis with basic staleness signals.
-    /// Returns <c>null</c> if the issue provider config is not found.
+    /// Pre-fetches issue details, comments, and detects existing analysis with basic staleness signals
+    /// (gate_rejection, gate_wont_do). Returns <c>null</c> if the issue provider config is not found.
     /// </summary>
-    /// <remarks>
-    /// This method does NOT invoke <see cref="AnalysisStalenessDetector"/> — that remains
-    /// in <see cref="PrepareDispatchCoreAsync"/> because it depends on the pipeline
-    /// configuration threshold which is resolved after issue context is built.
-    /// </remarks>
     internal async Task<IssueContextResult?> BuildIssueContextAsync(
         IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderId,
@@ -258,10 +245,7 @@ public sealed class DispatchInfrastructure
         };
 
         // Detect existing analysis and rework state from comments.
-        // NOTE: Only gate_rejection and gate_wont_do are detected here.
-        // The three AnalysisStalenessDetector signals (body_changed, agent_error,
-        // commit_threshold) are evaluated separately in PrepareDispatchCoreAsync because
-        // they depend on pipeline configuration resolved after this step.
+        // Detects gate_rejection and gate_wont_do signals.
         string? existingAnalysis = null;
         bool forceRefreshAnalysis = false;
         string? stalenessSignal = null;
@@ -362,50 +346,10 @@ public sealed class DispatchInfrastructure
             Resolution.ConfigStore.LoadAllTemplatesAsync,
             project, repoProviderId, brainProviderId, providerConfigs, ct);
 
-        // ── Step 4: Evaluate staleness signals (body_changed, agent_error, commit_threshold) ──
+        // ── Step 4: Carry forward staleness signals from issue context ──
         var forceRefresh = issueContext.ForceRefreshAnalysis;
         var stalenessSignal = issueContext.StalenessSignal;
         var refreshCount = issueContext.RefreshCount;
-
-        if (!forceRefresh && issueContext.ExistingAnalysis is not null && StalenessDetector is not null)
-        {
-            var analysisComment = issueContext.IssueComments
-                .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
-                .OrderByDescending(c => c.CreatedAt)
-                .FirstOrDefault();
-
-            if (analysisComment is not null)
-            {
-                // For signal 3 (commit_threshold): create a short-lived repo provider for commit counting
-                Func<DateTimeOffset, CancellationToken, Task<int>>? getCommitCount = null;
-                var repoConfig = await Resolution.ConfigStore
-                    .GetProviderConfigByIdAsync(repoProviderId.Value, ProviderKind.Repository, ct);
-                if (repoConfig is not null)
-                {
-                    getCommitCount = async (since, token) =>
-                    {
-                        await using var repoProvider = ProviderFactory.CreateRepositoryProvider(repoConfig);
-                        return await repoProvider.GetCommitCountSinceAsync(since, token);
-                    };
-                }
-
-                var result = await StalenessDetector.EvaluateAsync(
-                    new StalenessEvaluationRequest(
-                        analysisComment, issueContext.IssueComments,
-                        issueContext.IssueDetail.Description,
-                        issueIdentifier, issueProviderId,
-                        config.AnalysisCommitThreshold,
-                        getCommitCount),
-                    ct);
-
-                if (result.ForceRefresh)
-                {
-                    forceRefresh = true;
-                    stalenessSignal = result.Signal;
-                }
-                refreshCount = result.RefreshCount;
-            }
-        }
 
         return (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
             forceRefresh, stalenessSignal, refreshCount);

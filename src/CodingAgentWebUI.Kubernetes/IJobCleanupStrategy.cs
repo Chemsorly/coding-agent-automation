@@ -4,8 +4,8 @@ namespace CodingAgentWebUI.Kubernetes;
 
 /// <summary>
 /// Strategy interface for cleaning up K8s Jobs when a run is cancelled.
-/// Registered at DI time to resolve mode differences (K8s vs SignalR/Legacy)
-/// without runtime null-checks in <see cref="RunLifecycleManager"/>.
+/// Registered at DI time so that <see cref="RunLifecycleManager"/> has a
+/// non-null cleanup path without runtime null-checks.
 /// </summary>
 public interface IJobCleanupStrategy
 {
