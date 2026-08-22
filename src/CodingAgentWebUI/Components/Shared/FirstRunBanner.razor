@@ -1,0 +1,49 @@
+@using CodingAgentWebUI.Api.Client
+@inject IPipelineApiConfigClient ConfigClient
+@inject NavigationManager Navigation
+
+@if (_show)
+{
+    <div class="first-run-banner" role="alert" aria-live="polite">
+        <span class="first-run-banner-message">
+            No job templates configured. Go to <a href="/settings"><strong>Settings → Job Templates</strong></a> to set up your first template before the pipeline can dispatch work.
+        </span>
+        <button class="first-run-banner-dismiss" @onclick="DismissAsync" aria-label="Dismiss banner">Dismiss</button>
+    </div>
+}
+
+@code {
+    private bool _show;
+    private bool _dismissed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await EvaluateAsync();
+    }
+
+    private async Task EvaluateAsync()
+    {
+        var hasEnabled = await ConfigClient.HasEnabledTemplatesAsync(CancellationToken.None);
+        var dismissedValue = await ConfigClient.GetKeyValueAsync("first_run_banner_dismissed", CancellationToken.None);
+        _dismissed = dismissedValue == "true";
+
+        var currentPath = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/');
+        var onSettings = string.Equals(currentPath, "/settings", StringComparison.OrdinalIgnoreCase);
+
+        // show = noEnabledTemplates AND route != "/settings" AND (notDismissed OR noEnabledTemplates)
+        // Req 8.2: the third clause is intentionally redundant when noEnabledTemplates is true —
+        // dismissal never suppresses the banner when there are no templates.
+        var noEnabledTemplates = !hasEnabled;
+        _show = noEnabledTemplates
+                && !onSettings
+                && (!_dismissed || noEnabledTemplates);
+    }
+
+    private async Task DismissAsync()
+    {
+        await ConfigClient.SetKeyValueAsync("first_run_banner_dismissed", "true", CancellationToken.None);
+        _dismissed = true;
+        await EvaluateAsync();
+        StateHasChanged();
+    }
+}

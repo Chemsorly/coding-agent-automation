@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using Moq;
 
 namespace CodingAgentWebUI.Orchestration.UnitTests.Dispatch;

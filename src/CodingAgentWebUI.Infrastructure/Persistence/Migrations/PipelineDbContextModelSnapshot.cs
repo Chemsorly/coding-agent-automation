@@ -18,7 +18,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.9")
+                .HasAnnotation("ProductVersion", "10.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -199,11 +199,6 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .IsDescending();
 
                     b.HasIndex("FinalStep", "CompletedAt");
-
-                    b.HasIndex("ProjectId", "StartedAt")
-                        .IsDescending(false, true)
-                        .HasFilter("\"ProjectId\" IS NOT NULL AND \"CompletedAt\" IS NOT NULL")
-                        .HasDatabaseName("IX_PipelineRuns_ProjectId_StartedAt");
 
                     b.ToTable("PipelineRuns");
                 });
@@ -408,11 +403,6 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .HasFilter("\"Status\" NOT IN (3, 4, 5)");
 
                     b.HasIndex("IssueIdentifier", "IssueProviderConfigId", "Status");
-
-                    b.HasIndex("ProjectId", "CompletedAt")
-                        .IsDescending(false, true)
-                        .HasFilter("\"ProjectId\" IS NOT NULL AND \"Status\" IN (3, 4, 5) AND \"CompletedAt\" IS NOT NULL")
-                        .HasDatabaseName("IX_WorkItems_ProjectId_CompletedAt_Terminal");
 
                     b.ToTable("WorkItems");
                 });

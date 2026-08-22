@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure.Telemetry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 using Serilog.Enrichers.Span;

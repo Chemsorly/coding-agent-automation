@@ -2,14 +2,13 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
-using CodingAgentWebUI.Orchestration.Telemetry;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
@@ -304,7 +303,9 @@ public class ChatDispatcherObservabilityTests : IDisposable
             .FirstOrDefault(a => a.OperationName == "Chat.Terminate");
 
         terminateActivity.Should().NotBeNull("Chat.Terminate span must be created even when session not found");
-        terminateActivity!.GetTagItem("outcome")!.ToString().Should().Be("not_found");
+        // When no session is registered, TerminateChatSessionAsync attempts a best-effort direct
+        // job delete (agentId == jobName for chat pods) and tags the outcome accordingly.
+        terminateActivity!.GetTagItem("outcome")!.ToString().Should().Be("not_found_direct_delete");
     }
 
     // ─── Logging: DispatchChatPodAsync success ────────────────────────────────

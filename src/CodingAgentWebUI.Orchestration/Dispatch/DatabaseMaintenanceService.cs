@@ -1,7 +1,7 @@
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
-using CodingAgentWebUI.Orchestration.LeaderElection;
-using CodingAgentWebUI.Orchestration.Telemetry;
+using CodingAgentWebUI.Pipeline.LeaderElection;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
@@ -14,10 +14,9 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Periodic background service for database retention cleanup.
-/// Runs in BOTH DB modes (K8s and SignalR) to ensure tables don't grow unbounded.
-/// Cleans up: terminal WorkItems, PipelineRuns, and ConsolidationRuns past their retention period,
-/// plus per-project count-based retention sweeps for PipelineRuns and WorkItems.
-/// Gates all work behind leader election (when available) for multi-replica safety.
+/// Cleans up terminal WorkItems, PipelineRuns, and ConsolidationRuns past their retention period,
+/// plus per-project count-based retention sweeps. Gates all work behind leader election
+/// (when available) for multi-replica safety.
 /// </summary>
 public class DatabaseMaintenanceService : BackgroundService
 {
@@ -72,8 +71,7 @@ public class DatabaseMaintenanceService : BackgroundService
             sweepInterval, _options.StaleRetentionDays,
             _options.PipelineRunRetentionDays, _options.ConsolidationRunRetentionDays);
 
-        // Resolve ILeaderElectionService lazily — it's registered later in the DI pipeline
-        // (K8s or SignalR mode branch) and may not be available at construction time.
+        // Resolve ILeaderElectionService lazily — it may not be available at construction time.
         var leaderElection = _serviceProvider.GetService(typeof(ILeaderElectionService)) as ILeaderElectionService;
 
         using var timer = new PeriodicTimer(sweepInterval);

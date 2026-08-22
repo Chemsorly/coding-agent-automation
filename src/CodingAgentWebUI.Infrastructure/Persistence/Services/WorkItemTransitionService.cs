@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Services;
 /// Uses IDbContextFactory for singleton-safe context creation (compatible with BackgroundServices).
 /// Wraps DB operations with a Polly resilience pipeline for transient fault tolerance.
 /// </summary>
-public sealed class WorkItemTransitionService : IWorkItemQueryService
+public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItemTransitionService
 {
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly ILogger<WorkItemTransitionService> _logger;
@@ -125,6 +125,84 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
     }
 
     /// <summary>
+    /// Atomic compare-and-swap transition.
+    /// Succeeds only if the current status matches <paramref name="expectedCurrent"/>.
+    /// Never idempotent — returns false when current == target regardless of expectedCurrent.
+    /// Two concurrent callers with the same expectedCurrent will see exactly one succeed.
+    /// </summary>
+    /// <param name="workItemId">The work item to transition.</param>
+    /// <param name="expectedCurrent">The status the row must currently have for the transition to apply.</param>
+    /// <param name="target">The desired target status.</param>
+    /// <param name="mutate">Optional action to set additional fields on success (e.g., AssignedAgentId, DispatchedAt).</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<bool> TransitionIfAsync(
+        Guid workItemId,
+        WorkItemStatus expectedCurrent,
+        WorkItemStatus target,
+        Action<WorkItemEntity>? mutate = null,
+        CancellationToken ct = default)
+    {
+        if (_resiliencePipeline is not null)
+            return await _resiliencePipeline.ExecuteAsync(
+                async token => await TransitionIfCoreAsync(workItemId, expectedCurrent, target, mutate, token, 3), ct);
+
+        return await TransitionIfCoreAsync(workItemId, expectedCurrent, target, mutate, ct, 3);
+    }
+
+    private async Task<bool> TransitionIfCoreAsync(
+        Guid workItemId, WorkItemStatus expectedCurrent, WorkItemStatus target,
+        Action<WorkItemEntity>? mutate, CancellationToken ct, int maxRetries)
+    {
+        for (int attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var item = await db.WorkItems.FindAsync([workItemId], ct);
+            if (item is null)
+            {
+                _logger.LogWarning("WorkItem {WorkItemId} not found during TransitionIfAsync to {Target}", workItemId, target);
+                return false;
+            }
+
+            // Not idempotent — fail if already at target
+            if (item.Status == target) return false;
+
+            // CAS guard — fail if current != expected
+            if (item.Status != expectedCurrent) return false;
+
+            // Standard transition validation
+            if (!IsValidTransition(item.Status, target))
+            {
+                _logger.LogWarning(
+                    "Invalid transition for WorkItem {WorkItemId}: {Current} → {Target} (TransitionIfAsync)",
+                    workItemId, item.Status, target);
+                return false;
+            }
+
+            item.Status = target;
+            mutate?.Invoke(item);
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return true;
+            }
+            catch (DbUpdateConcurrencyException ex) when (attempt < maxRetries)
+            {
+                _logger.LogInformation(
+                    ex,
+                    "Concurrency conflict on WorkItem {WorkItemId} TransitionIfAsync to {Target}, retry {Attempt}/{MaxRetries}",
+                    workItemId, target, attempt + 1, maxRetries);
+                // Row changed — retry; the loop will re-read and re-check both conditions
+            }
+        }
+
+        _logger.LogWarning(
+            "WorkItem {WorkItemId} TransitionIfAsync to {Target} failed after exhausting all retries",
+            workItemId, target);
+        return false;
+    }
+
+    /// <summary>
     /// Determines whether a state transition from <paramref name="current"/> to <paramref name="target"/> is allowed.
     /// </summary>
     public static bool IsValidTransition(WorkItemStatus current, WorkItemStatus target)
@@ -133,6 +211,9 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
             (WorkItemStatus.Pending, WorkItemStatus.Dispatched or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
             (WorkItemStatus.Dispatched, WorkItemStatus.Running or WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Pending) => true,
             (WorkItemStatus.Running, WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
+            // Requeue paths: Failed/Cancelled → Pending (Req 6.1, POST /api/work-items/{id}/requeue)
+            (WorkItemStatus.Failed, WorkItemStatus.Pending) => true,
+            (WorkItemStatus.Cancelled, WorkItemStatus.Pending) => true,
             _ => false
         };
 

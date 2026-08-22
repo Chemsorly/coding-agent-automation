@@ -12,7 +12,7 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 |--------|------|------|------|-------------|
 | `pipeline.jobs.dispatched` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Incremented when a pipeline job starts |
 | `pipeline.jobs.completed` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Incremented when a job completes successfully |
-| `pipeline.jobs.failed` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Incremented when a job fails |
+| `pipeline.jobs.failed` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name`, `failure_reason` | Incremented when a job fails |
 | `pipeline.jobs.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Duration of the entire pipeline job |
 | `pipeline.loop.polls` | Counter | — | `result` | Incremented on each poll cycle (`success` or `failure`) |
 | `pipeline.loop.issues_found` | Counter | — | — | Incremented by the number of issues/PRs/epics discovered per poll cycle |
@@ -37,7 +37,7 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `dispatch.queue.depth` | ObservableGauge | — | — | Jobs waiting for available agent |
 | `agent.jobs.active` | ObservableGauge | — | — | Currently executing agent jobs |
 | `agent.connections.total` | ObservableGauge | — | — | Total registered agents |
-| `consolidation.jobs.expired` | Counter | — | — | Consolidation jobs expired from queue |
+| `consolidation.jobs.expired` | Counter | — | — | Consolidation jobs expired from queue (not currently emitted) |
 | `brain.syncs.completed` | Counter | — | — | Successful brain pre-run sync operations |
 | `brain.updates.committed` | Counter | — | — | Brain post-run commits pushed |
 | `brain.updates.empty` | Counter | — | — | Runs where agent produced no brain changes |
@@ -46,7 +46,14 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `agent.signalr.failures` | Counter | — | — | Failed or dropped SignalR messages from agent |
 | `pipeline.decomposition.sub_issues.created` | Counter | — | — | Sub-issues created by decomposition |
 | `pipeline.decomposition.sub_issues.failed` | Counter | — | — | Sub-issue creation failures |
-| `pipeline.decomposition.duration` | Histogram | seconds | — | Duration of decomposition phases |
+| `pipeline.decomposition.duration` | Histogram | seconds | `pipeline.project_id`, `pipeline.project_name`, `phase` | Duration of decomposition phases (`phase`: `analysis` or `creation`) |
+| `pipeline.housekeeping.triggered` | Counter | — | `repo_provider_id` | Server-side branch updates triggered |
+| `pipeline.housekeeping.succeeded` | Counter | — | `repo_provider_id` | Server-side branch updates completed successfully |
+| `pipeline.housekeeping.failed` | Counter | — | `repo_provider_id` | Server-side branch updates that threw an exception |
+| `pipeline.housekeeping.skipped` | Counter | — | `repo_provider_id` | PRs skipped during candidate selection (not behind, null, draft, active rework, or already in-flight) |
+| `pipeline.housekeeping.evicted` | Counter | — | `repo_provider_id` | In-flight entries removed (CI resolved or PR merged/label removed) |
+| `pipeline.housekeeping.conflict_rework_triggered` | Counter | — | `repo_provider_id` | Issues re-queued for rework due to PR merge conflict |
+| `pipeline.housekeeping.branch_deleted` | Counter | — | `repo_provider_id` | Stale agent branches deleted (no open PR, inactive issue label) |
 
 ### Tag Schema
 
@@ -56,6 +63,8 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `result` | `success`, `failure` | Poll cycle outcome |
 | `decision` | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` | Dispatch decision reason |
 | `reason` | `busy`, `shutting_down`, `unknown` | Agent job rejection reason |
+| `failure_reason` | `quality_gate_exhausted`, `agent_error`, `timeout`, `infrastructure_failure`, `token_refresh_failure`, `exit_code_failure`, `unknown` | Job failure classification — only present on `pipeline.jobs.failed` |
+| `repo_provider_id` | provider config UUID | Repository provider config ID — only present on `pipeline.housekeeping.*` metrics |
 
 ### Histogram Bucket Boundaries
 
@@ -66,6 +75,10 @@ Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instru
 | `pipeline.jobs.duration` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 | `pipeline.step.duration` | 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 | `dispatch.queue.wait_time` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
+| `workdistribution.dispatch_latency_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
+| `workdistribution.workitems_pending_duration_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
+| `workdistribution.job_execution_duration_seconds` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
+| `workdistribution.timeout_execution_age_seconds` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 
 Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use the OpenTelemetry SDK's default bucket boundaries.
 
@@ -80,15 +93,36 @@ The `pipeline.jobs.*` metrics (Prometheus: `pipeline_jobs_dispatched_total`, `pi
 - Pod is OOM-killed during execution
 - OTLP collector is unreachable and the flush timeout expires
 
-**Reliable fallback:** For alerting and dashboards where metric reliability is critical, use the orchestrator-side equivalents from the `CodingAgent.WorkDistribution` meter:
+**Reliable fallback:** For alerting and dashboards where metric reliability is critical, use the Job Controller-side equivalents from the `CodingAgent.WorkDistribution` meter (emitted by the long-lived `CodingAgentWebUI.JobController` process — `service.name=coding-agent-jobcontroller`):
 
-| Agent-side metric (may have gaps) | Orchestrator-side equivalent (reliable) |
-|-----------------------------------|----------------------------------------|
+| Agent-side metric (may have gaps) | Job Controller-side equivalent (reliable) |
+|-----------------------------------|------------------------------------------|
 | `pipeline.jobs.dispatched` (`pipeline_jobs_dispatched_total`) | `workdistribution.workitems_terminated` (`workdistribution_workitems_terminated_total`) |
 | `pipeline.jobs.completed` (`pipeline_jobs_completed_total`) | `workdistribution.workitems_terminated` with `status="Succeeded"` |
 | `pipeline.jobs.failed` (`pipeline_jobs_failed_total`) | `workdistribution.workitems_terminated` with `status="Failed"` |
 
-The orchestrator metrics are emitted from a long-lived process and are not subject to pod exit timing issues.
+The Job Controller metrics are emitted from a long-lived process and are not subject to pod exit timing issues.
+
+### Work Distribution Metrics
+
+The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (in the `CodingAgentWebUI.Pipeline` assembly, namespace `CodingAgentWebUI.Pipeline.Telemetry`). Instruments are fed by `DispatchService` and `ReconciliationService` in the Job Controller, and by `WorkItemMetricsBackgroundService` in the Pipeline API.
+
+| Metric | Type | Unit | Tags | Description |
+|--------|------|------|------|-------------|
+| `workdistribution.dispatch_latency_seconds` | Histogram | s | — | Time from WorkItem creation (Pending) to Dispatched |
+| `workdistribution.workitems_pending_duration_seconds` | Histogram | s | — | Time spent in Pending status before dispatch |
+| `workdistribution.job_execution_duration_seconds` | Histogram | s | — | Total execution duration (Dispatched → terminal) |
+| `workdistribution.timeout_execution_age_seconds` | Histogram | s | — | Execution age at the moment a timeout is enforced. Canary: if p10 clusters near zero, the timeout anchor is wrong |
+| `workdistribution.workitems_terminated` | Counter | {item} | `status`, `failure_reason` | Work items reaching a terminal state |
+| `workdistribution.dispatcher_polls` | Counter | {poll} | — | Number of dispatch poll cycles executed |
+| `workdistribution.dispatcher_last_poll_epoch_seconds` | ObservableGauge | s | — | Epoch seconds of the last dispatch poll cycle. Drives `DispatcherStalled` alert |
+| `workdistribution.credential_pool_available` | ObservableGauge | {pvc} | `pool` | Available credential PVCs |
+| `workdistribution.credential_pool_claimed` | ObservableGauge | {pvc} | `pool` | Claimed credential PVCs |
+| `workdistribution.workitems_by_status` | ObservableGauge | {item} | `status`, `agent_selector` | Current count of WorkItems by status |
+| `workdistribution.timeout_canary_violations` | Counter | {violation} | — | Timeouts skipped due to canary invariant violation — any non-zero value indicates a timestamp bug |
+| `workdistribution.progress_write_failures` | Counter | {failure} | — | Failed `LastProgressAt` DB writes. Sustained non-zero rate means `ReconciliationService` sees stale values and may false-positive timeout agents |
+| `pipeline.db_retention.pipeline_runs_deleted` | Counter | {row} | — | `PipelineRuns` rows deleted by the per-project retention sweep |
+| `pipeline.db_retention.work_items_deleted` | Counter | {row} | — | `WorkItems` rows deleted by the per-project retention sweep |
 
 ## Traces
 
@@ -189,20 +223,17 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 
 ### Service Names
 
-| Service | `service.name` | Description |
-|---------|---------------|-------------|
-| Orchestrator | `coding-agent-orchestrator` | Web UI + pipeline orchestration |
-| Agent Worker (.NET 1) | `coding-agent-worker-dotnet-1` | Kiro .NET agent container |
-| Agent Worker (.NET 2) | `coding-agent-worker-dotnet-2` | Kiro .NET agent container |
-| Agent Worker (Python) | `coding-agent-worker-python` | Kiro Python agent container |
-| Agent Worker (Java) | `coding-agent-worker-java` | Kiro Java agent container |
-| Agent Worker (OpenCode .NET) | `coding-agent-worker-opencode-dotnet` | OpenCode .NET agent container |
-| Agent Worker (OpenCode Python) | `coding-agent-worker-opencode-python` | OpenCode Python agent container |
-| Agent Worker (OpenCode Java) | `coding-agent-worker-opencode-java` | OpenCode Java agent container |
+Agent pods emit telemetry with `service.name` derived from the agent image and labels.
+
+| `service.name` | Component | Port |
+|----------------|-----------|------|
+| `coding-agent-orchestrator` | Orchestrator | — |
+| `coding-agent-api` | REST/WebSocket API | Port 8090 |
+| `coding-agent-jobcontroller` | Job Controller | Port 8091 |
 
 ### Example: Grafana Cloud
 
-OTEL variables are configured in `docker-compose.yml` and sourced from `.env`. To connect to Grafana Cloud, set these values in your `.env` file:
+OTEL variables are configured via Helm values or the `OTEL_*` environment variables. To connect to Grafana Cloud, set these values in your `values.yaml` or as Helm `--set` arguments:
 
 ```env
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-prod-us-east-0.grafana.net/otlp
@@ -210,17 +241,16 @@ OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64-encoded-instance-id:token>
 ```
 
-See `.env.example` for the full template.
+See `.env.example` for a reference of available variables.
 
 ## Verification
 
 ### Metrics
 
-Use `dotnet-counters` to verify metrics are being recorded locally:
+Use `dotnet-counters` to verify metrics are being recorded. Exec into the orchestrator pod:
 
 ```bash
-# Inside the orchestrator container
-dotnet-counters monitor --counters CodingAgent.Pipeline
+kubectl exec -it <orchestrator-pod> -n coding-agent -- dotnet-counters monitor --counters CodingAgent.Pipeline
 ```
 
 Expected output after dispatching a job:

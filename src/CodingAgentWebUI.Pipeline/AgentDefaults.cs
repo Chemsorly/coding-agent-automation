@@ -1,4 +1,4 @@
-namespace CodingAgentWebUI.Agent;
+namespace CodingAgentWebUI.Pipeline;
 
 /// <summary>
 /// Default values and constants for agent worker configuration.
@@ -13,7 +13,7 @@ public static class AgentDefaults
     /// <summary>
     /// Root directory for per-window chat session workspaces.
     /// Each chat window gets a subdirectory: <see cref="ChatWorkspacesRoot"/>/{chatWindowId}.
-    /// Distinct from <see cref="ChatWorkspacePath"/> (the legacy single-path for SignalR mode).
+    /// Distinct from <see cref="ChatWorkspacePath"/> (the legacy single-path constant retained for backward compatibility).
     /// </summary>
     public const string ChatWorkspacesRoot = "/app/workspaces/chat-sessions";
 
@@ -104,4 +104,11 @@ public static class AgentDefaults
 
     /// <summary>CLI argument prefix for work item ID (K8s mode).</summary>
     public const string CliWorkItemIdPrefix = "--work-item-id=";
+
+    /// <summary>
+    /// CLI argument emitted on chat pod specs (Spec 044 Req C5.1a).
+    /// Phase 2 (Spec 044 Task 15b.2) makes <c>--mode</c> mandatory;
+    /// this constant ensures both emitters use the same literal.
+    /// </summary>
+    public const string CliModeChat = "--mode=chat";
 }

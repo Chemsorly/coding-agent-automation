@@ -1,5 +1,3 @@
-using CodingAgentWebUI.Infrastructure.Telemetry;
-using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -54,17 +52,18 @@ internal static class OpenTelemetryRegistration
                     .AddOtlpExporter((_, readerOptions) =>
                         readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative);
 
-                // TODO [WARNING]: WorkDistributionTelemetry meter is added after AddOtlpExporter above.
-                // In the OTel .NET SDK, AddMeter and AddOtlpExporter both operate on the same MeterProviderBuilder
-                // pipeline — registration order within WithMetrics does not affect which meters are covered by
-                // the exporter. This meter IS exported with Cumulative temporality. However, the ordering may
-                // mislead future maintainers into thinking it is on a separate, unconfigured exporter. Consider
-                // moving AddMeter(WorkDistributionTelemetry.MeterName) inside the fluent chain above, or keep
-                // this comment as a clarification. (DotNetSpecialist / Correctness review finding)
-
-                // Work distribution metrics (035a)
-                if (!string.IsNullOrEmpty(dbConnectionString))
-                    m.AddMeter(WorkDistributionTelemetry.MeterName);
+                // Work distribution metrics (035a).
+                //
+                // Unconditional since Spec 045: the gate used to be
+                // `if (!string.IsNullOrEmpty(dbConnectionString))`, but that spec removed the
+                // monolith's database connection, making the gate permanently false and silently
+                // un-exporting every workdistribution.* instrument this process still records.
+                // The bulk of these instruments now live in the Pipeline API, which registers the
+                // same meter; the monolith keeps its own registration for what it still emits.
+                //
+                // AddMeter after AddOtlpExporter is fine — both operate on the same
+                // MeterProviderBuilder, so this meter is exported with Cumulative temporality too.
+                m.AddMeter(WorkDistributionTelemetry.MeterName);
             });
 
         return services;

@@ -1,6 +1,7 @@
 @inherits LayoutComponentBase
 @implements IAsyncDisposable
 @using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Hub
 @using CodingAgentWebUI.Services
 @inject IPipelineLoopService LoopService
 @inject ConsolidationBadgeService BadgeService
@@ -39,7 +40,14 @@
         <NavLink href="consolidation" class="sidebar-link">
             <span class="sidebar-icon" aria-hidden="true"><Icon Name="refresh-cw" Size="20" /></span>
             <span class="sidebar-label">Consolidation</span>
-            @if (BadgeService.BadgeCount > 0)
+            @if (!BadgeService.HasEverBeenIncremented)
+            {
+                <span class="sidebar-badge sidebar-badge--stale"
+                      title="Badge not available — consolidation events are now reported by the Pipeline API"
+                      aria-label="Badge not available — consolidation events are now reported by the Pipeline API"
+                      role="status">?</span>
+            }
+            else if (BadgeService.BadgeCount > 0)
             {
                 <span class="sidebar-badge">@BadgeService.BadgeCount</span>
             }
@@ -66,6 +74,7 @@
         </div>
     </nav>
     <main class="main-content">
+        <FirstRunBanner />
         <CascadingValue Value="this" IsFixed="true">
             @Body
         </CascadingValue>

@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
 using Serilog;
 
 namespace CodingAgentWebUI;
@@ -17,7 +18,7 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IAgentCancellationSender>()));
 
         services.AddSingleton(sp => new PipelineOrchestrationService(
-            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IProviderConfigStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<IPipelineCancellationFacade>(),
             sp.GetRequiredService<PipelineRunLifecycleService>(),
@@ -36,8 +37,10 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IProviderFactory>(),
                 Log.Logger));
         services.AddSingleton<IDispatchRunCreator>(sp => sp.GetRequiredService<DispatchRunCreationService>());
-        services.AddSingleton<IChangeNotifier>(sp =>
-            sp.GetRequiredService<PipelineRunLifecycleService>());
+
+        // IChangeNotifier removed from monolith DI — change notification arrives via IAgentHubConnection
+        // hub events (OnStepTransition, OnRunCompleted). IChangeNotifier is still registered in
+        // CodingAgentWebUI.Hub for AgentHub internals.
         services.AddSingleton<IChatNotifier>(sp =>
             sp.GetRequiredService<PipelineRunLifecycleService>());
     }

@@ -23,6 +23,11 @@ orchestrator:
   podSecurityContext: {}
   # Extra initContainers injected before the main container (e.g., permission fixers)
   initContainers: []
+  leaderElection:
+    # Override the PipelineLoopService leader election lease name.
+    # Empty (default) = release-scoped: caa-<release>-pipeline-loop-lock
+    # Set explicitly to use a fixed name across Helm releases.
+    pipelineLoopLeaseName: ""
   service:
     type: ClusterIP
     port: 8080
@@ -33,21 +38,6 @@ orchestrator:
     limits:
       cpu: 500m
       memory: 512Mi
-  persistence:
-    # Storage backend: pvc (default/cloud), hostPath (bare-metal), emptyDir (testing)
-    type: pvc
-    hostPath: ""
-    pvc:
-      # StorageClass name. Empty string = cluster default.
-      # Recommendation: use a storageClass with WaitForFirstConsumer volume binding mode
-      # for topology-aware provisioning (PVC provisioned on same node as pod).
-      storageClassName: ""
-      size: 5Gi
-    # Controls how the legacy pipeline-config volume is mounted.
-    # readWrite  — default, current behavior (read+write to JSON config files)
-    # readOnly   — migration source when database.enabled: true (mount at /app/config/pipeline read-only)
-    # disabled   — no mount (after migration is confirmed complete)
-    mountMode: readWrite
   probes:
     liveness:
       path: /healthz
@@ -86,61 +76,13 @@ orchestrator:
     #    hosts:
     #      - coding-agent.example.com
   env:
-    # Seconds to wait before resuming pipeline loop after pod restart (prevents dispatch to
-    # agents mid-termination during rolling updates). Must be > agent terminationGracePeriodSeconds.
-    pipelineLoopStartupDelaySeconds: 30
+    # Startup delay was previously needed to give the monolith hub time to rehydrate active runs
+    # before dispatching. After Spec 044, the API owns IOrchestratorRunService and rehydrates on
+    # its own startup; the orchestrator no longer dispatches directly. Set to 0 (Spec 044 Req 7.2).
+    pipelineLoopStartupDelaySeconds: 0
     # Seconds to wait after marking /readyz as 503 before proceeding with shutdown.
     readinessDrainDelaySeconds: 15
     # Log level for the orchestrator application
-    logLevel: Information
-
-# ── Agents (SignalR mode) ─────────────────────────────────────────────────────
-
-# Agent Deployments for SignalR work distribution mode (workDistribution.mode: SignalR).
-# Each entry produces its own Deployment + optional PVC — persistent containers that
-# connect via SignalR and receive jobs from the orchestrator.
-# In Kubernetes mode, these Deployments are NOT created. Use 'jobTemplates' instead
-# to define the K8s Job pod spec for ephemeral agent pods.
-agents:
-  - name: agent-kiro-dotnet-1
-    enabled: true
-    image:
-      repository: chemsorly/coding-agent
-      tag: coding-agent-kiro-dotnet10
-    # Provider type determines volume mount profile:
-    #   kiro    → mounts kiro-cli-data volume
-    #   opencode → mounts opencode config file from Secret
-    providerType: kiro
-    labels: "kiro,dotnet,dotnet10"
-    # Max concurrent Jobs for this label set in K8s mode. 0 = no limit.
-    maxConcurrent: 0
-    # Additional annotations on the Deployment metadata
-    annotations: {}
-    # Pod-level securityContext
-    podSecurityContext: {}
-    # Extra initContainers
-    initContainers: []
-    persistence:
-      # Storage backend: pvc (default/cloud), hostPath (bare-metal), emptyDir (testing)
-      # Recommendation: use a storageClass with WaitForFirstConsumer volume binding mode.
-      type: pvc
-      hostPath: ""
-      pvc:
-        storageClassName: ""
-        size: 1Gi
-    resources:
-      requests:
-        cpu: 100m
-        memory: 256Mi
-      limits:
-        cpu: "4"
-        memory: 8Gi
-    terminationGracePeriodSeconds: 15
-    strategy:
-      type: Recreate
-    nodeSelector: {}
-    affinity: {}
-    tolerations: []
     logLevel: Information
 
 # ── Secrets ──────────────────────────────────────────────────────────────────
@@ -183,16 +125,14 @@ serviceAccount:
 # ── Database (PostgreSQL) ────────────────────────────────────────────────────
 
 database:
-  # Enable PostgreSQL-backed persistence. When false, system uses JSON file store (current behavior).
-  enabled: false
-  # PostgreSQL host (service DNS name or IP). Required when enabled=true.
+  # PostgreSQL host (service DNS name or IP). Required.
   host: ""
   # PostgreSQL port.
   port: 5432
   # Kubernetes Secret containing database credentials.
   # Must contain keys for username, password, and database name (defaults to standard Postgres env var names).
   auth:
-    # Name of an existing K8s Secret with database credentials. Required when enabled=true.
+    # Name of an existing K8s Secret with database credentials. Required.
     existingSecret: ""
     # Key names within the Secret (defaults match standard Postgres container env vars).
     keys:
@@ -202,25 +142,25 @@ database:
   # Npgsql SSL mode: Disable, Prefer, Require, VerifyCA, VerifyFull.
   # Defaults to Require in production if not set. Use "Disable" for in-cluster Postgres without TLS.
   sslMode: ""
-  # Apply EF Core migrations on orchestrator startup. Uses distributed lock for multi-replica safety.
+  # Apply EF Core migrations on orchestrator startup.
+  # true  — apply automatically on startup (safe for single-replica; avoid concurrent upgrades)
+  # false — startup aborts when migrations are pending (blue/green — run them manually via
+  #         `kubectl exec deployment/<name>-orchestrator -- dotnet CodingAgentWebUI.dll migrate`)
   migrateOnStartup: true
 
 # ── Work Distribution ────────────────────────────────────────────────────────
 
 workDistribution:
-  # Mode: SignalR (default, docker-compose compatible) or Kubernetes (K8s Job dispatch).
-  mode: SignalR
-  # DispatchService settings (Kubernetes mode only)
+  # DispatchService settings
   dispatch:
     intervalSeconds: 10
     rateLimitPerSecond: 10
     chatSessionMaxDurationSeconds: 7200
     chatPodConnectTimeoutSeconds: 120
     chatTerminationGracePeriodSeconds: 120
-  # ReconciliationService settings (Kubernetes mode only)
+  # ReconciliationService settings
   reconciliation:
     intervalSeconds: 30
-    timeoutEnforcementEnabled: true
     staleRetentionDays: 7
 
 # ── Credential Pools ─────────────────────────────────────────────────────────
@@ -228,6 +168,8 @@ workDistribution:
 credentialPools:
   # List of PVC names for kiro agent credential data.
   # DispatchService claims an available PVC per kiro-type Job.
+  # PVCs MUST use ReadWriteOnce or ReadWriteOncePod access mode to prevent
+  # concurrent access from multiple agent Jobs.
   kiro: []
   # Example:
   # kiro:
@@ -238,15 +180,8 @@ credentialPools:
 # ── Job Templates (Kubernetes mode) ─────────────────────────────────────────
 
 # Job templates define the K8s Job pod spec for each agent label set.
-# Used ONLY in Kubernetes work distribution mode (workDistribution.mode: Kubernetes).
 # Each entry becomes a template in the job-templates ConfigMap that DispatchService
 # uses to create K8s Job pods per WorkItem.
-#
-# If empty, falls back to the 'agents' list for backward compatibility.
-# When both 'jobTemplates' and 'agents' are populated, jobTemplates takes
-# priority — agents[] is only used as fallback when jobTemplates is empty.
-# When migrating from a unified 'agents' config to split mode, populate this
-# section with your K8s Job-specific settings and keep 'agents' for SignalR Deployments.
 jobTemplates: []
   # Example:
   # - labels: "kiro,dotnet,dotnet10"
@@ -293,3 +228,75 @@ monitoring:
   prometheusRules:
     # Create PrometheusRule resources for alerting (requires Prometheus Operator).
     enabled: false
+
+# ── Pipeline API ─────────────────────────────────────────────────────────────
+
+api:
+  # The Pipeline API is required. It is the sole owner of the database and the only host of
+  # /hubs/agent and /api/work-items/*, so agent pods, the Job Controller and the orchestrator
+  # all depend on it. Set this to false only when an API is deployed out of band, in which case
+  # api.baseUrl must point at it (the chart fails at render time otherwise).
+  enabled: true
+  image:
+    repository: chemsorly/coding-agent
+    tag: coding-agent-api
+  # api.replicas MUST remain 1. Redis backplane handles hub message delivery but does NOT
+  # make multiple API replicas safe — AgentRegistryService, OrchestratorRunService, and all
+  # in-memory locking state is per-process. Spec 045 Task 13a rewrites the concurrency model
+  # for multi-process topology. Do NOT increase replicas before that lands.
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8090
+  # serviceUrl is the in-cluster URL that agent pods use to reach the API hub and HTTP
+  # endpoints (ORCHESTRATOR_URL). Both work-item pods and chat pods share this single config
+  # key (WorkDistribution__OrchestratorUrl) — changing it re-points both shapes simultaneously
+  # (Spec 044 Req C2.1 option a). Default derives from release name and api.service.port.
+  serviceUrl: ""
+  # Spec 045 Req 6.4/6.5: API base URL and hub URL for the orchestrator (monolith) to connect
+  # to the Pipeline API for config loading (IPipelineApiConfigClient) and live streaming
+  # (IAgentHubConnection). When empty, the chart computes the default in-cluster URL from
+  # the release name, namespace, and api.service.port. Override for external or custom routing.
+  # REQUIRED when api.enabled is false. When empty and api.enabled is false, the chart
+  # fails at render time — the orchestrator would otherwise compute an in-cluster URL
+  # (http://{fullname}-api.{namespace}.svc.cluster.local:{port}) pointing to a service
+  # that does not exist, causing silent runtime failures on the first HTTP call.
+  # Set to the URL of the externally deployed Pipeline API (e.g. http://api.example.com:8090).
+  baseUrl: ""    # override if API is not in same cluster/namespace
+  hubUrl: ""     # override for hub URL (defaults to baseUrl + /hubs/agent)
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  terminationGracePeriodSeconds: 30
+
+# ── Job Controller ────────────────────────────────────────────────────────────
+
+jobController:
+  # The Job Controller owns the dispatch and reconciliation loops. Nothing else runs them —
+  # the orchestrator's copies were removed — so with this off no work item is ever dispatched
+  # and the queue silently grows. Disable only when running the controller out of band.
+  enabled: true
+  image:
+    repository: chemsorly/coding-agent
+    tag: coding-agent-jobcontroller
+  # replicas: leader election (caa-dispatch-lock) handles multi-replica safety.
+  # Only the leader pod dispatches and reconciles; others idle waiting for leadership.
+  replicas: 1
+  service:
+    port: 8091
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  leaderElection:
+    # Override the dispatch lease name.
+    # Empty (default) = release-scoped: caa-<release>-dispatch-lock
+    # Set explicitly to use a fixed name across Helm releases (e.g. shared namespaces).
+    dispatchLeaseName: ""

@@ -28,7 +28,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     protected readonly PipelineProviderManager _providerManager;
 
     public PipelineOrchestrationService(
-        IConfigurationStore configurationStore,
+        IProviderConfigStore configurationStore,
         IProviderFactory providerFactory,
         IPipelineCancellationFacade cancellationFacade,
         PipelineRunLifecycleService lifecycle,
@@ -62,9 +62,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             _logger.Information(
                 "Pipeline {RunId} CancelPipelineAsync: {IssueIdentifier} → {Label} (runType={RunType}, step={CurrentStep})",
                 run.RunId, run.IssueIdentifier, AgentLabels.Cancelled, run.RunType, run.CurrentStep);
-            // TODO: Behavioral change — original SwapAgentLabelAsync caught ALL exceptions including
-            // OperationCanceledException. TrySwapLabelAsync lets OCE propagate. Unlikely with CancellationToken.None
-            // but possible if internal HttpClient times out.
+            // Note: TrySwapLabelAsync lets OperationCanceledException propagate (unlike the original
+            // SwapAgentLabelAsync which caught all exceptions). Unlikely with CancellationToken.None
+            // but possible if the internal HttpClient times out.
             await _labelSwapper.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "PipelineOrchestrationService.CancelPipelineAsync", CancellationToken.None);
         }
 

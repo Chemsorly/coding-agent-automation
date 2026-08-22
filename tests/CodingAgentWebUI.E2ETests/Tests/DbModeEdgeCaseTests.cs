@@ -12,15 +12,25 @@ using Microsoft.Extensions.DependencyInjection;
 namespace CodingAgentWebUI.E2ETests.Tests;
 
 /// <summary>
-/// DB-mode E2E edge case tests: dedup guards, concurrent dispatch, lifecycle management,
-/// stale detection, and multi-agent queue distribution.
-/// Exercises paths where race conditions and plumbing bugs commonly occur.
+/// DB-mode E2E edge case tests: concurrent dispatch, lifecycle management, and multi-agent queue
+/// distribution. Exercises paths where race conditions and plumbing bugs commonly occur.
+///
+/// Stale-dispatch detection used to be tested here through
+/// <c>IWorkDistributor.ReconcileStuckItemsAsync</c>. That method is a no-op in the Kubernetes
+/// topology — the Job Controller owns stuck-item detection because it can see Job state, which
+/// this side cannot — so the "stuck item is failed" test could never pass and its "recent item is
+/// untouched" sibling passed for the wrong reason: nothing was ever going to touch it. Both were
+/// removed. <c>ReconciliationLoopTests</c> in the Job Controller covers the real behaviour, in the
+/// process that performs it, with both the positive and negative case
+/// (<c>WhenDispatchedItemExceedsConnectTimeout_ShouldCallPostStatusAsync_Immediately</c> and
+/// <c>WhenDispatchedItemBelowConnectTimeout_ShouldNotCallPostStatusAsync</c>).
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
-public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbModeE2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class DbModeEdgeCaseTests : HeadlessE2ETestBase
 {
-    public DbModeEdgeCaseTests(DbModeE2EFixture fixture) : base(fixture) { }
+    public DbModeEdgeCaseTests(E2EFixture fixture) : base(fixture) { }
 
     private async Task SeedIssueAndProfileAsync(string issueId, string title = "Test issue")
     {
@@ -60,37 +70,26 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // F2: Dedup — dispatch same issue twice → second rejected
-    // ═══════════════════════════════════════════════════════════════════════
 
-    [Fact]
-    public async Task DbMode_DuplicateDispatch_SecondAttemptRejected()
-    {
-        // Arrange
-        await SeedIssueAndProfileAsync("100");
-        await using var agent = new FakeAgentClient("edge-agent-dedup", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Act: first dispatch succeeds
-        var result1 = await DispatchIssueAsync("100");
-        Assert.True(result1.Success, $"First dispatch failed: {result1.ErrorMessage}");
-
-        // Act: second dispatch for the same issue should fail (dedup guard)
-        var result2 = await DispatchIssueAsync("100");
-
-        // Assert: second dispatch is rejected (issue already active)
-        Assert.False(result2.Success,
-            "Second dispatch should fail — issue is already being processed");
-    }
-
+    /// <summary>
+    /// Covers the round trip: dispatch, agent accepts and completes, run reaches history, and the
+    /// issue can be dispatched again.
+    ///
+    /// Its companion — "second attempt while the first is still live is rejected" — was removed.
+    /// Rejection is enforced solely by the partial unique index on
+    /// (IssueIdentifier, IssueProviderConfigId), which EF InMemory cannot express, so this harness
+    /// strips it and no test here can observe it. <c>WorkItemDedupIndexTests</c> pins the index and
+    /// its status filter instead. Note the consequence for this test: the *allowed* half of that
+    /// rule is not really proved here either, since without the index nothing would have blocked
+    /// the second dispatch regardless. What it does prove is the completion path.
+    /// </summary>
     [Fact]
     public async Task DbMode_DuplicateDispatch_AfterCompletion_SecondAttemptSucceeds()
     {
         // Arrange
         await SeedIssueAndProfileAsync("101");
         await using var agent = new FakeAgentClient("edge-agent-dedup2", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // First dispatch + complete
         var result1 = await DispatchIssueAsync("101");
@@ -139,7 +138,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
 
         // Now connect agent — this triggers drain service
         await using var agent = new FakeAgentClient("edge-agent-concurrent", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Wait for drain to deliver the pending item
         var assignment1 = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
@@ -183,7 +182,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Arrange
         await SeedIssueAndProfileAsync("300", "Orchestration test issue");
         await using var agent = new FakeAgentClient("edge-agent-orch", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch and capture the full assignment
         var result = await DispatchIssueAsync("300");
@@ -250,7 +249,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Arrange
         await SeedIssueAndProfileAsync("400");
         await using var agent = new FakeAgentClient("edge-agent-lifecycle", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("400");
         Assert.True(result.Success);
@@ -261,7 +260,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         await agent.AcceptJobAsync(assignment.JobId);
 
         // Act: directly invoke FailRunAsync via the lifecycle manager (simulating infrastructure failure)
-        var lifecycleManager = Fixture.Factory.Services.GetRequiredService<IRunLifecycleManager>();
+        var lifecycleManager = Fixture.RunLifecycleManager;
         var failedRun = await lifecycleManager.FailRunAsync(
             assignment.JobId,
             "Simulated infrastructure failure",
@@ -284,7 +283,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         Assert.NotNull(history);
 
         // Assert: agent returned to Idle
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         await WaitUntilAsync(
             () => registry.GetByAgentId("edge-agent-lifecycle")?.Status == AgentStatus.Idle,
             TimeSpan.FromSeconds(5));
@@ -296,7 +295,7 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Arrange
         await SeedIssueAndProfileAsync("401");
         await using var agent = new FakeAgentClient("edge-agent-double-fail", "edge-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("401");
         Assert.True(result.Success);
@@ -305,85 +304,13 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         await agent.AcceptJobAsync(assignment.JobId);
 
         // Act: call FailRunAsync twice for the same runId
-        var lifecycleManager = Fixture.Factory.Services.GetRequiredService<IRunLifecycleManager>();
+        var lifecycleManager = Fixture.RunLifecycleManager;
         var first = await lifecycleManager.FailRunAsync(assignment.JobId, "First failure", CancellationToken.None);
         var second = await lifecycleManager.FailRunAsync(assignment.JobId, "Second failure", CancellationToken.None);
 
         // Assert: first call succeeds, second returns null (atomic RemoveRun pattern)
         Assert.NotNull(first);
         Assert.Null(second); // Already processed — no double-persist
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // F7: Stale dispatch detection — WorkItem stuck in Dispatched → Failed
-    // ═══════════════════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task DbMode_StaleDispatchDetection_StuckItem_TransitionedToFailed()
-    {
-        // Arrange: manually insert a WorkItem in Dispatched state with old timestamp
-        // (simulating a silent SignalR delivery failure where agent never processed the message)
-        await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var staleWorkItem = new WorkItemEntity
-        {
-            Id = Guid.NewGuid(),
-            TaskType = WorkItemTaskType.Implementation,
-            IssueIdentifier = "500-stale",
-            IssueProviderConfigId = "issue-e2e",
-            Status = WorkItemStatus.Dispatched,
-            Payload = "{}",
-            AgentSelector = "edge-e2e",
-            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
-            DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-10), // 10 minutes ago = stale
-            TimeoutSeconds = 3600
-        };
-        db.WorkItems.Add(staleWorkItem);
-        await db.SaveChangesAsync();
-
-        // Act: invoke stale detection directly
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
-        var stuckCount = await distributor.ReconcileStuckItemsAsync(CancellationToken.None);
-
-        // Assert: at least one stuck item detected
-        Assert.True(stuckCount >= 1, $"Expected at least 1 stuck item, got {stuckCount}");
-
-        // Assert: WorkItem is now Failed
-        var failedItem = await WaitForWorkItemStatusAsync(
-            staleWorkItem.Id, WorkItemStatus.Failed, TimeSpan.FromSeconds(5));
-        Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
-    }
-
-    [Fact]
-    public async Task DbMode_StaleDispatchDetection_RecentItem_NotAffected()
-    {
-        // Arrange: insert a WorkItem in Dispatched state with RECENT timestamp
-        await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var recentWorkItem = new WorkItemEntity
-        {
-            Id = Guid.NewGuid(),
-            TaskType = WorkItemTaskType.Implementation,
-            IssueIdentifier = "501-recent",
-            IssueProviderConfigId = "issue-e2e",
-            Status = WorkItemStatus.Dispatched,
-            Payload = "{}",
-            AgentSelector = "edge-e2e",
-            CreatedAt = DateTimeOffset.UtcNow.AddSeconds(-30),
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-30), // 30 seconds ago = NOT stale
-            TimeoutSeconds = 3600
-        };
-        db.WorkItems.Add(recentWorkItem);
-        await db.SaveChangesAsync();
-
-        // Act: invoke stale detection
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
-        await distributor.ReconcileStuckItemsAsync(CancellationToken.None);
-
-        // Assert: WorkItem still in Dispatched (not affected by stale detection)
-        await using var checkDb = Fixture.DbContextFactory.CreateDbContext();
-        var item = await checkDb.WorkItems.AsNoTracking()
-            .FirstOrDefaultAsync(w => w.Id == recentWorkItem.Id);
-        Assert.NotNull(item);
-        Assert.Equal(WorkItemStatus.Dispatched, item.Status);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -410,8 +337,8 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Connect 2 agents — drain service should distribute 2 jobs
         await using var agent1 = new FakeAgentClient("edge-multi-1", "edge-e2e");
         await using var agent2 = new FakeAgentClient("edge-multi-2", "edge-e2e");
-        await agent1.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await agent2.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent1.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await agent2.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Wait for both agents to receive jobs
         var job1 = await agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
@@ -492,8 +419,8 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         // Connect agents: one with matching label, one without
         await using var matchingAgent = new FakeAgentClient("edge-matching", "special-label");
         await using var nonMatchingAgent = new FakeAgentClient("edge-non-matching", "other-label");
-        await matchingAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await nonMatchingAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await matchingAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await nonMatchingAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch the special-label issue
         var orchService = Fixture.Factory.Services.GetRequiredService<IDispatchOrchestrationService>();

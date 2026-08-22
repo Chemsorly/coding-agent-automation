@@ -7,8 +7,8 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Evaluates analysis staleness signals to determine if an existing analysis
-/// comment should be regenerated. Shared between <see cref="DispatchOrchestrationService"/>
-/// (DB mode) and <see cref="AgentJobDispatcher"/> (Legacy/SignalR mode).
+/// comment should be regenerated. Used by <see cref="DispatchOrchestrationService"/>, which is
+/// the sole dispatch path since Spec 041.
 ///
 /// Signal evaluation order (cheapest first, short-circuits on first trigger):
 /// 1. body_changed — in-memory hash comparison (negligible cost)

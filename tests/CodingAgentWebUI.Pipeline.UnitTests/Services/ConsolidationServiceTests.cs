@@ -102,6 +102,7 @@ public sealed class ConsolidationServiceTests : IDisposable
     {
         // Validates: Requirement 3.1
         var sut = CreateSut();
+        var before = DateTimeOffset.UtcNow;
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
@@ -112,7 +113,9 @@ public sealed class ConsolidationServiceTests : IDisposable
         run.TemplateId.Should().Be("tmpl-1");
         run.TemplateName.Should().Be("DotNet Repo");
         run.RunId.Should().NotBeNullOrEmpty();
-        run.StartedAtUtc.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        run.StartedAtUtc.Should().BeOnOrAfter(before,
+            because: "StartedAtUtc must be set to a time at or after TriggerAsync was called");
+        run.StartedAtUtc.Should().BeOnOrBefore(before.AddSeconds(10));
     }
 
     [Fact]
@@ -235,6 +238,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
+        var before = DateTimeOffset.UtcNow;
         await sut.UpdateRunAsync(
             run!.RunId, ConsolidationRunStatus.Succeeded, "All done", CancellationToken.None);
 
@@ -244,7 +248,9 @@ public sealed class ConsolidationServiceTests : IDisposable
         updated.Status.Should().Be(ConsolidationRunStatus.Succeeded);
         updated.Summary.Should().Be("All done");
         updated.CompletedAtUtc.Should().NotBeNull();
-        updated.CompletedAtUtc!.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        updated.CompletedAtUtc!.Value.Should().BeOnOrAfter(before,
+            because: "CompletedAtUtc must be set when UpdateRunAsync marks the run complete");
+        updated.CompletedAtUtc.Value.Should().BeOnOrBefore(before.AddSeconds(10));
     }
 
     [Fact]

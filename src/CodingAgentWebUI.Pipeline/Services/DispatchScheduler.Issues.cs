@@ -34,8 +34,8 @@ internal sealed partial class DispatchScheduler
             _logger.Information("Dispatching issue {Issue} with project '{ProjectName}' (id={ProjectId}, template={TemplateId})",
                 issue.Identifier, dispatchProject?.Name ?? "NULL", dispatchProject?.Id ?? "NULL", template.Id);
 
-            var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
-                async ct => await _dispatchOrchestration!.PrepareDistributionRequestAsync(
+            var dispatched = await DispatchViaOrchestrationAsync(
+                async ct => await _dispatchOrchestration.PrepareDistributionRequestAsync(
                     new ImplementationDispatchOrchestrationRequest
                     {
                         IssueIdentifier = issue.Identifier,
@@ -47,9 +47,6 @@ internal sealed partial class DispatchScheduler
                         Project = dispatchProject ?? new PipelineProject { Id = "", Name = UnknownProjectName }
                     },
                     ct),
-                () => JobDistributionRequest.FromTemplate(
-                    template, issue, initiatedBy: "loop",
-                    projectId: dispatchProject?.Id, projectName: dispatchProject?.Name),
                 stopToken);
 
             if (dispatched)

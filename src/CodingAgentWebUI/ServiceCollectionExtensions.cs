@@ -1,13 +1,13 @@
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.GitLab;
-using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Services;
 using Serilog;
 
@@ -20,30 +20,10 @@ namespace CodingAgentWebUI;
 public static partial class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers infrastructure services: configuration store interfaces, provider factory, and validation services.
+    /// Registers infrastructure services. Config stores are registered by
+    /// <see cref="AddWorkDistribution"/> and <c>RegisterPipelineBackgroundServices</c>.
     /// </summary>
     public static IServiceCollection AddInfrastructureServices(
-        this IServiceCollection services,
-        JsonConfigurationStore configStore,
-        PipelineConfiguration pipelineConfig)
-    {
-        services.AddSingleton<IConfigurationStore>(configStore);
-        WorkDistributionRegistration.RegisterConfigStoreSubInterfaces(services);
-
-        services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
-
-        services.AddTransient<GitHubValidationService>(sp =>
-            new GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
-        services.AddTransient<GitLabValidationService>();
-
-        return services;
-    }
-
-    /// <summary>
-    /// Registers infrastructure services WITHOUT config store registrations.
-    /// Used in DB mode where PostgresConfigurationStore is registered by AddWorkDistribution.
-    /// </summary>
-    public static IServiceCollection AddInfrastructureServicesWithoutConfigStore(
         this IServiceCollection services)
     {
         services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
@@ -56,14 +36,13 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers WebUI-specific pipeline services: orchestration, loop service, lifecycle, and history.
-    /// In DB mode, skips the in-memory history service registration (PostgresPipelineRunHistoryService
-    /// is registered by AddWorkDistribution instead).
+    /// Registers WebUI-specific pipeline services: lifecycle, facades, shutdown, and background services.
+    /// Config stores are registered by <see cref="AddWorkDistribution"/> and <c>RegisterPipelineBackgroundServices</c>.
     /// </summary>
-    public static IServiceCollection AddPipelineCoreServices(this IServiceCollection services, bool isDatabaseMode = false)
+    public static IServiceCollection AddPipelineCoreServices(this IServiceCollection services)
     {
         // ── Lifecycle ──────────────────────────────────────────────────────
-        RegisterPipelineLifecycle(services, isDatabaseMode);
+        RegisterPipelineLifecycle(services);
 
         // ── Facades ────────────────────────────────────────────────────────
         RegisterPipelineFacades(services);
@@ -78,13 +57,12 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers multi-agent orchestration services: agent registry, job dispatch, token vending,
-    /// heartbeat monitoring, and the AgentHub facade.
+    /// Registers multi-agent orchestration services: agent registry, job dispatch,
+    /// token vending, and dispatch infrastructure. HeartbeatMonitorService lives in the API.
     /// </summary>
     public static IServiceCollection AddOrchestrationServices(
         this IServiceCollection services,
-        PipelineConfiguration pipelineConfig,
-        string? workDistributionMode = null)
+        PipelineConfiguration pipelineConfig)
     {
         // ── Agent Registry ─────────────────────────────────────────────────
         RegisterAgentRegistry(services);
@@ -92,14 +70,11 @@ public static partial class ServiceCollectionExtensions
         // ── Token Vending & Run Services ───────────────────────────────────
         RegisterTokenAndRunServices(services, pipelineConfig);
 
-        // ── Conditional Background Services ────────────────────────────────
-        RegisterOrchestrationBackgroundServices(services, workDistributionMode);
+        // ── Background Services ────────────────────────────────────────────
+        RegisterOrchestrationBackgroundServices(services);
 
         // ── Job Dispatching ────────────────────────────────────────────────
         RegisterJobDispatching(services);
-
-        // ── Agent Hub Services ─────────────────────────────────────────────
-        RegisterAgentHubServices(services);
 
         return services;
     }

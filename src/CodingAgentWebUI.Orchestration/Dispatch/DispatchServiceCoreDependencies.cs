@@ -10,7 +10,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 internal sealed record DispatchServiceCoreDependencies(
     IDbContextFactory<PipelineDbContext> DbFactory,
-    LeaderElection.ILeaderElectionService LeaderElection,
+    ILeaderElectionService LeaderElection,
     DispatchLifecycleService Lifecycle,
     ILabelSwapService? LabelSwapper = null,
     IAgentProfileStore? AgentProfileStore = null,

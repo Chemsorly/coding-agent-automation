@@ -1,6 +1,7 @@
 using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -15,13 +16,13 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class ProviderSectionComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
     private readonly GitHubValidationService _gitHubValidator;
 
     public ProviderSectionComponentTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
+        _mockStore = new Mock<IPipelineApiConfigClient>();
         _mockProviderFactory = new Mock<IProviderFactory>();
         _gitHubValidator = new GitHubValidationService();
     }
@@ -33,7 +34,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         Assert.Contains("Repository Providers", cut.Markup);
@@ -44,7 +45,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         Assert.Contains("+ Add Repository Provider", cut.Markup);
@@ -73,7 +74,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         Assert.Contains("My Repo", cut.Markup);
@@ -107,7 +108,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         Assert.Contains("kiro", cut.Markup);
@@ -138,7 +139,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         Assert.DoesNotContain("should-not-show", cut.Markup);
@@ -166,7 +167,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         var editButtons = cut.FindAll(".btn-edit");
@@ -180,7 +181,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         var addButton = cut.Find(".btn-add");
@@ -200,7 +201,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         var addButton = cut.Find(".btn-add");
@@ -214,7 +215,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         cut.Find(".btn-add").Click();
@@ -250,7 +251,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         cut.Find(".btn-edit").Click();
@@ -283,7 +284,7 @@ public class ProviderSectionComponentTests : BunitContext
         string? deletedId = null;
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.OnDelete, EventCallback.Factory.Create<string>(this, v => deletedId = v)));
 
@@ -304,7 +305,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
@@ -316,7 +317,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
@@ -344,7 +345,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
@@ -374,7 +375,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
@@ -402,7 +403,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
@@ -418,7 +419,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
@@ -437,7 +438,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
@@ -470,7 +471,7 @@ public class ProviderSectionComponentTests : BunitContext
         string? deletedId = null;
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object)
             .Add(s => s.OnDelete, EventCallback.Factory.Create<string>(this, v => deletedId = v)));
@@ -518,7 +519,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
@@ -561,7 +562,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
@@ -610,7 +611,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object));
 
@@ -659,7 +660,7 @@ public class ProviderSectionComponentTests : BunitContext
         (string Message, bool IsError)? statusResult = null;
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
@@ -704,7 +705,7 @@ public class ProviderSectionComponentTests : BunitContext
         (string Message, bool IsError)? statusResult = null;
         var cut = Render<IssueProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator)
             .Add(s => s.ProviderFactory, _mockProviderFactory.Object)
             .Add(s => s.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
@@ -749,7 +750,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         cut.Find(".btn-edit").Click();
@@ -785,7 +786,7 @@ public class ProviderSectionComponentTests : BunitContext
 
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, providers)
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         cut.Find(".btn-edit").Click();
@@ -798,7 +799,7 @@ public class ProviderSectionComponentTests : BunitContext
     {
         var cut = Render<RepoProviderSection>(p => p
             .Add(s => s.Providers, new List<ProviderConfig>())
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.GitHubValidator, _gitHubValidator));
 
         cut.Find(".btn-add").Click();

@@ -1,15 +1,10 @@
-using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
-using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
-using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
-using CodingAgentWebUI.TestUtilities;
-using Microsoft.AspNetCore.SignalR;
+using AwesomeAssertions;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -17,75 +12,58 @@ namespace CodingAgentWebUI.UnitTests.Services;
 
 /// <summary>
 /// Unit tests for <see cref="AgentMonitoringPageService"/> — validates cancellation orchestration,
-/// data refresh, and state management extracted from the AgentMonitoring Razor component.
+/// data refresh, and state management.
+/// <para>
+/// Spec 044: IOrchestratorRunService, IRunLifecycleManager, and IHubContext removed from the service.
+/// Cancel operations now route through IWorkDistributor only.
+/// </para>
+/// <para>
+/// Spec 045: IConfigurationStore replaced by IPipelineApiConfigClient;
+/// IPipelineRunHistoryService replaced by IPipelineApiRunHistoryClient.
+/// </para>
 /// </summary>
-/// <remarks>
-/// TODO: These tests mock IRunLifecycleManager, so they cannot detect if the lifecycle manager's
-/// contract changes (e.g., stops calling LabelService or ClearAgentState). The integration between
-/// page service and lifecycle manager is only covered by separate RunLifecycleManagerTests.
-/// Consider adding integration tests that use a real RunLifecycleManager to detect contract drift.
-/// </remarks>
 public sealed class AgentMonitoringPageServiceTests
 {
     private static readonly string[] s_KiroLabels = new[] { "kiro" };
 
-    private readonly Mock<IActiveRunQueryService> _mockActiveRunQuery = new();
     private readonly AgentRegistryService _registry;
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly JobDeduplicationGuardService _dispatcher;
-    private readonly OrchestratorRunService _runService;
-    private readonly Mock<IConfigurationStore> _mockConfigStore = new();
+    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
     private readonly Mock<IConsolidationService> _mockConsolidationService = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWorkQuery = new();
     private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
-    private readonly Mock<IHubContext<AgentHub, IAgentHubClient>> _mockHubContext = new();
-    private readonly Mock<ILabelService> _mockLabelService = new();
-    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
-    private readonly Mock<IRunLifecycleManager> _mockLifecycleManager = new();
-    private readonly PipelineRunLifecycleService _lifecycle;
+    private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistoryClient = new();
     private readonly AgentMonitoringPageService _sut;
 
     public AgentMonitoringPageServiceTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _runService = new OrchestratorRunService(_mockLogger.Object);
         _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
 
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { MaxRetries = 5 });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
-        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
-        _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<ActiveRunSummary>());
         _mockPendingWorkQuery.Setup(s => s.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PendingJob>());
         _mockConsolidationService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ConsolidationRun>());
-        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
-
-        _lifecycle = new PipelineRunLifecycleService(
-            _mockHistoryService.Object,
-            _runService,
-            _mockLogger.Object);
+        _mockRunHistoryClient.Setup(h => h.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = Array.Empty<PipelineRunSummary>(), Page = 1, PageSize = 1000, HasMore = false });
 
         _sut = new AgentMonitoringPageService(new AgentMonitoringPageServiceDependencies(
-            _mockActiveRunQuery.Object,
             _registry,
             _dispatcher,
-            _runService,
-            _lifecycle,
-            _mockConfigStore.Object,
+            _mockConfigClient.Object,
             _mockConsolidationService.Object,
             _mockPendingWorkQuery.Object,
             _mockWorkDistributor.Object,
-            _mockHubContext.Object,
-            _mockHistoryService.Object,
-            _mockLifecycleManager.Object));
+            _mockRunHistoryClient.Object));
     }
 
     private static PipelineRun CreateRun(string runId, string agentId = "agent-1")
@@ -128,7 +106,7 @@ public sealed class AgentMonitoringPageServiceTests
     {
         await _sut.InitializeAsync();
 
-        _mockActiveRunQuery.Verify(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _mockRunHistoryClient.Verify(s => s.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
         _mockPendingWorkQuery.Verify(s => s.GetPendingJobsAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -151,113 +129,47 @@ public sealed class AgentMonitoringPageServiceTests
         _sut.QueuedJobs[0].IssueIdentifier.Value.Should().Be("1");
     }
 
-    // ── CancelAgentRunAsync — Agent not found ──
+    // ── CancelAgentRunAsync — Spec 044 degraded mode ──
 
-    // TODO: This test only verifies the mock interaction (CancelRunAsync called with correct reason).
-    // It does not assert observable state changes (e.g., that RefreshDataAsync was triggered or that
-    // the run is removed from ActiveRuns). Consider adding state assertions for robustness.
     [Fact]
-    public async Task CancelAgentRunAsync_AgentNotFound_DelegatesToLifecycleManagerWithReason()
+    public async Task CancelAgentRunAsync_RoutesToWorkDistributor()
     {
-        var run = CreateRun("run-1", agentId: "nonexistent-agent");
-        _runService.AddRun(run);
+        var run = CreateRun("run-1", agentId: "agent-1");
 
-        _mockLifecycleManager
-            .Setup(l => l.CancelRunAsync("run-1", It.IsAny<CancellationToken>(), "Cancelled — agent not available"))
-            .ReturnsAsync((PipelineRun?)null);
+        _mockWorkDistributor
+            .Setup(w => w.CancelJobAsync("run-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         await _sut.CancelAgentRunAsync(run);
 
-        _mockLifecycleManager.Verify(
-            l => l.CancelRunAsync("run-1", It.IsAny<CancellationToken>(), "Cancelled — agent not available"),
-            Times.Once);
-    }
-
-    // ── CancelAgentRunAsync — Orphan-restored ──
-
-    // TODO: This test does not assert post-conditions on agent state (e.g., that OrphanRestoredAt is
-    // cleared after cancellation via ClearAgentState in the lifecycle manager). Consider adding
-    // assertions to detect regressions where agent cleanup is skipped.
-    [Fact]
-    public async Task CancelAgentRunAsync_OrphanRestored_DelegatesToLifecycleManagerWithReason()
-    {
-        var run = CreateRun("run-2", agentId: "agent-1");
-        _runService.AddRun(run);
-
-        var agent = RegisterAgent("agent-1", "conn-1");
-        agent.OrphanRestoredAt = DateTimeOffset.UtcNow.AddMinutes(-1);
-
-        _mockLifecycleManager
-            .Setup(l => l.CancelRunAsync("run-2", It.IsAny<CancellationToken>(), "Cancelled — agent lost job state (container restart)"))
-            .ReturnsAsync((PipelineRun?)null);
-
-        await _sut.CancelAgentRunAsync(run);
-
-        _mockLifecycleManager.Verify(
-            l => l.CancelRunAsync("run-2", It.IsAny<CancellationToken>(), "Cancelled — agent lost job state (container restart)"),
-            Times.Once);
-    }
-
-    // ── CancelAgentRunAsync — Connected agent ──
-
-    [Fact]
-    public async Task CancelAgentRunAsync_ConnectedAgent_SendsCancelJobAndDelegatesToLifecycleManager()
-    {
-        var run = CreateRun("run-3", agentId: "agent-1");
-        _runService.AddRun(run);
-
-        var agent = RegisterAgent("agent-1", "conn-1");
-
-        var mockClients = new Mock<IHubClients<IAgentHubClient>>();
-        var mockClient = new Mock<IAgentHubClient>();
-        _mockHubContext.Setup(h => h.Clients).Returns(mockClients.Object);
-        mockClients.Setup(c => c.Client("conn-1")).Returns(mockClient.Object);
-        mockClient.Setup(c => c.CancelJob("run-3")).Returns(Task.CompletedTask);
-
-        _mockLifecycleManager
-            .Setup(l => l.CancelRunAsync("run-3", It.IsAny<CancellationToken>(), "Cancelled by user"))
-            .ReturnsAsync((PipelineRun?)null);
-
-        await _sut.CancelAgentRunAsync(run);
-
-        // SignalR CancelJob sent
-        mockClient.Verify(c => c.CancelJob("run-3"), Times.Once);
-
-        // Lifecycle manager called with reason
-        _mockLifecycleManager.Verify(
-            l => l.CancelRunAsync("run-3", It.IsAny<CancellationToken>(), "Cancelled by user"),
+        _mockWorkDistributor.Verify(
+            w => w.CancelJobAsync("run-1", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     // ── CancelAgentRunByIdAsync ──
 
-    // TODO: This test uses It.IsAny<string?>() for failureReason verification, which is weaker than
-    // the other cancel tests that verify exact reason strings. Consider asserting the exact reason
-    // ("Cancelled — agent not available") to detect unintended reason changes.
     [Fact]
-    public async Task CancelAgentRunByIdAsync_RunInMemory_DelegatesToCancelAgentRunAsync()
+    public async Task CancelAgentRunByIdAsync_CallsWorkDistributor()
     {
-        var run = CreateRun("run-4", agentId: "agent-1");
-        _runService.AddRun(run);
-        // Agent not found → delegates to lifecycle manager via "agent not available" path
-        _mockLifecycleManager
-            .Setup(l => l.CancelRunAsync("run-4", It.IsAny<CancellationToken>(), It.IsAny<string?>()))
-            .ReturnsAsync((PipelineRun?)null);
+        _mockWorkDistributor
+            .Setup(w => w.CancelJobAsync("run-4", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         await _sut.CancelAgentRunByIdAsync("run-4");
 
-        _mockLifecycleManager.Verify(
-            l => l.CancelRunAsync("run-4", It.IsAny<CancellationToken>(), It.IsAny<string?>()),
+        _mockWorkDistributor.Verify(
+            w => w.CancelJobAsync("run-4", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     [Fact]
-    public async Task CancelAgentRunByIdAsync_RunNotInMemory_FallsBackToWorkDistributor()
+    public async Task CancelAgentRunByIdAsync_WhenNotFound_LogsAndRefreshes()
     {
-        // No run in memory
+        // WorkDistributor returns false (not found) — should not throw
         _mockWorkDistributor
             .Setup(w => w.CancelJobAsync("run-not-in-memory", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .ReturnsAsync(false);
 
         await _sut.CancelAgentRunByIdAsync("run-not-in-memory");
 
@@ -271,7 +183,6 @@ public sealed class AgentMonitoringPageServiceTests
     [Fact]
     public async Task RemoveFromQueueAsync_DbMode_CallsWorkDistributorCancelJob()
     {
-        // Seed queued jobs state
         var jobs = new[]
         {
             new PendingJob { IssueIdentifier = "org/repo#5", IssueProviderId = "ip-1", RepoProviderId = "rp-1", EnqueuedAt = DateTimeOffset.UtcNow, InitiatedBy = "test", WorkItemId = "wi-5" }
@@ -294,57 +205,30 @@ public sealed class AgentMonitoringPageServiceTests
     [Fact]
     public async Task RemoveFromQueueAsync_LegacyMode_CallsDispatcherRemoveFromQueue()
     {
-        // No matching job in queue (WorkItemId = null simulated by empty queue)
         _mockPendingWorkQuery.Setup(s => s.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PendingJob>());
         await _sut.RefreshDataAsync();
 
-        // Enqueue via the dispatcher so RemoveFromQueue has something to remove
-        // (The dispatcher tracks queued items internally for legacy mode)
-        // Just verify the method doesn't throw — no mock needed since it calls the real dispatcher
         await _sut.RemoveFromQueueAsync("org/repo#99", "ip-1");
 
-        // No WorkDistributor call in legacy mode
+        // No WorkDistributor call when no matching queued job
         _mockWorkDistributor.Verify(
             w => w.CancelJobAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
-    // ── ForceDisconnectAsync ──
+    // ── ForceDisconnectAsync — Spec 044 degraded mode ──
 
     [Fact]
-    public async Task ForceDisconnectAsync_SendsForceDisconnect_MarksRunFailed_DeregistersAgent()
+    public async Task ForceDisconnectAsync_DeregistersAgent_WithoutHubCall()
     {
         var agent = RegisterAgent("agent-force", "conn-force");
-        agent.ActiveJobId = "run-force";
         _registry.TransitionStatus("agent-force", AgentStatus.Busy);
-
-        var run = CreateRun("run-force", agentId: "agent-force");
-        _runService.AddRun(run);
-
-        var mockClients = new Mock<IHubClients<IAgentHubClient>>();
-        var mockClient = new Mock<IAgentHubClient>();
-        _mockHubContext.Setup(h => h.Clients).Returns(mockClients.Object);
-        mockClients.Setup(c => c.Client("conn-force")).Returns(mockClient.Object);
-        mockClient.Setup(c => c.ForceDisconnect()).Returns(Task.CompletedTask);
 
         await _sut.ForceDisconnectAsync(agent);
 
-        // ForceDisconnect signal sent
-        mockClient.Verify(c => c.ForceDisconnect(), Times.Once);
-
-        // Run marked as failed (inline lifecycle — no LifecycleManager call)
-        run.FailureReason.Should().Be("Force disconnected by operator");
-        run.CurrentStep.Should().Be(PipelineStep.Failed);
-        run.CompletedAtOffset.Should().NotBeNull();
-
-        // Agent deregistered
+        // Agent deregistered from local registry
         _registry.GetByAgentId("agent-force").Should().BeNull();
-
-        // Lifecycle manager NOT called (current behavior — inline bypass)
-        _mockLifecycleManager.Verify(
-            l => l.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()),
-            Times.Never);
     }
 
     // ── Resolvers ──

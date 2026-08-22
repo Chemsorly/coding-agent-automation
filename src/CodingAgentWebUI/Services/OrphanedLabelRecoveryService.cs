@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -12,6 +13,8 @@ namespace CodingAgentWebUI.Services;
 /// Such issues are relabelled to <c>agent:error</c>.
 /// Runs an initial sweep after a 60-second grace period, then sweeps at a configurable
 /// interval (default 30 minutes).
+/// Updated in Spec 045 to use <see cref="IPipelineApiConfigClient"/> instead of direct
+/// store interfaces (Req 1.2 F5).
 /// </summary>
 public sealed class OrphanedLabelRecoveryService : BackgroundService
 {
@@ -19,25 +22,19 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     private const int MinimumSweepIntervalMinutes = 5;
 
     private readonly IOrchestratorRunService _runService;
-    private readonly IProjectStore _projectStore;
-    private readonly IProviderConfigStore _providerConfigStore;
+    private readonly IPipelineApiConfigClient _configClient;
     private readonly IProviderFactory _providerFactory;
     private readonly ILabelService _labelService;
-    private readonly IPipelineConfigStore _configStore;
     private readonly ILogger _logger;
     private readonly TimeSpan _gracePeriod;
 
     public OrphanedLabelRecoveryService(
         IOrchestratorRunService runService,
-        IProjectStore projectStore,
-        IProviderConfigStore providerConfigStore,
+        IPipelineApiConfigClient configClient,
         IProviderFactory providerFactory,
         ILabelService labelService,
-        IPipelineConfigStore configStore,
         ILogger logger)
-        : this(new OrphanedLabelRecoveryServiceDependencies(
-            runService, projectStore, providerConfigStore, providerFactory,
-            labelService, configStore, logger, DefaultGracePeriod))
+        : this(runService, configClient, providerFactory, labelService, logger, DefaultGracePeriod)
     {
     }
 
@@ -46,29 +43,18 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     /// </summary>
     internal OrphanedLabelRecoveryService(
         IOrchestratorRunService runService,
-        IProjectStore projectStore,
-        IProviderConfigStore providerConfigStore,
+        IPipelineApiConfigClient configClient,
         IProviderFactory providerFactory,
         ILabelService labelService,
-        IPipelineConfigStore configStore,
         ILogger logger,
         TimeSpan gracePeriod)
-        : this(new OrphanedLabelRecoveryServiceDependencies(
-            runService, projectStore, providerConfigStore, providerFactory,
-            labelService, configStore, logger, gracePeriod))
     {
-    }
-
-    private OrphanedLabelRecoveryService(OrphanedLabelRecoveryServiceDependencies deps)
-    {
-        _runService = deps.RunService;
-        _projectStore = deps.ProjectStore;
-        _providerConfigStore = deps.ProviderConfigStore;
-        _providerFactory = deps.ProviderFactory;
-        _labelService = deps.LabelService;
-        _configStore = deps.ConfigStore;
-        _logger = deps.Logger.ForContext<OrphanedLabelRecoveryService>();
-        _gracePeriod = deps.GracePeriod == default ? DefaultGracePeriod : deps.GracePeriod;
+        _runService = runService;
+        _configClient = configClient;
+        _providerFactory = providerFactory;
+        _labelService = labelService;
+        _logger = logger.ForContext<OrphanedLabelRecoveryService>();
+        _gracePeriod = gracePeriod == default ? DefaultGracePeriod : gracePeriod;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -126,7 +112,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     {
         try
         {
-            var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
+            var config = await _configClient.GetPipelineConfigAsync(stoppingToken);
             var intervalMinutes = Math.Max(config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
             if (intervalMinutes != config.OrphanedLabelSweepIntervalMinutes)
             {
@@ -144,7 +130,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
     private async Task RecoverOrphanedLabelsAsync(CancellationToken ct)
     {
-        var templates = await _projectStore.LoadAllTemplatesAsync(ct);
+        var templates = await _configClient.GetAllTemplatesAsync(ct);
         if (templates.Count == 0)
         {
             _logger.Information("Orphaned label recovery: no templates configured, skipping");
@@ -179,7 +165,8 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
     private async Task<int> ScanProviderAsync(string providerConfigId, CancellationToken ct)
     {
-        var providerConfig = await _providerConfigStore.GetProviderConfigByIdAsync(providerConfigId, ProviderKind.Issue, ct);
+        var allProviders = await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
+        var providerConfig = allProviders.FirstOrDefault(p => p.Id == providerConfigId);
         if (providerConfig is null)
         {
             _logger.Warning("Orphaned label recovery: provider config {ProviderId} not found", providerConfigId);

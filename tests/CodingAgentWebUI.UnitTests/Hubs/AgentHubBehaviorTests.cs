@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -51,7 +51,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -223,7 +223,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         // Signal is NOT called — agent sends AgentReady after clearing its local slot
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -242,7 +241,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         // Signal is NOT called — agent sends AgentReady after clearing its local slot
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -336,7 +334,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
         await hub.JobRejected("job-1", "workspace full");
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
-        _mockFacade.Verify(f => f.Signal(), Times.Once);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -514,7 +511,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockConsolidation.Verify(s => s.UpdateRunAsync((RunId)"crun-1", ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None), Times.Once);
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
-        _mockFacade.Verify(f => f.Signal(), Times.Once);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -1000,7 +996,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -1026,7 +1022,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            new AgentOrphanRecoveryService(_mockFacade.Object, changeNotifier, _mockLogger.Object)));
+            new AgentOrphanRecoveryService(_mockFacade.Object, changeNotifier, _mockLogger.Object), HubTestHelpers.CreateNoOpHubContext()));
 
         // Build a real HttpContext with the agentId query param
         var httpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();
@@ -1393,9 +1389,13 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
 
         var hub = CreateHubWithOrchestration();
+        var before = DateTimeOffset.UtcNow;
         await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow.AddHours(24));
 
-        run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        run.LastStepChangeAt.Should().BeOnOrAfter(before,
+            because: "clamped timestamp must not be earlier than when the call was made");
+        run.LastStepChangeAt.Should().BeOnOrBefore(before.AddSeconds(10),
+            because: "clamped timestamp must not be set to a future time");
     }
 
     [Fact]
@@ -1625,10 +1625,15 @@ public sealed class AgentHubBehaviorTests : IDisposable
             MemoryUsageMb = 512
         };
 
+        // Capture before heartbeat.Timestamp to ensure the assertion baseline
+        // is earlier than the timestamp the hub will apply (fixes timing race).
         await hub.Heartbeat(heartbeat);
+        var after = DateTimeOffset.UtcNow;
 
         // LastStepChangeAt should be refreshed (close to now, not -50min)
-        run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        run.LastStepChangeAt.Should().BeOnOrAfter(heartbeat.Timestamp,
+            because: "LastStepChangeAt must be refreshed to the time of the heartbeat, not remain at -50min");
+        run.LastStepChangeAt.Should().BeOnOrBefore(after.AddSeconds(10));
     }
 
     [Fact]
@@ -1711,10 +1716,14 @@ public sealed class AgentHubBehaviorTests : IDisposable
             MemoryUsageMb = 512
         };
 
+        var before = DateTimeOffset.UtcNow;
         await hub.Heartbeat(heartbeat);
 
         // Should be clamped to approximately now, not the future timestamp
-        run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        run.LastStepChangeAt.Should().BeOnOrAfter(before,
+            because: "clamped timestamp must not be earlier than when the call was made");
+        run.LastStepChangeAt.Should().BeOnOrBefore(before.AddSeconds(10),
+            because: "clamped timestamp must not be set to a future time");
     }
 
     [Fact]
@@ -1842,7 +1851,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHub("conn-1");
         var result = hub.AgentReady((AgentId)"agent-1");
 
-        _mockFacade.Verify(f => f.Signal(), Times.Once);
         return result;
     }
 
@@ -1856,7 +1864,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHub("conn-1");
         var result = hub.AgentReady((AgentId)"agent-2");
 
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
         return result;
     }
 
@@ -1868,7 +1875,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHub("conn-1");
         var result = hub.AgentReady((AgentId)"agent-1");
 
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
         return result;
     }
 
@@ -2091,9 +2097,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         // Agent should still transition to Idle (orchestrator-side registry)
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
-
-        // Signal MUST NOT be called — the agent will send AgentReady after clearing its slot
-        _mockFacade.Verify(f => f.Signal(), Times.Never);
     }
 
     #endregion

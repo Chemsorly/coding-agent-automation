@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -32,7 +33,7 @@ public class InfrastructureHealthServiceTests
             .AddInMemoryCollection(configData)
             .Build();
 
-        return new InfrastructureHealthService(sp, configuration);
+        return new InfrastructureHealthService(sp, configuration, Mock.Of<CodingAgentWebUI.Api.Client.IPipelineApiHealthClient>());
     }
 
     [Fact]
@@ -59,22 +60,25 @@ public class InfrastructureHealthServiceTests
     }
 
     [Fact]
-    public void DatabaseConnected_ReturnsTrue_WhenDbHealthy()
+    public void DatabaseConnected_ReturnsNull_WhenDbHealthy()
     {
+        // Spec 045 Task 10 (Req 1.5): the monolith no longer has a direct Postgres connection.
+        // DatabaseConnected always returns null regardless of dbModeActive or DatabaseHealthState.
         var dbHealth = new DatabaseHealthState();
         var service = CreateService(dbHealth: dbHealth, dbModeActive: true);
 
-        Assert.True(service.DatabaseConnected);
+        Assert.Null(service.DatabaseConnected);
     }
 
     [Fact]
-    public void DatabaseConnected_ReturnsFalse_WhenDbUnhealthy()
+    public void DatabaseConnected_ReturnsNull_WhenDbUnhealthy()
     {
+        // Spec 045 Task 10 (Req 1.5): always null — monolith has no DB.
         var dbHealth = new DatabaseHealthState();
         dbHealth.MarkUnhealthy();
         var service = CreateService(dbHealth: dbHealth, dbModeActive: true);
 
-        Assert.False(service.DatabaseConnected);
+        Assert.Null(service.DatabaseConnected);
     }
 
     [Fact]
@@ -125,16 +129,17 @@ public class InfrastructureHealthServiceTests
     [Fact]
     public void DatabaseConnected_ReflectsStateChanges()
     {
+        // Spec 045 Task 10 (Req 1.5): always null — no DB in monolith.
         var dbHealth = new DatabaseHealthState();
         var service = CreateService(dbHealth: dbHealth, dbModeActive: true);
 
-        Assert.True(service.DatabaseConnected);
+        Assert.Null(service.DatabaseConnected);
 
         dbHealth.MarkUnhealthy();
-        Assert.False(service.DatabaseConnected);
+        Assert.Null(service.DatabaseConnected);
 
         dbHealth.MarkHealthy();
-        Assert.True(service.DatabaseConnected);
+        Assert.Null(service.DatabaseConnected);
     }
 
     [Fact]

@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using KiroCliLib.Core;
@@ -251,16 +251,17 @@ public class AgentHubTests
     [Fact]
     public void ChatEntry_Properties_RoundTrip()
     {
+        var now = DateTime.UtcNow;
         var entry = new ChatEntry
         {
             Role = ChatRole.Agent,
             Content = "Hello from agent",
-            Timestamp = DateTime.UtcNow
+            Timestamp = now
         };
 
         entry.Role.Should().Be(ChatRole.Agent);
         entry.Content.Should().Be("Hello from agent");
-        entry.Timestamp.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(1));
+        entry.Timestamp.Should().Be(now);
     }
 
     // ── QualityGateReport ───────────────────────────────────────────────

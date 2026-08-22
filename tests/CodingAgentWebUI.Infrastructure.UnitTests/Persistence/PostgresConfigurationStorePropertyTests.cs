@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 /// <summary>
 /// Property-based tests for <see cref="PostgresConfigurationStore"/> verifying
 /// round-trip invariants equivalent to <see cref="ConfigurationStorePropertyTests"/>
-/// (which only covers <see cref="JsonConfigurationStore"/>).
+/// (which covers InMemoryConfigurationStore after Spec 041 removed JsonConfigurationStore).
 /// Uses InMemory EF Core provider as a test double for Postgres.
 /// </summary>
 public class PostgresConfigurationStorePropertyTests : IDisposable

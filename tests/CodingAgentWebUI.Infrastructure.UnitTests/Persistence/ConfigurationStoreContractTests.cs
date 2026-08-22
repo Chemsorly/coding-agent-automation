@@ -1,17 +1,19 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Stores;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Moq;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 
 /// <summary>
 /// Contract tests for <see cref="IConfigurationStore"/> implementations.
-/// Both JSON-backed and Postgres-backed stores must satisfy these behavioral contracts.
-/// Prevents behavioral drift between dev (JSON) and prod (Postgres) modes.
+/// Postgres-backed store must satisfy these behavioral contracts.
 /// 
 /// Derived classes provide a concrete store instance via <see cref="CreateStore"/>.
 /// </summary>
@@ -236,30 +238,6 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     }
 }
 
-// ── JSON-backed implementation ──────────────────────────────────────────────
-
-/// <summary>
-/// Runs the contract tests against <see cref="JsonConfigurationStore"/>.
-/// </summary>
-public class JsonConfigurationStoreContractTests : ConfigurationStoreContractTests
-{
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), $"contract-json-{Guid.NewGuid()}");
-
-    public JsonConfigurationStoreContractTests()
-    {
-        Directory.CreateDirectory(_tempDir);
-    }
-
-    protected override IConfigurationStore CreateStore() => new JsonConfigurationStore(_tempDir);
-
-    public override void Dispose()
-    {
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
-        base.Dispose();
-    }
-}
-
 // ── Postgres-backed implementation (InMemory EF) ────────────────────────────
 
 /// <summary>
@@ -309,4 +287,90 @@ file class ContractTestDbContextFactory : IDbContextFactory<PipelineDbContext>
     public PipelineDbContext CreateDbContext() => new ContractTestPipelineDbContext(_options);
     public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
         => Task.FromResult(CreateDbContext());
+}
+
+// ── API-backed implementation ────────────────────────────────────────────────
+
+/// <summary>
+/// Runs the contract tests against <see cref="CodingAgentWebUI.Services.ApiConfigurationStore"/>.
+///
+/// This is the implementation used by the monolith frontend — a hot-path singleton that sits in
+/// front of every config read the dispatch loop makes. Each test gets a fresh in-memory mock
+/// client so the TTL cache cannot bleed state across tests.
+/// </summary>
+public sealed class ApiConfigurationStoreContractTests : ConfigurationStoreContractTests
+{
+    private PipelineConfiguration _pipelineConfig = new();
+    private readonly Dictionary<string, ProviderConfig> _providerConfigs = [];
+    private Mock<IPipelineApiConfigClient> _client = default!;
+
+    protected override IConfigurationStore CreateStore()
+    {
+        // Reset per-test state so the contract base's isolation assumption holds
+        _pipelineConfig = new PipelineConfiguration();
+        _providerConfigs.Clear();
+        _client = BuildClient();
+        return BuildStore(_client);
+    }
+
+    // ── Mock client that simulates real in-memory persistence ────────────────
+
+    private Mock<IPipelineApiConfigClient> BuildClient()
+    {
+        var mock = new Mock<IPipelineApiConfigClient>();
+
+        // Pipeline config — read/write/update
+        mock.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => _pipelineConfig);
+
+        mock.Setup(c => c.SavePipelineConfigAsync(It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineConfiguration, CancellationToken>((cfg, _) => _pipelineConfig = cfg)
+            .Returns(Task.CompletedTask);
+
+        // UpdatePipelineConfigAsync: read-modify-write delegated client-side (calls Get then Save)
+        mock.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Returns<Func<PipelineConfiguration, PipelineConfiguration>, CancellationToken>((transform, _) =>
+            {
+                _pipelineConfig = transform(_pipelineConfig);
+                return Task.CompletedTask;
+            });
+
+        // Provider configs — store by composite key (id+kind)
+        mock.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderKind kind, CancellationToken _) =>
+                (IReadOnlyList<ProviderConfig>)_providerConfigs.Values.Where(p => p.Kind == kind).ToList());
+
+        mock.Setup(c => c.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .Callback<ProviderConfig, CancellationToken>((cfg, _) => _providerConfigs[cfg.Id] = cfg)
+            .Returns(Task.CompletedTask);
+
+        mock.Setup(c => c.DeleteProviderConfigAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Callback<string, ProviderKind, CancellationToken>((id, _, __) => _providerConfigs.Remove(id))
+            .Returns(Task.CompletedTask);
+
+        // Stubs for the other sub-interfaces the composite store wraps
+        mock.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        mock.Setup(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        mock.Setup(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+        mock.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+        mock.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+
+        return mock;
+    }
+
+    private static CodingAgentWebUI.Services.ApiConfigurationStore BuildStore(Mock<IPipelineApiConfigClient> client)
+    {
+        // CacheTtlSeconds = 0 disables the TTL cache so each call goes through to the mock,
+        // letting the contract tests observe real-time state changes without delay.
+        var pipeline = new CodingAgentWebUI.Services.ApiPipelineConfigStore(client.Object) { CacheTtlSeconds = 0 };
+        var providers = new CodingAgentWebUI.Services.ApiProviderConfigStore(client.Object) { CacheTtlSeconds = 0 };
+        var projects = new CodingAgentWebUI.Services.ApiProjectStore(client.Object) { CacheTtlSeconds = 0 };
+        return new CodingAgentWebUI.Services.ApiConfigurationStore(client.Object, pipeline, providers, projects)
+            { CacheTtlSeconds = 0 };
+    }
 }

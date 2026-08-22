@@ -2,8 +2,9 @@ using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -25,9 +26,10 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "K8sMode")]
-public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class K8sModeTests : HeadlessE2ETestBase
 {
-    public K8sModeTests(K8sModeE2EFixture fixture) : base(fixture) { }
+    public K8sModeTests(E2EFixture fixture) : base(fixture) { }
 
     // ═══════════════════════════════════════════════════════════════════════
     // G5: KubernetesWorkDistributor — DistributeAsync inserts WorkItem row
@@ -37,7 +39,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_DistributeAsync_InsertsWorkItemAsPending()
     {
         // Act: distribute via the real KubernetesWorkDistributor
-        var result = await DistributeViaK8sAsync("k8s-issue-100", "kiro,dotnet");
+        var result = await DistributeDirectlyAsync("k8s-issue-100", "kiro,dotnet");
 
         // Assert: distribution succeeded
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
@@ -60,7 +62,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_DistributeAsync_DuplicateIssue_SecondRejected()
     {
         // First distribution
-        var r1 = await DistributeViaK8sAsync("k8s-issue-101");
+        var r1 = await DistributeDirectlyAsync("k8s-issue-101");
         Assert.True(r1.Success);
 
         // Second distribution for same issue — should detect existing active WorkItem
@@ -232,7 +234,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         Assert.IsType<KubernetesWorkDistributor>(distributor);
 
         // Verify it inserts as Pending (not Dispatched like SignalR mode)
-        var result = await DistributeViaK8sAsync("k8s-type-check-500");
+        var result = await DistributeDirectlyAsync("k8s-type-check-500");
         Assert.True(result.Success);
         Assert.True(result.Queued); // K8s mode always returns Queued=true
 
@@ -252,7 +254,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_CancelWorkItem_TransitionsToCancelled()
     {
         // Arrange: distribute a work item
-        var result = await DistributeViaK8sAsync("k8s-cancel-600");
+        var result = await DistributeDirectlyAsync("k8s-cancel-600");
         Assert.True(result.Success);
         var workItemId = result.WorkItemId!;
 
@@ -275,7 +277,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_GetJobStatus_ReturnsMappedStatus()
     {
         // Arrange: distribute
-        var result = await DistributeViaK8sAsync("k8s-status-700");
+        var result = await DistributeDirectlyAsync("k8s-status-700");
         Assert.True(result.Success);
 
         // Act: query status
@@ -348,11 +350,13 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         Assert.Equal("chemsorly/coding-agent:kiro-dotnet10-latest", container.Image);
         Assert.Equal("Always", container.ImagePullPolicy);
 
-        // ── THE KEY ASSERTION: AGENT_ID from Downward API ──
+        // ── THE KEY ASSERTION: AGENT_ID is the static job name (not pod name via Downward API) ──
+        // JobSpecBuilder sets AGENT_ID = ctx.JobName (static value) so HMAC key derivation matches.
+        // Using metadata.name (pod name) would give caa-xxx-<random> which diverges from the job name.
         var agentIdEnv = container.Env.FirstOrDefault(e => e.Name == "AGENT_ID");
         Assert.NotNull(agentIdEnv);
-        Assert.NotNull(agentIdEnv.ValueFrom?.FieldRef);
-        Assert.Equal("metadata.name", agentIdEnv.ValueFrom.FieldRef.FieldPath);
+        Assert.Null(agentIdEnv.ValueFrom);  // static value, not a field ref
+        Assert.Equal(jobName, agentIdEnv.Value);
 
         // Assert: other critical env vars present
         Assert.Contains(container.Env, e => e.Name == "ORCHESTRATOR_URL" && e.Value == "http://orchestrator:8080");
@@ -464,12 +468,26 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         return new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["WorkDistribution:Dispatch:IntervalSeconds"] = "1",
+                // The option is PollIntervalSeconds; "IntervalSeconds" bound to nothing and left
+                // the default 10s in place. Harmless in practice — the base class runs a cycle
+                // before its first delay — but the key was silently doing nothing.
+                ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "1",
                 ["WorkDistribution:Dispatch:RateLimitPerSecond"] = "10",
                 ["WorkDistribution:OrchestratorUrl"] = orchestratorUrl,
                 ["WorkDistribution:AgentApiKeySecretName"] = agentApiKeySecretName,
                 ["WorkDistribution:AgentServiceAccountName"] = agentServiceAccountName,
-                ["WorkDistribution:Namespace"] = ns
+                ["WorkDistribution:Namespace"] = ns,
+
+                // Without a credential pool, DispatchEligibilityChecker returns NoPvcAvailable for
+                // every kiro template and no Job is ever created — which is what made the
+                // DispatchService tests time out waiting for a Job that dispatch had quietly
+                // skipped. Five slots so the concurrency-limit test is bounded by maxConcurrent
+                // rather than by the pool.
+                ["WorkDistribution:CredentialPools:Kiro:0"] = "fake-pvc-0",
+                ["WorkDistribution:CredentialPools:Kiro:1"] = "fake-pvc-1",
+                ["WorkDistribution:CredentialPools:Kiro:2"] = "fake-pvc-2",
+                ["WorkDistribution:CredentialPools:Kiro:3"] = "fake-pvc-3",
+                ["WorkDistribution:CredentialPools:Kiro:4"] = "fake-pvc-4"
             })
             .Build();
     }
@@ -487,7 +505,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
             OrchestratorUrl = orchestratorUrl,
             AgentApiKeySecretName = agentApiKeySecretName,
             AgentServiceAccountName = agentServiceAccountName,
-            Namespace = ns
+            Namespace = ns,
+            KiroPvcPool = ["fake-pvc-0", "fake-pvc-1", "fake-pvc-2", "fake-pvc-3", "fake-pvc-4"]
         };
     }
 
@@ -501,7 +520,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_AgentFetchesAssignment_ReturnsValidPayload()
     {
         // Arrange: insert a WorkItem with a full Payload (as KubernetesWorkDistributor does)
-        var result = await DistributeViaK8sAsync("k8s-fetch-assign-900");
+        var result = await DistributeDirectlyAsync("k8s-fetch-assign-900");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
@@ -511,9 +530,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
             w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
 
         // Act: call the assignment endpoint (same as WorkItemHttpClient.GetAssignmentAsync)
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var response = await httpClient.GetAsync($"/api/work-items/{workItemId}/assignment");
 
@@ -529,7 +548,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         Assert.Equal(workItemId.ToString(), root.GetProperty("jobId").GetString());
         Assert.Equal("k8s-fetch-assign-900", root.GetProperty("issueIdentifier").GetString());
         Assert.Equal("repo-e2e", root.GetProperty("repoProviderConfigId").GetString());
-        Assert.Equal("k8s-e2e-test", root.GetProperty("initiatedBy").GetString());
+        Assert.Equal("e2e-test", root.GetProperty("initiatedBy").GetString());
     }
 
     [Fact]
@@ -554,9 +573,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         await db.SaveChangesAsync();
 
         // Act
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var response = await httpClient.GetAsync($"/api/work-items/{workItemId}/assignment");
 
@@ -573,7 +592,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_AgentPostsRunningStatus_TransitionAccepted()
     {
         // Arrange: distribute + transition to Dispatched
-        var result = await DistributeViaK8sAsync("k8s-status-running-1000");
+        var result = await DistributeDirectlyAsync("k8s-status-running-1000");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
@@ -582,9 +601,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
             w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
 
         // Act: agent POSTs Running status (as WorkItemAgentService does)
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var statusBody = new { Status = "Running", AgentId = "caa-test-pod" };
         var response = await httpClient.PostAsJsonAsync(
@@ -605,15 +624,15 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_AgentPostsRunningStatus_InvalidTransition_Returns400()
     {
         // Arrange: WorkItem is Pending (can't go directly to Running — must go through Dispatched)
-        var result = await DistributeViaK8sAsync("k8s-status-invalid-1001");
+        var result = await DistributeDirectlyAsync("k8s-status-invalid-1001");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
         // WorkItem is Pending — Running is not a valid transition from Pending
 
         // Act
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var statusBody = new { Status = "Running", AgentId = "caa-test-pod-2" };
         var response = await httpClient.PostAsJsonAsync(
@@ -634,7 +653,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_AgentPostsFailedStatus_TransitionAccepted()
     {
         // Arrange: distribute → dispatch → running
-        var result = await DistributeViaK8sAsync("k8s-status-failed-1002");
+        var result = await DistributeDirectlyAsync("k8s-status-failed-1002");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
@@ -644,9 +663,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
 
         // Act: agent POSTs Failed status (as WorkItemAgentService does on pipeline failure)
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var statusBody = new
         {
@@ -726,14 +745,14 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         // Act: connect as a K8s agent with ActiveJobState (mimicking WorkItemAgentService)
         await using var agent = new FakeAgentClient("caa-k8s-token-agent", "kiro", "dotnet");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
-            K8sModeE2EWebApplicationFactory.TestApiKey,
+            AgentHubUrl,
+            E2EWebApplicationFactory.TestApiKey,
             workItemId.ToString(),
             "k8s-token-refresh-1100",
             "repo-k8s-token-test");
 
         // Assert: agent is registered and busy
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var entry = registry.GetByAgentId("caa-k8s-token-agent");
         Assert.NotNull(entry);
         Assert.Equal(AgentStatus.Busy, entry.Status);
@@ -753,7 +772,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         // Arrange: connect but do NOT register (old buggy behavior)
         // This test documents the failure mode that was happening in production
         await using var agent = new FakeAgentClient("caa-k8s-noreg-agent", "kiro");
-        await agent.ConnectAsync(Fixture.ServerAddress, K8sModeE2EWebApplicationFactory.TestApiKey);
+        await agent.ConnectAsync(Fixture.AgentHubUrl, E2EWebApplicationFactory.TestApiKey);
 
         // Act & Assert: RequestTokenRefresh should fail because agent has no ActiveJobId
         // The [RequiresActiveJob] filter rejects because ActiveJobId (null) != jobId
@@ -842,7 +861,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_AgentPostsSucceededStatus_WithResultPayload_Accepted()
     {
         // Arrange: full lifecycle → Dispatched → Running
-        var result = await DistributeViaK8sAsync("k8s-status-succeeded-1300");
+        var result = await DistributeDirectlyAsync("k8s-status-succeeded-1300");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
@@ -852,9 +871,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
 
         // Act: agent POSTs Succeeded with a result payload (completion data)
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var statusBody = new
         {
@@ -885,10 +904,10 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     }
 
     [Fact]
-    public async Task K8sMode_AgentPostsDuplicateTerminalStatus_SecondRejected()
+    public async Task K8sMode_AgentPostsDuplicateTerminalStatus_IsIdempotent()
     {
         // Arrange: WorkItem already in terminal state (Failed)
-        var result = await DistributeViaK8sAsync("k8s-status-duplicate-1301");
+        var result = await DistributeDirectlyAsync("k8s-status-duplicate-1301");
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
@@ -901,22 +920,31 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
             ct: CancellationToken.None);
 
         // Act: agent crashes and restarts, tries to POST Failed again
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var statusBody = new { Status = "Failed", AgentId = "caa-dup-pod", ErrorMessage = "Second failure attempt" };
         var response = await httpClient.PostAsJsonAsync(
             $"/api/work-items/{workItemId}/status", statusBody);
 
-        // Assert: rejected — Failed→Failed is not a valid transition
-        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+        // Assert: accepted, not rejected. WorkItemTransitionService short-circuits
+        // `item.Status == target` as idempotent before it reaches IsValidTransition, so a repeat
+        // of a terminal post is a no-op that reports success.
+        //
+        // This test previously asserted 400. Status reporting is at-least-once — an agent that
+        // crashes after posting will post again on restart — so answering an error for work that
+        // already succeeded would push agents into spurious retry and error logging. What has to
+        // hold is that the repeat changes nothing, which is the assertion below: the short-circuit
+        // returns before the mutation, so the first (real) failure survives.
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
 
-        // Assert: original error message preserved
+        // Assert: original error message preserved — the second post must not overwrite it
         await using var db = Fixture.DbContextFactory.CreateDbContext();
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
         Assert.NotNull(item);
         Assert.Equal("First failure", item.ErrorMessage);
+        Assert.Equal(WorkItemStatus.Failed, item.Status);
     }
 
     [Fact]
@@ -926,9 +954,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var fakeId = Guid.NewGuid();
 
         // Act
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var statusBody = new { Status = "Running", AgentId = "caa-ghost-pod" };
         var response = await httpClient.PostAsJsonAsync(
@@ -963,9 +991,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         await db.SaveChangesAsync();
 
         // Act
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var response = await httpClient.GetAsync($"/api/work-items/{workItemId}/assignment");
 
@@ -977,9 +1005,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_AgentFetchesAssignment_NonexistentId_Returns404()
     {
         // Act: request assignment for a work item that doesn't exist
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var fakeId = Guid.NewGuid();
         var response = await httpClient.GetAsync($"/api/work-items/{fakeId}/assignment");
@@ -1028,8 +1056,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
 
         await using var agent = new FakeAgentClient("caa-k8s-multi-refresh", "kiro");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
-            K8sModeE2EWebApplicationFactory.TestApiKey,
+            AgentHubUrl,
+            E2EWebApplicationFactory.TestApiKey,
             workItemId.ToString(),
             "k8s-multi-refresh-1400",
             "repo-k8s-multi-refresh");
@@ -1093,8 +1121,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
 
         await using var agent = new FakeAgentClient("caa-k8s-brain-agent", "kiro");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
-            K8sModeE2EWebApplicationFactory.TestApiKey,
+            AgentHubUrl,
+            E2EWebApplicationFactory.TestApiKey,
             workItemId.ToString(),
             "k8s-brain-token-1401",
             "repo-k8s-brain-test",
@@ -1133,8 +1161,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
 
         await using var agent = new FakeAgentClient("caa-k8s-wrongjob", "kiro");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
-            K8sModeE2EWebApplicationFactory.TestApiKey,
+            AgentHubUrl,
+            E2EWebApplicationFactory.TestApiKey,
             realJobId.ToString(),
             "k8s-wrong-job-1402",
             "repo-e2e");
@@ -1175,14 +1203,14 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         // Act: agent registers with a RunId that's already in history (stale pod restart)
         await using var agent = new FakeAgentClient("caa-k8s-stale-agent", "kiro");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
-            K8sModeE2EWebApplicationFactory.TestApiKey,
+            AgentHubUrl,
+            E2EWebApplicationFactory.TestApiKey,
             completedRunId,
             "completed-issue",
             "repo-e2e");
 
         // Assert: agent is registered but NOT busy (stale job ignored)
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var entry = registry.GetByAgentId("caa-k8s-stale-agent");
         Assert.NotNull(entry);
         // The RegisterAgent handler ignores ActiveJob when RunId is in history
@@ -1349,7 +1377,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_AgentEndpoints_NoAuth_Returns401()
     {
         // Act: call work-items API without auth header
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient(authenticated: false);
         // Deliberately NO Authorization header
 
         var response = await httpClient.GetAsync($"/api/work-items/{Guid.NewGuid()}/assignment");
@@ -1362,7 +1390,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     public async Task K8sMode_AgentEndpoints_WrongApiKey_Returns401()
     {
         // Act: call with an invalid API key
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "wrong-key-12345");
 
@@ -1436,9 +1464,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         Assert.True(dispatched, "Pending → Dispatched transition should succeed");
 
         // ── Step 3: Agent fetches assignment (HTTP — as WorkItemHttpClient does) ──
-        using var httpClient = Fixture.Factory.CreateClient();
+        using var httpClient = Fixture.CreateApiClient();
         httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", K8sModeE2EWebApplicationFactory.TestApiKey);
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", E2EWebApplicationFactory.TestApiKey);
 
         var assignResponse = await httpClient.GetAsync($"/api/work-items/{workItemId}/assignment");
         Assert.Equal(System.Net.HttpStatusCode.OK, assignResponse.StatusCode);
@@ -1466,14 +1494,14 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         // ── Step 5: Agent connects to SignalR and registers with ActiveJob ──
         await using var agent = new FakeAgentClient("caa-lifecycle-pod", "kiro", "dotnet");
         await agent.ConnectWithActiveJobAsync(
-            Fixture.ServerAddress,
-            K8sModeE2EWebApplicationFactory.TestApiKey,
+            AgentHubUrl,
+            E2EWebApplicationFactory.TestApiKey,
             workItemId.ToString(),
             "k8s-lifecycle-e2e-9999",
             "repo-lifecycle-e2e");
 
         // Verify: agent is Busy in registry with correct ActiveJobId
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var agentEntry = registry.GetByAgentId("caa-lifecycle-pod");
         Assert.NotNull(agentEntry);
         Assert.Equal(AgentStatus.Busy, agentEntry.Status);

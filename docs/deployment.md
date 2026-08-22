@@ -2,146 +2,19 @@
 
 ## Architecture
 
-The application follows Clean Architecture with a multi-container deployment:
+The application runs on Kubernetes as four distinct processes:
 
-```mermaid
-graph TB
-    Browser[Web Browser]
-    
-    subgraph Orchestrator["Orchestrator Container"]
-        WebUI[WebUI<br/>Blazor Server + Pages]
-        Orch[Orchestration<br/>dispatch, tracking, leader election]
-        Infra[Infrastructure<br/>providers, config store, resilience]
-        Pipeline[Pipeline<br/>orchestration logic, services, models]
-        CodeReview[Pipeline.CodeReview<br/>review findings, inline comments]
-        KiroLib[KiroCliLib<br/>CLI config parsing, shared utilities]
-    end
-    
-    subgraph Agents["Agent Containers"]
-        AgentHost[Agent Host<br/>connection, lifecycle, health]
-        AgentKiro[Agent.KiroCli<br/>Kiro CLI process provider]
-        AgentOC[Agent.OpenCode<br/>OpenCode HTTP provider]
-        A1[Kiro Agent .NET ×2]
-        A2[Kiro Agent Python]
-        A3[Kiro Agent Java]
-        A4[OpenCode Agent .NET]
-        A5[OpenCode Agent Python]
-        A6[OpenCode Agent Java]
-    end
-    
-    Browser -->|HTTP/SignalR| WebUI
-    WebUI --> Orch
-    Orch --> Infra
-    Orch --> Pipeline
-    Infra --> Pipeline
-    Pipeline --> CodeReview
-    Pipeline --> KiroLib
-    Orch -->|SignalR / K8s Jobs<br/>work distribution| AgentHost
-    AgentHost --> AgentKiro
-    AgentHost --> AgentOC
-    AgentKiro --> KiroLib
-```
+- **Orchestrator** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI and `PipelineLoopService`. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (scoped per circuit) subscribes to the API hub for live run streaming.
+- **Pipeline API** (`CodingAgentWebUI.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `JobDeduplicationGuardService`, `ConsolidationWorkItemDispatchService`, `DatabaseMaintenanceService`, `WorkItemMetricsBackgroundService`, and `ChatJobDispatcher`.
+- **Job Controller** (`CodingAgentWebUI.JobController`) — Kubernetes Job dispatch. Claims `WorkItem` rows from the API and creates K8s Jobs. Leader-elected via `caa-{release}-dispatch-lock` Lease. Stateless between dispatches; all state lives in Postgres via the API.
+- **Agent Host** (`CodingAgentWebUI.Agent`) — Ephemeral K8s Job pod. Connects to the Pipeline API hub using `AGENT_API_KEY` as a Bearer token. Picks up assignments via `GET /api/work-items/{id}/assignment`, reports progress and terminal status via hub methods and `POST /api/work-items/{id}/status`. Two execution modes: _work-item pods_ (spawned with `--work-item-id`) and _chat pods_.
 
-- **WebUI** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI, SignalR hub, API endpoints, background services (OrphanedLabelRecovery, LoopStatePersistence).
-- **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic (`DispatchService`, `ReconciliationService`, `SignalRWorkDistributor`, `KubernetesWorkDistributor`), agent registry, run lifecycle management, leader election, telemetry.
-- **Infrastructure** (`CodingAgentWebUI.Infrastructure`) — Provider implementations (GitHub, filesystem), config store, resilience pipelines, token vending.
-- **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline orchestration (`PipelineOrchestrationService`, facades, `PipelineLoopService`), step execution, models, interfaces, constants.
-- **Pipeline.CodeReview** (`CodingAgentWebUI.Pipeline.CodeReview`) — Review findings parsing, inline comment selection, severity filtering.
-- **KiroCliLib** — Shared library for Kiro CLI configuration parsing. Referenced by Pipeline, Agent.KiroCli, and Agent.OpenCode.
-- **Agent Host** (`CodingAgentWebUI.Agent`) — Agent executable. Manages SignalR/HTTP connection to orchestrator, work item lifecycle, health endpoints, heartbeat, and reconnection logic.
-- **Agent.KiroCli** (`CodingAgentWebUI.Agent.KiroCli`) — Kiro CLI agent provider. Spawns kiro-cli processes and translates pipeline operations into CLI invocations.
-- **Agent.OpenCode** (`CodingAgentWebUI.Agent.OpenCode`) — OpenCode agent provider. Communicates with the OpenCode HTTP API for LLM-driven code generation.
-- **Agent Containers** — Worker containers connecting via SignalR or HTTP. Two backends: Kiro CLI (process) and OpenCode (HTTP API). Scale by adding containers.
+Supporting libraries (shared, not deployed independently):
 
-## Docker Compose
-
-The `docker-compose.yml` defines 9 services: 1 orchestrator + 2 Kiro .NET agents + 1 Kiro Python agent + 1 Kiro Java agent + 1 OpenCode .NET agent + 1 OpenCode Python agent + 1 OpenCode Java agent.
-
-To add more agents, copy a service definition with a new name and volume — don't use `--scale` (each agent needs its own named volume to avoid SQLite corruption).
-
-### DB+SignalR Mode (Postgres)
-
-For persistent state across container restarts, use the Postgres overlay:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build
-```
-
-This adds PostgreSQL (persistence) and Redis (SignalR backplane). The orchestrator stores all configuration, work items, and run history in Postgres instead of JSON files. The dispatch flow uses `SignalRWorkDistributor`: work items are tracked in DB rows while job delivery uses SignalR push to connected agents.
-
-After first start, import your pipeline configuration via **Settings → Data Management** using a JSON bundle file.
-
-**Key differences from JSON-file mode:**
-- Configuration stored in Postgres (tables: `ProviderConfigs`, `AgentProfiles`, `QualityGateConfigs`, `PipelineJobTemplates`, `Projects`)
-- Work items tracked in `WorkItems` table with lifecycle transitions (Pending → Dispatched → Running → Succeeded/Failed/Cancelled)
-- Active runs enriched from in-memory state for real-time UI updates (step transitions, output streaming)
-- Config changes take effect immediately (cache invalidated on import)
-
-**Environment variables (Postgres overlay):**
-
-| Variable | Description |
-|----------|-------------|
-| `Database__Host` | PostgreSQL hostname |
-| `Database__Port` | PostgreSQL port (default: `5432`) |
-| `Database__Username` | PostgreSQL username |
-| `Database__Password` | PostgreSQL password |
-| `Database__Name` | PostgreSQL database name |
-| `Database__SslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull` (default: `Disable` in local overlay) |
-| `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`) |
-| `SignalR__Redis__ConnectionString` | Redis connection string for SignalR backplane (optional for single instance) |
-
-## Volume Mounts
-
-### Orchestrator
-
-| Mount | Container Path | Purpose |
-|-------|---------------|---------|
-| Pipeline config | `/app/config/pipeline` | Provider configs, quality gates, profiles, run history (persists across restarts) |
-
-### Agent Containers (Kiro CLI)
-
-| Mount | Container Path | Purpose |
-|-------|---------------|---------|
-| Agent CLI auth | `/home/ubuntu/.local/share/kiro-cli` | Agent CLI login tokens |
-
-### Agent Containers (OpenCode)
-
-OpenCode agents have no volume mounts in Docker Compose — they receive configuration via the `OPENCODE_CONFIG_CONTENT` environment variable injected at startup. In Kubernetes (Helm), a read-only Secret-backed volume is mounted at `/app/config/opencode` containing the OpenCode configuration file.
-
-Each agent container needs its own CLI data volume to avoid SQLite corruption from concurrent access. Workspaces are created inside the container at `/app/workspaces/` — no volume mount needed.
-
-## Provider Configuration
-
-The pipeline supports multiple provider backends. Each provider type requires specific settings.
-
-### GitHub
-
-```json
-{
-  "providerType": "GitHub",
-  "settings": {
-    "owner": "my-org",
-    "repo": "my-repo",
-    "appId": "123456",
-    "privateKeyBase64": "base64-encoded-pem-key",
-    "installationId": "78901234"
-  }
-}
-```
-
-### GitLab
-
-```json
-{
-  "providerType": "GitLab",
-  "settings": {
-    "apiUrl": "https://gitlab.com",
-    "accessToken": "glpat-xxxxxxxxxxxxxxxxxxxx",
-    "projectId": "12345",
-    "baseBranch": "main"
-  }
-}
-```
+- **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API.
+- **Infrastructure** (`CodingAgentWebUI.Infrastructure`) — Provider implementations (GitHub, GitLab, filesystem), EF Core context, config store. Linked into the Pipeline API, Orchestration, and Agent. The Blazor Orchestrator (`CodingAgentWebUI`) has no direct reference.
+- **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, interfaces, constants. Linked into the Orchestrator and Pipeline API.
+- **Hub** (`CodingAgentWebUI.Hub`) — Full hub implementation: `AgentHub` (split across partial classes), authentication handlers (`AgentApiKeyAuthHandler`), `ChatJobDispatcher` (ephemeral chat pod dispatch), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), completion strategies, `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
 
 ## Authentication
 
@@ -169,80 +42,63 @@ Secrets and environment variables injected for a pipeline run (via setup steps o
 
 For Kubernetes deployments, a Helm chart is provided at `helm/coding-agent-automation/`.
 
+### Prerequisites
+
+- kubectl ≥ 1.25
+- Helm ≥ 3.12
+- A running PostgreSQL instance accessible from the cluster
+- (Optional) Redis for multi-replica SignalR backplane
+
 ### Install
 
 ```bash
+# 1. Install the chart
 helm install coding-agent ./helm/coding-agent-automation \
   --set secrets.agentApiKey="$(openssl rand -hex 32)" \
-  --set orchestrator.image.tag=coding-agent-webui \
-  --set otel.endpoint=http://otel-collector:4317
+  --set database.host=<postgres-host> \
+  --set database.auth.existingSecret=<k8s-secret-name> \
+  --set api.enabled=true \
+  --set jobController.enabled=true
 ```
 
 ### Architecture
 
 The chart deploys:
-- **1 Orchestrator Deployment** — Blazor Server app with pipeline orchestration
-- **N Agent Deployments** — One Deployment per agent entry in `values.yaml` (each gets its own PVC for CLI auth data)
+- **1 Orchestrator Deployment** — Blazor Server app (`CodingAgentWebUI`). Connects to the API for all data access; no direct database connection.
+- **1 Pipeline API Deployment** — `CodingAgentWebUI.Api`. Authoritative database owner, agent hub, and config/run-history server.
+- **1 Job Controller Deployment** — `CodingAgentWebUI.JobController`. Claims WorkItems and dispatches K8s Jobs. Leader-elected.
+- **No persistent agent Deployments** — All agents are ephemeral K8s Jobs dispatched on demand by the Job Controller.
 
 ### Key values.yaml Settings
 
 | Path | Description |
 |------|-------------|
 | `orchestrator.image.repository/tag` | Orchestrator container image |
-| `orchestrator.persistence.type` | Storage backend: `pvc` (default), `hostPath`, or `emptyDir` |
-| `orchestrator.persistence.mountMode` | Config volume mount mode: `readWrite` (default), `readOnly` (migration source when database enabled), `disabled` (after migration complete) |
-| `agents[]` | List of agent definitions for SignalR mode (name, image, labels, providerType). Creates Deployments. |
-| `agents[].providerType` | `kiro` or `opencode` — determines volume mount profile |
-| `agents[].labels` | Comma-separated routing labels (e.g., `kiro,dotnet,dotnet10`) |
-| `jobTemplates[]` | List of K8s Job templates for Kubernetes mode. Defines pod spec per label set. Falls back to `agents[]` if empty. |
+| `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
 | `secrets.otelHeaders` | OTLP auth headers |
 | `secrets.opencodeConfigContent` | OpenCode config JSON (mounted as file for opencode agents) |
 | `existingSecret` | Use a pre-existing K8s Secret instead of chart-managed one |
 | `otel.endpoint` | OTLP collector endpoint |
 | `orchestrator.ingress.enabled` | Enable Ingress for external access |
-| `database.enabled` | Enable PostgreSQL-backed persistence (default: `false`, uses JSON file store when disabled) |
-| `database.host` | PostgreSQL hostname (required when database enabled) |
+| `database.host` | PostgreSQL hostname (required) |
 | `database.port` | PostgreSQL port (default: `5432`) |
 | `database.auth.existingSecret` | K8s Secret containing database credentials (keys: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) |
-| `database.migrateOnStartup` | Apply EF Core migrations on orchestrator startup (default: `true`) |
-| `database.sslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. Defaults to `Require` in production if not set. Use `Disable` for in-cluster Postgres without TLS |
-| `workDistribution.mode` | Dispatch mode: `SignalR` (default, docker-compose compatible) or `Kubernetes` (K8s Job dispatch) |
-| `workDistribution.dispatch.intervalSeconds` | Seconds between dispatch cycles in Kubernetes mode (default: `10`) |
-| `workDistribution.dispatch.rateLimitPerSecond` | Max dispatches per second in Kubernetes mode (default: `10`) |
-| `workDistribution.reconciliation.intervalSeconds` | Seconds between reconciliation cycles in Kubernetes mode (default: `30`) |
+| `database.migrateOnStartup` | **Has no effect — the Helm templates hardcode `Database__MigrateOnStartup=false` on both the Orchestrator and the Pipeline API.** EF Core migrations are applied automatically by the Pipeline API on startup via `RunApiMigrationsAsync`. If pending migrations are detected on the API, it throws and restarts until the schema is current; the Orchestrator does the same fast-fail check and will not start against an unmigrated schema. Run migrations manually only via `kubectl exec` into the API pod (not the Orchestrator). |
+| `database.sslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. Defaults to `Require` in production if not set. Use `Disable` for in-cluster Postgres without TLS. |
+| `workDistribution.dispatch.intervalSeconds` | Seconds between dispatch cycles (default: `10`) |
+| `workDistribution.dispatch.rateLimitPerSecond` | Max dispatches per second (default: `10`) |
+| `workDistribution.reconciliation.intervalSeconds` | Seconds between reconciliation cycles (default: `30`) |
 | `workDistribution.reconciliation.timeoutEnforcementEnabled` | Whether to enforce agent timeouts via reconciliation (default: `true`) |
 | `workDistribution.reconciliation.staleRetentionDays` | Days to retain stale work items before cleanup (default: `7`) |
-| `credentialPools.kiro` | List of PVC names for kiro agent credential data (DispatchService claims one per Job) |
-| `signalr.redis.enabled` | Enable Redis backplane for multi-replica orchestrator SignalR (default: `false`) |
+| `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. `DispatchService` claims one PVC per Job at dispatch time. |
+| `signalr.redis.enabled` | Documents intent to enable Redis backplane (default: `false`). Note: the Helm templates only check `signalr.redis.connectionString` — setting `enabled: true` without a non-empty `connectionString` has no effect. To activate the backplane, set `signalr.redis.connectionString` to a non-empty value. |
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
 
-In Kubernetes mode, Job pod specs (image, imagePullPolicy, resources, nodeSelector, tolerations, initContainers, podSecurityContext, maxConcurrent) are configured in the `jobTemplates[]` list and rendered into a ConfigMap consumed by `DispatchService`. If `jobTemplates` is empty, the chart falls back to deriving templates from the `agents[]` list for backward compatibility.
+### Defining Agent Pod Templates
 
-### Scaling Agents
-
-**SignalR mode** — add entries to `agents[]`. Each entry produces a separate Deployment with dedicated storage:
-
-```yaml
-agents:
-  - name: agent-kiro-dotnet-1
-    enabled: true
-    image:
-      repository: chemsorly/coding-agent
-      tag: coding-agent-kiro-dotnet10
-    providerType: kiro
-    labels: "kiro,dotnet,dotnet10"
-  - name: agent-kiro-dotnet-2
-    enabled: true
-    image:
-      repository: chemsorly/coding-agent
-      tag: coding-agent-kiro-dotnet10
-    providerType: kiro
-    labels: "kiro,dotnet,dotnet10"
-```
-
-**Kubernetes mode** — define `jobTemplates[]` with K8s Job-specific pod spec. `maxConcurrent` controls parallelism per label set:
+All agent pod specs are defined in `jobTemplates[]`. Each entry produces a K8s Job spec rendered into a ConfigMap consumed by `DispatchService`. `maxConcurrent` controls parallelism per label set:
 
 ```yaml
 jobTemplates:
@@ -277,12 +133,12 @@ jobTemplates:
 
 The chart supports zero-downtime rolling updates:
 - Orchestrator uses `readinessDrainDelaySeconds` (default: 15s) to stop accepting traffic before terminating
-- `pipelineLoopStartupDelaySeconds` (Helm default: 30s, application default: 90s) prevents dispatching to agents that are mid-termination — must be greater than agent `terminationGracePeriodSeconds`. The Helm value overrides the application's built-in default via the `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` env var.
-- Agent `terminationGracePeriodSeconds` defaults to 15s
+- `pipelineLoopStartupDelaySeconds` (Helm default: **0**, application default: 90s) delays `PipelineLoopService` startup after the process is ready — set to 0 because the API now owns `IOrchestratorRunService` and rehydrates on its own startup; the Orchestrator no longer dispatches directly (Spec 044)
+- Let in-flight agent Jobs finish before upgrading — no drain hook exists
 
-### Leader Election (Kubernetes Mode)
+### Leader Election
 
-In DB+Kubernetes mode, the orchestrator uses Kubernetes Lease-based leader election to ensure only one replica runs leader-dependent services. This prevents duplicate dispatches and conflicting reconciliation actions when running multiple orchestrator replicas.
+Dispatch and reconciliation are leader-elected across the system. Each process has its own `LeaderElectionService` instance with a distinct Kubernetes Lease, preventing duplicate dispatches and conflicting reconciliation across replicas.
 
 #### How It Works
 
@@ -293,22 +149,27 @@ In DB+Kubernetes mode, the orchestrator uses Kubernetes Lease-based leader elect
 
 #### Leader-Dependent Services
 
+Two independent leases are used — one per process:
+
+**Job Controller** (`caa-{release}-dispatch-lock` lease):
+
 | Service | Behavior When Leader | Behavior When Non-Leader |
 |---------|---------------------|--------------------------|
 | `DispatchService` | Polls for pending WorkItems and dispatches K8s Jobs | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 | `ReconciliationService` | Runs startup reconciliation, watches K8s Jobs, enforces timeouts | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 
-Both services create a linked `CancellationTokenSource` combining the host `stoppingToken` and `LeaderToken`. This ensures immediate stop on either graceful shutdown OR leadership loss — no stale work continues after failover.
+**Pipeline API** (`caa-{release}-api-lock` lease):
 
-#### Leadership Lifecycle
+| Service | Behavior When Leader | Behavior When Non-Leader |
+|---------|---------------------|--------------------------|
+| `ConsolidationWorkItemDispatchService` | Dispatches consolidation K8s Jobs | Waits |
+| `DatabaseMaintenanceService` | Runs retention sweep | Waits |
 
-```
-Replica starts → polls for Lease → acquires → IsLeader=true, LeaderToken valid
-  → DispatchService + ReconciliationService enter work loops
-  → ...leadership lost (Lease expires, network partition, pod preempt)...
-  → LeaderToken cancelled → services exit work loops → re-enter wait state
-  → re-acquires Lease → fresh LeaderToken → services resume
-```
+**Orchestrator** (`caa-{release}-pipeline-loop-lock` lease):
+
+| Service | Behavior When Leader | Behavior When Non-Leader |
+|---------|---------------------|--------------------------|
+| `PipelineLoopService` | Dispatches pipeline runs | Pauses (leader gate blocks loop entry) |
 
 #### Configuration
 
@@ -316,7 +177,7 @@ Bound from the `LeaderElection` configuration section:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `LeaseName` | `caa-leader` | Name of the Kubernetes Lease resource |
+| `LeaseName` | `caa-leader` | Base name of the Kubernetes Lease resource. Overridden per-process by Helm (see above) |
 | `Namespace` | *(auto-detected)* | Namespace for the Lease. Auto-reads from `POD_NAMESPACE` env var or mounted service account namespace file |
 | `LeaseDuration` | 15s | Duration non-leaders wait before attempting acquisition |
 | `RenewDeadline` | 10s | Deadline for the leader to renew before the lease expires. Must be less than `LeaseDuration` |
@@ -324,55 +185,72 @@ Bound from the `LeaderElection` configuration section:
 | `Identity` | *(auto-detected)* | Pod identity. Auto-reads from `POD_NAME` → `HOSTNAME` → `MachineName` |
 | `FailOnNonKubernetesEnvironment` | false | If true, startup fails outside K8s. If false, logs a warning and remains non-leader (graceful degradation for local dev) |
 
+Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller, defaults to `caa-{release}-dispatch-lock`), `orchestrator.leaderElection.pipelineLoopLeaseName` (Orchestrator, defaults to `caa-{release}-pipeline-loop-lock`), and the API lease (`caa-{release}-api-lock`) which is hardcoded in the API Helm template with no `values.yaml` override. The Orchestrator and API leases use different names to prevent competition.
+
 #### RBAC Requirements
 
-The orchestrator ServiceAccount needs Lease permissions. The Helm chart creates these automatically when `database.enabled=true` and `workDistribution.mode=Kubernetes`:
+The Helm chart creates ServiceAccounts and ClusterRoleBindings (or RoleBindings) automatically for each process.
+
+**Orchestrator** (`CodingAgentWebUI`) ServiceAccount:
 
 ```yaml
 rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["create", "get", "update"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
 ```
 
-#### Non-Kubernetes Environments
+> **Note:** The Orchestrator retains `batch/jobs` RBAC for backwards compatibility with `ChatJobDispatcher`, which now runs in the Pipeline API (Hub library). Work-item dispatch was moved to the Job Controller.
 
-The K8s Lease-based `LeaderElectionService` only activates in Kubernetes mode. Behavior in other modes:
+**Pipeline API** (`CodingAgentWebUI.Api`) ServiceAccount:
 
-- **DB+SignalR mode** (Docker Compose with Postgres): Uses `PostgresLeaderElectionService` instead — see [Leader Election (DB+SignalR Mode)](#leader-election-dbsignalr-mode) below.
-- **Legacy mode** (no database): No leader election is needed. `PipelineLoopService` handles dispatch directly, and there is only one orchestrator instance.
+```yaml
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]   # per-Job derived-key Secrets (GC'd via ownerReference)
+  - apiGroups: [""]
+    resources: ["pods", "configmaps"]
+    verbs: ["get", "list"]
+```
 
-### Leader Election (DB+SignalR Mode)
+**Job Controller** (`CodingAgentWebUI.JobController`) ServiceAccount:
 
-When running with PostgreSQL but without Kubernetes (e.g., Docker Compose with `docker-compose.postgres.yml`), multi-replica safety is provided by `PostgresLeaderElectionService` using PostgreSQL advisory locks (`pg_try_advisory_lock`).
+```yaml
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]   # per-Job derived-key Secrets (GC'd via ownerReference)
+```
 
-This ensures that only one orchestrator replica runs the `PendingWorkItemDrainService` loop at a time, preventing duplicate dispatches when scaling the orchestrator horizontally behind a load balancer.
+### Credential Pool Initialization
 
-#### How It Works
+Kiro agents require CLI authentication tokens stored on persistent volumes. In Kubernetes mode, `DispatchService` claims a PVC from the credential pool for each spawned Job pod, mounting it at `/home/ubuntu/.local/share/kiro-cli`. Before the first dispatch, each PVC must contain valid tokens.
 
-`PostgresLeaderElectionService` is a singleton `IHostedService` that:
-1. Attempts to acquire a Postgres advisory lock (configurable lock key)
-2. If acquired: sets `IsLeader = true`, creates a valid `LeaderToken`
-3. Periodically renews the lock (re-executes the lock query on the same connection)
-4. If the lock is lost (connection drop, explicit release): cancels `LeaderToken`, dependent services stop
-
-#### Configuration
-
-Bound from the `LeaderElection:Postgres` configuration section:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `LockKey` | `0x0CAA_1EAD` (212926893) | Advisory lock key (bigint). All replicas must use the same key. Derived from "caa-leader". |
-| `RenewalInterval` | 5s | How often to re-check/renew the advisory lock |
-| `RetryDelay` | 5s | Delay between acquisition attempts when not the leader |
-
-### Credential Pool Initialization (Kubernetes Mode)
-
-Kiro agents require CLI authentication tokens stored on persistent volumes. In Kubernetes mode, the `DispatchService` claims a PVC from the credential pool for each spawned Job pod, mounting it at `/home/ubuntu/.local/share/kiro-cli`. Before the first dispatch, each PVC must contain valid tokens.
+PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs.
 
 #### One-Time Setup Per PVC
-
-Each PVC in `credentialPools.kiro` must be authenticated once. Since agent Jobs are ephemeral (terminate on completion or failure), use a temporary long-running pod for the interactive login flow:
 
 **1. Create a temporary auth pod mounting the target PVC:**
 
@@ -416,9 +294,9 @@ kubectl delete pod kiro-auth-1 -n coding-agent
 #### Token Lifecycle
 
 - Tokens include a refresh token with long expiry (weeks to months depending on the identity provider)
-- Regular pipeline runs keep the refresh token active automatically — each Job mounts the PVC and the CLI refreshes the token as needed
-- If a PVC's token expires (e.g., the pool was not used for an extended period), re-run the auth pod workflow for that PVC
-- Token validity can be verified without running a full pipeline: `kubectl exec ... -- kiro-cli auth status`
+- Regular pipeline runs keep the refresh token active automatically
+- If a PVC's token expires, re-run the auth pod workflow for that PVC
+- Token validity can be verified: `kubectl exec ... -- kiro-cli auth status`
 
 #### Troubleshooting
 
@@ -428,3 +306,67 @@ kubectl delete pod kiro-auth-1 -n coding-agent
 | Job pod hangs during CLI startup | Token refresh failing (network/IdP issue) | Check pod logs, verify IdP connectivity |
 | DispatchService logs "no PVC available" | All PVCs claimed by running Jobs | Wait for Jobs to complete, or add more PVCs to the pool |
 | Auth pod can't mount PVC | PVC bound to a different node | Ensure nodeSelector matches the PV's node affinity |
+
+---
+
+## Local Development
+
+For local development, use [Rancher Desktop](https://rancherdesktop.io/) or [Docker Desktop](https://www.docker.com/products/docker-desktop/) with Kubernetes enabled.
+
+Set up a `~/.kube/config` pointing at your local cluster. The Kubernetes client uses in-cluster config when running inside a pod and falls back to `~/.kube/config` when running locally (`dotnet run`).
+
+```bash
+# Run the orchestrator locally against your local cluster
+dotnet run --project src/CodingAgentWebUI/
+```
+
+> `Database__Host` must be set — the orchestrator requires PostgreSQL on startup.
+
+For the agent project (work-item mode, connecting to the Pipeline API hub on port 8090):
+```bash
+ORCHESTRATOR_URL=http://localhost:8090 AGENT_ID=local-agent-1 AGENT_API_KEY=<key> \
+  dotnet run --project src/CodingAgentWebUI.Agent/ -- --mode=workitem --work-item-id=<guid>
+```
+
+For chat mode (no `--work-item-id`):
+```bash
+ORCHESTRATOR_URL=http://localhost:8090 AGENT_ID=local-chat-1 AGENT_API_KEY=<key> \
+  dotnet run --project src/CodingAgentWebUI.Agent/ -- --mode=chat
+```
+
+`ORCHESTRATOR_URL`, `AGENT_ID`, and `AGENT_API_KEY` are environment variables, not CLI arguments. `--mode` (workitem or chat) is required.
+
+---
+
+## Provider Configuration
+
+The pipeline supports multiple provider backends. Each provider type requires specific settings.
+
+### GitHub
+
+```json
+{
+  "providerType": "GitHub",
+  "settings": {
+    "owner": "my-org",
+    "repo": "my-repo",
+    "appId": "123456",
+    "privateKeyBase64": "base64-encoded-pem-key",
+    "installationId": "78901234"
+  }
+}
+```
+
+### GitLab
+
+```json
+{
+  "providerType": "GitLab",
+  "settings": {
+    "apiUrl": "https://gitlab.com",
+    "accessToken": "glpat-xxxxxxxxxxxxxxxxxxxx",
+    "projectId": "12345",
+    "baseBranch": "main"
+  }
+}
+```

@@ -51,6 +51,14 @@ RUN mkdir -p /app/config/pipeline/providers/issue \
 USER ubuntu
 WORKDIR /app
 
+# Hygiene: assert no kubeconfig landed in the runtime image.
+# A stray ~/.kube/config would let BuildDefaultConfig() silently redirect agent-Job
+# creation to whatever cluster the file names — bypassing the in-cluster path even
+# inside a real cluster. Fail the build immediately if any such file is present.
+RUN test ! -e /home/ubuntu/.kube/config && \
+    test ! -e /root/.kube/config && \
+    echo "OK: no kubeconfig in runtime image"
+
 # Configure ASP.NET to listen on port 8080
 ENV ASPNETCORE_URLS=http://+:8080
 

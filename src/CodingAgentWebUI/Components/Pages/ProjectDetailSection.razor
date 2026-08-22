@@ -1,4 +1,4 @@
-@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
 @using System.Text.RegularExpressions
 @implements IAsyncDisposable
@@ -45,7 +45,7 @@
     private const string TabMcp = "mcp";
 
     [Parameter, EditorRequired] public string ProjectId { get; set; } = default!;
-    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback OnProjectSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
@@ -133,13 +133,7 @@
 
     private async Task LoadDataAsync()
     {
-        // TODO: All ConfigStore calls here use CancellationToken.None. The component has a _cts that is
-        // cancelled on disposal (IAsyncDisposable), and MoveTemplateAsync was correctly updated to use
-        // _cts.Token. LoadDataAsync is called on init and after RemoveTemplate/AddTemplate, so if the
-        // component is disposed mid-refresh (rapid navigation), all five store calls remain orphaned and
-        // post-disposal state writes (_project, _allProjects, etc.) may cause silent corruption or
-        // NullReferenceExceptions. Thread _cts.Token through LoadDataAsync and all its inner calls.
-        var project = await ConfigStore.GetProjectByIdAsync(ProjectId, CancellationToken.None);
+        var project = await ConfigClient.GetProjectByIdAsync(ProjectId, CancellationToken.None);
         if (project is null)
         {
             // New project being created — pre-populate with defaults, don't persist yet
@@ -149,10 +143,10 @@
         {
             _project = project;
         }
-        _globalConfig = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
-        _allTemplates = (await ConfigStore.LoadAllTemplatesAsync(CancellationToken.None)).ToList();
-        _allProjects = await ConfigStore.LoadProjectsAsync(CancellationToken.None);
+        _globalConfig = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+        _issueProviders = (await ConfigClient.GetProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+        _allTemplates = (await ConfigClient.GetAllTemplatesAsync(CancellationToken.None)).ToList();
+        _allProjects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
 
         // Populate overview fields
         _name = _project.Name;
@@ -513,7 +507,7 @@
 
         try
         {
-            await ConfigStore.MoveTemplateAsync(sourceProject.Id, _project.Id, _selectedTemplateToAdd, _cts.Token);
+            await ConfigClient.MoveTemplateAsync(sourceProject.Id, _project.Id, _selectedTemplateToAdd, _cts.Token);
             _selectedTemplateToAdd = null;
             await LoadDataAsync();
             await OnProjectSaved.InvokeAsync();
@@ -577,7 +571,7 @@
 
         try
         {
-            await ConfigStore.MoveTemplateAsync(_project.Id, targetProjectId, templateId, CancellationToken.None);
+            await ConfigClient.MoveTemplateAsync(_project.Id, targetProjectId, templateId, CancellationToken.None);
             await LoadDataAsync();
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Template moved to another project.", false));
@@ -600,7 +594,7 @@
                 EpicIssueProviderId = string.IsNullOrEmpty(_epicIssueProviderId) ? null : _epicIssueProviderId
             };
 
-            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project overview saved.", false));
         }
@@ -617,7 +611,7 @@
         try
         {
             _project = _project with { Secrets = BuildSecretsDictionary() };
-            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project secrets saved.", false));
         }
@@ -666,7 +660,7 @@
                 SteeringContent = string.IsNullOrWhiteSpace(_steeringContent) ? null : _steeringContent.Trim()
             };
 
-            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project settings saved.", false));
         }
@@ -680,7 +674,7 @@
     {
         try
         {
-            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project updated.", false));
         }
@@ -1016,7 +1010,7 @@
             }).ToList();
 
             _project = _project with { McpServers = servers.Count > 0 ? servers : null };
-            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project MCP servers saved.", false));
         }

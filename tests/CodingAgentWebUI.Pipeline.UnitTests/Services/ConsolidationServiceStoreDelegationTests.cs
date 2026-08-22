@@ -125,10 +125,31 @@ public sealed class ConsolidationServiceStoreDelegationTests
             .ReturnsAsync(new List<ConsolidationRun> { orphan });
 
         var sut = CreateSut();
-        await sut.CleanupOrphanedRunsAsync(CancellationToken.None);
+        await sut.CleanupOrphanedRunsAsync([], CancellationToken.None);
 
         _mockRunStore.Verify(s => s.SaveRunAsync(It.Is<ConsolidationRun>(r =>
             r.RunId == orphan.RunId && r.Status == ConsolidationRunStatus.Failed), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CleanupOrphanedRunsAsync_SkipsRun_WhenAgentIsStillActive()
+    {
+        var orphan = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Running
+        };
+        _mockRunStore.Setup(s => s.LoadAllRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ConsolidationRun> { orphan });
+
+        var sut = CreateSut();
+        // Pass the run's ID as an active agent job — it should NOT be marked Failed
+        await sut.CleanupOrphanedRunsAsync([orphan.RunId], CancellationToken.None);
+
+        _mockRunStore.Verify(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()), Times.Never,
+            "A running run with an active agent should not be marked Failed");
     }
 
     [Fact]

@@ -1,10 +1,8 @@
-using CodingAgentWebUI.Hubs;
-using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
-using Microsoft.AspNetCore.SignalR;
 
 namespace CodingAgentWebUI.Services;
 
@@ -13,15 +11,12 @@ namespace CodingAgentWebUI.Services;
 /// constructor parameter count (S107). All members are required.
 /// </summary>
 public sealed record AgentMonitoringPageServiceDependencies(
-    IActiveRunQueryService ActiveRunQuery,
     IAgentRegistryService Registry,
     JobDeduplicationGuardService Dispatcher,
-    IOrchestratorRunService RunService,
-    PipelineRunLifecycleService Lifecycle,
-    IConfigurationStore ConfigStore,
+    IPipelineApiConfigClient ConfigClient,
     IConsolidationService ConsolidationService,
-    IPendingWorkQuery PendingWorkQuery,
+    /// Optional — null when IPendingWorkQuery is not registered (no DB-backed pending work query available).
+    /// </summary>
+    IPendingWorkQuery? PendingWorkQuery,
     IWorkDistributor WorkDistributor,
-    IHubContext<AgentHub, IAgentHubClient> HubContext,
-    IPipelineRunHistoryService HistoryService,
-    IRunLifecycleManager LifecycleManager);
+    IPipelineApiRunHistoryClient RunHistoryClient);

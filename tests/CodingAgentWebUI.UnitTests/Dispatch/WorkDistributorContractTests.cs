@@ -1,17 +1,10 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Services;
-using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.UnitTests.Dispatch;
 
@@ -21,17 +14,16 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 
 /// <summary>
 /// Abstract contract tests verifying behavioral invariants shared by ALL <see cref="IWorkDistributor"/>
-/// implementations (Legacy, SignalR, Kubernetes).
+/// implementations (Kubernetes).
 /// Ensures behavioral contract doesn't drift when switching dispatch modes.
 /// </summary>
 /// <remarks>
-/// The shared contract covers only methods with consistent semantics across all 3 implementations:
+/// The shared contract covers only methods with consistent semantics across all implementations:
 /// <list type="bullet">
 ///   <item><see cref="IWorkDistributor.DistributeAsync"/> success path</item>
 ///   <item><see cref="IWorkDistributor.IsIssueDistributedAsync"/> post-distribute</item>
 ///   <item><see cref="IWorkDistributor.GetActiveIssueIdentifiersAsync"/> post-distribute</item>
 /// </list>
-/// <c>CancelJobAsync</c> and <c>GetJobStatusAsync</c> are excluded — Legacy returns Unknown/false by design.
 /// </remarks>
 public abstract class WorkDistributorContractTests : IDisposable
 {
@@ -66,7 +58,7 @@ public abstract class WorkDistributorContractTests : IDisposable
     // ── Shared Contract: IsIssueDistributedAsync post-distribute ─────────
 
     [Fact]
-    public async Task AfterDistribute_IsIssueDistributed_ReturnsTrue()
+    public virtual async Task AfterDistribute_IsIssueDistributed_ReturnsTrue()
     {
         var sut = CreateSut();
         var request = CreateMinimalRequest();
@@ -82,7 +74,7 @@ public abstract class WorkDistributorContractTests : IDisposable
     // ── Shared Contract: GetActiveIssueIdentifiersAsync post-distribute ──
 
     [Fact]
-    public async Task AfterDistribute_GetActiveIssueIdentifiers_ContainsIssue()
+    public virtual async Task AfterDistribute_GetActiveIssueIdentifiers_ContainsIssue()
     {
         var sut = CreateSut();
         var request = CreateMinimalRequest();
@@ -101,205 +93,41 @@ public abstract class WorkDistributorContractTests : IDisposable
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Legacy implementation — mocked IJobDispatcher with AgentRegistryService
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// <summary>
-/// Runs the shared contract tests against <see cref="LegacyWorkDistributor"/>.
-/// Pre-registers an idle agent via <see cref="AgentRegistryService"/> and uses a stateful
-/// <see cref="IJobDispatcher"/> mock that tracks distributed issues.
-/// </summary>
-public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
-{
-    private readonly Mock<IJobDispatcher> _mockJobDispatcher = new();
-    private readonly Mock<IOrchestratorRunService> _mockRunService = new();
-    private readonly AgentRegistryService _registry;
-    private readonly JobDeduplicationGuardService _dispatcherService;
-    private readonly HashSet<(string IssueIdentifier, string IssueProviderConfigId)> _distributedIssues = new();
-
-    public LegacyWorkDistributorContractTests()
-    {
-        var logger = Mock.Of<ILogger>();
-
-        // Pre-register an idle agent via AgentRegistryService
-        _registry = new AgentRegistryService(logger);
-        _registry.Register(
-            new AgentRegistrationMessage
-            {
-                AgentId = "agent-contract-1",
-                Hostname = "contract-test-host",
-                Labels = ["default"]
-            },
-            connectionId: "conn-contract-1");
-
-        _dispatcherService = new JobDeduplicationGuardService(_registry, logger);
-
-        // Stateful mock: TryDispatchAsync records the issue, IsIssueBeingProcessedOrQueued checks recorded set
-        // TODO: TryDispatchAsync unconditionally returns true — this test asserts mock return value rather than
-        // validating request data flows correctly or correct overload is called. Consider stricter argument matching.
-        _mockJobDispatcher
-            .Setup(d => d.TryDispatchAsync(
-                It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<PipelineProject?>()))
-            .ReturnsAsync(true)
-            .Callback<IssueIdentifier, ProviderConfigId, ProviderConfigId, string?, string?, string, CancellationToken, string?, PipelineProject?>(
-                (issueId, provId, _, _, _, _, _, _, _) => _distributedIssues.Add((issueId.Value, provId.Value)));
-
-        // TODO: IsIssueBeingProcessedOrQueued uses It.IsAny<ProviderConfigId>() matchers — incorrect argument
-        // forwarding by LegacyWorkDistributor would go undetected. Consider matching specific values.
-        _mockJobDispatcher
-            .Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
-            .Returns<IssueIdentifier, ProviderConfigId>((issueId, provId) => _distributedIssues.Contains((issueId.Value, provId.Value)));
-
-        _mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun>());
-    }
-
-    protected override IWorkDistributor CreateSut()
-    {
-        return new LegacyWorkDistributor(
-            _mockJobDispatcher.Object,
-            _dispatcherService,
-            _mockRunService.Object);
-    }
-
-    protected override void SetupForDistribution(JobDistributionRequest request)
-    {
-        // TODO: This pre-configures GetActiveRuns() BEFORE DistributeAsync is called, meaning
-        // AfterDistribute_GetActiveIssueIdentifiers_ContainsIssue would pass even if DistributeAsync
-        // were never invoked. Consider verifying empty state before distribution to strengthen the assertion.
-        // Configure the run service mock to return the expected issue after dispatch.
-        // GetActiveIssueIdentifiersAsync reads from _dispatcherService.GetQueuedJobs() + _runService.GetActiveRuns().
-        // Since the mocked TryDispatchAsync doesn't actually enqueue, we provide the state via GetActiveRuns.
-        _mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun>
-        {
-            PipelineRun.CreateImplementation(new PipelineRunCreationParams
-            {
-                RunId = Guid.NewGuid().ToString(),
-                IssueIdentifier = request.IssueIdentifier,
-                IssueTitle = "Contract test issue",
-                IssueProviderConfigId = request.IssueProviderConfigId,
-                RepoProviderConfigId = request.RepoProviderConfigId,
-                InitiatedBy = request.InitiatedBy
-            })
-        });
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SignalR implementation — InMemory EF + mocked agent resolver
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// <summary>
-/// Runs the shared contract tests against <see cref="SignalRWorkDistributor"/>.
-/// Uses InMemory EF Core with mocked agent communication.
-/// </summary>
-public class SignalRWorkDistributorContractTests : WorkDistributorContractTests
-{
-    private readonly DbContextOptions<PipelineDbContext> _dbOptions;
-    private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
-    private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly SignalRWorkDistributor _sut;
-
-    public SignalRWorkDistributorContractTests()
-    {
-        _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase($"SignalRContract_{Guid.NewGuid()}")
-            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
-
-        using (var ctx = new ContractTestPipelineDbContext(_dbOptions))
-        {
-            ctx.Database.EnsureCreated();
-        }
-
-        _dbFactory = new ContractTestDbContextFactory(_dbOptions);
-
-        var transitionService = new WorkItemTransitionService(
-            _dbFactory, NullLogger<WorkItemTransitionService>.Instance);
-
-        _sut = new SignalRWorkDistributor(
-            _dbFactory,
-            _mockAgentComm.Object,
-            transitionService,
-            _mockResolver.Object,
-            new Mock<IOrchestratorRunService>().Object,
-            new Mock<IProjectStore>().Object,
-            NullLogger<SignalRWorkDistributor>.Instance);
-    }
-
-    protected override IWorkDistributor CreateSut() => _sut;
-
-    [Fact]
-    public void RequiresConnectedAgents_ReturnsFalse()
-    {
-        _sut.RequiresConnectedAgents.Should().BeFalse();
-    }
-
-    protected override void SetupForDistribution(JobDistributionRequest request)
-    {
-        // Mock agent resolution to return a valid agent
-        _mockResolver
-            .Setup(r => r.ResolveAgent(It.IsAny<string>()))
-            .Returns(new AgentResolveResult("conn-contract-1", "agent-contract-1"));
-
-        // Mock SignalR push to succeed
-        _mockAgentComm
-            .Setup(c => c.AssignJobAsync(
-                It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-    }
-
-    public override void Dispose()
-    {
-        using var db = new ContractTestPipelineDbContext(_dbOptions);
-        db.Database.EnsureDeleted();
-        base.Dispose();
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Kubernetes implementation — InMemory EF (simplest)
+// Kubernetes implementation — backed by an in-memory Pipeline API fake
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// <summary>
 /// Runs the shared contract tests against <see cref="KubernetesWorkDistributor"/>.
-/// Uses InMemory EF Core — no special setup needed (DistributeAsync is a pure DB insert).
+/// The distributor is a pure Pipeline API client, so the SUT is paired with an in-memory
+/// stand-in for the API (see <see cref="ApiWorkItemClientFake"/>) rather than a database.
 /// </summary>
 public class KubernetesWorkDistributorContractTests : WorkDistributorContractTests
 {
-    private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly KubernetesWorkDistributor _sut;
 
-    // TODO: Unlike SignalRWorkDistributorContractTests, this class does not override Dispose() to call
-    // EnsureDeleted(). While InMemory databases with unique GUID names won't leak across tests, this is
-    // inconsistent with the cleanup pattern and could accumulate InMemory database instances in long test runs.
     public KubernetesWorkDistributorContractTests()
     {
-        _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase($"K8sContract_{Guid.NewGuid()}")
-            .Options;
-        var factory = new ContractTestSimpleDbContextFactory(_dbOptions);
-        var transitionService = new WorkItemTransitionService(factory, Mock.Of<ILogger<WorkItemTransitionService>>());
-        _sut = new KubernetesWorkDistributor(factory, transitionService, Mock.Of<ILogger<KubernetesWorkDistributor>>());
+        _sut = new KubernetesWorkDistributor(
+            ApiWorkItemClientFake.Create(),
+            Mock.Of<ILogger<KubernetesWorkDistributor>>());
     }
 
     protected override IWorkDistributor CreateSut() => _sut;
 
     protected override void SetupForDistribution(JobDistributionRequest request)
     {
-        // No-op — K8s DistributeAsync always succeeds (pure DB insert as Pending)
+        // No-op — DistributeAsync records the item in the API fake, which then serves
+        // the dedup and status reads. No per-test priming needed.
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Additional tests — preserved Theory+MemberData tests + Kubernetes-specific
+// Additional tests — cold-state + Kubernetes-specific
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// <summary>
 /// Additional contract tests covering "cold state" behaviors (no prior distribution)
-/// and implementation-specific behaviors not part of the shared contract.
+/// and Kubernetes-specific behaviors not part of the shared contract.
 /// </summary>
 public class WorkDistributorAdditionalTests
 {
@@ -309,9 +137,7 @@ public class WorkDistributorAdditionalTests
     public static TheoryData<string, IWorkDistributor> AllImplementations()
     {
         var data = new TheoryData<string, IWorkDistributor>();
-        data.Add("Legacy", CreateLegacy());
         data.Add("Kubernetes", CreateKubernetes());
-        data.Add("SignalR", CreateSignalR());
         return data;
     }
 
@@ -321,7 +147,7 @@ public class WorkDistributorAdditionalTests
     [MemberData(nameof(AllImplementations))]
     public async Task DistributeAsync_NullRequest_ThrowsArgumentNullException(string implName, IWorkDistributor sut)
     {
-        _ = implName; // Used for test name disambiguation
+        _ = implName;
         var act = () => sut.DistributeAsync(null!, CancellationToken.None);
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
@@ -399,6 +225,8 @@ public class WorkDistributorAdditionalTests
     [Fact]
     public async Task Kubernetes_AfterDistribute_GetJobStatus_ReturnsPending()
     {
+        // DistributeAsync creates the WorkItem via the API in Pending state; the Job Controller's
+        // dispatch loop is what later moves it to Dispatched/Running.
         var sut = CreateKubernetes();
         var request = CreateMinimalRequest();
 
@@ -408,98 +236,10 @@ public class WorkDistributorAdditionalTests
         status.Should().Be(JobDistributionStatus.Pending);
     }
 
-    [Fact]
-    public async Task Kubernetes_AfterDistributeAndCancel_GetJobStatus_ReturnsCancelled()
-    {
-        var sut = CreateKubernetes();
-        var request = CreateMinimalRequest();
-
-        var result = await sut.DistributeAsync(request, CancellationToken.None);
-        var cancelled = await sut.CancelJobAsync(result.WorkItemId!, CancellationToken.None);
-
-        cancelled.Should().BeTrue();
-        var status = await sut.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
-        status.Should().Be(JobDistributionStatus.Cancelled);
-    }
-
-    // ── RequiresConnectedAgents — Property Value Verification ───────────
-
-    [Fact]
-    public void LegacyWorkDistributor_RequiresConnectedAgents_ReturnsTrue()
-    {
-        var sut = CreateLegacy();
-        sut.RequiresConnectedAgents.Should().BeTrue();
-    }
-
-    [Fact]
-    public void KubernetesWorkDistributor_RequiresConnectedAgents_ReturnsFalse()
-    {
-        var sut = CreateKubernetes();
-        sut.RequiresConnectedAgents.Should().BeFalse();
-    }
-
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    private static LegacyWorkDistributor CreateLegacy()
-    {
-        var mockJobDispatcher = new Mock<IJobDispatcher>();
-        mockJobDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
-            .Returns(false);
-        var logger = Mock.Of<ILogger>();
-        var registry = new AgentRegistryService(logger);
-        var dispatcherService = new JobDeduplicationGuardService(registry, logger);
-        var mockRunService = new Mock<IOrchestratorRunService>();
-        mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun>());
-
-        return new LegacyWorkDistributor(
-            mockJobDispatcher.Object,
-            dispatcherService,
-            mockRunService.Object);
-    }
-
     private static KubernetesWorkDistributor CreateKubernetes()
-    {
-        var options = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase($"AdditionalTests_{Guid.NewGuid()}")
-            .Options;
-        var factory = new ContractTestSimpleDbContextFactory(options);
-        var transitionService = new WorkItemTransitionService(factory, Mock.Of<ILogger<WorkItemTransitionService>>());
-        return new KubernetesWorkDistributor(factory, transitionService, Mock.Of<ILogger<KubernetesWorkDistributor>>());
-    }
-
-    private static SignalRWorkDistributor CreateSignalR()
-    {
-        // Must use ContractTestPipelineDbContext (not plain PipelineDbContext) to suppress
-        // InMemory provider incompatibilities: RowVersion concurrency tokens + filtered indexes.
-        // Must include ConfigureWarnings to suppress the InMemory transaction warning emitted
-        // by SaveChangesAsync / TransitionAsync calls inside SignalRWorkDistributor.
-        var dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase($"SignalRAdditional_{Guid.NewGuid()}")
-            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
-
-        using (var ctx = new ContractTestPipelineDbContext(dbOptions))
-            ctx.Database.EnsureCreated();
-
-        var dbFactory = new ContractTestDbContextFactory(dbOptions);
-        var transitionService = new WorkItemTransitionService(
-            dbFactory, NullLogger<WorkItemTransitionService>.Instance);
-
-        // IAgentCommunication and ISignalRWorkDistributorAgentResolver mocks have no setups here.
-        // The six cold-state Theory tests don't trigger dispatch paths so this is currently safe,
-        // but if SignalRWorkDistributor ever calls ResolveAgent/AssignJobAsync before its null guard,
-        // the mock's default return (null) would mask the bug rather than throwing NullReferenceException.
-        // Add explicit mock setups (matching SignalRWorkDistributorContractTests) if the
-        // DistributeAsync null-guard position changes or new Theory tests are added that exercise dispatch.
-        return new SignalRWorkDistributor(
-            dbFactory,
-            new Mock<IAgentCommunication>().Object,
-            transitionService,
-            new Mock<ISignalRWorkDistributorAgentResolver>().Object,
-            new Mock<IOrchestratorRunService>().Object,
-            new Mock<IProjectStore>().Object,
-            NullLogger<SignalRWorkDistributor>.Instance);
-    }
+        => new(ApiWorkItemClientFake.Create(), Mock.Of<ILogger<KubernetesWorkDistributor>>());
 
     private static JobDistributionRequest CreateMinimalRequest() => new()
     {
@@ -518,70 +258,43 @@ public class WorkDistributorAdditionalTests
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// <summary>
-/// InMemory PipelineDbContext that disables RowVersion concurrency tokens and
-/// removes filtered partial indexes (not supported by InMemory provider).
-/// Required for SignalR tests where DistributeAsync updates work item status.
+/// In-memory stand-in for the Pipeline API's work-item endpoints, covering the four operations
+/// <see cref="KubernetesWorkDistributor"/> uses. Created work items are remembered so that the
+/// dedup and status reads answer from them — the same round trip a live API performs, and the
+/// only way the distributor's post-distribute contract can be exercised now that it holds no
+/// database of its own.
 /// </summary>
-file sealed class ContractTestPipelineDbContext : PipelineDbContext
+file static class ApiWorkItemClientFake
 {
-    public ContractTestPipelineDbContext(DbContextOptions<PipelineDbContext> options)
-        : base(options) { }
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    public static IPipelineApiWorkItemClient Create()
     {
-        base.OnModelCreating(modelBuilder);
+        var created = new List<(Guid Id, JobDistributionRequest Request)>();
+        var mock = new Mock<IPipelineApiWorkItemClient>();
 
-        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
-        {
-            var rowVersionProp = entityType.FindProperty("RowVersion");
-            if (rowVersionProp != null)
+        mock.Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDistributionRequest request, CancellationToken _) =>
             {
-                rowVersionProp.IsConcurrencyToken = false;
-                rowVersionProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
-            }
-        }
+                var id = Guid.NewGuid();
+                created.Add((id, request));
+                return id;
+            });
 
-        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
-        {
-            var indexesToRemove = entityType.GetIndexes()
-                .Where(i => i.GetFilter() != null)
-                .ToList();
-            foreach (var index in indexesToRemove)
-            {
-                entityType.RemoveIndex(index);
-            }
-        }
+        // POST /api/work-items creates the item in Pending; nothing here dispatches it further.
+        mock.Setup(c => c.GetStatusAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                created.Any(w => w.Id == id) ? WorkItemStatus.Pending : null);
+
+        mock.Setup(c => c.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string issueIdentifier, string providerConfigId, CancellationToken _) =>
+                created.Any(w => w.Request.IssueIdentifier == issueIdentifier &&
+                                 w.Request.IssueProviderConfigId == providerConfigId));
+
+        mock.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => (IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>)created
+                .Select(w => (w.Request.IssueIdentifier.Value, w.Request.IssueProviderConfigId))
+                .Distinct()
+                .ToList());
+
+        return mock.Object;
     }
-}
-
-/// <summary>
-/// IDbContextFactory for SignalR contract tests — uses <see cref="ContractTestPipelineDbContext"/>
-/// with explicit <see cref="IDbContextFactory{TContext}.CreateDbContextAsync"/> implementation.
-/// </summary>
-file sealed class ContractTestDbContextFactory : IDbContextFactory<PipelineDbContext>
-{
-    private readonly DbContextOptions<PipelineDbContext> _options;
-
-    public ContractTestDbContextFactory(DbContextOptions<PipelineDbContext> options)
-        => _options = options;
-
-    public PipelineDbContext CreateDbContext()
-        => new ContractTestPipelineDbContext(_options);
-
-    public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
-        => Task.FromResult(CreateDbContext());
-}
-
-/// <summary>
-/// Simple IDbContextFactory for Kubernetes contract tests — uses plain <see cref="PipelineDbContext"/>
-/// (K8s DistributeAsync only inserts, no RowVersion usage in the contract test paths).
-/// </summary>
-file sealed class ContractTestSimpleDbContextFactory : IDbContextFactory<PipelineDbContext>
-{
-    private readonly DbContextOptions<PipelineDbContext> _options;
-
-    public ContractTestSimpleDbContextFactory(DbContextOptions<PipelineDbContext> options)
-        => _options = options;
-
-    public PipelineDbContext CreateDbContext() => new(_options);
 }

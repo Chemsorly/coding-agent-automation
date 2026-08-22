@@ -4,7 +4,7 @@ using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
-using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Hub;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 

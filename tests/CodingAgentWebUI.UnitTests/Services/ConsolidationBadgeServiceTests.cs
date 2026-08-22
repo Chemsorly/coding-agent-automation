@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Hub;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 
@@ -168,5 +168,103 @@ public sealed class ConsolidationBadgeServiceTests
 
         var shouldDisplay = _sut.BadgeCount > 0;
         shouldDisplay.Should().BeFalse();
+    }
+
+    // ── HasEverBeenIncremented ─────────────────────────────────────────────
+
+    [Fact]
+    public void HasEverBeenIncremented_Initially_IsFalse()
+    {
+        // Validates: Req 3.9 — badge shows stale indicator when never incremented
+        _sut.HasEverBeenIncremented.Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasEverBeenIncremented_AfterIncrementByPositive_IsTrue()
+    {
+        // Validates: Req 3.9 — once events arrive, stale indicator no longer shown
+        _sut.IncrementBy(1);
+
+        _sut.HasEverBeenIncremented.Should().BeTrue();
+    }
+
+    [Fact]
+    public void HasEverBeenIncremented_AfterIncrementByZero_RemainseFalse()
+    {
+        // IncrementBy(0) is a no-op — should not count as "ever incremented"
+        _sut.IncrementBy(0);
+
+        _sut.HasEverBeenIncremented.Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasEverBeenIncremented_AfterReset_RemainsTrue()
+    {
+        // Validates: Req 3.9 — Reset resets the count but NOT the ever-incremented flag;
+        // "visited page" and "stale instance" must remain distinguishable.
+        _sut.IncrementBy(3);
+        _sut.Reset();
+
+        _sut.HasEverBeenIncremented.Should().BeTrue();
+    }
+}
+
+
+// Additional thread-safety tests for uncovered concurrent-access paths
+
+public sealed class ConsolidationBadgeServiceConcurrencyTests
+{
+    [Fact]
+    public void IncrementBy_ConcurrentCalls_ProducesCorrectFinalCount()
+    {
+        // Validates: thread-safety under concurrent IncrementBy calls (lock path)
+        var sut = new ConsolidationBadgeService();
+        const int threadCount = 10;
+        const int incrementsPerThread = 100;
+
+        Parallel.For(0, threadCount, _ =>
+        {
+            for (int i = 0; i < incrementsPerThread; i++)
+                sut.IncrementBy(1);
+        });
+
+        sut.BadgeCount.Should().Be(threadCount * incrementsPerThread);
+    }
+
+    [Fact]
+    public void Reset_ConcurrentWithIncrementBy_NeverProducesNegativeCount()
+    {
+        // Validates: Reset and IncrementBy racing together never produce a negative count
+        var sut = new ConsolidationBadgeService();
+        const int ops = 200;
+
+        Parallel.For(0, ops, i =>
+        {
+            if (i % 2 == 0)
+                sut.IncrementBy(1);
+            else
+                sut.Reset();
+        });
+
+        sut.BadgeCount.Should().BeGreaterThanOrEqualTo(0);
+    }
+
+    [Fact]
+    public void HasEverBeenIncremented_ConcurrentIncrements_NeverFlipsBackToFalse()
+    {
+        // Once HasEverBeenIncremented is true, it must never revert under concurrency
+        var sut = new ConsolidationBadgeService();
+
+        // Set it to true first
+        sut.IncrementBy(1);
+
+        Parallel.For(0, 100, _ =>
+        {
+            sut.Reset();
+            // This should never set HasEverBeenIncremented back to false
+        });
+
+        sut.HasEverBeenIncremented.Should().BeTrue(
+            "Reset must never clear HasEverBeenIncremented");
     }
 }

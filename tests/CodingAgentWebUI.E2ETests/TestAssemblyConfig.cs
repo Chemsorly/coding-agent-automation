@@ -1,7 +1,7 @@
 using Xunit;
 
 // Test parallelism is disabled because multiple WebApplicationFactory instances
-// set process-global environment variables (Database__Host, WorkDistribution__Mode)
+// set process-global environment variables (Database__Host, PipelineApi__BaseUrl, ...)
 // that determine which code path Program.cs takes. With parallel execution, one
 // factory's env vars bleed into another's host build.
 //

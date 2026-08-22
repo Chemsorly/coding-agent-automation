@@ -201,8 +201,8 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         if (agent is null)
             return false;
 
-        // Accept Idle (Legacy drain — agent not yet reserved) or Busy with no active job
-        // (DB drain — agent pre-reserved by PendingWorkItemDrainService via ResolveAgent).
+        // Accept Idle or Busy with no active job
+        // (agent was reserved but never accepted a job, which can happen during agent startup).
         if (agent.Status != AgentStatus.Idle &&
             !(agent.Status == AgentStatus.Busy && agent.ActiveJobId is null))
             return false;
@@ -258,7 +258,6 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         // Consider querying by IssueIdentifier instead of relying on ID equality. (#1084 follow-up)
         await _workDistributor.CancelJobAsync(runId.Value, ct);
 
-        // Legacy mode: remove from in-memory queue
         // TODO: JobDeduplicationGuardService.RemoveJob still takes string — RunId.Value is unwrapped
         // here at the JobDeduplicationGuardService boundary. Updating RemoveJob to accept RunId would
         // close this remaining string crossing. (#2069 follow-up)

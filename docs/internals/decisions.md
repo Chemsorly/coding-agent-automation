@@ -6,7 +6,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 <!-- Intent Extraction Sessions -->
 <!-- Session: 12 | Last run: 2026-08-14 | Decisions captured: 64 -->
-<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService decomposition execution -->
+<!-- Session: 13 | Last run: 2026-08-22 | Updates: leader-election registration correction, LocalPipelineExecutor marked complete, AgentCodingPageService status updated, Signal() removal noted -->
+<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition -->
 
 ---
 
@@ -24,9 +25,11 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Date:** 2026-08-14
 **Category:** architecture
 
-**Decision:** In K8s multi-replica deployments, `PipelineLoopService` MUST only run its poll loop when `ILeaderElectionService.IsLeader` is true. This applies to the entire loop — not just the housekeeping sub-step. The rationale: `LoopStatePersistenceService` auto-resumes the loop on pod restart, meaning all replicas would independently start polling if the loop were not leader-gated. Operations that bypass the WorkItem dedup pipeline (most immediately, the housekeeping auto-branch-updater calling `UpdatePullRequestBranchAsync` directly) have no dedup at all and WILL fire concurrently on non-gated replicas. In Legacy and SignalR modes (single-replica by design), `ILeaderElectionService` is not registered; the loop runs unconditionally as today. Issue #1987 tracks the implementation; it is blocked by #1912 (now closed — #1912 is complete, so #1987 is unblocked).
+**Decision:** In K8s multi-replica deployments, `PipelineLoopService` MUST only run its poll loop when `ILeaderElectionService.IsLeader` is true. This applies to the entire loop — not just the housekeeping sub-step. The rationale: `LoopStatePersistenceService` auto-resumes the loop on pod restart, meaning all replicas would independently start polling if the loop were not leader-gated. Operations that bypass the WorkItem dedup pipeline (most immediately, the housekeeping auto-branch-updater calling `UpdatePullRequestBranchAsync` directly) have no dedup at all and WILL fire concurrently on non-gated replicas. `ILeaderElectionService` is registered unconditionally at `WorkDistributionRegistration.Consolidation.cs:70`; when the gate resolves to null (test environments with no DI registration), the loop runs unconditionally as before.
 
-**Context:** `PipelineLoopService` predates the multi-replica deployment model. `LeaderElectedPollingService` was extracted in #1912 and is used by `DispatchService`, `ConsolidationDispatchHandler`, and `ReconciliationService`. `PipelineLoopService` was not migrated in that PR. `LeaderElectionService.cs` documentation already claims PipelineLoopService is covered — this is aspirational, not yet true.
+**Status (2026-08-20):** Implemented. `PipelineLoopService` uses a `_leaderGate` field (`ILeaderGate?`) sourced from `deps.LeaderElection` (= `sp.GetService<ILeaderElectionService>()`). On startup, the loop spins on `_leaderGate is { IsLeader: false }` before entering the activation loop, and links `_leaderGate.LeaderToken` into the run's `CancellationTokenSource` so the loop stops immediately on leadership loss. When `ILeaderElectionService` is not registered (test environments), `_leaderGate` is null and the loop runs unconditionally as before. Issue #1987 is complete.
+
+**Context:** `PipelineLoopService` predates the multi-replica deployment model. `LeaderElectedPollingService` was extracted in #1912 and is used by `DispatchService`, `ConsolidationDispatchHandler`, and `ReconciliationService`. `PipelineLoopService` was not migrated to use `LeaderElectedPollingService` as its base — it has its own `_leaderGate` integration instead.
 
 **Alternatives considered:** Gate only direct API callers like housekeeping (partial gating) — rejected because WorkItem dedup is not a hard guarantee and auto-resume makes full loop gating necessary.
 
@@ -61,6 +64,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Alternatives considered:** Keep as-is (coherent vertical slices are readable, ~750 lines is not yet blocking), dispatch-path extraction only (removes mode branching but leaves drawer methods dense).
 
 **Reassess when:** After extraction, if the sub-services are harder to navigate than the original monolith, reconsider granularity.
+
+**Status (2026-08-22):** Partially completed. `AgentCodingPageService` is now 449 lines (down from ~747). However, `AgentCoding.razor.cs` grew to 572 lines (was ~501, target was timer/dismiss-only) — logic landed in the component rather than leaving it. The razor component is now the higher-priority decomposition target: business logic should be extracted back into services on the next touch.
 
 ---
 
@@ -182,6 +187,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 **Reassess when:** If the system needs per-agent revocation without rotating the master key (e.g., a compromised agent that must be isolated without restarting others). This would require individual secrets or a revocation list.
 
+**Status (2026-08-17):** Resolved in Spec 043. JobSpecBuilder now vends HMAC-SHA256(master, agentId) via per-Job Secret with ownerReference. WorkItemHttpClient appends ?agentId= on GetAssignment and PostStatus. The divergence predated specs 041–045; prior to this spec, every agent pod mounted the master Secret directly despite the HMAC derivation logic existing at the auth layer.
+
 ---
 
 ### Telemetry philosophy: instrument every decision point for full run traceability
@@ -279,6 +286,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 **Decision:** Two distinct agent lifetime models exist by deployment mode. Docker Compose: agents are persistent containers using a pull-model (connect via SignalR, receive jobs, execute, return to idle). K8s mode: agents are ephemeral pods using a push-model (one K8s Job per WorkItem, container destroyed after completion). The pull-model was the original design. The K8s push-model is the production-scale future. Docker-compose mode may eventually be deprecated once K8s-mode proves itself. `IWorkDistributor` abstracts the difference from the pipeline layer.
 
+**Status (2026-08-16):** Spec 041 removed the docker-compose deployment target and the Legacy/SignalR work distribution modes. Kubernetes Jobs are now the only work distribution mechanism. The pull-model (docker-compose) is gone; the push-model (K8s) is now the only runtime. The `IWorkDistributor` abstraction was retained — `KubernetesWorkDistributor` is the sole implementation.
+
 **Context:** GitHub Actions uses ephemeral runners. Argo uses ephemeral pods. The pull-model works well for developer/small-team deployments (low-latency, session affinity for resume). K8s ephemeral is better for production (clean-slate isolation, autoscaling, no stale state). The PVC pool in K8s manages credential persistence across ephemeral pods.
 
 **Alternatives considered:** Single model (always ephemeral — locks out non-K8s users), converge immediately (premature — K8s mode is still maturing).
@@ -293,6 +302,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Category:** architecture
 
 **Decision:** The Helm `values.yaml` separates `agents[]` (SignalR mode Deployments) from `jobTemplates[]` (Kubernetes mode Job pod specs). These serve fundamentally different purposes: `agents` creates persistent Deployments with PVCs, health probes, and rolling update strategies; `jobTemplates` defines ephemeral Job pod specs (image, resources, securityContext, initContainers) rendered into a ConfigMap consumed by `DispatchService`. The ConfigMap template falls back to `agents[]` when `jobTemplates` is empty for backward compatibility.
+
+**Status (2026-08-16):** Spec 041 removed `agents[]` from `values.yaml`. `jobTemplates[]` is now the sole definition for agent pod specs. The ConfigMap fallback to `agents[]` is gone. The separation rationale is now historical — the two values sections have been collapsed to one.
 
 **Context:** Originally a single `agents[]` field served both modes. In SignalR mode it creates Deployments; in K8s mode it only produced a ConfigMap (no Deployments). The dual-purpose design caused confusion: K8s-only fields (maxConcurrent, initContainers for permission fixers) mixed with Deployment-only fields (persistence, strategy, affinity). The split clarifies: `agents` for what runs persistently, `jobTemplates` for what ephemeral Job pods look like.
 
@@ -465,6 +476,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 **Reassess when:** After #975 is implemented (extract records), reassess if further decomposition is needed. Target: core file under 600 lines.
 
+**Status (2026-08-22):** Completed. `LocalPipelineExecutor` is now 334 lines — well under the 600-line target. Decomposition is complete; no further action needed.
+
 ---
 
 ### Label lifecycle needs formalization — currently informal state machine (#1046)
@@ -503,6 +516,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Category:** architecture
 
 **Decision:** `InfiniteRetryPolicy` (exponential backoff 1s → 120s cap + jitter) ensures agents never self-terminate from disconnection. This is intentional for docker-compose mode: orchestrator restarts are common during development, and agents should recover automatically. For a future K8s-only setup, self-termination after prolonged disconnection (letting K8s liveness probes → pod restart) would be more appropriate. Currently, both modes use infinite retry.
+
+**Status (2026-08-16):** Spec 041 removed docker-compose mode. All agents are now ephemeral K8s Jobs. For work-item pods this is largely moot (the Job terminates after one work item). For chat pods (`AgentWorkerService`), infinite retry is retained — chat pods use SignalR throughout their lifetime and should reconnect automatically if the orchestrator restarts. The `InfiniteRetryPolicy` remains in place for chat pods.
 
 **Context:** Kubernetes controllers use infinite watch re-establishment. GitHub Actions runners self-terminate after prolonged disconnection (5 min). The 120s cap prevents CPU waste while maintaining ~30s average reconnection latency after orchestrator returns.
 
@@ -809,6 +824,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Category:** future-direction
 
 **Decision:** The system supports three deployment modes representing progressive infrastructure investment. Legacy (in-memory JSON files, zero dependencies) was the initial implementation. DB+SignalR adds Postgres persistence for multi-replica safety. DB+Kubernetes adds K8s Job-based dispatch for production scale. For non-K8s deployments, DB+SignalR is the production path. K8s-only is a possible long-term direction but that decision hasn't been made yet. Legacy mode remains for zero-friction onboarding but is not guaranteed feature parity with DB modes — new persistence-dependent features can be DB-only.
+
+**Status (2026-08-16):** Spec 041 removed Legacy mode and DB+SignalR mode. Kubernetes (DB+Kubernetes) is now the only supported deployment target. PostgreSQL is required. The progressive model was collapsed to a single mode.
 
 **Context:** The `IWorkDistributor` and `IConfigurationStore` abstractions enable all three modes. Docker Compose is the development/small-team target. Helm chart is the K8s production target. Both deployment targets are first-class. New features requiring work item lifecycle or reconciliation can be DB-only.
 

@@ -1,6 +1,6 @@
 # Pipeline Configuration
 
-Pipeline behavior is configured via the web UI (Settings page) or the database. In legacy file-based mode, configuration was stored in `config/pipeline/` JSON files; in DB mode, all configuration is persisted to PostgreSQL.
+Pipeline behavior is configured via the web UI (Settings page) or the database. All configuration is persisted to PostgreSQL.
 
 See also: [Pipeline Orchestration](pipeline-orchestration.md) for how these settings affect the state machine, [Label Routing](label-routing.md) for per-stack quality gate and reviewer configuration, and [Projects](projects.md) for per-project settings inheritance.
 
@@ -76,6 +76,18 @@ These control in-memory bounded data structures for each pipeline run. Rarely ne
 | `decompositionTimeout` | 00:15:00 | Timeout for decomposition phases (separate from `agentTimeout`) |
 | `maxOpenIssuesForContext` | 50 | Maximum open issues downloaded for deduplication context |
 
+### Consolidation Dispatch
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxConsolidationDispatchRetries` | 5 | Maximum attempts the drain service will make to dispatch a consolidation job to an agent before marking the run as `Failed`. Consolidation jobs are not subject to the standard quality gate retry budget. Configurable per project. |
+
+### Kubernetes
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `modelFetchTimeoutSeconds` | 120 | Timeout in seconds for the model-fetch K8s Job (`caa-models-*`). Increase on slow setups where image pull or pod scheduling takes longer than the default. Range: 30–600. |
+
 ## Quality Gate Settings
 
 Quality gates are configured per-stack via Quality Gate Configurations (see [Label Routing](label-routing.md#quality-gate-configurations)). Each QGC has these fields:
@@ -87,6 +99,7 @@ Quality gates are configured per-stack via Quality Gate Configurations (see [Lab
 | `coverageThreshold` | Minimum code coverage percentage (0-100). Set to `null` or `0` to disable coverage checks. |
 | `coverageReportFormat` | `cobertura` or `jacoco` — determines how coverage reports are parsed |
 | `coverageReportPaths` | Explicit file globs for coverage reports. When not specified, convention-based discovery is used. |
+| `processTimeoutSeconds` | Maximum execution time in seconds for quality gate processes (compilation, tests). Default: `600` (10 minutes). Processes exceeding this limit are killed (entire process tree) and the gate is reported as failed. |
 
 ## Code Review Settings
 
@@ -173,26 +186,27 @@ Templates are managed in the **Agent Coding** page. When creating or viewing a t
 | ReviewEnabled | No | Whether this template processes PRs for code review (default: true) |
 | DecompositionEnabled | No | Whether this template processes epics for decomposition (default: false) |
 | HousekeepingEnabled | No | Whether this template manages agent:done PRs for branch updates and stale cleanup (default: false) |
+| BrainReadOnly | No | When `true`, forces brain read-only mode for this template regardless of global and project-level settings. **One-directional override** — can only be set to `true`; a template cannot re-enable brain writes if the project has disabled them. Default: `false`. |
 
 ## Environment Variables
 
-These environment variables are used by the Docker containers:
+These environment variables are used by the Kubernetes deployment.
 
-### Database (DB+SignalR Mode)
+### Database
 
 | Variable | Description |
 |----------|-------------|
-| `Database__Host` | PostgreSQL hostname. When set, the orchestrator uses Postgres instead of JSON files for all configuration and work item persistence. |
+| `Database__Host` | PostgreSQL hostname (required — startup fails if not configured). |
 | `Database__Port` | PostgreSQL port (default: `5432`) |
 | `Database__Username` | PostgreSQL username |
 | `Database__Password` | PostgreSQL password |
-| `Database__Name` | PostgreSQL database name (default: `coding_agent_automation`). `docker-compose.postgres.yml` also uses this value. |
+| `Database__Name` | PostgreSQL database name (default: `coding_agent_automation`). |
 | `Database__SslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. The application normalizes `Prefer` to `Require` in production environments when no explicit value is set. Use `Disable` for local/in-cluster Postgres without TLS. |
-| `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`). Disable if running migrations externally. |
+| `Database__MigrateOnStartup` | **Has no effect — the Helm templates hardcode this to `false`.** EF Core migrations are applied automatically by the Pipeline API on startup. Set this only when running migrations manually via `kubectl exec` into the API pod. |
 
 ### Config Import/Export
 
-In DB mode, pipeline configuration is managed via **Settings → Data Management**:
+Pipeline configuration is managed via **Settings → Data Management**:
 
 - **Export** — Downloads the full configuration as a single JSON bundle (providers, profiles, quality gates, reviewers, projects, templates)
 - **Import** — Uploads a JSON bundle, clears existing config, and inserts from the bundle. Cache is invalidated immediately; UI refreshes automatically.
@@ -201,44 +215,42 @@ The bundle format is a flat JSON object with arrays for each entity type. Provid
 
 API endpoints:
 - `GET /api/config/export` — returns the bundle as `application/json`
-- `POST /api/config/import` — accepts multipart form upload of the bundle file
+- `POST /api/config/import` — accepts `multipart/form-data` upload with field `file`
 
-For full request/response examples, authentication details, and query parameters, see the [HTTP API Reference](api-reference.md).
+For full request/response examples, authentication details, and query parameters, see the [HTTP API Reference](api-reference.md). For migration scenarios, see [Bootstrap](bootstrap.md).
 
 ### Orchestrator
 
 | Variable | Description |
 |----------|-------------|
-| `AGENT_API_KEY` | Shared secret for authenticating agent connections. Each agent derives its actual auth key via HMAC(master_key, agent_id). Legacy agents without an ID fall back to raw key comparison. |
-| `LOG_LEVEL` | Serilog log level (default: `Information`) — also applies to the orchestrator |
+| `AGENT_API_KEY` | Shared secret for authenticating agent connections. Each agent derives its actual auth key via HMAC(master_key, agent_id). |
+| `LOG_LEVEL` | Serilog log level (default: `Information`) |
 | `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 90, range: 0–600). Prevents dispatching to agents mid-termination during rolling updates. |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
 | `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. |
+| `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8090`). **Required.** Used by `IPipelineApiConfigClient` to load pipeline configuration and by `IAgentHubConnection` as the fallback hub URL base. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
+| `PipelineApi__HubUrl` | Full URL of the Pipeline API SignalR hub (default: `{PipelineApi__BaseUrl}/hubs/agent`). The Orchestrator's `IAgentHubConnection` subscribes to this hub for live run streaming. Override via `api.hubUrl` in `values.yaml` only when the hub path differs from the default. |
 
-### SignalR Backplane (DB mode)
-
-| Variable | Description |
-|----------|-------------|
-| `SignalR__Redis__ConnectionString` | Redis connection string for SignalR backplane (required when running multiple orchestrator replicas in DB mode). Format: `host:port,password=xxx` |
-
-### Work Distribution
+### SignalR Backplane (multi-replica)
 
 | Variable | Description |
 |----------|-------------|
-| `WorkDistribution__Mode` | Dispatch mode: `SignalR` (default) or `Kubernetes`. Only applicable in DB mode. |
+| `SignalR__Redis__ConnectionString` | Redis connection string for SignalR backplane (required when running multiple orchestrator replicas). Format: `host:port,password=xxx` |
 
-### Database Maintenance (DB mode)
+### Database Maintenance
 
-In DB mode, a background `DatabaseMaintenanceService` periodically deletes terminal records to prevent unbounded table growth. Configuration is in the `WorkDistribution:Reconciliation` section (same section used by `ReconciliationService` in K8s mode):
+A background `DatabaseMaintenanceService` periodically deletes terminal records to prevent unbounded table growth. Configuration is via `PipelineConfiguration` properties (set in the pipeline config JSON in the database, not as environment variables):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `WorkDistribution:Reconciliation:PipelineRunRetentionDays` | 90 | Days to retain `PipelineRuns` after completion before deletion |
-| `WorkDistribution:Reconciliation:ConsolidationRunRetentionDays` | 90 | Days to retain `ConsolidationRuns` after completion before deletion |
-| `WorkDistribution:Reconciliation:StaleRetentionDays` | 7 | Days to retain terminal `WorkItems` (`Succeeded`, `Failed`, `Cancelled`) before deletion |
-| `WorkDistribution:Reconciliation:MaintenanceIntervalHours` | 6 | Hours between maintenance cycles |
+| `PipelineRunRetentionCount` | `-1` (disabled) | Max `PipelineRuns` rows to retain per project. `-1` disables count-based retention. |
+| `WorkItemRetentionCount` | `-1` (disabled) | Max terminal `WorkItems` rows to retain per project. `-1` disables count-based retention. |
+| `DbRetentionSweepInterval` | `24h` | Interval between maintenance cycles. Minimum 1 minute. |
+| `WorkDistribution:Reconciliation:StaleRetentionDays` | `7` | Days to retain terminal `WorkItems` (`Succeeded`, `Failed`, `Cancelled`) before deletion. Set via env var. |
 
-The maintenance service runs immediately on startup and then on the configured interval. In multi-replica deployments it gates behind leader election so only one replica runs cleanup at a time.
+> **Note:** The `WorkDistribution:Reconciliation:PipelineRunRetentionDays`, and `MaintenanceIntervalHours` config keys no longer exist. They were replaced by `PipelineRunRetentionCount`, `WorkItemRetentionCount`, and `DbRetentionSweepInterval` in `PipelineConfiguration`. `ConsolidationRunRetentionDays` still exists on `ReconciliationServiceOptions` (default: 90 days) and controls how long consolidation run history is kept.
+
+The maintenance service runs on first startup and then on the configured interval. In multi-replica deployments it gates behind leader election so only one replica runs cleanup at a time.
 
 ### OpenTelemetry
 
@@ -247,7 +259,7 @@ The maintenance service runs immediately on startup and then on the configured i
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
-| `OTEL_SERVICE_NAME` | Service name for telemetry (set per container in docker-compose) |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-orchestrator`, `coding-agent-api`, `coding-agent-jobcontroller`) |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
 
 ### Agent Containers
@@ -268,8 +280,6 @@ The maintenance service runs immediately on startup and then on the configured i
 | `OPENAI_API_KEY` | OpenAI API key for LLM access (optional, for OpenAI-backed agents) |
 | `OPENROUTER_API_KEY` | OpenRouter API key for LLM access (optional, for OpenRouter-backed agents) |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
-
-> **Operator note:** The `docker-compose.yml` intentionally does not pass through sensitive credentials (`OPENCODE_SERVER_PASSWORD`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`). If needed, add them manually to the relevant service's `environment` block or source them from your `.env` file. The Helm chart exposes these explicitly via `values.yaml`.
 
 ## Environment Setup Steps
 

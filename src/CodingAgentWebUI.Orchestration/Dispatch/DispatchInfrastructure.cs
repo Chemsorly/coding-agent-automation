@@ -7,16 +7,15 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Aggregate that bundles shared dispatch-path dependencies used by both
-/// <see cref="AgentJobDispatcher"/> and <see cref="DispatchOrchestrationService"/>.
+/// Aggregate that bundles shared dispatch-path dependencies used by
+/// <see cref="DispatchOrchestrationService"/>.
 /// Reduces constructor parameter count by grouping services that always travel together:
 /// provider config building, profile resolution, token vending, and label operations.
 /// <para>
 /// Also hosts <see cref="PrepareDispatchCoreAsync"/> — the single consolidated method
 /// for the shared dispatch preparation sequence (QG/reviewer resolution, issue context,
 /// provider config preparation, pipeline config resolution, and staleness detection).
-/// Both <see cref="AgentJobDispatcher"/> and <see cref="DispatchOrchestrationService"/>
-/// delegate to this method, eliminating drift between the Legacy and DB paths.
+/// <see cref="DispatchOrchestrationService"/> delegates to this method.
 /// </para>
 /// <para>
 /// Registered as a singleton in DI. Consumers access individual services via properties.
@@ -31,8 +30,7 @@ public sealed class DispatchInfrastructure
 
     /// <summary>
     /// Optional staleness detector for evaluating analysis freshness.
-    /// Injected via constructor in DB mode; null in legacy (no-DB) mode where
-    /// <see cref="Pipeline.Interfaces.IWorkItemQueryService"/> is unavailable.
+    /// Null when not registered (AnalysisStalenessDetector was removed in Spec 045 Req 1.2).
     /// </summary>
     public AnalysisStalenessDetector? StalenessDetector { get; }
 
@@ -55,7 +53,7 @@ public sealed class DispatchInfrastructure
         StalenessDetector = stalenessDetector;
     }
 
-    // ── Config Resolution (extracted from AgentJobDispatcher) ─────────────────────
+    // ── Config Resolution ──────────────────────────────────────────────────────────
 
     /// <summary>
     /// Prepares provider configs and resolves the pipeline configuration for a dispatch.
@@ -110,7 +108,7 @@ public sealed class DispatchInfrastructure
     /// </summary>
     /// <remarks>
     /// The superset signature supports optional <paramref name="additionalRepoProviderIds"/> for
-    /// cross-repo decomposition (used by <see cref="AgentJobDispatcher"/>). Callers that don't
+    /// cross-repo decomposition. Callers that don't
     /// need cross-repo support simply omit the parameter.
     /// </remarks>
     internal async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
@@ -311,8 +309,7 @@ public sealed class DispatchInfrastructure
     // ── Consolidated Dispatch Preparation ─────────────────────────────────────────
 
     /// <summary>
-    /// Consolidated dispatch preparation logic shared by both <see cref="AgentJobDispatcher"/>
-    /// (Legacy/SignalR path) and <see cref="DispatchOrchestrationService"/> (DB path).
+    /// Consolidated dispatch preparation logic used by <see cref="DispatchOrchestrationService"/>.
     /// <para>
     /// Performs the full shared sequence: resolve quality gates → resolve reviewers →
     /// build issue context → prepare provider configs → resolve pipeline configuration →

@@ -2,3 +2,16 @@
 # Provides placeholder values for required secrets that would otherwise fail validation.
 secrets:
   agentApiKey: ci-placeholder
+database:
+  host: postgres.coding-agent.svc.cluster.local
+  auth:
+    existingSecret: ci-postgres-secret
+api:
+  enabled: true
+  image:
+    tag: ci-api-placeholder
+jobController:
+  enabled: true
+  image:
+    repository: chemsorly/coding-agent
+    tag: coding-agent-jobcontroller

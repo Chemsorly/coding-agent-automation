@@ -291,8 +291,8 @@ public sealed partial class PipelineRun
     /// <summary>
     /// Which agent is executing this run, or null for test runs.
     /// Uses <see cref="Volatile"/> read/write to ensure cross-thread visibility since this is
-    /// written by dispatch paths (SignalRWorkDistributor, PendingWorkItemDrainService,
-    /// RunLifecycleManager.AgentAcceptedRunAsync) and read by HeartbeatMonitorService.
+    /// written by the dispatch path (<c>RunLifecycleManager.AgentAcceptedRunAsync</c>) and read
+    /// by the hub's run-status queries on other threads.
     /// </summary>
     public string? AgentId
     {

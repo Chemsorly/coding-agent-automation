@@ -10,7 +10,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Validates: navigate → select section → verify fields render → modify → save → reload → verify persisted.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class SettingsGlobalDefaultsTests : E2ETestBase
 {
     public SettingsGlobalDefaultsTests(E2EFixture fixture) : base(fixture) { }
 

@@ -4,6 +4,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.Extensions.Configuration;
@@ -52,7 +53,7 @@ public class MainLayoutComponentTests : BunitContext
             ProjectStore = mockStore.Object,
             Logger = mockLogger.Object,
             WorkDistributor = null,
-            DispatchOrchestration = null,
+            DispatchOrchestration = new CodingAgentWebUI.TestUtilities.NullDispatchOrchestrationService(),
             DependencyChecker = null,
             HousekeepingService = null,
             LeaderElection = null
@@ -63,9 +64,16 @@ public class MainLayoutComponentTests : BunitContext
         // Health indicators component dependencies
         var emptyConfig = new ConfigurationBuilder().Build();
         var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
-        Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig));
+        Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig, Mock.Of<CodingAgentWebUI.Api.Client.IPipelineApiHealthClient>()));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
-        Services.AddSingleton(new FeatureFlags());  // defaults: IsKubernetesMode = false
+
+        // FirstRunBanner.razor requires IPipelineApiConfigClient (Spec 045 Task 3)
+        var mockConfigClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient>();
+        mockConfigClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        mockConfigClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        Services.AddSingleton(mockConfigClient.Object);
     }
 
     [Fact]
@@ -196,7 +204,7 @@ public class MainLayoutComponentTests : BunitContext
     [Fact]
     public void Sidebar_AgentChatLink_PresentInSignalRMode()
     {
-        // FeatureFlags defaults to IsKubernetesMode = false — link should be visible
+        // Nav link is always visible — no mode gate.
         var cut = Render<MainLayout>();
 
         Assert.Contains("agent-chat", cut.Markup);
@@ -206,8 +214,6 @@ public class MainLayoutComponentTests : BunitContext
     public void Sidebar_AgentChatLink_PresentInKubernetesMode()
     {
         // Task 9.2 removed the IsKubernetesMode gate — nav link now always visible.
-        Services.AddSingleton(new FeatureFlags { IsKubernetesMode = true });
-
         var cut = Render<MainLayout>();
 
         Assert.Contains("agent-chat", cut.Markup);

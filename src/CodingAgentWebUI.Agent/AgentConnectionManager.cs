@@ -19,8 +19,8 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class AgentConnectionManager : IAgentConnectionManager
 {
-    private volatile HubConnectionManager _hubManager;
-    private readonly HubConnectionManagerFactory _hubManagerFactory;
+    private volatile IHubConnectionManager _hubManager;
+    private readonly IHubConnectionManagerFactory _hubManagerFactory;
     private readonly AgentId _agentId;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
@@ -42,8 +42,8 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     public event Func<Task>? OnReconnected;
 
     public AgentConnectionManager(
-        HubConnectionManager hubManager,
-        HubConnectionManagerFactory hubManagerFactory,
+        IHubConnectionManager hubManager,
+        IHubConnectionManagerFactory hubManagerFactory,
         AgentId agentId,
         Serilog.ILogger logger)
     {
@@ -158,7 +158,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 
     // ── Private: Event Handlers ──────────────────────────────────────────
 
-    private void WireEventHandlers(HubConnectionManager hubManager)
+    private void WireEventHandlers(IHubConnectionManager hubManager)
     {
         hubManager.OnCancelJob += HandleCancelJobAsync;
         hubManager.OnForceDisconnect += HandleForceDisconnectAsync;
@@ -253,7 +253,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
             _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
                 attempt, maxAttempts, delay.TotalSeconds);
 
-            HubConnectionManager? newManager = null;
+            IHubConnectionManager? newManager = null;
             try
             {
                 // Fire-and-forget: reconnection delay has no ambient cancellation token in this event handler
@@ -358,7 +358,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         }
     }
 
-    private async ValueTask SafeDisposeAsync(HubConnectionManager? manager)
+    private async ValueTask SafeDisposeAsync(IHubConnectionManager? manager)
     {
         if (manager is null) return;
         try

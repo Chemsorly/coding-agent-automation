@@ -1,7 +1,7 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -164,6 +164,42 @@ public class ChatJobDispatcherTests
     }
 
     // ─── 2. DispatchChatPodAsync — active chat job exists ────────────────────
+
+    /// <summary>
+    /// Spec 044 Req C5.1, C5.1a: ChatJobDispatcher MUST emit --mode=chat in the container Args.
+    /// This is phase 1 of making --mode mandatory (Task 15b.2 enforces it in AgentStartupConfig).
+    /// </summary>
+    [Fact]
+    public async Task DispatchChatPodAsync_PodSpec_ContainsModeChat()
+    {
+        // Arrange
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        V1Job? createdJob = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJob = j;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                if (!string.IsNullOrEmpty(dispatchId))
+                    RegisterChatAgent(registry, "agent-mode-test", dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+
+        // Act
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // Assert
+        createdJob.Should().NotBeNull("job must be created");
+        var container = createdJob!.Spec.Template.Spec.Containers[0];
+        container.Args.Should().Contain("--mode=chat",
+            "chat pods must emit --mode=chat so AgentStartupConfig can identify the pod shape (Spec 044 Req C5.1a)");
+        container.Args.Should().NotContain("--mode=workitem",
+            "chat pods must not emit --mode=workitem");
+    }
 
     [Fact]
     public async Task DispatchChatPodAsync_ActiveChatJobExists_ThrowsChatAlreadyActiveException()
@@ -410,6 +446,58 @@ public class ChatJobDispatcherTests
 
         var envVars = createdJob!.Spec.Template.Spec.Containers[0].Env;
         envVars.Should().Contain(e => e.Name == "AGENT_CHAT_MODE" && e.Value == "true");
+    }
+
+    [Fact]
+    public async Task DispatchChatPodAsync_InjectsAgentProviderTypeEnvVar()
+    {
+        var jobClientMock = CreateJobClientMock();
+        V1Job? createdJob = null;
+        var registry = CreateRegistry();
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJob = j;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, "agent-provtype", dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        // Template uses providerType "kiro" from CreateTemplateStore()
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        var envVars = createdJob!.Spec.Template.Spec.Containers[0].Env;
+        envVars.Should().Contain(e => e.Name == "AGENT_PROVIDER_TYPE" && e.Value == "kiro",
+            "chat pod must know its provider type so ChatJobHandler picks the right execution path");
+    }
+
+    [Fact]
+    public async Task DispatchChatPodAsync_OpenCodeTemplate_InjectsOpenCodeProviderType()
+    {
+        var jobClientMock = CreateJobClientMock();
+        V1Job? createdJob = null;
+        var registry = CreateRegistry();
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJob = j;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, "agent-opencode-provtype", dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(
+            jobClient: jobClientMock.Object,
+            registry: registry,
+            templateStore: CreateTemplateStore(providerType: "opencode"));
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        var envVars = createdJob!.Spec.Template.Spec.Containers[0].Env;
+        envVars.Should().Contain(e => e.Name == "AGENT_PROVIDER_TYPE" && e.Value == "opencode",
+            "opencode chat pod must get AGENT_PROVIDER_TYPE=opencode to activate the OpenCode execution path");
     }
 
     // ─── 11. DispatchChatPodAsync — AGENT_CHAT_SESSION_ID env var ────────────
@@ -854,4 +942,67 @@ public class ChatJobDispatcherTests
     [InlineData("opencode-dotnet")]
     public void IsOpencodeAgent_NonOpencode_ReturnsFalse(string providerType)
         => ChatJobDispatcher.IsOpencodeAgent(providerType).Should().BeFalse();
+
+    // ─── IsNotFound ───────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("Operation returned an invalid status code 'NotFound'")]
+    [InlineData("jobs.batch \"caa-chat-abc\" not found")]
+    [InlineData("404 Not Found")]
+    [InlineData("HTTP 404")]
+    public void IsNotFound_KnownNotFoundMessages_ReturnsTrue(string message)
+        => ChatJobDispatcher.IsNotFound(new Exception(message)).Should().BeTrue();
+
+    [Theory]
+    [InlineData("Connection refused")]
+    [InlineData("Timeout")]
+    [InlineData("500 Internal Server Error")]
+    public void IsNotFound_TransientOrOtherErrors_ReturnsFalse(string message)
+        => ChatJobDispatcher.IsNotFound(new Exception(message)).Should().BeFalse();
+
+    /// <summary>
+    /// Regression test for the infinite-404-loop bug:
+    /// When ReadJobAsync throws a 404 (job deleted from K8s), the watcher must clean up
+    /// the session and exit — not retry forever.
+    ///
+    /// Previously TryReadJobAsync treated ALL exceptions as transient and kept retrying,
+    /// leaving orphaned sessions that would eventually kill a newly-connected agent.
+    /// </summary>
+    [Fact]
+    public async Task WatcherTask_WhenReadJobAsyncThrowsNotFound_SessionIsRemovedWithoutRetry()
+    {
+        // Arrange
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+
+        // ReadJobAsync throws 404 — job was deleted from K8s
+        var notFoundEx = new Exception("Operation returned an invalid status code 'NotFound'");
+        jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(notFoundEx);
+
+        // Register an agent so dispatch can complete
+        string? capturedDispatchId = null;
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                capturedDispatchId = j.Metadata.Labels["caa/chat-session-id"];
+                RegisterChatAgent(registry, "agent-404-test", capturedDispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+
+        // Act: dispatch creates session + starts watcher
+        var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        agentId.Should().Be("agent-404-test");
+
+        // The watcher polls every 10s — use a short timeout and wait for it to finish.
+        // With the fix, the first poll gets 404 → watcher exits → session removed.
+        // Without the fix, the watcher retries forever and this assertion times out.
+        var watcherCompleted = await dispatcher.WaitForWatcherAsync(agentId, TimeSpan.FromSeconds(15));
+        watcherCompleted.Should().BeTrue("watcher must exit when job returns 404, not retry forever");
+
+        // Session must be cleaned up
+        dispatcher.HasActiveSession(agentId).Should().BeFalse("session must be removed after 404");
+    }
 }

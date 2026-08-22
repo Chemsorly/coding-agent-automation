@@ -1,8 +1,8 @@
 using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.UnitTests.Components;
@@ -13,12 +13,12 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class QualityGateConfigSectionComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
     public QualityGateConfigSectionComponentTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore = new Mock<IPipelineApiConfigClient>();
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<QualityGateConfiguration>());
     }
 
@@ -27,7 +27,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_RendersHeader()
     {
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("Quality Gate Configurations", cut.Markup);
     }
@@ -35,7 +35,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_WhenNoConfigs_ShowsEmptyMessage()
     {
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("No quality gate configurations", cut.Markup);
     }
@@ -43,7 +43,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_ShowsAddButton()
     {
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("Add Quality Gate Configuration", cut.Markup);
     }
@@ -53,7 +53,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_WithConfigs_ShowsTable()
     {
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<QualityGateConfiguration>
             {
                 new()
@@ -71,7 +71,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains(".NET Quality Gates", cut.Markup);
         Assert.Contains("dotnet", cut.Markup);
@@ -81,7 +81,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_WithGlobalConfig_ShowsGlobalBadge()
     {
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<QualityGateConfiguration>
             {
                 new()
@@ -94,7 +94,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("GLOBAL", cut.Markup);
         Assert.Contains("(all jobs)", cut.Markup);
@@ -103,7 +103,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_ShowsEnabledStatus()
     {
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<QualityGateConfiguration>
             {
                 new()
@@ -122,7 +122,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         // TODO: Assertions don't verify icon-to-row association — test would pass even if conditional logic were inverted. Scope assertions to each row's markup.
         Assert.Contains("data-icon=\"check-circle\"", cut.Markup);
@@ -132,7 +132,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_ShowsNoCoverageThreshold_AsDash()
     {
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<QualityGateConfiguration>
             {
                 new()
@@ -145,7 +145,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         // The "—" dash is used when no coverage threshold
         Assert.Contains("—", cut.Markup);
@@ -154,7 +154,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_ShowsEditAndDeleteButtons()
     {
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<QualityGateConfiguration>
             {
                 new()
@@ -166,7 +166,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("Edit", cut.Markup);
         Assert.Contains("Delete", cut.Markup);
@@ -177,7 +177,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_ClickAdd_ShowsForm()
     {
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Quality Gate"));
         await addBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -192,7 +192,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_FormSave_WithEmptyName_ShowsError()
     {
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Quality Gate"));
         await addBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -206,7 +206,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_FormSave_WithNoCommands_ShowsError()
     {
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Quality Gate"));
         await addBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -224,7 +224,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_FormCancel_HidesForm()
     {
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Quality Gate"));
         await addBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -241,12 +241,12 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     // ═══ Save Flow ═══
 
     [Fact]
-    public async Task Section_FormSave_CallsConfigStore()
+    public async Task Section_FormSave_CallsConfigClient()
     {
         _mockStore.Setup(s => s.SaveQualityGateConfigAsync(It.IsAny<QualityGateConfiguration>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Quality Gate"));
         await addBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -275,7 +275,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
 
         (string Message, bool IsError) status = default;
         var cut = Render<QualityGateConfigSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Quality Gate"));
@@ -302,7 +302,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_ClickDelete_ShowsConfirmation()
     {
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<QualityGateConfiguration>
             {
                 new()
@@ -314,7 +314,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var deleteBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Delete"));
         await deleteBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -324,9 +324,9 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public async Task Section_ConfirmDelete_CallsConfigStore()
+    public async Task Section_ConfirmDelete_CallsConfigClient()
     {
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<QualityGateConfiguration>
             {
                 new()
@@ -340,7 +340,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
         _mockStore.Setup(s => s.DeleteQualityGateConfigAsync("qgc-1", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         // Click Delete to show confirmation
         var deleteBtn = cut.FindAll("button").First(b => b.TextContent.Trim() == "Delete");
@@ -358,12 +358,12 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_LoadFails_InvokesOnShowStatus()
     {
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("disk error"));
 
         (string Message, bool IsError) status = default;
         var cut = Render<QualityGateConfigSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
         Assert.Contains("Failed to load", status.Message);
@@ -376,7 +376,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
         _mockStore.Setup(s => s.SaveQualityGateConfigAsync(It.IsAny<QualityGateConfiguration>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("write error"));
 
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Quality Gate"));
         await addBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -401,7 +401,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_WithConfigs_ShowsTableHeaders()
     {
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<QualityGateConfiguration>
             {
                 new()
@@ -413,7 +413,7 @@ public class QualityGateConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("Display Name", cut.Markup);
         Assert.Contains("Match Labels", cut.Markup);

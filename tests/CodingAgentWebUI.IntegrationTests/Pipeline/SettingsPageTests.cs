@@ -5,7 +5,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.TestUtilities;
 
 namespace CodingAgentWebUI.IntegrationTests.Pipeline;
 
@@ -626,101 +626,73 @@ public class SettingsPageTests
     [Fact]
     public async Task MergeSave_GeneralThenSecurity_PreservesGeneralValues()
     {
-        // Use a real JsonConfigurationStore with a temp directory
-        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        Directory.CreateDirectory(tempDir);
-        try
-        {
-            var store = new JsonConfigurationStore(tempDir);
+        var store = new InMemoryConfigurationStore();
 
-            // Save General section (MaxRetries=7, AgentTimeout=45min)
-            await store.UpdatePipelineConfigAsync(
-                c => c with { MaxRetries = 7, AgentTimeout = TimeSpan.FromMinutes(45) },
-                CancellationToken.None);
+        // Save General section (MaxRetries=7, AgentTimeout=45min)
+        await store.UpdatePipelineConfigAsync(
+            c => c with { MaxRetries = 7, AgentTimeout = TimeSpan.FromMinutes(45) },
+            CancellationToken.None);
 
-            // Save Security section (BrainReadOnly=true)
-            await store.UpdatePipelineConfigAsync(
-                c => c with { BrainReadOnly = true },
-                CancellationToken.None);
+        // Save Security section (BrainReadOnly=true)
+        await store.UpdatePipelineConfigAsync(
+            c => c with { BrainReadOnly = true },
+            CancellationToken.None);
 
-            // Verify General values are preserved
-            var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
-            loaded.MaxRetries.Should().Be(7);
-            loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
-            loaded.BrainReadOnly.Should().BeTrue();
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        // Verify General values are preserved
+        var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+        loaded.MaxRetries.Should().Be(7);
+        loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
+        loaded.BrainReadOnly.Should().BeTrue();
     }
 
     [Fact]
     public async Task MergeSave_PreservesNonUiFields()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        Directory.CreateDirectory(tempDir);
-        try
+        var store = new InMemoryConfigurationStore();
+
+        // Set non-default values for all non-UI properties
+        await store.SavePipelineConfigAsync(new PipelineConfiguration
         {
-            var store = new JsonConfigurationStore(tempDir);
+            IssuePageSize = 50,
+            WorkspaceBaseDirectory = "/custom/workspaces",
+            StallWarningInterval = TimeSpan.FromMinutes(5),
+            StallPollInterval = TimeSpan.FromSeconds(10),
+            LastUsedProviderIds = new Dictionary<string, string> { ["issue"] = "test-id" },
+            ClosedLoopMaxPagesToFetch = 20
+        }, CancellationToken.None);
 
-            // Set non-default values for all non-UI properties
-            await store.SavePipelineConfigAsync(new PipelineConfiguration
-            {
-                IssuePageSize = 50,
-                WorkspaceBaseDirectory = "/custom/workspaces",
-                StallWarningInterval = TimeSpan.FromMinutes(5),
-                StallPollInterval = TimeSpan.FromSeconds(10),
-                LastUsedProviderIds = new Dictionary<string, string> { ["issue"] = "test-id" },
-                ClosedLoopMaxPagesToFetch = 20
-            }, CancellationToken.None);
+        // Save any sub-section (General)
+        await store.UpdatePipelineConfigAsync(
+            c => c with { MaxRetries = 5 },
+            CancellationToken.None);
 
-            // Save any sub-section (General)
-            await store.UpdatePipelineConfigAsync(
-                c => c with { MaxRetries = 5 },
-                CancellationToken.None);
-
-            // Verify all non-UI fields survive
-            var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
-            loaded.IssuePageSize.Should().Be(50);
-            loaded.WorkspaceBaseDirectory.Should().Be("/custom/workspaces");
-            loaded.StallWarningInterval.Should().Be(TimeSpan.FromMinutes(5));
-            loaded.StallPollInterval.Should().Be(TimeSpan.FromSeconds(10));
-            loaded.LastUsedProviderIds.Should().ContainKey("issue");
-            loaded.ClosedLoopMaxPagesToFetch.Should().Be(20);
-            // Also verify the saved field
-            loaded.MaxRetries.Should().Be(5);
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        // Verify all non-UI fields survive
+        var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+        loaded.IssuePageSize.Should().Be(50);
+        loaded.WorkspaceBaseDirectory.Should().Be("/custom/workspaces");
+        loaded.StallWarningInterval.Should().Be(TimeSpan.FromMinutes(5));
+        loaded.StallPollInterval.Should().Be(TimeSpan.FromSeconds(10));
+        loaded.LastUsedProviderIds.Should().ContainKey("issue");
+        loaded.ClosedLoopMaxPagesToFetch.Should().Be(20);
+        // Also verify the saved field
+        loaded.MaxRetries.Should().Be(5);
     }
 
     [Fact]
-    public async Task UpdatePipelineConfigAsync_CorruptedFile_ThrowsInvalidOperationException()
+    public async Task UpdatePipelineConfigAsync_AfterSave_ReturnsUpdatedValues()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        Directory.CreateDirectory(tempDir);
-        try
-        {
-            var store = new JsonConfigurationStore(tempDir);
+        // Note: JsonConfigurationStore had a test for corrupt-file detection; InMemoryConfigurationStore
+        // does not have file I/O so that path does not apply. This test verifies UpdatePipelineConfigAsync
+        // applies the transform correctly.
+        var store = new InMemoryConfigurationStore();
 
-            // Write invalid JSON to the config file
-            var configPath = Path.Combine(tempDir, "pipeline-config.json");
-            await File.WriteAllTextAsync(configPath, "{ this is not valid json }}}");
+        await store.SavePipelineConfigAsync(new PipelineConfiguration { MaxRetries = 3 }, CancellationToken.None);
 
-            // UpdatePipelineConfigAsync should throw instead of silently overwriting
-            var act = () => store.UpdatePipelineConfigAsync(
-                c => c with { MaxRetries = 5 },
-                CancellationToken.None);
+        await store.UpdatePipelineConfigAsync(
+            c => c with { MaxRetries = 5 },
+            CancellationToken.None);
 
-            await act.Should().ThrowAsync<InvalidOperationException>()
-                .WithMessage("*invalid JSON*");
-        }
-        finally
-        {
-            Directory.Delete(tempDir, true);
-        }
+        var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+        loaded.MaxRetries.Should().Be(5);
     }
 }

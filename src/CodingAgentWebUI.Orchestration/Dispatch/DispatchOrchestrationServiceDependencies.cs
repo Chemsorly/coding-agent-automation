@@ -8,8 +8,6 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 public sealed record DispatchOrchestrationServiceDependencies(
     DispatchInfrastructure Infra,
-    IDispatchRunCreator Orchestration,
-    IOrchestratorRunService RunService,
     IWorkDistributor WorkDistributor,
     IAgentProfileStore AgentProfileStore,
     IConfigurationStore ProviderConfigStore,

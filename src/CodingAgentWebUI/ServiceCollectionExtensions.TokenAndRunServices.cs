@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;

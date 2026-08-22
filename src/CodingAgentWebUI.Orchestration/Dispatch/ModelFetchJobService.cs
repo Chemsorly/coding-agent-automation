@@ -1,4 +1,4 @@
-using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -116,7 +116,10 @@ public sealed class ModelFetchJobService
         }
 
         // ── 5. Wait for agent to connect and report results via SignalR ──
-        // The agent pod's AGENT_ID is set from metadata.name = "{jobName}-{k8s-suffix}".
+        // For model-fetch pods, AGENT_ID is still set from metadata.name (Downward API fieldRef),
+        // so the pod name includes the random K8s suffix. This differs from work-item pods where
+        // AGENT_ID is set to the static job name (Spec 041 auth fix). Model-fetch pods use the
+        // chat/SignalR auth path (not the HMAC work-item path) so the suffix mismatch is acceptable.
         // ModelFetchService.WaitAndFetchAsync polls the registry until that agent appears,
         // then sends RequestFetchModels and awaits ReportFetchModelsResult — all over the
         // existing hub connection. No pod log reads, no pods/log RBAC required.

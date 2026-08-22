@@ -1,9 +1,13 @@
 using System.Threading.RateLimiting;
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Dispatch;
+using DispatchStateBuilder = CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder;
+using DispatchLifecycleService = CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService;
+using DispatchTemplateResolver = CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;

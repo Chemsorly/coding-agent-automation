@@ -35,9 +35,10 @@ public class WorkItemTransitionServiceTests
     [InlineData(WorkItemStatus.Succeeded, WorkItemStatus.Failed, false)]
     [InlineData(WorkItemStatus.Succeeded, WorkItemStatus.Cancelled, false)]
     [InlineData(WorkItemStatus.Succeeded, WorkItemStatus.Pending, false)]
-    [InlineData(WorkItemStatus.Failed, WorkItemStatus.Pending, false)]
+    // Requeue paths added by Req 6.1 (POST /api/work-items/{id}/requeue): Failed/Cancelled → Pending
+    [InlineData(WorkItemStatus.Failed, WorkItemStatus.Pending, true)]
     [InlineData(WorkItemStatus.Failed, WorkItemStatus.Running, false)]
-    [InlineData(WorkItemStatus.Cancelled, WorkItemStatus.Pending, false)]
+    [InlineData(WorkItemStatus.Cancelled, WorkItemStatus.Pending, true)]
     [InlineData(WorkItemStatus.Cancelled, WorkItemStatus.Running, false)]
     public void IsValidTransition_ReturnsExpected(WorkItemStatus current, WorkItemStatus target, bool expected)
     {
@@ -47,10 +48,12 @@ public class WorkItemTransitionServiceTests
     [Fact]
     public void IsValidTransition_TerminalStates_CannotTransitionAnywhere()
     {
-        var terminals = new[] { WorkItemStatus.Succeeded, WorkItemStatus.Failed, WorkItemStatus.Cancelled };
+        // Succeeded is truly terminal — no outgoing transitions.
+        // Failed and Cancelled can requeue to Pending (Req 6.1), so they are not fully terminal.
+        var trulyTerminal = new[] { WorkItemStatus.Succeeded };
         var allStatuses = Enum.GetValues<WorkItemStatus>();
 
-        foreach (var terminal in terminals)
+        foreach (var terminal in trulyTerminal)
         foreach (var target in allStatuses)
         {
             WorkItemTransitionService.IsValidTransition(terminal, target).Should().BeFalse(

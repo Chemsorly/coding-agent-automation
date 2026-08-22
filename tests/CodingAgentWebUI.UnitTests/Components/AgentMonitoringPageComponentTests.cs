@@ -1,15 +1,13 @@
 using Bunit;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Hubs;
-using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
-using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Moq;
@@ -22,71 +20,84 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class AgentMonitoringPageComponentTests : BunitContext
 {
-    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
-    private readonly Mock<IConfigurationStore> _mockStore = new();
-
     private void RegisterDefaults(IReadOnlyList<PipelineRunSummary>? history = null)
     {
-        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(history ?? Array.Empty<PipelineRunSummary>());
-
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        // Spec 045: IPipelineApiConfigClient replaces IConfigurationStore for the page service.
+        // IConfigurationStore is still registered for child components that @inject it (e.g., HistoryRunDetailModal).
+        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
+        mockConfigClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
-        _mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        mockConfigClient.Setup(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        // IConfigurationStore still needed by HistoryRunDetailModal and other child components
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
 
         var mockLogger = new Mock<ILogger>();
         var mockFactory = new Mock<IProviderFactory>();
         var mockValidator = new Mock<IQualityGateValidator>();
 
-        var runService = new OrchestratorRunService(mockLogger.Object);
-        var lifecycle = new PipelineRunLifecycleService(_mockHistoryService.Object, runService, mockLogger.Object);
-
         var registry = new AgentRegistryService(mockLogger.Object);
 
-        Services.AddSingleton(lifecycle);
-        Services.AddSingleton<IChangeNotifier>(lifecycle);
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
-        Services.AddSingleton(runService);
-        Services.AddSingleton<IOrchestratorRunService>(runService);
-        Services.AddSingleton(_mockStore.Object);
-        Services.AddSingleton(_mockHistoryService.Object);
-        Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
+        Services.AddSingleton<IPipelineApiConfigClient>(mockConfigClient.Object);
+        Services.AddSingleton<IConfigurationStore>(mockConfigStore.Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(Mock.Of<ILabelService>());
         Services.AddSingleton(Mock.Of<IConsolidationService>(s =>
             s.GetRunHistoryAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ConsolidationRun>>(Array.Empty<ConsolidationRun>())));
-        Services.AddSingleton(Mock.Of<IActiveRunQueryService>(s =>
-            s.GetActiveRunsAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ActiveRunSummary>>(Array.Empty<ActiveRunSummary>())));
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
-        Services.AddSingleton(Mock.Of<IRunLifecycleManager>());
-        Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
-            Services.BuildServiceProvider().GetRequiredService<JobDeduplicationGuardService>()));
+        Services.AddSingleton<IPendingWorkQuery>(Mock.Of<IPendingWorkQuery>(q =>
+            q.GetPendingJobsAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<PendingJob>>(Array.Empty<PendingJob>())));
 
         Services.AddSingleton(TimeProvider.System);
 
-        // TODO: This AgentMonitoringPageServiceDependencies registration block is copy-pasted verbatim in
-        // AgentMonitoringComponentTests, AgentMonitoringPageComponentTests, and FeedbackSectionComponentTests.
-        // Any future change to AgentMonitoringPageServiceDependencies constructor signature must be applied
-        // in all three places. Extract into a shared helper or base class to avoid drift.
+        // Spec 045: IAgentHubConnection and IPipelineApiRunHistoryClient now injected by AgentMonitoring.
+        // Registered as Singleton (not Scoped) to prevent DI from calling Dispose() on the mock proxy
+        // which only implements IAsyncDisposable — the Scoped lifetime would cause bunit to fail on teardown.
+        var mockHubConnection = new Mock<IAgentHubConnection>();
+        mockHubConnection.SetupGet(h => h.State).Returns(HubConnectionState.Disconnected);
+        mockHubConnection.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockHubConnection.Setup(h => h.On<string, IReadOnlyList<string>>(It.IsAny<string>(), It.IsAny<Action<string, IReadOnlyList<string>>>()))
+            .Returns(Mock.Of<IDisposable>());
+        mockHubConnection.Setup(h => h.On<string, PipelineStep, DateTimeOffset>(It.IsAny<string>(), It.IsAny<Action<string, PipelineStep, DateTimeOffset>>()))
+            .Returns(Mock.Of<IDisposable>());
+        mockHubConnection.Setup(h => h.On<string, JobCompletionPayload>(It.IsAny<string>(), It.IsAny<Action<string, JobCompletionPayload>>()))
+            .Returns(Mock.Of<IDisposable>());
+        Services.AddSingleton<IAgentHubConnection>(mockHubConnection.Object);
+
+        var mockRunHistoryClient = new Mock<IPipelineApiRunHistoryClient>();
+        mockRunHistoryClient.Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRunSummary?)null);
+        var runHistoryItems = history ?? Array.Empty<PipelineRunSummary>();
+        mockRunHistoryClient.Setup(c => c.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runHistoryItems, Page = 1, PageSize = 1000, HasMore = false });
+        Services.AddSingleton<IPipelineApiRunHistoryClient>(mockRunHistoryClient.Object);
+
         // Register AgentMonitoringPageServiceDependencies so DI can auto-construct AgentMonitoringPageService.
+        // Spec 045: IActiveRunQueryService removed — active runs derived from IPipelineApiRunHistoryClient.
         Services.AddScoped(sp => new AgentMonitoringPageServiceDependencies(
-            sp.GetRequiredService<IActiveRunQueryService>(),
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<PipelineRunLifecycleService>(),
-            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IPipelineApiConfigClient>(),
             sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<IPendingWorkQuery>(),
             sp.GetRequiredService<IWorkDistributor>(),
-            sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IRunLifecycleManager>()));
+            sp.GetRequiredService<IPipelineApiRunHistoryClient>()));
 
         // Page service — resolved via DI with all dependencies above
         Services.AddScoped<AgentMonitoringPageService>();

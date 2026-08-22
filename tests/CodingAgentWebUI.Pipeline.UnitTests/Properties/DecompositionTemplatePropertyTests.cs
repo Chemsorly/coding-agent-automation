@@ -284,7 +284,9 @@ public class DecompositionTemplatePropertyTests
             ProjectStore = mockStore.Object,
             Logger = mockLogger.Object,
             WorkDistributor = distributor,
-            DispatchOrchestration = null,
+            DispatchOrchestration = distributor is null
+                ? new NullDispatchOrchestrationService()
+                : new BridgingDispatchOrchestrationService(distributor),
             DependencyChecker = null,
             HousekeepingService = null,
             LeaderElection = null

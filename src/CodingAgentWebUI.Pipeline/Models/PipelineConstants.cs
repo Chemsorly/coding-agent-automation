@@ -144,6 +144,19 @@ public static class PipelineConstants
     public static readonly TimeSpan DefaultRestartDedupCooldown = TimeSpan.FromMinutes(5);
 
     /// <summary>
+    /// Non-terminal WorkItem statuses. A WorkItem in one of these is still in flight, so its issue
+    /// counts as already distributed. Together with <see cref="DefaultRestartDedupCooldown"/> this
+    /// is the whole dispatch-dedup predicate — keep them defined in one place so the two halves
+    /// cannot drift apart across the endpoints that read them.
+    /// </summary>
+    public static readonly WorkItemStatus[] ActiveWorkItemStatuses =
+    [
+        WorkItemStatus.Pending,
+        WorkItemStatus.Dispatched,
+        WorkItemStatus.Running
+    ];
+
+    /// <summary>
     /// Default number of commits on the default branch since the analysis was produced
     /// that triggers an automatic analysis refresh. Set to 0 to disable.
     /// </summary>

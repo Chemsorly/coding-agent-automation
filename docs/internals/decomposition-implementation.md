@@ -8,7 +8,9 @@ Two `PipelineRunType` values route to dedicated step pipelines:
 - `DecompositionAnalysis` → Phase 1 steps
 - `Decomposition` → Phase 2 steps
 
-Dispatch chain: `PipelineLoopService` → `IJobDispatcher` → `JobAssignmentMessage` → `LocalPipelineExecutor`
+Dispatch chain: `PipelineLoopService` → `DispatchOrchestrationService` → `KubernetesWorkDistributor` → K8s Job → agent pod → `LocalPipelineExecutor`
+
+> **Note:** `IJobDispatcher` and `AgentJobDispatcher` were removed in Spec 044. Decomposition jobs now go through the Kubernetes work-item dispatch path in the same way as implementation and review jobs.
 
 ## Eligibility Filters
 

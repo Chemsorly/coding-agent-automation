@@ -1,3 +1,4 @@
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
@@ -114,7 +115,7 @@
 
 @code {
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
-    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
     [Parameter, EditorRequired] public GitHubValidationService GitHubValidator { get; set; } = default!;
     [Parameter, EditorRequired] public IProviderFactory ProviderFactory { get; set; } = default!;
     [Parameter] public GitLabValidationService? GitLabValidator { get; set; }
@@ -288,7 +289,7 @@
                 }
             };
 
-            await ConfigStore.SaveProviderConfigAsync(config, _cts.Token);
+            await ConfigClient.SaveProviderConfigAsync(config, _cts.Token);
             _showForm = false;
             _availableRepos.Clear();
             _validationMessage = null;
@@ -453,7 +454,7 @@
                 }
             };
 
-            await ConfigStore.SaveProviderConfigAsync(config, _cts.Token);
+            await ConfigClient.SaveProviderConfigAsync(config, _cts.Token);
             _showForm = false;
             _validationMessage = null;
             await OnSaved.InvokeAsync(config);

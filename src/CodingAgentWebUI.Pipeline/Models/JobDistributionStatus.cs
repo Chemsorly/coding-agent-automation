@@ -6,7 +6,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// </summary>
 public enum JobDistributionStatus
 {
-    /// <summary>Status could not be determined (legacy mode or missing item).</summary>
+    /// <summary>Status could not be determined (work item not found).</summary>
     Unknown,
 
     /// <summary>Work item exists but has not been dispatched.</summary>

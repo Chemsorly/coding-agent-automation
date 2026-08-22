@@ -31,4 +31,10 @@ public interface IProjectStore
 
     /// <summary>Move a template from one project to another. Updates TemplateIds on both projects.</summary>
     Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct);
+
+    /// <summary>
+    /// Returns <c>true</c> if at least one <see cref="PipelineJobTemplate"/> with <c>Enabled = true</c>
+    /// exists across all projects. Used by the first-run banner to avoid loading all templates.
+    /// </summary>
+    Task<bool> HasEnabledTemplatesAsync(CancellationToken ct);
 }

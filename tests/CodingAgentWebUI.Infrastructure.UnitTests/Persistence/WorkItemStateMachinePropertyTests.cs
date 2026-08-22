@@ -21,6 +21,8 @@ public class WorkItemStateMachinePropertyTests
     /// - Pending → Dispatched, Failed, Cancelled
     /// - Dispatched → Running, Failed, Cancelled, Pending (re-queue on rejection)
     /// - Running → Succeeded, Failed, Cancelled
+    /// - Failed → Pending (requeue, Req 6.1)
+    /// - Cancelled → Pending (requeue, Req 6.1)
     /// All other pairs (including self-transitions) must be rejected.
     /// </summary>
     private static readonly HashSet<(WorkItemStatus Current, WorkItemStatus Target)> AllowedTransitions =
@@ -35,6 +37,9 @@ public class WorkItemStateMachinePropertyTests
         (WorkItemStatus.Running, WorkItemStatus.Succeeded),
         (WorkItemStatus.Running, WorkItemStatus.Failed),
         (WorkItemStatus.Running, WorkItemStatus.Cancelled),
+        // Requeue paths (Req 6.1 — POST /api/work-items/{id}/requeue)
+        (WorkItemStatus.Failed, WorkItemStatus.Pending),
+        (WorkItemStatus.Cancelled, WorkItemStatus.Pending),
     ];
 
     /// <summary>
@@ -86,8 +91,9 @@ public class WorkItemStatusPairArbitraries
 public class WorkItemStateMachineReachabilityPropertyTests
 {
     private static readonly WorkItemStatus[] AllStatuses = Enum.GetValues<WorkItemStatus>();
+    // Succeeded is the only truly terminal state — Failed and Cancelled can requeue to Pending (Req 6.1).
     private static readonly WorkItemStatus[] TerminalStatuses =
-        [WorkItemStatus.Succeeded, WorkItemStatus.Failed, WorkItemStatus.Cancelled];
+        [WorkItemStatus.Succeeded];
 
     /// <summary>
     /// Property: Random walk from Pending always ends at a terminal state or stays
@@ -148,6 +154,7 @@ public class WorkItemStateMachineReachabilityPropertyTests
 
     /// <summary>
     /// Property: Terminal states are truly terminal — no valid outgoing transitions.
+    /// Only Succeeded is truly terminal; Failed/Cancelled can requeue to Pending (Req 6.1).
     /// </summary>
     [Fact]
     public void TerminalStates_HaveNoOutgoingTransitions()
@@ -163,18 +170,21 @@ public class WorkItemStateMachineReachabilityPropertyTests
     }
 
     /// <summary>
-    /// Property: The initial state (Pending) is reachable only from Dispatched (re-queue scenario).
-    /// No other state can transition back to Pending.
+    /// Property: Pending is reachable from Dispatched, Failed, and Cancelled (requeue paths).
     /// </summary>
     [Fact]
     public void Pending_OnlyReachableFrom_Dispatched()
     {
         var statesThatCanReachPending = AllStatuses
             .Where(s => s != WorkItemStatus.Pending && WorkItemTransitionService.IsValidTransition(s, WorkItemStatus.Pending))
+            .OrderBy(s => s)
             .ToArray();
 
-        Assert.Single(statesThatCanReachPending);
-        Assert.Equal(WorkItemStatus.Dispatched, statesThatCanReachPending[0]);
+        // Dispatched (rejection re-queue) + Failed + Cancelled (explicit requeue, Req 6.1)
+        Assert.Equal(3, statesThatCanReachPending.Length);
+        Assert.Contains(WorkItemStatus.Dispatched, statesThatCanReachPending);
+        Assert.Contains(WorkItemStatus.Failed, statesThatCanReachPending);
+        Assert.Contains(WorkItemStatus.Cancelled, statesThatCanReachPending);
     }
 
     private static HashSet<WorkItemStatus> ComputeReachableStates(WorkItemStatus start)

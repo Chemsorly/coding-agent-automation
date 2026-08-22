@@ -15,7 +15,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// and agent status display.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class MonitoringInteractionTests : E2ETestBase
 {
     public MonitoringInteractionTests(E2EFixture fixture) : base(fixture) { }
 
@@ -50,7 +51,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         });
 
         await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -66,7 +67,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for the run to reflect the step in server state
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "70" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring page
@@ -114,7 +115,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         });
 
         await using var fakeAgent = new FakeAgentClient("modal-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch and get the run active
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -130,16 +131,27 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for the run to reflect the step in server state
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "71" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring and click the active run row
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
         await monitoringPage.NavigateAsync();
 
-        // Wait for the clickable row to appear (ARM runners can be slow to render)
-        await Page.WaitForSelectorAsync("tr.monitoring-row-clickable", new() { Timeout = 15_000 });
-        await Page.ClickAsync("tr.monitoring-row-clickable");
+        // Click this run's row in the Active Runs table.
+        //
+        // Three tables on this page share tr.monitoring-row-clickable — active runs, agents, recent
+        // runs — and only the active-runs row's click opens the run-detail modal (the agent row's
+        // opens an agent modal). Worse, the run's own GUID appears in both the active-runs RUN ID
+        // cell and the agent row's ACTIVE JOB cell, so filtering by run id alone still matches the
+        // agent row. Scope to the Active Runs <section> so neither the agents table nor the id
+        // collision can misdirect the click. This used to "work" only because the agents table was
+        // always empty (the monolith registry had no writer); now it renders real agents.
+        var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "71").RunId;
+        var runRow = Page.Locator("section:has(h2:has-text('Active Runs')) tr.monitoring-row-clickable")
+            .Filter(new() { HasTextString = runId });
+        await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
+        await runRow.First.ClickAsync();
 
         // Wait for modal to open
         await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });
@@ -185,7 +197,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         });
 
         await using var fakeAgent = new FakeAgentClient("escape-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -200,14 +212,18 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for the run to reflect the step in server state
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "72" && r.CurrentStep == PipelineStep.GeneratingCode));
 
-        // Navigate to monitoring and open modal
+        // Navigate to monitoring and open the modal for this run, scoped to the Active Runs
+        // section — see the note in Monitoring_RunDetailModal_OpensOnRowClick.
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
         await monitoringPage.NavigateAsync();
-        await Page.WaitForSelectorAsync("tr.monitoring-row-clickable", new() { Timeout = 15_000 });
-        await Page.ClickAsync("tr.monitoring-row-clickable");
+        var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "72").RunId;
+        var runRow = Page.Locator("section:has(h2:has-text('Active Runs')) tr.monitoring-row-clickable")
+            .Filter(new() { HasTextString = runId });
+        await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
+        await runRow.First.ClickAsync();
         await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });
 
         // Act: focus the modal overlay (tabindex="-1" makes it focusable) then press Escape
@@ -253,7 +269,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         });
 
         await using var fakeAgent = new FakeAgentClient("status-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch and accept job
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -269,7 +285,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for the run to reflect the step in server state
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "73" && r.CurrentStep == PipelineStep.GeneratingCode));
 
         // Act: navigate to monitoring
@@ -353,7 +369,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         // Now connect an agent and verify the job moves to Active Runs
         await using var fakeAgent = new FakeAgentClient("late-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Wait for the agent to receive and accept the job
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -361,7 +377,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
         // Wait for server state to reflect
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r =>
             r.IssueIdentifier == "80" && r.AgentId == "late-agent-1"));
 

@@ -5,10 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// </summary>
 public sealed record PendingJob
 {
-    /// <summary>
-    /// The WorkItem ID (DB modes only). Null in legacy/in-memory mode.
-    /// Used by the UI to cancel pending items via <see cref="IWorkDistributor.CancelJobAsync"/>.
-    /// </summary>
+    // The WorkItem ID is null when not yet claimed by the Job Controller
     public string? WorkItemId { get; init; }
 
     public required IssueIdentifier IssueIdentifier { get; init; }
@@ -40,7 +37,7 @@ public sealed record PendingJob
     /// <summary>The WorkItem task type. Used as the primary discriminator for consolidation jobs.</summary>
     public WorkItemTaskType TaskType { get; init; } = WorkItemTaskType.Implementation;
 
-    // --- Consolidation-specific (Legacy mode queueing) ---
+    // --- Consolidation-specific ---
 
     /// <summary>The consolidation run type. When set, this PendingJob represents a consolidation job rather than a pipeline job.</summary>
     public ConsolidationRunType? ConsolidationRunType { get; init; }
@@ -69,8 +66,7 @@ public sealed record PendingJob
     /// <summary>
     /// Whether this pending job is a consolidation job.
     /// <see cref="RunType"/> is the single reliable discriminator — set to
-    /// <see cref="PipelineRunType.Consolidation"/> by both DB mode (<c>DbPendingWorkQuery.ResolveRunType</c>)
-    /// and legacy/in-memory mode (<c>LegacyWorkDistributor</c>).
+    /// <see cref="PipelineRunType.Consolidation"/> by <c>DbPendingWorkQuery.ResolveRunType</c>.
     /// </summary>
     public bool IsConsolidation => RunType == PipelineRunType.Consolidation;
 }

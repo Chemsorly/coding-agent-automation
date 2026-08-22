@@ -3,7 +3,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
-/// Groups the 9 constructor parameters of <see cref="Services.PipelineLoopService"/>
+/// Groups the constructor parameters of <see cref="Services.PipelineLoopService"/>
 /// into a single parameter object to satisfy S107. Registered as singleton in DI.
 /// </summary>
 public sealed record PipelineLoopServiceDependencies
@@ -20,11 +20,11 @@ public sealed record PipelineLoopServiceDependencies
     public required IHousekeepingService? HousekeepingService { get; init; }
 
     /// <summary>
-    /// Optional leader-election gate. When non-null (K8s or SignalR+DB modes),
+    /// Optional leader-election gate. When non-null (K8s mode),
     /// <see cref="Services.PipelineLoopService"/> waits for leadership before activating
-    /// its poll loop and stops cleanly on leadership loss. When null (Legacy mode or
-    /// any mode without <c>ILeaderElectionService</c> registered), the loop runs
-    /// unconditionally as before.
+    /// its poll loop and stops cleanly on leadership loss. When null (no
+    /// <c>ILeaderElectionService</c> registered, e.g. test environments), the loop runs
+    /// unconditionally.
     /// </summary>
     public required ILeaderGate? LeaderElection { get; init; }
 }

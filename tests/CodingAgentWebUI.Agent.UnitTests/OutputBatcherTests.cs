@@ -32,27 +32,36 @@ public class OutputBatcherTests
     }
 
     [Fact]
-    public async Task FlushesAt250msTimerInterval()
+    public async Task FlushesAtTimerInterval()
     {
-        // Arrange
+        // Uses ManualFlushTrigger — no real-time dependency.
+        // Verifies that lines added below the 50-line threshold are flushed
+        // when the trigger fires (i.e., the timer tick path works correctly).
+        var trigger = new ManualFlushTrigger();
         var flushedBatches = new List<IReadOnlyList<string>>();
-        await using var batcher = new OutputBatcher();
+        await using var batcher = new OutputBatcher(trigger);
         batcher.OnFlush += batch =>
         {
             flushedBatches.Add(batch.ToList());
             return Task.CompletedTask;
         };
 
-        // Act — add fewer than 50 lines (won't trigger threshold flush)
+        // Add fewer than 50 lines — won't trigger the threshold flush
         await batcher.AddLineAsync("timer-line-1");
         await batcher.AddLineAsync("timer-line-2");
 
-        // Poll until the timer flushes (no fixed delay)
-        var deadline = DateTime.UtcNow.AddSeconds(3);
-        while (!flushedBatches.Any() && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // No flush yet — trigger hasn't ticked
+        flushedBatches.Should().BeEmpty();
 
-        // Assert — timer should have flushed the 2 lines
+        // Fire the trigger — this simulates the 250ms timer tick
+        trigger.Tick();
+
+        // Wait for the flush loop to process the tick (event-driven, no fixed delay)
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (flushedBatches.Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+
+        // Assert — trigger flush must have delivered both lines
         flushedBatches.Should().HaveCountGreaterThanOrEqualTo(1);
         var allLines = flushedBatches.SelectMany(b => b).ToList();
         allLines.Should().Contain("timer-line-1");

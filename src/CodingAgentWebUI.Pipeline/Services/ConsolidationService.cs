@@ -20,7 +20,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private readonly ConsolidationTemplateResolver _templateResolver;
 
     private readonly ConcurrentDictionary<(ConsolidationRunType, string?), ConsolidationRun> _runningRuns = new();
-    private IReadOnlyList<ConsolidationRun>? _runHistoryCache;
 
     /// <inheritdoc />
     public event Action? OnChange;
@@ -56,18 +55,33 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     }
 
     /// <inheritdoc />
-    public async Task CleanupOrphanedRunsAsync(CancellationToken ct)
+    public async Task CleanupOrphanedRunsAsync(IReadOnlyCollection<string> activeAgentJobIds, CancellationToken ct)
     {
         var allRuns = await _runStore.LoadAllRunsAsync(ct);
+        // Only consider runs that are in Running state — already-terminal runs (Succeeded, Failed,
+        // Cancelled) must never be overwritten, even if they happened to be Running at the last
+        // shutdown. The API may have updated them to a terminal state after the orchestrator went down.
         foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Running))
         {
+            // Skip runs where an agent is still actively working — the agent connects to
+            // the API hub which survives orchestrator restarts, so the run is not orphaned.
+            if (activeAgentJobIds.Contains(run.RunId))
+            {
+                _logger.Information("Consolidation run {RunId} ({Type}) has active agent — skipping orphan cleanup", run.RunId, run.Type);
+                // Restore to _runningRuns so TriggerAsync dedup guard works correctly and
+                // prevents a duplicate dispatch for the same (type, templateId) key.
+                var key = (run.Type, run.TemplateId);
+                _runningRuns.TryAdd(key, run);
+                continue;
+            }
+
             run.Status = ConsolidationRunStatus.Failed;
             run.Summary = "Orphaned: application restarted before completion";
             run.CompletedAtUtc = DateTimeOffset.UtcNow;
             await _runStore.SaveRunAsync(run, ct);
             _logger.Information("Marked orphaned consolidation run {RunId} ({Type}) as Failed", run.RunId, run.Type);
         }
-        _runHistoryCache = null;
+        
     }
 
     /// <inheritdoc />
@@ -99,24 +113,20 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             templateName = "Global";
         }
 
-        var run = new ConsolidationRun
-        {
-            RunId = Guid.NewGuid().ToString(),
-            Type = type,
-            TemplateId = templateIdValue,
-            TemplateName = templateName,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Running,
-            AutoDispatch = autoDispatch,
-            ProjectName = projectName
-        };
+        var run = BuildNewRun(type, templateIdValue, templateName, projectName, autoDispatch);
 
         if (!_runningRuns.TryAdd(key, run))
         {
-            _logger.Warning(
-                "Consolidation run rejected: {Type} for template {TemplateId} is already running or queued",
-                type, templateId ?? "Global");
-            return null;
+            // Attempt stale-entry eviction: in multi-process mode the API may have
+            // completed the run without notifying us. If so, evict and retry once.
+            var evicted = await TryEvictAndRetryAsync(key, run, type, templateId, ct);
+            if (!evicted)
+            {
+                _logger.Warning(
+                    "Consolidation run rejected: {Type} for template {TemplateId} is already running or queued",
+                    type, templateId ?? "Global");
+                return null;
+            }
         }
 
         if (type == ConsolidationRunType.HarnessSuggestions)
@@ -209,13 +219,12 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     /// <inheritdoc />
     public async Task<IReadOnlyList<ConsolidationRun>> GetRunHistoryAsync(CancellationToken ct)
     {
-        if (_runHistoryCache is not null)
-            return _runHistoryCache;
-
+        // Always read from store — the store is the authoritative source.
+        // In the multi-process architecture (Spec 041+), the API updates ConsolidationRun
+        // status directly in the DB. An in-memory cache here would lag behind those updates
+        // and cause the monitoring page to show stale Queued status after dispatch.
         var runs = await _runStore.LoadAllRunsAsync(ct);
-        var result = runs.OrderByDescending(r => r.StartedAtUtc).ToList();
-        _runHistoryCache = result;
-        return result;
+        return runs.OrderByDescending(r => r.StartedAtUtc).ToList();
     }
 
     /// <inheritdoc />
@@ -250,9 +259,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
                 return;
             }
 
-            if (run.Status is ConsolidationRunStatus.Succeeded
-                or ConsolidationRunStatus.Failed
-                or ConsolidationRunStatus.Cancelled)
+            if (IsTerminalStatus(run.Status))
             {
                 _logger.Debug(
                     "Skipping update for consolidation run {RunId}: already in terminal status {CurrentStatus} (requested: {RequestedStatus})",
@@ -262,7 +269,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
             run.Status = status;
             run.Summary = summary;
-            if (status is ConsolidationRunStatus.Succeeded or ConsolidationRunStatus.Failed or ConsolidationRunStatus.Cancelled)
+            if (IsTerminalStatus(status))
                 run.CompletedAtUtc = DateTimeOffset.UtcNow;
             run.TotalTokens = totalTokens;
 
@@ -393,7 +400,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private async Task PersistRunAsync(ConsolidationRun run, CancellationToken ct)
     {
         await _runStore.SaveRunAsync(run, ct);
-        _runHistoryCache = null;
+        
     }
 
     /// <inheritdoc />
@@ -402,7 +409,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             await _runStore.DeleteRunAsync(runId, ct);
-            _runHistoryCache = null;
+            
         }
         catch (Exception ex)
         {
@@ -417,7 +424,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         try
         {
             await _runStore.DeleteRunAsync(runId, CancellationToken.None);
-            _runHistoryCache = null;
+            
         }
         catch (Exception ex)
         {
@@ -426,4 +433,50 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     }
 
     private enum DispatchOutcome { Success, Queued, Failed, NoDispatcher }
+
+    private static bool IsTerminalStatus(ConsolidationRunStatus status) =>
+        status is ConsolidationRunStatus.Succeeded
+            or ConsolidationRunStatus.Failed
+            or ConsolidationRunStatus.Cancelled;
+
+    private static ConsolidationRun BuildNewRun(
+        ConsolidationRunType type,
+        string? templateIdValue,
+        string templateName,
+        string? projectName,
+        bool autoDispatch) => new()
+    {
+        RunId = Guid.NewGuid().ToString(),
+        Type = type,
+        TemplateId = templateIdValue,
+        TemplateName = templateName,
+        StartedAtUtc = DateTimeOffset.UtcNow,
+        Status = ConsolidationRunStatus.Running,
+        AutoDispatch = autoDispatch,
+        ProjectName = projectName
+    };
+
+    private async Task<bool> TryEvictAndRetryAsync(
+        (ConsolidationRunType, string?) key,
+        ConsolidationRun newRun,
+        ConsolidationRunType type,
+        TemplateId? templateId,
+        CancellationToken ct)
+    {
+        if (!_runningRuns.TryGetValue(key, out var existing))
+            return false;
+
+        var stored = await _runStore.GetByIdAsync(new RunId(existing.RunId), ct);
+        if (stored is null || !IsTerminalStatus(stored.Status))
+            return false;
+
+        _logger.Information(
+            "ConsolidationService: evicting stale _runningRuns entry for {Type}/{TemplateId} " +
+            "(store status={Status}) to allow new run",
+            type, templateId ?? "Global", stored.Status);
+        _runningRuns.TryRemove(key, out _);
+
+        // Retry the add — if it fails again, a genuinely concurrent trigger won
+        return _runningRuns.TryAdd(key, newRun);
+    }
 }

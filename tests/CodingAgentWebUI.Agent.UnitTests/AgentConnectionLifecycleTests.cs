@@ -146,7 +146,7 @@ public partial class AgentConnectionLifecycleTests
         var sourceCode = File.ReadAllText(
             Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionLifecycle.cs"));
 
-        sourceCode.Should().Contain("volatile HubConnectionManager? _hubManager",
+        sourceCode.Should().Contain("volatile IHubConnectionManager? _hubManager",
             "The _hubManager field must be nullable to hold null after disposal");
     }
 

@@ -10,9 +10,6 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// Every caller that terminates a run (HeartbeatMonitor, AgentHub.ReportJobCompleted,
 /// CancelJob, RevertFailedDistribution) MUST use this interface rather than individually
 /// calling RemoveRun + TransitionWorkItem + SwapLabel + etc.
-///
-/// In Legacy (no-DB) mode, the DB operations are no-ops. The abstraction ensures callers
-/// don't need to know which mode they're in.
 /// </summary>
 public interface IRunLifecycleManager
 {
@@ -20,7 +17,7 @@ public interface IRunLifecycleManager
     /// Atomically terminates a run as Failed. Performs in order:
     /// 1. Marks the PipelineRun as Failed (sets FailureReason, CompletedAt, CurrentStep)
     /// 2. Removes from in-memory active runs (OrchestratorRunService)
-    /// 3. Transitions the DB WorkItem to Failed (DB mode only, no-op in legacy)
+    /// 3. Transitions the DB WorkItem to Failed
     /// 4. Persists to run history
     /// 5. Marks issue as complete in dedup tracker
     /// 6. Clears agent state (ActiveJobId, OrphanRestoredAt) and transitions to Idle
@@ -34,7 +31,7 @@ public interface IRunLifecycleManager
     /// <summary>
     /// Atomically terminates a run as Completed/Succeeded. Performs in order:
     /// 1. Removes from in-memory active runs
-    /// 2. Transitions the DB WorkItem to the given terminal status (DB mode only)
+    /// 2. Transitions the DB WorkItem to the given terminal status
     /// 3. Persists to run history
     /// 4. Marks issue as complete in dedup tracker
     ///
@@ -49,7 +46,7 @@ public interface IRunLifecycleManager
     /// Atomically cancels a run. Performs in order:
     /// 1. Marks the PipelineRun as Cancelled (sets FailureReason if provided, CompletedAt, CurrentStep)
     /// 2. Removes from in-memory active runs
-    /// 3. Transitions the DB WorkItem to Cancelled (DB mode only)
+    /// 3. Transitions the DB WorkItem to Cancelled
     /// 4. Persists to run history
     /// 5. Marks issue as complete in dedup tracker
     /// 6. Clears agent state and transitions to Idle
@@ -65,9 +62,8 @@ public interface IRunLifecycleManager
     /// 2. Sets ActiveJobId on the agent registry entry and transitions to Busy
     /// 3. Swaps label to agent:in-progress (best-effort)
     ///
-    /// Called by ALL distribution paths (SignalRWorkDistributor, DrainService, Legacy dispatcher)
-    /// to ensure label swap timing is consistent across modes: labels only change when
-    /// an agent actually starts working on the issue.
+    /// Called on every path that hands a run to an agent, so that label swap timing stays
+    /// consistent: labels only change when an agent actually starts working on the issue.
     /// </summary>
     Task AgentAcceptedRunAsync(RunId runId, AgentId agentId, IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderConfigId, ProviderConfigId repoProviderConfigId,
@@ -77,7 +73,7 @@ public interface IRunLifecycleManager
     /// Transitions a WorkItem to Failed in the database without touching in-memory state.
     /// Used when the in-memory run was already removed by other means (e.g., RevertFailedDistribution)
     /// but the DB row is still in a non-terminal state.
-    /// No-op in Legacy mode.
+    /// No-op when WorkItemFallbackTransitionService is not registered.
     /// </summary>
     Task TransitionWorkItemToFailedAsync(RunId runId, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null);

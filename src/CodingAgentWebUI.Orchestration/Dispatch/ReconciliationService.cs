@@ -1,8 +1,11 @@
+// DEAD CODE (Spec 043) — this class is no longer registered as a hosted service in any host.
+// Source retained because test projects directly instantiate it via 'new ReconciliationService(...)'.
+// TODO(Spec 046): migrate those tests to use the Job Controller's ReconciliationLoop and delete this class.
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
-using CodingAgentWebUI.Orchestration.LeaderElection;
-using CodingAgentWebUI.Orchestration.Telemetry;
+using CodingAgentWebUI.Pipeline.LeaderElection;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s;
@@ -89,14 +92,10 @@ public sealed partial class ReconciliationService : LeaderElectedPollingService
         // Exit when leadership lost or stopping
         await Task.WhenAny(watchTask, pollTask);
 
-        // TODO: Stale comment — no local CTS is created here. The original code had explicit
-        // cancellation (`await linked.CancelAsync()`) between WhenAny and WhenAll to stop the
-        // surviving loop when the other exited. That path was removed in the refactoring.
-        // Both loops only exit via ct cancellation (leadership loss or host stop), so this is
-        // safe in practice, but if loop logic changes in the future, consider re-adding explicit
-        // cancellation to stop the surviving loop immediately rather than waiting for its delay.
-        // Note: The base class owns the linked CTS, so cancellation propagates from LeaderToken.
-        // If one loop faults, we need to propagate exception after cleanup.
+        // Both loops only exit via ct cancellation (leadership loss or host stop), so WhenAll
+        // is safe. If loop logic changes in the future, consider re-adding explicit cancellation
+        // to stop the surviving loop immediately rather than waiting for its next delay.
+        // The base class owns the linked CTS, so cancellation propagates from LeaderToken.
         try { await Task.WhenAll(watchTask, pollTask); }
         catch (OperationCanceledException) { /* expected */ }
         catch (Exception ex)

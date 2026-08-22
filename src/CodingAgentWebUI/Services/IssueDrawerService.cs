@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -20,8 +19,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     private readonly IProviderFactory _providerFactory;
     private readonly IDependencyChecker _dependencyChecker;
     private readonly IWorkDistributor _workDistributor;
-    private readonly IAgentRegistryService _agentRegistry;
-    private readonly IDispatchOrchestrationService? _dispatchOrchestration;
+    private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<IssueSummary> _issueDrawer;
 
@@ -29,13 +27,11 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         IProviderFactory providerFactory,
         IDependencyChecker dependencyChecker,
         IWorkDistributor workDistributor,
-        IAgentRegistryService agentRegistry,
-        IDispatchOrchestrationService? dispatchOrchestration = null)
+        IDispatchOrchestrationService dispatchOrchestration)
     {
         _providerFactory = providerFactory;
         _dependencyChecker = dependencyChecker;
         _workDistributor = workDistributor;
-        _agentRegistry = agentRegistry;
         _dispatchOrchestration = dispatchOrchestration;
 
         _issueDrawer = new DrawerStateService<IssueSummary>(
@@ -69,22 +65,21 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     {
         _issueDrawer.Loading = true;
         _issueDrawer.Page = page;
+        var ct = _issueDrawer.CancellationToken;
         try
         {
             var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
             if (providerConfig == null) { _issueDrawer.Loading = false; return "Issue provider not found for this template."; }
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
             var labels = _issueDrawer.SelectedLabels.Count > 0 ? _issueDrawer.SelectedLabels : null;
-            // TODO: [WARNING] CancellationToken.None is passed to all provider calls in the load methods
-            // (LoadDrawerIssuesAsync, LoadDrawerLabelsCallbackAsync). The drawer's own CancellationToken
-            // is available via _issueDrawer.CancellationToken but is not threaded into the load callbacks
-            // because DrawerStateService's load delegates take only PipelineJobTemplate. A user closing the
-            // drawer mid-load will not cancel the in-flight HTTP call to the issue provider, holding a
-            // connection pool slot. Fix: either pass the drawer's CancellationToken through the load
-            // callback signature, or capture it at callback invocation time.
-            var result = await provider.ListOpenIssuesAsync(_issueDrawer.Page, 15, labels, CancellationToken.None);
+            var result = await provider.ListOpenIssuesAsync(_issueDrawer.Page, 15, labels, ct);
             _issueDrawer.Items = result.Items.ToList();
             _issueDrawer.HasMore = result.HasMore;
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _issueDrawer.Items.Clear();
             return null;
         }
         catch (Exception ex) { _issueDrawer.Items.Clear(); return $"Failed to load issues: {ex.Message}"; }
@@ -96,13 +91,19 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 
     private async Task<string?> LoadDrawerLabelsCallbackAsync(PipelineJobTemplate template)
     {
+        var ct = _issueDrawer.CancellationToken;
         try
         {
             var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
             if (providerConfig == null) return null;
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
+            var labels = await provider.ListRepositoryLabelsAsync(ct);
             _issueDrawer.Labels = labels.ToList();
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _issueDrawer.Labels.Clear();
             return null;
         }
         catch
@@ -145,12 +146,11 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         }
     }
 
-    private async Task CheckDrawerDependenciesInBackgroundAsync(PipelineJobTemplate template)
+    private async Task CheckDrawerDependenciesInBackgroundAsync(PipelineJobTemplate template, CancellationToken ct)
     {
-        var token = _issueDrawer.CancellationToken;
         try
         {
-            await CheckDrawerDependenciesAsync(template, null, token);
+            await CheckDrawerDependenciesAsync(template, null, ct);
         }
         catch (OperationCanceledException) { /* expected on drawer close */ }
     }
@@ -180,8 +180,6 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     {
         if (!issueProviders.Any(p => p.Id == template.IssueProviderId) || !repoProviders.Any(p => p.Id == template.RepoProviderId))
             return (false, "Template references providers that no longer exist.", null);
-        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
-            return (false, "Could not dispatch — no agents are currently connected.", null);
 
         var depProviderConfig = issueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
         if (depProviderConfig != null)
@@ -192,33 +190,23 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
                 return (false, $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", depResult.BlockedBy.Select(n => $"#{n}"))}", null);
         }
 
-        if (_dispatchOrchestration is not null)
-        {
-            return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
-                _dispatchOrchestration,
-                project => _dispatchOrchestration.PrepareDistributionRequestAsync(
-                    new ImplementationDispatchOrchestrationRequest
-                    {
-                        IssueIdentifier = issue.Identifier,
-                        IssueProviderId = template.IssueProviderId,
-                        RepoProviderId = template.RepoProviderId,
-                        BrainProviderId = template.BrainProviderId,
-                        PipelineProviderId = template.PipelineProviderId,
-                        InitiatedBy = DrawerDispatchHelper.ManualInitiator,
-                        Project = project
-                    }, CancellationToken.None),
-                parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
-                "Could not dispatch — distribution failed.",
-                $"⏳ Queued #{issue.Identifier} — waiting for an idle agent",
-                $"✅ Dispatched #{issue.Identifier}");
-        }
-
-        var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, issue, initiatedBy: DrawerDispatchHelper.ManualInitiator, timeoutSeconds: 3600,
-            projectId: parentProject?.Id, projectName: parentProject?.Name);
-        return await DrawerDispatchHelper.DispatchLegacyAsync(_workDistributor, minimalRequest,
-            $"✅ Dispatched #{issue.Identifier}",
-            "Could not dispatch — issue is already being processed or queued, or no agents are available.");
+        return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
+            _dispatchOrchestration,
+            project => _dispatchOrchestration.PrepareDistributionRequestAsync(
+                new ImplementationDispatchOrchestrationRequest
+                {
+                    IssueIdentifier = issue.Identifier,
+                    IssueProviderId = template.IssueProviderId,
+                    RepoProviderId = template.RepoProviderId,
+                    BrainProviderId = template.BrainProviderId,
+                    PipelineProviderId = template.PipelineProviderId,
+                    InitiatedBy = DrawerDispatchHelper.ManualInitiator,
+                    Project = project
+                }, CancellationToken.None),
+            parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
+            "Could not dispatch — distribution failed.",
+            $"⏳ Queued #{issue.Identifier} — the job controller will start an agent pod for it",
+            $"✅ Dispatched #{issue.Identifier}");
     }
 
     // ── Drawer orchestration ──

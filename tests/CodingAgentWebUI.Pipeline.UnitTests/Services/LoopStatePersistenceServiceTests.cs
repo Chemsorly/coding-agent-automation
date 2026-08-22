@@ -240,7 +240,7 @@ public class LoopStatePersistenceServiceTests : IDisposable
             ProjectStore = mockProjectStore.Object,
             Logger = _logger,
             WorkDistributor = null,
-            DispatchOrchestration = null,
+            DispatchOrchestration = new NullDispatchOrchestrationService(),
             DependencyChecker = null,
             HousekeepingService = null,
             LeaderElection = null

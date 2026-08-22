@@ -1,7 +1,7 @@
 using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Xunit;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;

@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -37,7 +37,7 @@ public sealed class AgentHubIssueProxyTests
             Mock.Of<IAgentTokenRefreshService>(),
             _mockGateFormatter.Object,
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);

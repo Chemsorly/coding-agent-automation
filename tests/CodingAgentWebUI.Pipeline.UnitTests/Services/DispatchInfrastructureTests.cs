@@ -116,4 +116,54 @@ public class DispatchInfrastructureTests
     // should be tested for: provider config build failure, pipeline config load failure, template
     // load failure, and successful resolution. BuildSyntheticIssueContext should be tested for
     // null description coalescing and IssueDescriptionParser.Parse interaction.
+
+    // ── BuildSyntheticIssueContext ─────────────────────────────────────────
+
+    [Fact]
+    public void BuildSyntheticIssueContext_NullDescription_DescriptionIsEmpty()
+    {
+        var (issueDetail, _) = DispatchInfrastructure.BuildSyntheticIssueContext(
+            identifier: "owner/repo#1",
+            title: "Some Title",
+            description: null);
+
+        issueDetail.Description.Should().Be(string.Empty);
+    }
+
+    [Fact]
+    public void BuildSyntheticIssueContext_NullDescription_LabelsIsEmpty()
+    {
+        var (issueDetail, _) = DispatchInfrastructure.BuildSyntheticIssueContext(
+            identifier: "owner/repo#1",
+            title: "Some Title",
+            description: null);
+
+        issueDetail.Labels.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildSyntheticIssueContext_NonNullDescription_PassesThroughDescription()
+    {
+        const string desc = "This is the description.";
+
+        var (issueDetail, _) = DispatchInfrastructure.BuildSyntheticIssueContext(
+            identifier: "owner/repo#2",
+            title: "Another Title",
+            description: desc);
+
+        issueDetail.Description.Should().Be(desc);
+        issueDetail.Labels.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void BuildSyntheticIssueContext_EmptyStringDescription_DescriptionIsEmpty()
+    {
+        var (issueDetail, _) = DispatchInfrastructure.BuildSyntheticIssueContext(
+            identifier: "owner/repo#3",
+            title: "Title",
+            description: string.Empty);
+
+        // Empty string is NOT coalesced — null-coalescing only applies to null
+        issueDetail.Description.Should().Be(string.Empty);
+    }
 }

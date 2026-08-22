@@ -44,7 +44,8 @@ public static class WorkItemMutationFactory
             item.ErrorMessage = errorMessage ?? DefaultFailureMessage;
             // TODO: ??= preserves a FailureReason already set by a prior transition (e.g., recovery paths in
             // RunLifecycleManager). This changes semantics compared to the direct = assignments that existed at
-            // some call sites before this refactor (DispatchLifecycleService, SignalRWorkDistributor). At those
+            // some call sites before this refactor (DispatchLifecycleService, and the since-deleted
+            // SignalR-mode distributor). At those
             // call sites the pre-refactor code used unconditional = and would have overwritten a pre-existing
             // FailureReason; with ??= a pre-existing value is silently preserved instead. Verify that no caller
             // relies on the overwrite behaviour, or introduce a forceOverwrite parameter if explicit override

@@ -2,7 +2,6 @@ using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.Playwright;
 
 namespace CodingAgentWebUI.E2ETests.Tests;
 
@@ -11,12 +10,26 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Ensures the UI provides clear feedback instead of silently failing.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class DispatchEdgeCaseTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class DispatchEdgeCaseTests : E2ETestBase
 {
     public DispatchEdgeCaseTests(E2EFixture fixture) : base(fixture) { }
 
+    /// <summary>
+    /// Dispatching with nothing connected queues the work rather than refusing it.
+    ///
+    /// <para>
+    /// This test used to assert the opposite — a red "no agents are currently connected" banner —
+    /// which was correct while the in-memory distributor pushed a job straight to a connected
+    /// agent. Since Spec 041 there is nothing to be connected in advance: the dispatch writes a
+    /// work item and the Job Controller starts a pod for it, so
+    /// <c>IWorkDistributor.RequiresConnectedAgents</c> is <c>false</c> and the guard that produced
+    /// that banner never fires. Asserting the banner made this a test of a dead branch; asserting
+    /// the queue makes it a test of what an operator with an empty cluster actually gets.
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task Dispatch_NoAgentsAvailable_ShowsErrorMessage()
+    public async Task Dispatch_NoAgentsAvailable_QueuesForTheJobController()
     {
         // Arrange: seed template and issue, but do NOT connect any agent
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
@@ -53,19 +66,17 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase, IClassFixture<E2EFixtur
         await codingPage.SelectIssueAsync("50");
         await codingPage.ClickStartPipelineAsync();
 
-        // Assert: error message appears (not silent failure)
-        await Page.WaitForSelectorAsync(".settings-status.status-error", new() { Timeout = 10_000 });
-        var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();
-        Assert.True(errorVisible > 0, "Expected an error message when no agents are available for dispatch");
+        // Assert: the operator is told the work is queued, not that it was refused.
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
 
-        var errorText = await Page.TextContentAsync(".settings-status.status-error");
-        Assert.NotNull(errorText);
-        // The error should mention inability to dispatch
-        Assert.True(
-            errorText.Contains("Could not dispatch", StringComparison.OrdinalIgnoreCase) ||
-            errorText.Contains("no agents", StringComparison.OrdinalIgnoreCase) ||
-            errorText.Contains("already being processed", StringComparison.OrdinalIgnoreCase),
-            $"Error message should explain why dispatch failed. Got: '{errorText}'");
+        var statusText = await Page.TextContentAsync(".settings-status.status-success");
+        Assert.NotNull(statusText);
+        Assert.Contains("Queued", statusText, StringComparison.OrdinalIgnoreCase);
+
+        // And the work item really is waiting for a pod: nothing has claimed it, because nothing
+        // is connected. This is the half of the assertion the old error-banner check never made.
+        var pending = await Fixture.WorkItems.GetPendingAsync(50, CancellationToken.None);
+        Assert.Contains(pending, w => w.IssueIdentifier == "50");
     }
 
     [Fact]
@@ -99,7 +110,7 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase, IClassFixture<E2EFixtur
         });
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act
         var codingPage = new AgentCodingPage(Page, BaseUrl);

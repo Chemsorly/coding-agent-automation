@@ -30,7 +30,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     // test-seeding method or constructor overload to restore the field to private readonly.
     internal readonly ProviderCacheManager _cacheManager;
     private readonly TemplatePoller _poller;
-    private readonly DispatchScheduler _dispatcher;
+    private readonly DispatchScheduler? _dispatcher;
 
     private volatile bool _stopRequested;
     private CancellationTokenSource? _loopCts;
@@ -105,7 +105,9 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
 
         _cacheManager = new ProviderCacheManager(deps.ProviderFactory, deps.Logger);
         _poller = new TemplatePoller(_cacheManager, deps.Logger);
-        _dispatcher = new DispatchScheduler(deps.Orchestration, deps.DispatchOrchestration, deps.WorkDistributor, deps.DependencyChecker, _cacheManager, deps.Logger);
+        _dispatcher = deps.DispatchOrchestration is not null
+            ? new DispatchScheduler(deps.Orchestration, deps.DispatchOrchestration, deps.DependencyChecker, _cacheManager, deps.Logger)
+            : null;
     }
 
     /// <summary>
@@ -229,9 +231,9 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            // K8s mode: wait for leadership before entering the activation-wait loop.
-            // _leaderGate is null in Legacy mode → this inner loop is skipped entirely,
-            // preserving the existing unconditional behaviour.
+        // K8s mode: wait for leadership before entering the activation-wait loop.
+            // _leaderGate is null when leader election is not configured (test environments)
+            // → this inner loop is skipped and the loop runs unconditionally.
             while (!stoppingToken.IsCancellationRequested && (_leaderGate is { IsLeader: false }))
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
 

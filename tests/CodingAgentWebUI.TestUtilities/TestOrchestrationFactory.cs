@@ -144,6 +144,26 @@ public static class TestOrchestrationFactory
                 HasMore = hasMore
             });
         }
+        public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+        {
+            var runIdStr = runId.ToString();
+            return Task.FromResult(_runs.FirstOrDefault(s => s.RunId == runIdStr));
+        }
+        public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
+        {
+            var source = feedbackOnly ? _runs.Where(s => s.Feedback is not null).ToList() : _runs;
+            var items = source.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+            var hasMore = items.Count > pageSize;
+            if (hasMore)
+                items = items.Take(pageSize).ToList();
+            return Task.FromResult(new PagedResult<PipelineRunSummary>
+            {
+                Items = items.AsReadOnly(),
+                Page = page,
+                PageSize = pageSize,
+                HasMore = hasMore
+            });
+        }
         public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
         {
             _runs.Add(run.ToSummary());

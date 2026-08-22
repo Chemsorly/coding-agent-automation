@@ -1,0 +1,149 @@
+{{- if .Values.api.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-api
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  # api.replicas MUST remain 1 — Redis backplane handles message delivery but not
+  # in-memory singleton state (AgentRegistryService, OrchestratorRunService, etc.).
+  # See Req 9.8a. Do NOT increase without completing Spec 045 Task 13a.
+  {{- if gt (int .Values.api.replicas) 1 }}
+  {{- fail "api.replicas must be 1. AgentRegistryService, OrchestratorRunService and JobDeduplicationGuardService are in-memory singletons; a second replica gets a divergent copy of each. See docs/architecture/concurrency-model.md." }}
+  {{- end }}
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "coding-agent-automation.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-api
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
+      containers:
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.service.port }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.api.service.port }}
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.api.service.port }}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.api.service.port }}
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          env:
+            - name: ASPNETCORE_URLS
+              value: "http://+:{{ .Values.api.service.port }}"
+            - name: AGENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.secretName" . }}
+                  key: agent-api-key
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.secretName" . }}
+                  key: otel-headers
+                  optional: true
+            - name: Database__Host
+              value: {{ required "database.host is required" .Values.database.host | quote }}
+            - name: Database__Port
+              value: {{ .Values.database.port | default 5432 | quote }}
+            - name: Database__Name
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.auth.existingSecret is required" .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.database | default "POSTGRES_DB" }}
+            - name: Database__Username
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.username | default "POSTGRES_USER" }}
+            - name: Database__Password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.password | default "POSTGRES_PASSWORD" }}
+            {{- if .Values.database.sslMode }}
+            - name: Database__SslMode
+              value: {{ .Values.database.sslMode | quote }}
+            {{- end }}
+            # API applies migrations when Database.migrateOnStartup is true (default).
+            # Set to false only when running migrations externally (blue/green deployments).
+            - name: Database__MigrateOnStartup
+              value: {{ .Values.database.migrateOnStartup | toString | quote }}
+            # API uses its own leader election lease, separate from the orchestrator's PipelineLoop lease.
+            # Without a distinct name both processes compete for "caa-leader" and the API's
+            # ConsolidationWorkItemDispatchService never acquires leadership.
+            - name: LeaderElection__LeaseName
+              value: "caa-{{ .Release.Name }}-api-lock"
+            {{- if .Values.signalr.redis.connectionString }}
+            - name: SignalR__Redis__ConnectionString
+              value: {{ .Values.signalr.redis.connectionString | quote }}
+            {{- end }}
+            # WorkDistribution env vars — required by DispatchServiceOptionsFactory.Create(),
+            # consumed by ModelFetchJobService and ConsolidationWorkItemDispatchService (Req 9.3c).
+            # Without these the factory returns empty OrchestratorUrl / ServiceAccount, and
+            # JobSpecBuilder emits a Job spec the K8s admission webhook rejects.
+            # ORCHESTRATOR_URL handed to the consolidation and model-fetch agent pods dispatched
+            # from this process. Must be the Pipeline API, not the orchestrator.
+            - name: WorkDistribution__OrchestratorUrl
+              value: {{ include "coding-agent-automation.agentOrchestratorUrl" . | quote }}
+            - name: WorkDistribution__AgentApiKeySecretName
+              value: {{ include "coding-agent-automation.secretName" . | quote }}
+            - name: WorkDistribution__AgentServiceAccountName
+              value: "{{ include "coding-agent-automation.fullname" . }}-agent"
+            - name: WorkDistribution__Namespace
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: WorkDistribution__OpencodeConfigSecretName
+              value: {{ include "coding-agent-automation.secretName" . | quote }}
+            - name: WorkDistribution__JobTemplatesPath
+              value: "/app/config/job-templates.yaml"
+            - name: WorkDistribution__Dispatch__IntervalSeconds
+              value: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
+            - name: WorkDistribution__Dispatch__RateLimitPerSecond
+              value: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
+            - name: WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds
+              value: {{ .Values.workDistribution.dispatch.chatSessionMaxDurationSeconds | quote }}
+            - name: WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds
+              value: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
+            - name: WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds
+              value: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
+            {{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}
+            - name: WorkDistribution__CredentialPools__Kiro__{{ $i }}
+              value: {{ $pvc | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: job-templates
+              mountPath: /app/config
+              readOnly: true
+      volumes:
+        - name: job-templates
+          configMap:
+            name: {{ include "coding-agent-automation.fullname" . }}-job-templates
+            optional: true
+{{- end }}

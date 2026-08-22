@@ -1,3 +1,4 @@
+{{- include "coding-agent-automation.deprecations" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,9 +30,7 @@ spec:
         app.kubernetes.io/component: orchestrator
     spec:
       serviceAccountName: {{ include "coding-agent-automation.serviceAccountName" . }}
-      {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
       automountServiceAccountToken: true
-      {{- end }}
       terminationGracePeriodSeconds: {{ .Values.orchestrator.terminationGracePeriodSeconds }}
       {{- with .Values.orchestrator.podSecurityContext }}
       securityContext:
@@ -94,15 +93,20 @@ spec:
                   name: {{ include "coding-agent-automation.secretName" . }}
                   key: otel-headers
                   optional: true
-            {{- if .Values.database.enabled }}
+            # KubernetesWorkDistributor and KubernetesJobCleanup have been migrated to
+            # IPipelineApiWorkItemClient. IDbContextFactory is still registered in the monolith
+            # for: IPipelineRunHistoryService, IConsolidationRunStore, IHarnessSuggestionStore,
+            # and WorkItemTransitionService (consolidation services). These env vars are required
+            # until those remaining consumers are migrated to API calls.
+            # Note Database__MigrateOnStartup=false: the API owns schema migrations (Req 9.5a).
             - name: Database__Host
-              value: {{ required "database.host is required when database.enabled=true" .Values.database.host | quote }}
+              value: {{ required "database.host is required" .Values.database.host | quote }}
             - name: Database__Port
               value: {{ .Values.database.port | default 5432 | quote }}
             - name: Database__Name
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "database.auth.existingSecret is required when database.enabled=true" .Values.database.auth.existingSecret }}
+                  name: {{ required "database.auth.existingSecret is required" .Values.database.auth.existingSecret }}
                   key: {{ .Values.database.auth.keys.database | default "POSTGRES_DB" }}
             - name: Database__Username
               valueFrom:
@@ -119,48 +123,36 @@ spec:
               value: {{ .Values.database.sslMode | quote }}
             {{- end }}
             - name: Database__MigrateOnStartup
-              value: {{ .Values.database.migrateOnStartup | quote }}
-            - name: WorkDistribution__Mode
-              value: {{ .Values.workDistribution.mode | quote }}
-            {{- end }}
+              value: "false"
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}
             {{- end }}
-          volumeMounts:
-            {{- if ne .Values.orchestrator.persistence.mountMode "disabled" }}
-            - name: pipeline-config
-              mountPath: /app/config/pipeline
-              {{- if eq .Values.orchestrator.persistence.mountMode "readOnly" }}
-              readOnly: true
+            # Pipeline API connection — required by IPipelineApiConfigClient and IAgentHubConnection.
+            # Spec 045 Req 6.4: orchestrator must know API base URL and hub URL.
+            - name: PipelineApi__BaseUrl
+              value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
+            - name: PipelineApi__HubUrl
+              value: {{ if .Values.api.hubUrl -}}
+                {{- .Values.api.hubUrl | quote }}
+              {{- else -}}
+                {{- printf "%s/hubs/agent" (include "coding-agent-automation.apiBaseUrl" .) | quote }}
               {{- end }}
-            {{- end }}
-            {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
+            # Leader election lease name — release-scoped to prevent collision when multiple
+            # Helm releases share a namespace (Req 6.3/6.7). Overridable via values.yaml.
+            - name: LeaderElection__PipelineLoopLeaseName
+              value: {{ if .Values.orchestrator.leaderElection.pipelineLoopLeaseName -}}
+                {{- .Values.orchestrator.leaderElection.pipelineLoopLeaseName | quote }}
+              {{- else -}}
+                {{- printf "caa-%s-pipeline-loop-lock" .Release.Name | quote }}
+              {{- end }}
+          volumeMounts:
             - name: job-templates
               mountPath: /app/config/job-templates.yaml
               subPath: job-templates.yaml
               readOnly: true
-            {{- end }}
       volumes:
-        {{- if ne .Values.orchestrator.persistence.mountMode "disabled" }}
-        - name: pipeline-config
-          {{- if eq .Values.orchestrator.persistence.type "pvc" }}
-          persistentVolumeClaim:
-            claimName: {{ include "coding-agent-automation.fullname" . }}-orchestrator-config
-            {{- if eq .Values.orchestrator.persistence.mountMode "readOnly" }}
-            readOnly: true
-            {{- end }}
-          {{- else if eq .Values.orchestrator.persistence.type "hostPath" }}
-          hostPath:
-            path: {{ .Values.orchestrator.persistence.hostPath }}
-            type: DirectoryOrCreate
-          {{- else }}
-          emptyDir:
-            sizeLimit: 1Gi
-          {{- end }}
-        {{- end }}
-        {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
         - name: job-templates
           configMap:
             name: {{ include "coding-agent-automation.fullname" . }}-job-templates
-        {{- end }}
+            optional: true

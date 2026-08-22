@@ -1,9 +1,7 @@
 using FsCheck;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Infrastructure.GitHub;
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.TestUtilities;
 using Xunit;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
@@ -12,22 +10,11 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests;
 /// Property 8: Configuration store round-trip preserves data
 /// Feature: automated-dev-pipeline, Property 8: Configuration store round-trip preserves data
 /// Validates: Requirements 9.5
+/// Uses InMemoryConfigurationStore (promoted from E2ETests by Spec 041).
 /// </summary>
-public class ConfigurationStorePropertyTests : IDisposable
+public class ConfigurationStorePropertyTests
 {
-    private readonly string _tempDir;
-
-    public ConfigurationStorePropertyTests()
-    {
-        _tempDir = Path.Combine(Path.GetTempPath(), $"config-store-pbt-{Guid.NewGuid()}");
-        Directory.CreateDirectory(_tempDir);
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
-    }
+    private static InMemoryConfigurationStore CreateStore() => new InMemoryConfigurationStore();
 
     /// <summary>
     /// Property 8a: Saving then loading a PipelineConfiguration produces an equivalent object.
@@ -49,7 +36,7 @@ public class ConfigurationStorePropertyTests : IDisposable
             BlacklistedPaths = new[] { ".agent", ".github", $".custom-{Math.Abs(maxRetries % 10)}" },
         };
 
-        var store = new JsonConfigurationStore(_tempDir);
+        var store = CreateStore();
 
         store.SavePipelineConfigAsync(original, CancellationToken.None).GetAwaiter().GetResult();
         var loaded = store.LoadPipelineConfigAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -88,7 +75,7 @@ public class ConfigurationStorePropertyTests : IDisposable
             }
         };
 
-        var store = new JsonConfigurationStore(_tempDir);
+        var store = CreateStore();
 
         store.SaveProviderConfigAsync(original, CancellationToken.None).GetAwaiter().GetResult();
         var loaded = store.LoadProviderConfigsAsync(kind, CancellationToken.None).GetAwaiter().GetResult();

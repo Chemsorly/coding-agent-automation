@@ -1,5 +1,5 @@
 using System.Text.Json;
-using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline;
 using Microsoft.Extensions.Hosting;
 using ILogger = Serilog.ILogger;
 

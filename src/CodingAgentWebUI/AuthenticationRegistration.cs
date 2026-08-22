@@ -1,4 +1,4 @@
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI;

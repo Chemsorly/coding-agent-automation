@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -8,6 +8,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 using Polly.CircuitBreaker;
 using ILogger = Serilog.ILogger;
@@ -23,27 +24,26 @@ public sealed class AgentHubFacadeRetryBehaviorTests
 {
     private readonly Mock<IWorkItemFallbackTransitionService> _mockFallbackService;
     private readonly AgentHubFacade _facade;
+    private readonly FakeTimeProvider _timeProvider;
 
     public AgentHubFacadeRetryBehaviorTests()
     {
         _mockFallbackService = new Mock<IWorkItemFallbackTransitionService>();
+        _timeProvider = new FakeTimeProvider();
 
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
-        var drainService = new JobQueueDrainService(
-            new JobQueueDrainDependencies(dispatcher, registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
-            new ShutdownSignal(), mockLogger.Object));
 
         _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
-            registry, runService, dispatcher, drainService,
+            registry, runService, dispatcher,
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
             NullLogger<AgentHubFacadeDependencies>.Instance,
-            WorkItemFallbackTransition: _mockFallbackService.Object));
+            WorkItemFallbackTransition: _mockFallbackService.Object,
+            TimeProvider: _timeProvider));
     }
 
     // ── Retry on chain failure ────────────────────────────────────────────
@@ -79,7 +79,7 @@ public sealed class AgentHubFacadeRetryBehaviorTests
     /// <summary>
     /// When the fallback chain throws on attempt 1 and succeeds on attempt 2,
     /// TransitionWorkItemAsync must make exactly two calls and not re-throw.
-    /// This verifies the catch branch fires and the delay path executes before retry.
+    /// Uses FakeTimeProvider to skip the 2-second retry delay instantly.
     /// </summary>
     [Fact]
     public async Task TransitionWorkItemAsync_WhenExceptionThrownOnFirstAttempt_RetriesAndSucceeds()
@@ -96,24 +96,26 @@ public sealed class AgentHubFacadeRetryBehaviorTests
                 return Task.FromResult(true);
             });
 
-        // Act — use a cancelled token to short-circuit the 2s Task.Delay
-        using var cts = new CancellationTokenSource();
-        // We let the first attempt throw. The catch fires and starts Task.Delay.
-        // We cancel immediately so Task.Delay throws OperationCanceledException,
-        // which propagates from the retry's Task.Delay call — that's acceptable
-        // (the retry was initiated). Instead, we don't cancel: let the delay actually
-        // run. But 2s is too long. Use a workaround: the mock's second call succeeds,
-        // so the delay WILL happen before the second call. Accept the 2s cost here
-        // for correctness, or skip the delay assertion and just verify call count + no throw.
-        //
-        // For test speed, we verify behavior without waiting 2s by checking call count.
-        // The Task.Delay is an implementation detail (it fires between attempt 0 and 1).
-        // TODO: This test incurs a real 2-second Task.Delay from the production retry loop.
-        // Inject a TimeProvider or delay delegate into AgentHubFacade to allow fast tests.
-        // Until then, this test adds ~2s to every CI run.
+        // FakeTimeProvider: advance time in a background thread so the Task.Delay(2s, _timeProvider, ct)
+        // resolves immediately once it is awaited, without any real wall-clock wait.
+        using var advanceCts = new CancellationTokenSource();
+        var advanceThread = new Thread(() =>
+        {
+            while (!advanceCts.IsCancellationRequested)
+            {
+                Thread.Sleep(1);
+                _timeProvider.Advance(TimeSpan.FromSeconds(3));
+            }
+        }) { IsBackground = true };
+        advanceThread.Start();
+
+        // Act
         var exception = await Record.ExceptionAsync(() =>
             _facade.TransitionWorkItemAsync(workItemId.ToString(), WorkItemStatus.Failed,
                 CancellationToken.None, "err", FailureReason.AgentError));
+
+        advanceCts.Cancel();
+        advanceThread.Join(100);
 
         // Assert: no exception escapes; called twice (attempt 0 threw, attempt 1 succeeded)
         exception.Should().BeNull();
@@ -160,16 +162,29 @@ public sealed class AgentHubFacadeRetryBehaviorTests
             .Setup(s => s.TryFallbackChainAsync(workItemId, WorkItemStatus.Cancelled, null, null, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new TimeoutException("DB timeout"));
 
+        // FakeTimeProvider: advance in a background thread so Task.Delay(2s, _timeProvider, ct)
+        // between the two attempts does not block real wall-clock time.
+        using var advanceCts = new CancellationTokenSource();
+        var advanceThread = new Thread(() =>
+        {
+            while (!advanceCts.IsCancellationRequested)
+            {
+                Thread.Sleep(1);
+                _timeProvider.Advance(TimeSpan.FromSeconds(3));
+            }
+        }) { IsBackground = true };
+        advanceThread.Start();
+
         // Act
         var exception = await Record.ExceptionAsync(() =>
             _facade.TransitionWorkItemAsync(workItemId.ToString(), WorkItemStatus.Cancelled, CancellationToken.None));
 
+        advanceCts.Cancel();
+        advanceThread.Join(100);
+
         // Assert: the final attempt's exception propagates — the catch guard is false on attempt index 1
         // (catch condition: attempt < maxAttempts - 1  =>  1 < 1  =>  false).
         // Two calls are made before the exception escapes.
-        // TODO: Times.Exactly(2) is coupled to the maxAttempts=2 constant in AgentHubFacade.
-        // If maxAttempts changes, update this assertion to match. Consider exposing the constant
-        // or deriving the expected count from a shared source to make the coupling explicit.
         exception.Should().BeOfType<TimeoutException>(
             "the final attempt's exception propagates when the catch guard is false");
         _mockFallbackService.Verify(

@@ -1,5 +1,4 @@
 using Moq;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
@@ -14,8 +13,6 @@ namespace CodingAgentWebUI.UnitTests.Services;
 public class PrReviewDrawerServiceTests
 {
     private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IWorkDistributor> _mockWorkDistributor;
-    private readonly Mock<IAgentRegistryService> _mockAgentRegistry;
     private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
     private readonly PrReviewDrawerService _service;
 
@@ -28,14 +25,10 @@ public class PrReviewDrawerServiceTests
     public PrReviewDrawerServiceTests()
     {
         _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockWorkDistributor = new Mock<IWorkDistributor>();
-        _mockAgentRegistry = new Mock<IAgentRegistryService>();
         _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
 
         _service = new PrReviewDrawerService(
             _mockProviderFactory.Object,
-            _mockWorkDistributor.Object,
-            _mockAgentRegistry.Object,
             _mockDispatchOrchestration.Object);
     }
 
@@ -52,8 +45,7 @@ public class PrReviewDrawerServiceTests
     {
         var svc = new PrReviewDrawerService(
             new Mock<IProviderFactory>().Object,
-            new Mock<IWorkDistributor>().Object,
-            new Mock<IAgentRegistryService>().Object);
+            new Mock<IDispatchOrchestrationService>().Object);
         Assert.NotNull(svc);
         svc.Dispose();
     }
@@ -110,25 +102,12 @@ public class PrReviewDrawerServiceTests
     // ── DispatchPrReviewAsync ──
 
     [Fact]
-    public async Task DispatchPrReviewAsync_ReturnsError_WhenRequiresConnectedAgentsAndNoneConnected()
-    {
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(true);
-        _mockAgentRegistry.Setup(r => r.GetAllAgents()).Returns(new List<AgentEntry>());
-
-        var (success, error, _) = await _service.DispatchPrReviewAsync(MakePr(), MakeTemplate(), IssueProviders, RepoProviders, null);
-
-        Assert.False(success);
-        Assert.Contains("no agents are currently connected", error);
-    }
-
-    [Fact]
     public async Task DispatchPrReviewAsync_DbMode_ReturnsSuccess_WhenOrchestrationSucceeds()
     {
         // TODO: [WARNING] This test asserts only Assert.True(success) and does not check the returned
         // msg string. Swapping the queuedMessage and dispatchedMessage arguments in
         // DispatchWithOrchestrationAsync would not be caught. Add: var (success, _, msg) = ...
         // and Assert.DoesNotContain("Queued", msg) to complement the queued-message test.
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
 
         var request = CreateMinimalRequest();
         _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
@@ -145,8 +124,6 @@ public class PrReviewDrawerServiceTests
     [Fact]
     public async Task DispatchPrReviewAsync_DbMode_QueuedMessage_WhenQueued()
     {
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
-
         var request = CreateMinimalRequest();
         _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(request);
@@ -175,7 +152,6 @@ public class PrReviewDrawerServiceTests
     public async Task DispatchFromPrDrawerAsync_DoesNotCloseDrawer_OnSuccess()
     {
         // PR drawer stays open after dispatch (unlike issue/epic)
-        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
         _service.SetProviderContext(IssueProviders, RepoProviders);
 
         var template = MakeTemplate();

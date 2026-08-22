@@ -1,6 +1,6 @@
 using System.Reflection;
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
@@ -502,7 +502,7 @@ public class AgentAuthorizationFilterInvokeTests
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
         hub.Context = MakeContext(connectionId);
         return hub;
     }
@@ -514,7 +514,7 @@ public class AgentAuthorizationFilterInvokeTests
         return mock.Object;
     }
 
-    private static HubInvocationContext MakeInvocationContext(Hub hub, string connectionId, string methodName, IReadOnlyList<object> args)
+    private static HubInvocationContext MakeInvocationContext(Microsoft.AspNetCore.SignalR.Hub hub, string connectionId, string methodName, IReadOnlyList<object> args)
     {
         // For methods that don't exist on AgentHub (e.g. on DummyHub), search on the actual hub type.
         var method = hub.GetType().GetMethod(methodName)
@@ -526,7 +526,7 @@ public class AgentAuthorizationFilterInvokeTests
 }
 
 /// <summary>Minimal non-AgentHub stub for testing the hub-type bypass in the filter.</summary>
-public sealed class DummyHub : Hub
+public sealed class DummyHub : Microsoft.AspNetCore.SignalR.Hub
 {
     public void DoSomething() { }
 }

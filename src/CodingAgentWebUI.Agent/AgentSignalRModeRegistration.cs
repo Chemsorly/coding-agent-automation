@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure.Resilience;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using KiroCliLib.Core;
@@ -8,8 +9,13 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
-/// Extension methods for registering SignalR-mode agent services.
-/// Extracted from Program.cs to reduce top-level statement complexity.
+/// Extension methods for registering chat-pod agent services.
+/// Reached when the agent pod is started without <c>--work-item-id</c> (chat mode).
+/// Registers <see cref="AgentWorkerService"/> and the full SignalR hub connection stack
+/// (<see cref="AgentConnectionLifecycle"/>, <see cref="AgentJobSlotManager"/>,
+/// <see cref="ChatJobHandler"/>, <see cref="ConsolidationJobHandler"/>,
+/// <see cref="SignalRCompletionReporter"/>, <see cref="CriticalMessageBuffer"/>)
+/// so the pod can serve interactive chat sessions and consolidation jobs.
 /// </summary>
 internal static class AgentSignalRModeRegistration
 {
@@ -19,7 +25,7 @@ internal static class AgentSignalRModeRegistration
     {
         services.AddSingleton<CriticalMessageBuffer>();
         services.AddSingleton<SignalRCompletionReporter>(sp => new SignalRCompletionReporter(
-            sp.GetRequiredService<HubConnectionManager>(),
+            sp.GetRequiredService<IHubConnectionManager>(),
             ResiliencePipelineFactory.CreateSignalRPipeline(logger),
             sp.GetRequiredService<CriticalMessageBuffer>(),
             logger));
@@ -47,8 +53,8 @@ internal static class AgentSignalRModeRegistration
             });
         });
         services.AddSingleton<AgentConnectionLifecycle>(sp => new AgentConnectionLifecycle(
-            sp.GetRequiredService<HubConnectionManager>(),
-            sp.GetRequiredService<HubConnectionManagerFactory>(),
+            sp.GetRequiredService<IHubConnectionManager>(),
+            sp.GetRequiredService<IHubConnectionManagerFactory>(),
             sp.GetRequiredService<SignalRCompletionReporter>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
             sp.GetRequiredService<AgentId>(),

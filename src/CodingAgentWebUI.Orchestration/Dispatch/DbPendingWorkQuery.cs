@@ -10,7 +10,6 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// <summary>
 /// DB-mode implementation of <see cref="IPendingWorkQuery"/>.
 /// Queries the WorkItems table for items with Status=Pending.
-/// Used in both SignalR+DB and Kubernetes modes.
 /// </summary>
 public sealed class DbPendingWorkQuery : IPendingWorkQuery
 {

@@ -1,7 +1,8 @@
 using Bunit;
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
@@ -12,6 +13,7 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 
@@ -55,9 +57,24 @@ public class AgentChatComponentTests : BunitContext
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
-        Services.AddSingleton(new FeatureFlags());  // defaults: IsKubernetesMode = false
         Services.AddSingleton(JobTemplateStore.CreateEmpty());
         Services.AddSingleton<IChatJobDispatcher, NullChatJobDispatcher>();
+
+        // IAgentHubConnection — no-op mock (chat component starts the hub and registers event handlers)
+        var mockHub = new Mock<IAgentHubConnection>();
+        mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
+        mockHub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockHub.Setup(h => h.InvokeAsync(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockHub.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>())).Returns(Mock.Of<IDisposable>());
+        mockHub.Setup(h => h.On<string, IReadOnlyList<string>>(It.IsAny<string>(), It.IsAny<Action<string, IReadOnlyList<string>>>())).Returns(Mock.Of<IDisposable>());
+        mockHub.Setup(h => h.On<string, int, string?>(It.IsAny<string>(), It.IsAny<Action<string, int, string?>>())).Returns(Mock.Of<IDisposable>());
+        Services.AddSingleton(mockHub.Object);
+
+        // IPipelineApiAgentClient — no-op mock for bUnit rendering
+        Services.AddSingleton(Mock.Of<IPipelineApiAgentClient>());
+
+        // IChatPromptBuilder — required after ChatPromptBuilder extraction
+        Services.AddSingleton<IChatPromptBuilder>(new ChatPromptBuilder());
 
         // IConfiguration required by AgentChat for ChatPodConnectTimeoutSeconds
         Services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
@@ -79,34 +96,35 @@ public class AgentChatComponentTests : BunitContext
         var cut = Render<AgentChat>();
 
         Assert.Contains("Interactive Chat", cut.Markup);
-        Assert.Contains("Select Agent", cut.Markup);
+        Assert.Contains("Select an agent type to launch", cut.Markup);
     }
 
     [Fact]
-    public void AgentChat_ShowsNoIdleAgentsWarning_WhenNoAgents()
+    public void AgentChat_ShowsLaunchButton_WhenNoTemplateSelected()
     {
         var cut = Render<AgentChat>();
 
-        Assert.Contains("No idle agents available", cut.Markup);
+        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
+        Assert.True(launchBtn.HasAttribute("disabled"));
     }
 
     [Fact]
-    public void AgentChat_StartChatButton_DisabledWhenNoAgentSelected()
+    public void AgentChat_StartChatButton_DisabledWhenNoTemplateSelected()
     {
         var cut = Render<AgentChat>();
 
-        var startBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Start Chat"));
-        Assert.True(startBtn.HasAttribute("disabled"));
+        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
+        Assert.True(launchBtn.HasAttribute("disabled"));
     }
 
     [Fact]
-    public void AgentChat_ShowsAgentDropdown()
+    public void AgentChat_ShowsTemplateDropdown()
     {
         var cut = Render<AgentChat>();
 
-        var select = cut.Find("select#agent-select");
+        var select = cut.Find("select#template-select");
         Assert.NotNull(select);
-        Assert.Contains("Select an idle agent", cut.Markup);
+        Assert.Contains("Select agent type", cut.Markup);
     }
 
     [Fact]
@@ -114,7 +132,7 @@ public class AgentChatComponentTests : BunitContext
     {
         var cut = Render<AgentChat>();
 
-        Assert.Contains("Send prompts to an idle agent for MCP validation and debugging", cut.Markup);
+        Assert.Contains("Select an agent type to launch a dedicated chat pod", cut.Markup);
     }
 
     [Fact]
@@ -139,22 +157,9 @@ public class AgentChatComponentTests : BunitContext
     }
 
     [Fact]
-    public void AgentChat_ShowsChatUI_InSignalRMode()
+    public void AgentChat_ShowsK8sLaunchUI()
     {
-        // FeatureFlags defaults to IsKubernetesMode = false — chat UI should be present
-        var cut = Render<AgentChat>();
-
-        Assert.Contains("Interactive Chat", cut.Markup);
-        Assert.DoesNotContain("not available in Kubernetes mode", cut.Markup);
-    }
-
-    [Fact]
-    public void AgentChat_ShowsK8sLaunchUI_InKubernetesMode()
-    {
-        // Task 9.1 removed the static "not available in Kubernetes mode" banner.
-        // K8s mode now shows the Job Template dropdown and Launch Chat Pod button.
-        Services.AddSingleton(new FeatureFlags { IsKubernetesMode = true });
-
+        // K8s mode is now the only mode — shows Job Template dropdown and Launch Chat Pod button.
         var cut = Render<AgentChat>();
 
         Assert.DoesNotContain("not available in Kubernetes mode", cut.Markup);

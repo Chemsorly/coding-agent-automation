@@ -1,8 +1,8 @@
 using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.UnitTests.Components;
@@ -12,12 +12,12 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class PipelineAdvancedSectionComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
     public PipelineAdvancedSectionComponentTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore = new Mock<IPipelineApiConfigClient>();
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -27,7 +27,7 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
     public void RendersHeader()
     {
         var cut = Render<PipelineAdvancedSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Advanced", cut.Markup);
     }
 
@@ -35,7 +35,7 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
     public void RendersAllSections()
     {
         var cut = Render<PipelineAdvancedSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Agent Routing", cut.Markup);
         Assert.Contains("Brain Repository", cut.Markup);
         Assert.Contains("Agent Health Monitoring", cut.Markup);
@@ -46,7 +46,7 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
     public void RendersAllFields()
     {
         var cut = Render<PipelineAdvancedSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Default Required Agent Labels", cut.Markup);
         Assert.Contains("Brain Push Max Retries", cut.Markup);
         Assert.Contains("Agent Disconnect Grace Period", cut.Markup);
@@ -63,7 +63,7 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
     [Fact]
     public void LoadsConfigValues()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 DefaultRequiredAgentLabels = "kiro,dotnet",
@@ -80,7 +80,7 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
             });
 
         var cut = Render<PipelineAdvancedSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var textInput = cut.Find("input[type='text']");
         Assert.Equal("kiro,dotnet", textInput.GetAttribute("value"));
@@ -97,11 +97,11 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
     [Fact]
     public void LoadsNullLabels_AsEmptyString()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { DefaultRequiredAgentLabels = null });
 
         var cut = Render<PipelineAdvancedSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var textInput = cut.Find("input[type='text']");
         Assert.Equal("", textInput.GetAttribute("value"));
@@ -111,7 +111,7 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
     public async Task Save_CallsUpdatePipelineConfig()
     {
         var cut = Render<PipelineAdvancedSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Advanced"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -126,7 +126,7 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
     {
         (string Message, bool IsError) status = default;
         var cut = Render<PipelineAdvancedSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockStore.Object)
              .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Advanced"));
@@ -148,7 +148,7 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
             });
 
         var cut = Render<PipelineAdvancedSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Advanced"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -179,7 +179,7 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
             });
 
         var cut = Render<PipelineAdvancedSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Advanced"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -196,7 +196,7 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
 
         (string Message, bool IsError) status = default;
         var cut = Render<PipelineAdvancedSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockStore.Object)
              .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Advanced"));

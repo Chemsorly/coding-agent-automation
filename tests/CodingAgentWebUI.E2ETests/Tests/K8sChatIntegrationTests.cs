@@ -1,7 +1,9 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.E2ETests.Infrastructure;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -15,13 +17,14 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "K8sChatMode")]
-public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<K8sChatE2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
 {
     private readonly AgentRegistryService _registry;
 
-    public K8sChatIntegrationTests(K8sChatE2EFixture fixture) : base(fixture)
+    public K8sChatIntegrationTests(E2EFixture fixture) : base(fixture)
     {
-        _registry = fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        _registry = fixture.AgentRegistry;
     }
 
     // ── Happy path ────────────────────────────────────────────────────────
@@ -91,9 +94,13 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
         await using (fakeAgent)
         {
             var entry = _registry.GetByAgentId(agentId)!;
-            var hubContext = Fixture.Factory.Services
+
+            // The API host's hub context, not the monolith's. Both resolve, but only this one has
+            // the agent's connection on it — sending through the other one silently goes nowhere
+            // and the wait below times out after 10s.
+            var hubContext = Fixture.ApiServices
                 .GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<
-                    CodingAgentWebUI.Hubs.AgentHub,
+                    CodingAgentWebUI.Hub.AgentHub,
                     CodingAgentWebUI.Pipeline.Interfaces.IAgentHubClient>>();
 
             var sessionId = Guid.NewGuid().ToString();
@@ -137,7 +144,7 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
             var jobName = job.Metadata!.Name!;
 
             // Terminate the session
-            await Fixture.Factory.ChatDispatcher.TerminateChatSessionAsync(
+            await Fixture.ChatDispatcher.TerminateChatSessionAsync(
                 agentId, CancellationToken.None);
 
             // Wait for CancelChat to be delivered to the fake agent
@@ -159,7 +166,7 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
     public async Task K8sChat_DoubleDispatch_SameSelector_SecondThrows()
     {
         // First dispatch — don't connect agent (keep job non-terminal)
-        var firstDispatchTask = Fixture.Factory.ChatDispatcher.DispatchChatPodAsync(
+        var firstDispatchTask = Fixture.ChatDispatcher.DispatchChatPodAsync(
             "kiro,dotnet", null, null, CancellationToken.None);
 
         // Wait for job to be created
@@ -167,7 +174,7 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
 
         // Second dispatch for same selector — should throw immediately
         var ex = await Assert.ThrowsAsync<ChatAlreadyActiveException>(async () =>
-            await Fixture.Factory.ChatDispatcher.DispatchChatPodAsync(
+            await Fixture.ChatDispatcher.DispatchChatPodAsync(
                 "kiro,dotnet", null, null, CancellationToken.None));
 
         Assert.NotEmpty(ex.Message);
@@ -213,7 +220,7 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
             // Both pool PVCs are now held by active in-process sessions.
             // Third dispatch should throw NoPvcAvailableException.
             await Assert.ThrowsAsync<NoPvcAvailableException>(async () =>
-                await Fixture.Factory.ChatDispatcher.DispatchChatPodAsync(
+                await Fixture.ChatDispatcher.DispatchChatPodAsync(
                     "kiro,node", null, null, CancellationToken.None));
         }
     }
@@ -241,10 +248,10 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
             ChatTerminationGracePeriodSeconds = 10
         };
 
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var hubContext = Fixture.Factory.Services.GetRequiredService<
             Microsoft.AspNetCore.SignalR.IHubContext<
-                CodingAgentWebUI.Hubs.AgentHub,
+                CodingAgentWebUI.Hub.AgentHub,
                 CodingAgentWebUI.Pipeline.Interfaces.IAgentHubClient>>();
         var templateStore = Fixture.Factory.Services.GetRequiredService<JobTemplateStore>();
 
@@ -256,7 +263,7 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
             templateStore,
             registry,
             shortOptions,
-            Fixture.Factory.Services.GetRequiredService<CodingAgentWebUI.Orchestration.LeaderElection.ILeaderElectionService>(),
+            Fixture.Factory.Services.GetRequiredService<CodingAgentWebUI.Pipeline.LeaderElection.ILeaderElectionService>(),
             Serilog.Log.Logger);
 
         await dispatcher.StartAsync(CancellationToken.None);

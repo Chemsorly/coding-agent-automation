@@ -1,0 +1,398 @@
+using System.Text.Json;
+using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Models;
+using WireMock.RequestBuilders;
+using WireMock.ResponseBuilders;
+using WireMock.Server;
+using Xunit;
+
+namespace CodingAgentWebUI.Infrastructure.UnitTests.ApiClient;
+
+/// <summary>
+/// HTTP-level unit tests for <see cref="PipelineApiWorkItemClient"/> via WireMock.
+/// Covers null-return branches (404, 409, 410), null-coalescing fallbacks, and URL construction.
+/// These branches cannot be reached by mocking <see cref="IPipelineApiWorkItemClient"/>.
+/// </summary>
+public sealed class PipelineApiWorkItemClientTests : IDisposable
+{
+    private readonly WireMockServer _server;
+    private readonly PipelineApiWorkItemClient _sut;
+
+    private static readonly JsonSerializerOptions JsonOpts = PipelineJsonOptions.Default;
+
+    public PipelineApiWorkItemClientTests()
+    {
+        _server = WireMockServer.Start();
+        var http = new HttpClient { BaseAddress = new Uri(_server.Url!) };
+        _sut = new PipelineApiWorkItemClient(http);
+    }
+
+    public void Dispose()
+    {
+        _server.Stop();
+        _server.Dispose();
+    }
+
+    // ── GetPendingAsync ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetPendingAsync_Success_ReturnsList()
+    {
+        var items = new[]
+        {
+            new {
+                id = Guid.NewGuid(),
+                issueIdentifier = "owner/repo#1",
+                issueProviderConfigId = "p1",
+                taskType = "Implementation",
+                createdAt = DateTimeOffset.UtcNow,
+                agentSelector = "kiro",
+                retryCount = 0
+            }
+        };
+        _server.Given(Request.Create().WithPath("/api/work-items/pending").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(items)));
+
+        var result = await _sut.GetPendingAsync();
+
+        result.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task GetPendingAsync_NullResponse_ReturnsEmptyList()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/pending").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var result = await _sut.GetPendingAsync();
+
+        result.Should().BeEmpty();
+    }
+
+    // ── ClaimAsync ────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ClaimAsync_Success_ReturnsResponse()
+    {
+        var workItemId = Guid.NewGuid();
+        var response = new
+        {
+            workItemId,
+            runId = "run-1",
+            payloadJson = "{}",
+            orchestratorUrl = "http://hub:8080"
+        };
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/claim").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(response)));
+
+        var result = await _sut.ClaimAsync(workItemId, new ClaimWorkItemRequest
+        {
+            AssignedAgentId = "agent-1",
+            DispatchedAt = DateTimeOffset.UtcNow
+        });
+
+        result.Should().NotBeNull();
+        result!.RunId.Should().Be("run-1");
+    }
+
+    [Fact]
+    public async Task ClaimAsync_Conflict_ReturnsNull()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/claim").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(409));
+
+        var result = await _sut.ClaimAsync(workItemId, new ClaimWorkItemRequest
+        {
+            DispatchedAt = DateTimeOffset.UtcNow
+        });
+
+        result.Should().BeNull("409 Conflict must be treated as a contention signal, not an error");
+    }
+
+    [Fact]
+    public async Task ClaimAsync_NotFound_ReturnsNull()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/claim").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(404));
+
+        var result = await _sut.ClaimAsync(workItemId, new ClaimWorkItemRequest
+        {
+            DispatchedAt = DateTimeOffset.UtcNow
+        });
+
+        result.Should().BeNull("404 Not Found must be treated as a no-op, not an error");
+    }
+
+    // ── GetAssignmentAsync ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetAssignmentAsync_NotFound_ReturnsNull()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/assignment").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(404));
+
+        var result = await _sut.GetAssignmentAsync(workItemId);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetAssignmentAsync_Gone_ReturnsNull()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/assignment").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(410));
+
+        var result = await _sut.GetAssignmentAsync(workItemId);
+
+        result.Should().BeNull("410 Gone means the assignment was already consumed — must return null, not throw");
+    }
+
+    // ── GetRetryCountAsync ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetRetryCountAsync_Success_ReturnsCount()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/retry-count").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("{\"retryCount\": 3}"));
+
+        var result = await _sut.GetRetryCountAsync(workItemId);
+
+        result.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task GetRetryCountAsync_NullResponse_ReturnsZero()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/retry-count").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var result = await _sut.GetRetryCountAsync(workItemId);
+
+        result.Should().Be(0, "null API response must fall back to the default 0 via null-coalescing");
+    }
+
+    // ── GetStatusAsync ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetStatusAsync_Success_ReturnsStatus()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/status").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("{\"status\": \"Running\"}"));
+
+        var result = await _sut.GetStatusAsync(workItemId);
+
+        result.Should().Be(WorkItemStatus.Running);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_NotFound_ReturnsNull()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/status").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(404));
+
+        var result = await _sut.GetStatusAsync(workItemId);
+
+        result.Should().BeNull();
+    }
+
+    // ── GetK8sJobNameAsync ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetK8sJobNameAsync_Success_ReturnsName()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/k8s-job-name").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("{\"jobName\": \"caa-job-abc\"}"));
+
+        var result = await _sut.GetK8sJobNameAsync(workItemId);
+
+        result.Should().Be("caa-job-abc");
+    }
+
+    [Fact]
+    public async Task GetK8sJobNameAsync_NotFound_ReturnsNull()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/k8s-job-name").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(404));
+
+        var result = await _sut.GetK8sJobNameAsync(workItemId);
+
+        result.Should().BeNull();
+    }
+
+    // ── IsIssueDistributedAsync ────────────────────────────────────────────
+
+    [Fact]
+    public async Task IsIssueDistributedAsync_True_ReturnsTrue()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/is-distributed").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("{\"isDistributed\": true}"));
+
+        var result = await _sut.IsIssueDistributedAsync("owner/repo#1", "provider-1");
+
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IsIssueDistributedAsync_NullResponse_ReturnsFalse()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/is-distributed").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var result = await _sut.IsIssueDistributedAsync("owner/repo#1", "provider-1");
+
+        result.Should().BeFalse("null response falls back to false via null-coalescing");
+    }
+
+    // ── GetActiveAsync ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetActiveAsync_NullResponse_ReturnsEmpty()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/active").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var result = await _sut.GetActiveAsync(60);
+
+        result.Should().BeEmpty();
+    }
+
+    // ── GetActiveIdentifiersAsync ─────────────────────────────────────────
+
+    [Fact]
+    public async Task GetActiveIdentifiersAsync_NullResponse_ReturnsEmpty()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/active-identifiers").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var result = await _sut.GetActiveIdentifiersAsync();
+
+        result.Should().BeEmpty("null response from active-identifiers must fall back to empty list, not throw");
+    }
+
+    // ── GetStalenessAsync ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetStalenessAsync_NotFound_ReturnsNull()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/staleness").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(404));
+
+        var result = await _sut.GetStalenessAsync("owner/repo#1", "p1",
+            DateTimeOffset.UtcNow.AddHours(-1));
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetStalenessAsync_Success_ReturnsResult()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/staleness").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("{\"hasAgentErrorSince\": true, \"lastSuccessfulCompletion\": null}"));
+
+        var result = await _sut.GetStalenessAsync("owner/repo#1", "p1",
+            DateTimeOffset.UtcNow.AddHours(-1));
+
+        result.Should().NotBeNull();
+        result!.HasAgentErrorSince.Should().BeTrue();
+    }
+
+    // ── PostStatusAsync / RequeueAsync / PostLastProgressAsync ──────────────
+
+    [Fact]
+    public async Task PostStatusAsync_SendsToCorrectPath()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/status").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        await _sut.PostStatusAsync(workItemId, new WorkItemStatusUpdate { Status = "Running" });
+
+        _server.LogEntries.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task RequeueAsync_SendsPostWithNoBody()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/requeue").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        await _sut.RequeueAsync(workItemId);
+
+        _server.LogEntries.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task PostLastProgressAsync_SendsToCorrectPath()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/last-progress").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        await _sut.PostLastProgressAsync(workItemId, DateTimeOffset.UtcNow);
+
+        _server.LogEntries.Should().HaveCount(1);
+    }
+
+    // ── PostLabelSwapAsync ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PostLabelSwapAsync_SendsToCorrectPath()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/label-swap").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        await _sut.PostLabelSwapAsync(workItemId, "kiro");
+
+        _server.LogEntries.Should().HaveCount(1);
+    }
+}

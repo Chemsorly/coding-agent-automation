@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Agent;
 /// Used by <see cref="AgentWorkerService"/> to rebuild the SignalR connection from scratch
 /// after the connection enters the terminal Closed state (e.g., orchestrator restart).
 /// </summary>
-public sealed class HubConnectionManagerFactory
+public sealed class HubConnectionManagerFactory : IHubConnectionManagerFactory
 {
     private readonly string _orchestratorUrl;
     private readonly AgentId _agentId;
@@ -30,5 +30,5 @@ public sealed class HubConnectionManagerFactory
     /// <summary>
     /// Creates a new <see cref="HubConnectionManager"/> instance with the same configuration.
     /// </summary>
-    public HubConnectionManager Create() => new(_orchestratorUrl, _agentId, _apiKey, _logger);
+    public IHubConnectionManager Create() => new HubConnectionManager(_orchestratorUrl, _agentId, _apiKey, _logger);
 }

@@ -96,4 +96,17 @@ jobs:
             --collect:"XPlat Code Coverage" \
             --settings tests/CodingAgentWebUI.Infrastructure.IntegrationTests/coverlet.runsettings \
             --results-directory TestResults
+          # Added by Specs 042/043. Without these two entries the Pipeline API and Job Controller
+          # — the processes that own the database and the dispatch loop — contribute no coverage
+          # to the quality gate at all.
+          dotnet test tests/CodingAgentWebUI.Api.IntegrationTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/CodingAgentWebUI.Api.IntegrationTests/coverlet.runsettings \
+            --results-directory TestResults
+          dotnet test tests/CodingAgentWebUI.JobController.UnitTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/CodingAgentWebUI.JobController.UnitTests/coverlet.runsettings \
+            --results-directory TestResults
           ${{ runner.temp }}/scanner/dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"

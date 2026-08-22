@@ -26,8 +26,9 @@ Detailed documentation lives in the [`docs/`](docs/) folder:
 7. [Pipeline Projects](docs/projects.md) — Multi-repository grouping, project-level configuration
 8. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation
 9. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration
-10. [Deployment](docs/deployment.md) — Docker setup, Helm chart, volume mounts, scaling agents, architecture
-11. [HTTP API Reference](docs/api-reference.md) — REST endpoints, authentication, request/response examples
+10. [Deployment](docs/deployment.md) — Helm chart, Kubernetes setup, scaling agents, local development
+11. [Bootstrap](docs/bootstrap.md) — Migrating config from an existing instance, fresh-install setup
+12. [HTTP API Reference](docs/api-reference.md) — REST endpoints, authentication, request/response examples
 
 ## Agent Execution Flow
 
@@ -149,36 +150,40 @@ Phase 1 produces a plan for human review. Phase 2 runs only after explicit appro
 
 ### Prerequisites
 
-- **Docker** — For building and running the application
-- **.NET 10 SDK** — For local development (optional if only running via Docker)
+- **kubectl** ≥ 1.25 and **Helm** ≥ 3.12 — For deploying and managing the application
+- **Kubernetes cluster** — Local (Rancher Desktop, Docker Desktop) or production
+- **PostgreSQL** — Required; must be accessible from the cluster
+- **.NET 10 SDK** — For local development only (`dotnet run`)
 - **Issue tracker credentials** — App credentials for issue/repository access and PR creation (e.g., a GitHub App with Issues + Contents + Pull Requests permissions)
-- **Agent CLI authentication** — Kiro agent containers need CLI auth tokens (see First-Time Setup below)
+- **Agent CLI authentication** — Kiro credential PVCs need CLI auth tokens (see First-Time Setup below)
 
-### Run with Docker Compose
+### Deploy with Helm
 
 ```bash
-# 1. Create a .env file with a shared secret for orchestrator↔agent authentication
-echo "AGENT_API_KEY=$(openssl rand -hex 32)" > .env
-
-# 2. Start the orchestrator and all agent containers
-docker compose up --build
+# 1. Install the chart
+helm install coding-agent ./helm/coding-agent-automation \
+  --set secrets.agentApiKey="$(openssl rand -hex 32)" \
+  --set database.host=<postgres-host> \
+  --set database.auth.existingSecret=<k8s-secret-name> \
+  --set api.enabled=true \
+  --set jobController.enabled=true
 ```
 
-Open `http://localhost:8080` in your browser.
+Open the orchestrator URL in your browser (check `kubectl get ingress -n coding-agent` or port-forward the service).
 
 ### First-Time Setup
 
-1. **Authenticate Kiro CLI agents** — Exec into each Kiro agent container and run the login flow:
+1. **Authenticate Kiro credential PVCs** — Each PVC in `credentialPools.kiro` must be authenticated once before the first dispatch. Create a temporary pod mounting the PVC and run the login flow:
    ```bash
-   docker exec -it coding-agent-automation-agent-kiro-dotnet-1-1 kiro-cli login
+   kubectl exec -it kiro-auth-1 -n coding-agent -- kiro-cli login
    ```
-   Follow the device code flow in your browser. Auth tokens persist via the volume mount (one-time step per Kiro agent). OpenCode agents authenticate via environment variables and don't require this step.
+   Follow the device code flow in your browser. See [Deployment — Credential Pool Initialization](docs/deployment.md#credential-pool-initialization) for the full procedure. OpenCode agents authenticate via environment variables and don't require this step.
 
 2. **Configure providers** — Go to Settings → Providers in the web UI and set up Issue, Repository, Agent, and (optionally) Pipeline/CI providers.
 
 3. **Configure label routing** — Set up Agent Profiles, Quality Gate Configs, and Reviewer Configs for your stack.
 
-4. **Create a pipeline job template** — Link your providers and enable the desired work types (implementation, review, decomposition).
+4. **Create a pipeline job template** — In `jobTemplates[]` in `values.yaml`, define the pod spec for your agent stack. Then link providers in the web UI and enable the desired work types (implementation, review, decomposition).
 
 5. **Start a run** — Select a template, browse issues, and dispatch. Or enable closed-loop mode to process `agent:next` issues automatically.
 

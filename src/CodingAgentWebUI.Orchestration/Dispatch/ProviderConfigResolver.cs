@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// <summary>
 /// Shared helper for resolving provider configs with cache-then-DB-fallback semantics.
 /// Centralizes the pattern used by both <see cref="DispatchOrchestrationService"/> and
-/// <see cref="AgentJobDispatcher"/> to avoid duplication.
+/// <c>AgentJobDispatcher</c> to avoid duplication.
 /// </summary>
 internal static class ProviderConfigResolver
 {

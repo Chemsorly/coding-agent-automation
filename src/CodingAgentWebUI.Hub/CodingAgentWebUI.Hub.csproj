@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.IntegrationTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.E2ETests" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CodingAgentWebUI.Orchestration\CodingAgentWebUI.Orchestration.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Pipeline.CodeReview\CodingAgentWebUI.Pipeline.CodeReview.csproj" />
+  </ItemGroup>
+</Project>

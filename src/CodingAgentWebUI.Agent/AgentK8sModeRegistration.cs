@@ -21,8 +21,11 @@ internal static class AgentK8SModeRegistration
         services.AddHttpClient<WorkItemHttpClient>(client =>
         {
             client.BaseAddress = new Uri(config.OrchestratorUrl.TrimEnd('/'));
+            // Derive per-agent key: HMAC(masterKey, agentId).
+            // Must match what AgentApiKeyAuthHandler re-derives from ?agentId= on each request.
+            var derivedKey = CodingAgentWebUI.Agent.HubConnectionManager.DeriveKey(config.AgentApiKey, config.AgentId.Value);
             client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", config.AgentApiKey);
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", derivedKey);
             // DO NOT set client.Timeout — resilience handler manages timeouts
         })
         .AddStandardResilienceHandler(options =>
@@ -34,6 +37,23 @@ internal static class AgentK8SModeRegistration
             options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
         });
 
+        // Capture agentId at registration time; set it after the typed client is resolved.
+        // Using AddSingleton with a factory so AgentId is embedded in the closure rather than
+        // requiring DI to inject it (which would break the single-ctor contract for typed clients).
+        // Note: AddHttpClient<WorkItemHttpClient> also registers a transient; this singleton wins
+        // for GetRequiredService<WorkItemHttpClient>() because it is registered last.
+        var agentIdValue = config.AgentId.Value;
+        services.AddSingleton<WorkItemHttpClient>(sp =>
+        {
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var httpClient = factory.CreateClient(nameof(WorkItemHttpClient));
+            var client = new WorkItemHttpClient(httpClient, Serilog.Log.Logger)
+            {
+                AgentId = agentIdValue // append ?agentId= to work-item API calls for HMAC key derivation
+            };
+            return client;
+        });
+
         services.AddSingleton<IWorkItemExecutor>(sp => new WorkItemExecutorRouter(
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IConsolidationExecutor>(),
@@ -43,8 +63,8 @@ internal static class AgentK8SModeRegistration
             sp.GetRequiredService<WorkItemHttpClient>());
 
         services.AddSingleton<IAgentConnectionManager>(sp => new AgentConnectionManager(
-            sp.GetRequiredService<HubConnectionManager>(),
-            sp.GetRequiredService<HubConnectionManagerFactory>(),
+            sp.GetRequiredService<IHubConnectionManager>(),
+            sp.GetRequiredService<IHubConnectionManagerFactory>(),
             sp.GetRequiredService<AgentId>(),
             logger));
 

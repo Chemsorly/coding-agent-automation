@@ -2,9 +2,8 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
 /// Provides a cooperative shutdown signal that prevents new dispatches during graceful shutdown.
-/// Set by <c>ShutdownService</c> before it cancels active runs, checked by
-/// <c>JobQueueDrainService</c> and dispatch paths to avoid registering runs that would
-/// immediately be cancelled.
+/// Set by <c>ShutdownService</c> before it cancels active runs, checked by dispatch paths
+/// to avoid registering runs that would immediately be cancelled.
 /// </summary>
 public interface IShutdownSignal
 {

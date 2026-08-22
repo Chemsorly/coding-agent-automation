@@ -1,0 +1,127 @@
+{{- if .Values.jobController.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jobcontroller
+spec:
+  replicas: {{ .Values.jobController.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: jobcontroller
+  template:
+    metadata:
+      labels:
+        {{- include "coding-agent-automation.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: jobcontroller
+    spec:
+      serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
+      automountServiceAccountToken: true
+      containers:
+        - name: jobcontroller
+          image: "{{ .Values.jobController.image.repository }}:{{ .Values.jobController.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.jobController.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.jobController.service.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.jobController.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.jobController.resources | nindent 12 }}
+          env:
+            - name: ASPNETCORE_URLS
+              value: "http://+:{{ .Values.jobController.service.port }}"
+            - name: PipelineApi__BaseUrl
+              value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
+            - name: AGENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.secretName" . }}
+                  key: agent-api-key
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.secretName" . }}
+                  key: otel-headers
+                  optional: true
+            - name: OTEL_SERVICE_NAME
+              value: "coding-agent-jobcontroller"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ .Values.otel.protocol | quote }}
+            # Leader election lease names — release-scoped to prevent collision
+            # when multiple Helm releases share a namespace (e.g. staging vs prod).
+            - name: LeaderElection__DispatchLeaseName
+              value: {{ if .Values.jobController.leaderElection.dispatchLeaseName -}}
+                {{- .Values.jobController.leaderElection.dispatchLeaseName | quote }}
+              {{- else -}}
+                {{- printf "caa-%s-dispatch-lock" .Release.Name | quote }}
+              {{- end }}
+            - name: LeaderElection__Namespace
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # WorkDistribution env vars — required by DispatchServiceOptionsFactory
+            - name: WorkDistribution__Namespace
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: WorkDistribution__JobTemplatesPath
+              value: "/app/config/job-templates.yaml"
+            # ORCHESTRATOR_URL handed to every work-item agent pod this controller dispatches.
+            # Must be the Pipeline API — it is the sole host of /hubs/agent and /api/work-items/*.
+            - name: WorkDistribution__OrchestratorUrl
+              value: {{ include "coding-agent-automation.agentOrchestratorUrl" . | quote }}
+            - name: WorkDistribution__AgentApiKeySecretName
+              value: {{ include "coding-agent-automation.secretName" . | quote }}
+            - name: WorkDistribution__AgentServiceAccountName
+              value: "{{ include "coding-agent-automation.fullname" . }}-agent"
+            - name: WorkDistribution__OpencodeConfigSecretName
+              value: {{ include "coding-agent-automation.secretName" . | quote }}
+            - name: WorkDistribution__Dispatch__IntervalSeconds
+              value: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
+            - name: WorkDistribution__Dispatch__RateLimitPerSecond
+              value: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
+            - name: WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds
+              value: {{ .Values.workDistribution.dispatch.chatSessionMaxDurationSeconds | quote }}
+            - name: WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds
+              value: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
+            - name: WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds
+              value: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
+            - name: WorkDistribution__Reconciliation__IntervalSeconds
+              value: {{ .Values.workDistribution.reconciliation.intervalSeconds | quote }}
+            - name: WorkDistribution__Reconciliation__StaleRetentionDays
+              value: {{ .Values.workDistribution.reconciliation.staleRetentionDays | quote }}
+            {{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}
+            - name: WorkDistribution__CredentialPools__Kiro__{{ $i }}
+              value: {{ $pvc | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: job-templates
+              mountPath: /app/config
+              readOnly: true
+      volumes:
+        - name: job-templates
+          configMap:
+            name: {{ include "coding-agent-automation.fullname" . }}-job-templates
+            optional: true
+{{- end }}

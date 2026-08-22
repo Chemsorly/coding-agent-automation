@@ -100,14 +100,10 @@ Configuration: `HarnessSuggestionsReviewEnabled` (default: `true`) controls the 
 
 ### Consolidation Dispatch
 
-Consolidation jobs are dispatched via `ConsolidationDispatchService` (implements `IConsolidationDispatchService`). The service enforces:
+Consolidation jobs are dispatched via `IConsolidationDispatchService`. In K8s mode, `ConsolidationWorkItemDispatchService` (a `BackgroundService` in the Pipeline API) polls for `WorkItem` rows with `TaskType=Consolidation` and dispatches them as K8s Jobs under leader election. In both modes the service enforces:
 
-- **Time-based expiry:** Jobs queued longer than 24 hours are expired and transitioned to `Failed` status
 - **Deduplication:** The same `RunId` cannot be enqueued twice
-- **Dispatch retries:** Up to 5 retry attempts before permanent failure
-- **Cancellation tracking:** Cancelled run IDs are retained for 5 minutes to prevent race conditions during dequeue
-
-Expired jobs are tracked via the `consolidation.jobs.expired` OTel metric.
+- **Dispatch retries:** Up to `maxConsolidationDispatchRetries` retry attempts (default: 5) before permanent failure. See [Configuration — Consolidation Dispatch](configuration.md#consolidation-dispatch).
 
 ### Consolidation Page
 
@@ -119,4 +115,7 @@ The sidebar shows a "Consolidation" nav item with a badge count (new issues + su
 
 ### Retention
 
-In DB mode, consolidation run history is automatically pruned by `DatabaseMaintenanceService`. The default retention period is **90 days** after completion. Configure via `WorkDistribution:Reconciliation:ConsolidationRunRetentionDays`. See [Configuration — Database Maintenance](configuration.md#database-maintenance-db-mode) for details.
+Consolidation run history is automatically pruned by `DatabaseMaintenanceService`. Two retention mechanisms apply:
+
+- **ConsolidationRun records:** Deleted when older than `WorkDistribution:Reconciliation:ConsolidationRunRetentionDays` (default: `90` days). Configured on the Job Controller — not a `PipelineConfiguration` property.
+- **WorkItem rows (K8s mode):** Terminal consolidation `WorkItems` are deleted by `WorkDistribution:Reconciliation:StaleRetentionDays` (default: `7` days).

@@ -111,7 +111,7 @@ public class DrawerStateServiceTests
             _ => Task.FromResult<string?>(null),
             _ => Task.FromResult<string?>(null),
             (i, t) => Task.FromResult<(bool, string?, string?)>((true, null, null)),
-            postLoadAsync: _ => { tcs.SetResult(true); return Task.CompletedTask; });
+            postLoadAsync: (_, _) => { tcs.SetResult(true); return Task.CompletedTask; });
 
         var error = await drawer.OpenAsync(template, null);
 
@@ -380,7 +380,7 @@ public class DrawerStateServiceTests
             _ => Task.FromResult<string?>("Failed to load items"),
             _ => Task.FromResult<string?>(null),
             (i, t) => Task.FromResult<(bool, string?, string?)>((true, null, null)),
-            postLoadAsync: _ => { postLoadCalled = true; return Task.CompletedTask; });
+            postLoadAsync: (_, _) => { postLoadCalled = true; return Task.CompletedTask; });
 
         var error = await drawer.OpenAsync(template, null);
 

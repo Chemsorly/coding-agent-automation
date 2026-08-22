@@ -1,21 +1,44 @@
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.E2ETests.PageObjects;
-using CodingAgentWebUI.Hubs;
-using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.E2ETests.Tests;
 
 /// <summary>
-/// E2E tests for the Consolidation page (/consolidation).
-/// Validates page rendering, trigger buttons, consolidation job dispatch,
-/// agent completion flow, run history updates, and badge behavior.
-/// Covers feature 021 (Consolidation Loops).
+/// E2E tests for the Consolidation page (/consolidation): page rendering, trigger buttons, the
+/// queued-dispatch feedback an operator sees, and badge behaviour. Covers feature 021
+/// (Consolidation Loops).
+///
+/// <para>
+/// <b>Six tests were removed here rather than ported.</b> They connected a <c>FakeAgentClient</c>
+/// and waited for a <c>ConsolidationJobMessage</c> to arrive over SignalR — the pre-Kubernetes
+/// flow, where <c>ConsolidationDispatchService</c> picked an idle agent out of the registry and
+/// pushed the job to it. Neither half of that survives the 041–045 arc: Spec 044 moved the hub to
+/// the Pipeline API, so the monolith's <c>IHubContext</c> reaches no agents, and Kubernetes mode
+/// has no idle agents to pick — pods are started per job. What the page does now is enqueue a work
+/// item (<c>TaskType = Consolidation</c>) that the Job Controller turns into a pod, which is the
+/// path <c>ConsolidationPage_TriggerWithNoAgent_ShowsQueuedMessage</c> and its brain-consolidation
+/// twin cover.
+/// </para>
+///
+/// <para>
+/// The three removed <c>ProviderConfigs</c> tests asserted a rule that is not about this page at
+/// all — that a refactoring scan carries an Issue provider config and harness/brain consolidation
+/// do not. That rule lives in <c>ConsolidationJobPreparationService</c>, shared by both dispatch
+/// paths, and is already pinned by <c>ConsolidationJobPreparationServiceTests</c>
+/// (<c>PrepareAsync_RefactoringDetection_IncludesIssueProviderConfig</c>,
+/// <c>PrepareAsync_NonRefactoring_ExcludesIssueProviderConfig</c>,
+/// <c>PrepareAsync_TemplateWithRepoAndBrain_BothResolved</c>) — at a level where it costs
+/// milliseconds instead of 34 seconds of waiting for a message that never comes. They also each
+/// began with <c>if (isDisabled) return;</c>, so they reported green whenever the button they
+/// meant to click was disabled.
+/// </para>
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class ConsolidationPageTests : E2ETestBase
 {
     public ConsolidationPageTests(E2EFixture fixture) : base(fixture) { }
 
@@ -99,205 +122,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         Assert.False(await page.IsStatusMessageErrorAsync());
     }
 
-    [Fact]
-    public async Task ConsolidationPage_TriggerHarnessSuggestions_DispatchesAndCompletes()
-    {
-        // Arrange: seed a template and connect an agent
-        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
-        {
-            Id = "template-consol-3",
-            Name = "Harness Template",
-            IssueProviderId = "issue-e2e",
-            RepoProviderId = "repo-e2e",
-            Enabled = true
-        }, CancellationToken.None);
 
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = "profile-consol",
-            DisplayName = "Consolidation Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        await using var fakeAgent = new FakeAgentClient("consol-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Act: navigate and trigger harness suggestions
-        var page = new ConsolidationPage(Page, BaseUrl);
-        await page.NavigateAsync();
-
-        // Check if button is enabled
-        var isDisabled = await page.IsGenerateSuggestionsDisabledAsync();
-        if (isDisabled)
-            return; // Skip — stale state from shared ConsolidationService singleton
-
-        await page.ClickGenerateSuggestionsAsync();
-
-        // Wait for the agent to receive the consolidation job
-        var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-
-        // Assert: job was dispatched correctly
-        Assert.NotNull(assignment);
-        Assert.Equal(ConsolidationRunType.HarnessSuggestions, assignment.Type);
-
-        // Complete the job to clean up state (prevents interference with other tests)
-        await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
-        {
-            JobId = assignment.JobId,
-            Success = true,
-            Summary = "No new feedback to analyze"
-        });
-
-        // Wait for the agent to return to Idle (confirms hub processed the completion)
-        var registry = Fixture.Factory.AgentRegistry;
-        await WaitUntilAsync(() => registry.GetByAgentId("consol-agent-1")?.Status == AgentStatus.Idle);
-    }
-
-    [Fact]
-    public async Task ConsolidationPage_AgentCompletesHarness_ShowsSuggestions()
-    {
-        // Arrange: seed a template and connect an agent
-        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
-        {
-            Id = "template-consol-4",
-            Name = "Badge Template",
-            IssueProviderId = "issue-e2e",
-            RepoProviderId = "repo-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = "profile-consol-2",
-            DisplayName = "Consolidation Agent Profile 2",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        await using var fakeAgent = new FakeAgentClient("consol-agent-2", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Act: navigate and trigger harness suggestions
-        var page = new ConsolidationPage(Page, BaseUrl);
-        await page.NavigateAsync();
-
-        // Check if button is enabled
-        var isDisabled = await page.IsGenerateSuggestionsDisabledAsync();
-        if (isDisabled)
-            return; // Skip — stale state from shared ConsolidationService singleton
-
-        await page.ClickGenerateSuggestionsAsync();
-
-        // Wait for the agent to receive the consolidation job
-        var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-
-        // Agent completes with harness suggestions
-        Exception? completionError = null;
-        string? hubDebugInfo = null;
-        try
-        {
-            hubDebugInfo = await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
-            {
-                JobId = assignment.JobId,
-                Success = true,
-                Summary = "Generated 2 suggestions from 10 runs",
-                HarnessSuggestions = new HarnessSuggestions
-                {
-                    GeneratedAtUtc = DateTime.UtcNow,
-                    BasedOnRunCount = 10,
-                    SuccessRate = 75.0m,
-                    Suggestions = new[]
-                    {
-                        new HarnessSuggestion
-                        {
-                            Text = "Add project structure to initial context",
-                            Rationale = "Agent frequently spent time exploring directory layout",
-                            Frequency = 7
-                        },
-                        new HarnessSuggestion
-                        {
-                            Text = "Include test framework config in prompt",
-                            Rationale = "Agent often guessed wrong test runner",
-                            Frequency = 4
-                        }
-                    }
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            completionError = ex;
-        }
-
-        // DIAGNOSTIC: Capture state immediately after completion call
-        var registry = Fixture.Factory.AgentRegistry;
-        var hubRegistry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
-        var facade = Fixture.Factory.Services.GetRequiredService<IAgentHubFacade>();
-        var agentEntry = registry.GetByAgentId("consol-agent-2");
-        var hubAgentEntry = hubRegistry.GetByAgentId("consol-agent-2");
-        // Check what connectionId the facade would look up
-        var facadeLookup = facade.GetByAgentId("consol-agent-2");
-
-        var diagMsg = $"[DIAG] hubDebugInfo={hubDebugInfo ?? "null"}, " +
-                      $"completionError={completionError?.GetType().Name}: {completionError?.Message}, " +
-                      $"sameRegistryInstance={ReferenceEquals(registry, hubRegistry)}, " +
-                      $"agentEntry={(agentEntry is null ? "NULL" : $"status={agentEntry.Status}, activeJobId={agentEntry.ActiveJobId ?? "null"}, connectionId={agentEntry.ConnectionId}")}, " +
-                      $"hubAgentEntry={(hubAgentEntry is null ? "NULL" : $"status={hubAgentEntry.Status}")}, " +
-                      $"facadeLookup={(facadeLookup is null ? "NULL" : $"status={facadeLookup.Status}, connId={facadeLookup.ConnectionId}")}, " +
-                      $"fakeAgentConnected={fakeAgent.IsConnected}, " +
-                      $"assignmentJobId={assignment.JobId}";
-
-        // Output diagnostic to test output (visible in CI trx/console)
-        Assert.True(completionError is null,
-            $"ReportConsolidationCompleteAsync threw: {completionError?.GetType().Name}: {completionError?.Message}. Diag: {diagMsg}");
-
-        // Wait for hub to process the completion and agent to return to Idle
-        // Use a shorter initial check + diagnostic on failure
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (DateTime.UtcNow < deadline)
-        {
-            var entry = registry.GetByAgentId("consol-agent-2");
-            if (entry?.Status == AgentStatus.Idle) break;
-            await Task.Delay(50);
-        }
-
-        // If still not Idle, capture detailed state and fail with diagnostic
-        var finalEntry = registry.GetByAgentId("consol-agent-2");
-        if (finalEntry?.Status != AgentStatus.Idle)
-        {
-            var allAgents = registry.GetAllAgents();
-            var agentList = string.Join("; ", allAgents.Select(a => $"{a.AgentId}={a.Status}(conn={a.ConnectionId},job={a.ActiveJobId ?? "null"})"));
-            Assert.Fail(
-                $"Agent 'consol-agent-2' did not reach Idle within 10s. " +
-                $"hubDebugInfo={hubDebugInfo ?? "null"}, " +
-                $"finalEntry={(finalEntry is null ? "NULL" : $"status={finalEntry.Status}, activeJobId={finalEntry.ActiveJobId ?? "null"}")}, " +
-                $"allAgents=[{agentList}], " +
-                $"sameInstance={ReferenceEquals(registry, hubRegistry)}, " +
-                $"completionError={completionError?.Message ?? "none"}");
-        }
-
-        // Refresh the page to see updated data
-        await page.NavigateAsync();
-
-        // Assert: suggestions are displayed
-        Assert.False(await page.IsNoSuggestionsMessageVisibleAsync());
-        var meta = await page.GetSuggestionsMetaAsync();
-        Assert.NotNull(meta);
-        Assert.Contains("10 runs", meta);
-
-        var suggestionCount = await page.GetSuggestionItemCountAsync();
-        Assert.Equal(2, suggestionCount);
-
-        var firstSuggestion = await page.GetSuggestionTextAsync(0);
-        Assert.Contains("Add project structure to initial context", firstSuggestion);
-
-        // Assert: run history shows the completed run
-        var runHistoryCount = await page.GetRunHistoryRowCountAsync();
-        Assert.True(runHistoryCount >= 1, "Expected at least one run in history after completion");
-    }
 
     [Fact]
     public async Task ConsolidationPage_RefactoringButton_VisibleForConfiguredTemplate()
@@ -404,219 +229,4 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
         Assert.True(badgeValue >= 3, $"Badge should be at least 3, was {badgeValue}");
     }
 
-    #region ProviderConfigs content assertions (Issue #1247)
-
-    // TODO: All tests in this region silently pass (return) when the button is disabled due to stale
-    // ConsolidationService singleton state. If buttons are always disabled, these tests provide zero
-    // coverage while appearing green. Consider using Skip/Assert.Skip or Assert.Fail instead of
-    // silent early return to make skipped executions visible in test reports.
-
-    [Fact]
-    public async Task ConsolidationPage_TriggerRefactoringScan_DispatchesAndCompletes()
-    {
-        // Arrange: seed a template with all providers and connect an agent
-        await SeedFullTemplateAndProfileAsync("template-refactor-1", "Refactoring Dispatch Template", "profile-refactor-1");
-
-        await using var fakeAgent = new FakeAgentClient("consol-agent-refactor-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Act: navigate and trigger refactoring scan
-        var page = new ConsolidationPage(Page, BaseUrl);
-        await page.NavigateAsync();
-
-        var isDisabled = await page.IsRefactoringButtonDisabledAsync("Refactoring Dispatch Template");
-        if (isDisabled)
-            return; // Skip — stale state from shared ConsolidationService singleton
-
-        await page.ClickRefactoringScanAsync("Refactoring Dispatch Template");
-        await page.ConfirmRefactoringModalAsync();
-
-        // Wait for the agent to receive the consolidation job
-        var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-
-        // Assert: job was dispatched with correct type
-        Assert.NotNull(assignment);
-        Assert.Equal(ConsolidationRunType.RefactoringDetection, assignment.Type);
-
-        // Complete the job to clean up state
-        await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
-        {
-            JobId = assignment.JobId,
-            Success = true,
-            Summary = "No refactoring opportunities detected"
-        });
-
-        var registry = Fixture.Factory.AgentRegistry;
-        await WaitUntilAsync(() => registry.GetByAgentId("consol-agent-refactor-1")?.Status == AgentStatus.Idle);
-    }
-
-    [Fact]
-    public async Task ConsolidationPage_RefactoringScan_ProviderConfigsContainIssueProvider()
-    {
-        // Arrange: seed a template with all providers (including issue) and connect an agent
-        await SeedFullTemplateAndProfileAsync("template-refactor-2", "Refactoring Configs Template", "profile-refactor-2");
-
-        await using var fakeAgent = new FakeAgentClient("consol-agent-refactor-2", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Act: navigate and trigger refactoring scan
-        var page = new ConsolidationPage(Page, BaseUrl);
-        await page.NavigateAsync();
-
-        var isDisabled = await page.IsRefactoringButtonDisabledAsync("Refactoring Configs Template");
-        if (isDisabled)
-            return;
-
-        await page.ClickRefactoringScanAsync("Refactoring Configs Template");
-        await page.ConfirmRefactoringModalAsync();
-
-        // Wait for the agent to receive the consolidation job
-        var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-
-        // Assert: ProviderConfigs contains an Issue kind config
-        Assert.NotNull(assignment);
-        var configKinds = assignment.ProviderConfigs.Select(c => c.Kind).ToList();
-        Assert.Contains(ProviderKind.Issue, configKinds);
-        Assert.Contains(ProviderKind.Agent, configKinds);
-        Assert.Contains(ProviderKind.Repository, configKinds);
-
-        // Clean up
-        await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
-        {
-            JobId = assignment.JobId,
-            Success = true,
-            Summary = "Done"
-        });
-
-        var registry = Fixture.Factory.AgentRegistry;
-        await WaitUntilAsync(() => registry.GetByAgentId("consol-agent-refactor-2")?.Status == AgentStatus.Idle);
-    }
-
-    [Fact]
-    public async Task ConsolidationPage_HarnessSuggestions_ProviderConfigsDoNotContainIssueProvider()
-    {
-        // Arrange: seed a template with all providers and connect an agent
-        await SeedFullTemplateAndProfileAsync("template-harness-configs", "Harness Configs Template", "profile-harness-configs");
-
-        await using var fakeAgent = new FakeAgentClient("consol-agent-harness-configs", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Act: navigate and trigger harness suggestions
-        var page = new ConsolidationPage(Page, BaseUrl);
-        await page.NavigateAsync();
-
-        var isDisabled = await page.IsGenerateSuggestionsDisabledAsync();
-        if (isDisabled)
-            return;
-
-        await page.ClickGenerateSuggestionsAsync();
-
-        // Wait for the agent to receive the consolidation job
-        var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-
-        // Assert: ProviderConfigs does NOT contain Issue kind config
-        Assert.NotNull(assignment);
-        Assert.Equal(ConsolidationRunType.HarnessSuggestions, assignment.Type);
-        var configKinds = assignment.ProviderConfigs.Select(c => c.Kind).ToList();
-        Assert.DoesNotContain(ProviderKind.Issue, configKinds);
-        Assert.Contains(ProviderKind.Agent, configKinds);
-
-        // Clean up
-        await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
-        {
-            JobId = assignment.JobId,
-            Success = true,
-            Summary = "Done"
-        });
-
-        var registry = Fixture.Factory.AgentRegistry;
-        await WaitUntilAsync(() => registry.GetByAgentId("consol-agent-harness-configs")?.Status == AgentStatus.Idle);
-    }
-
-    [Fact]
-    public async Task ConsolidationPage_BrainConsolidation_ProviderConfigsContainRepoAndBrain()
-    {
-        // TODO: This test relies on InMemoryConfigurationStore accumulating both the SeedDefaults "repo-e2e"
-        // config AND the newly-saved "brain-e2e" config. If the store's SaveProviderConfigAsync replaces
-        // rather than adds (for duplicate kinds), or if SeedDefaults changes, this test breaks non-obviously.
-        // Consider explicitly seeding both repo configs in the test for clarity.
-
-        // Arrange: seed a template with repo AND brain providers, plus a brain provider config
-        await SeedFullTemplateAndProfileAsync("template-brain-configs", "Brain Configs Template", "profile-brain-configs");
-
-        await using var fakeAgent = new FakeAgentClient("consol-agent-brain-configs", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Act: navigate and trigger brain consolidation
-        var page = new ConsolidationPage(Page, BaseUrl);
-        await page.NavigateAsync();
-
-        var isDisabled = await page.IsBrainButtonDisabledAsync("Brain Configs Template");
-        if (isDisabled)
-            return;
-
-        await page.ClickBrainConsolidationAsync("Brain Configs Template");
-
-        // Wait for the agent to receive the consolidation job
-        var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-
-        // Assert: ProviderConfigs contains two Repository-kind configs (repo + brain)
-        Assert.NotNull(assignment);
-        Assert.Equal(ConsolidationRunType.BrainConsolidation, assignment.Type);
-        var repoConfigs = assignment.ProviderConfigs.Where(c => c.Kind == ProviderKind.Repository).ToList();
-        Assert.Equal(2, repoConfigs.Count);
-        Assert.Contains(repoConfigs, c => c.Id == "repo-e2e");
-        Assert.Contains(repoConfigs, c => c.Id == "brain-e2e");
-
-        // Assert: Issue provider NOT included for BrainConsolidation
-        Assert.DoesNotContain(assignment.ProviderConfigs, c => c.Kind == ProviderKind.Issue);
-
-        // Clean up
-        await fakeAgent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
-        {
-            JobId = assignment.JobId,
-            Success = true,
-            Summary = "Done"
-        });
-
-        var registry = Fixture.Factory.AgentRegistry;
-        await WaitUntilAsync(() => registry.GetByAgentId("consol-agent-brain-configs")?.Status == AgentStatus.Idle);
-    }
-
-    /// <summary>
-    /// Seeds a full template with repo, brain, and issue providers, plus a matching agent profile.
-    /// Brain provider config is explicitly seeded as Kind=Repository (shared kind with repo configs).
-    /// </summary>
-    private async Task SeedFullTemplateAndProfileAsync(string templateId, string templateName, string profileId)
-    {
-        // Seed brain provider config (not in SeedDefaults — brain uses Repository kind)
-        await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
-        {
-            Id = "brain-e2e",
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "E2E Brain Provider"
-        }, CancellationToken.None);
-
-        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
-        {
-            Id = templateId,
-            Name = templateName,
-            IssueProviderId = "issue-e2e",
-            RepoProviderId = "repo-e2e",
-            BrainProviderId = "brain-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = profileId,
-            DisplayName = $"Profile for {templateName}",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-    }
-
-    #endregion
 }
