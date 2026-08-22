@@ -181,4 +181,32 @@ public class SignalRAgentCommunicationTests
         ProviderConfigs = [],
         PipelineConfiguration = new PipelineConfiguration()
     };
+
+    // ── Null guards for ForceDisconnectAsync and RequestFetchModelsAsync ───
+
+    [Fact]
+    public async Task ForceDisconnectAsync_NullConnectionId_ThrowsArgumentNullException()
+    {
+        var act = () => _comm.ForceDisconnectAsync(null!, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task RequestFetchModelsAsync_NullConnectionId_ThrowsArgumentNullException()
+    {
+        var request = new FetchModelsRequest { RequestId = "req-1" };
+
+        var act = () => _comm.RequestFetchModelsAsync(null!, request, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task RequestFetchModelsAsync_NullRequest_ThrowsArgumentNullException()
+    {
+        var act = () => _comm.RequestFetchModelsAsync("conn-1", null!, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentNullException>();
+    }
 }

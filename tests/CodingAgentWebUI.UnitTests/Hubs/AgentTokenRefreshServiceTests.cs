@@ -320,3 +320,94 @@ public sealed class AgentTokenRefreshServiceTests
 
     #endregion
 }
+
+// ── Additional coverage for whitespace token values and K8s empty repoId ──
+
+public sealed class AgentTokenRefreshServiceAdditionalTests
+{
+    private readonly Mock<IAgentHubFacade> _mockFacade = new();
+    private readonly Mock<ITokenVendingService> _mockTokenVending = new();
+    private readonly Mock<ILogger> _mockLogger = new();
+
+    private AgentTokenRefreshService CreateService() =>
+        new(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object);
+
+    private static PipelineRun MakeRun(string repoConfigId = "repo-1") => new()
+    {
+        RunId = "job-1",
+        IssueIdentifier = "org/repo#1",
+        IssueTitle = "Test",
+        IssueProviderConfigId = "issue-1",
+        RepoProviderConfigId = repoConfigId
+    };
+
+    // K8s fallback: WorkItem found but repoProviderConfigId is empty string → throws
+
+    [Fact]
+    public async Task RefreshToken_K8sFallback_EmptyRepoProviderConfigId_ThrowsHubException()
+    {
+        _mockFacade.Setup(f => f.GetRun("wi-1")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetWorkItemProviderConfigIdsAsync("wi-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("", null)); // empty repoProviderConfigId
+
+        var service = CreateService();
+
+        var act = () => service.RefreshTokenAsync("wi-1", ProviderKind.Repository, CancellationToken.None);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*repoProviderConfigId*");
+    }
+
+    // AccessToken with whitespace-only value falls through to Token check, then to error
+
+    [Fact]
+    public async Task RefreshToken_WhitespaceAccessToken_FallsThroughToError()
+    {
+        var config = new ProviderConfig
+        {
+            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitLab", DisplayName = "Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AccessToken] = "   " // whitespace only — treated as empty
+            }
+        };
+
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(MakeRun());
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var service = CreateService();
+
+        var act = () => service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
+
+        // Falls through AccessToken (whitespace) and Token (absent) to the no-auth-method error
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*no supported authentication method*");
+    }
+
+    // Token with whitespace-only value falls through to error
+
+    [Fact]
+    public async Task RefreshToken_WhitespaceToken_FallsThroughToError()
+    {
+        var config = new ProviderConfig
+        {
+            Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.Token] = "  " // whitespace only
+            }
+        };
+
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(MakeRun());
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var service = CreateService();
+
+        var act = () => service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*no supported authentication method*");
+    }
+}

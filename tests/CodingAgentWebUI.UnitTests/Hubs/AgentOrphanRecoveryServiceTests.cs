@@ -727,4 +727,241 @@ public sealed class AgentOrphanRecoveryServiceTests
         var job = CreateActiveJob(runId);
         return job with { ModelName = modelName, RepositoryName = repositoryName };
     }
+
+    // ── Additional coverage: null entry in RestoreConsolidationTracking ──────────
+
+    [Fact]
+    public async Task ActiveJob_ConsolidationRun_NullEntry_DoesNotThrow()
+    {
+        const string agentId = "agent-null-entry";
+        const string runId = "consol-null-entry";
+
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns((AgentEntry?)null); // null entry
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
+
+        var activeJob = new ActiveJobState
+        {
+            RunId = runId,
+            IssueIdentifier = "consolidation",
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            AgentProviderConfigId = "ap-1",
+            InitiatedBy = "consolidation",
+            CurrentStep = PipelineStep.AnalyzingCode,
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5)
+        };
+        var message = CreateMessage(agentId, activeJob);
+
+        var act = async () => await _service.RecoverOrphanedStateAsync(message, agentId);
+        await act.Should().NotThrowAsync("null entry in consolidation tracking must be a no-op");
+
+        // AddRun never called for consolidation
+        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never);
+        // TransitionStatus never called (entry is null)
+        _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
+    }
+
+    // ── Additional coverage: null entry in RestorePipelineRun ────────────────────
+
+    [Fact]
+    public async Task ActiveJob_PipelineRun_NullEntry_DoesNotThrow()
+    {
+        const string agentId = "agent-null-pipeline";
+        const string runId = "pipeline-null-entry";
+
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns((AgentEntry?)null);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
+
+        var message = CreateMessage(agentId, CreateActiveJob(runId));
+
+        var act = async () => await _service.RecoverOrphanedStateAsync(message, agentId);
+        await act.Should().NotThrowAsync("null entry in pipeline run restoration must be a no-op for the status transition");
+
+        _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r => r.RunId == runId)), Times.Once);
+        _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
+    }
+
+    // ── Multiple orphaned runs: picks most recent ────────────────────────────────
+
+    [Fact]
+    public async Task NoActiveJob_MultipleOrphanedRuns_PicksMostRecent()
+    {
+        const string agentId = "agent-multi-orphan";
+        const string oldRunId = "orphan-old";
+        const string newRunId = "orphan-new";
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = null;
+
+        var olderRun = new PipelineRun
+        {
+            RunId = oldRunId,
+            IssueIdentifier = "org/repo#10",
+            IssueTitle = "Old Orphan",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+        var newerRun = new PipelineRun
+        {
+            RunId = newRunId,
+            IssueIdentifier = "org/repo#11",
+            IssueTitle = "New Orphan",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId))
+            .Returns(new List<PipelineRun> { olderRun, newerRun });
+
+        var message = CreateMessage(agentId, activeJob: null);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        entry.ActiveJobId.Should().Be(newRunId,
+            "DetectAndRestoreOrphans must restore the most recent (last) orphaned run");
+        entry.OrphanRestoredAt.Should().NotBeNull();
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+    }
+
+    // ── ConsolidationTracking notifies change ────────────────────────────────────
+
+    [Fact]
+    public async Task ActiveJob_ConsolidationRun_NotifiesChange()
+    {
+        const string agentId = "agent-consol-notify";
+        const string runId = "consol-notify-1";
+
+        var entry = CreateEntry(agentId);
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
+
+        var activeJob = new ActiveJobState
+        {
+            RunId = runId,
+            IssueIdentifier = "consolidation",
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            AgentProviderConfigId = "ap-1",
+            InitiatedBy = "consolidation",
+            CurrentStep = PipelineStep.AnalyzingCode,
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5)
+        };
+        var message = CreateMessage(agentId, activeJob);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        _mockChangeNotifier.Verify(c => c.NotifyChange(), Times.Once);
+    }
+
+    // ── DetectAndRestoreOrphans: orphan restored but TransitionStatus skipped ────
+
+    [Fact]
+    public async Task NoActiveJob_OrphanedRuns_DrainRacePreventsBusyTransition()
+    {
+        const string agentId = "agent-race-busy";
+        const string orphanRunId = "orphan-race";
+        const string drainAssignedId = "drain-job-different";
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = null;
+
+        var orphanedRun = new PipelineRun
+        {
+            RunId = orphanRunId,
+            IssueIdentifier = "org/repo#50",
+            IssueTitle = "Orphan Race",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId))
+            .Returns(new List<PipelineRun> { orphanedRun })
+            .Callback(() => { entry.ActiveJobId = drainAssignedId; });
+
+        var message = CreateMessage(agentId, activeJob: null);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        entry.ActiveJobId.Should().Be(drainAssignedId,
+            "drain-assigned job must not be overwritten by orphan restoration");
+        _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
+    }
+
+    // ── HandleCrashRecovery else branch: agent has activeJob ────────────────────
+
+    [Fact]
+    public async Task CrashRecovery_AgentHasActiveJob_LogsElseBranch()
+    {
+        const string agentId = "agent-crash-else";
+        const string existingJobId = "existing-job-crash";
+        const string runId = "active-run";
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = existingJobId;
+        entry.OrphanRestoredAt = null;
+
+        var existingRun = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#99",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns(existingRun);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
+
+        var activeJob = CreateActiveJob(runId);
+        var message = CreateMessage(agentId, activeJob);
+
+        var act = async () => await _service.RecoverOrphanedStateAsync(message, agentId);
+        await act.Should().NotThrowAsync();
+
+        entry.OrphanRestoredAt.Should().BeNull(
+            "else branch of HandleCrashRecovery must not set OrphanRestoredAt");
+    }
+
+    // ── DecompositionAnalysis RunType → creates decomposition run ────────────────
+
+    [Fact]
+    public async Task ActiveJob_DecompositionAnalysisRunType_RestoresDecompositionRun()
+    {
+        const string agentId = "agent-decomp-analysis";
+        const string runId = "decomp-analysis-run-1";
+
+        var entry = CreateEntry(agentId);
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
+
+        var activeJob = CreateActiveJob(runId) with { RunType = PipelineRunType.DecompositionAnalysis };
+        var message = CreateMessage(agentId, activeJob);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r =>
+            r.RunId == runId &&
+            r.RunType == PipelineRunType.DecompositionAnalysis)), Times.Once);
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+    }
 }

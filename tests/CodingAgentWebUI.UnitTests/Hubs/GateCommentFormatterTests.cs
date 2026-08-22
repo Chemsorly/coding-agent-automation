@@ -122,3 +122,37 @@ public sealed class GateCommentFormatterTests
 
     #endregion
 }
+
+
+// Additional tests for uncovered null-assessment deserialization path
+
+public sealed class GateCommentFormatterNullAssessmentTests
+{
+    private readonly GateCommentFormatter _formatter = new(Mock.Of<ILogger>());
+
+    [Fact]
+    public void FormatGateComment_JsonDeserializesToNull_WontDo_WrapsInCodeBlock()
+    {
+        // System.Text.Json deserializes "null" as a null AnalysisAssessment
+        const string nullJson = "null";
+
+        var result = _formatter.FormatGateComment(nullJson, isWontDo: true);
+
+        // Fallback: assessment was null after deserialization → code block wrapping
+        result.Should().Contain("## 🚫 Analysis Gate: Won't Do");
+        result.Should().Contain("```json");
+        result.Should().Contain(nullJson);
+    }
+
+    [Fact]
+    public void FormatGateComment_JsonDeserializesToNull_NotReady_WrapsInCodeBlock()
+    {
+        const string nullJson = "null";
+
+        var result = _formatter.FormatGateComment(nullJson, isWontDo: false);
+
+        result.Should().Contain("## ⚠️ Analysis Gate: Needs Refinement");
+        result.Should().Contain("```json");
+        result.Should().Contain(nullJson);
+    }
+}

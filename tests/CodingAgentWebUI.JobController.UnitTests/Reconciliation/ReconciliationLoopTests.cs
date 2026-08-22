@@ -348,3 +348,599 @@ public sealed class ReconciliationLoopTests
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }
+
+// ─── Error / exception paths ──────────────────────────────────────────────────
+
+public sealed class ReconciliationLoopErrorTests
+{
+    private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
+    private readonly Mock<IKubernetesJobClient> _k8sClient = new();
+    private readonly DispatchServiceOptions _options = new()
+    {
+        Namespace = "test-ns",
+        ChatSessionMaxDurationSeconds = 7200,
+        ChatPodConnectTimeoutSeconds = 120
+    };
+
+    private ReconciliationLoop CreateLoop(PvcPool? pvcPool = null) =>
+        new(_workItemClient.Object, _k8sClient.Object, pvcPool ?? new PvcPool([]), _options);
+
+    // ─── ReconcileOnceAsync ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ReconcileOnce_WhenListJobsThrows_DoesNotPropagate()
+    {
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("k8s unavailable"));
+
+        var loop = CreateLoop();
+
+        // Should not throw — exception is caught and reconciliation is skipped
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReconcileOnce_WhenPostStatusThrows_PvcStillReleased()
+    {
+        const string pvcName = "kiro-pvc-err";
+        var pool = new PvcPool([pvcName]);
+        var id = Guid.NewGuid();
+        pool.TryClaim(id);
+
+        var jobName = $"caa-agent-{id:N}"[..21];
+        var job = MakeJob(jobName, id, succeeded: true, pvcName: pvcName);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("DB error"));
+
+        var loop = CreateLoop(pool);
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // PVC must still be released even when PostStatusAsync throws
+        Assert.Equal(1, pool.AvailableCount);
+    }
+
+    [Fact]
+    public async Task ReconcileOnce_JobWithUnparsableWorkItemId_IsSkipped()
+    {
+        // Job has caa/work-item-id but value is not a valid GUID — should be skipped
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = "caa-agent-badguid00000",
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                    ["caa/work-item-id"] = "not-a-guid"
+                }
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = new V1JobStatus { Succeeded = 1 }
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReconcileOnce_JobWithNoWorkItemIdLabel_IsSkipped()
+    {
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = "caa-agent-nolabel0000",
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator"
+                    // no caa/work-item-id
+                }
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = new V1JobStatus { Succeeded = 1 }
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── GetJobPhase fallback to counters ─────────────────────────────────
+
+    [Fact]
+    public async Task ReconcileOnce_JobSucceededViaCounter_NotConditions_IsHandled()
+    {
+        // Job.Status.Succeeded = 1 but no Conditions set — fallback to counter
+        var id = Guid.NewGuid();
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = $"caa-agent-{id:N}"[..21],
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                    ["caa/work-item-id"] = id.ToString()
+                }
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = new V1JobStatus { Succeeded = 1, Conditions = [] } // empty conditions list
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReconcileOnce_JobFailedViaCounter_NotConditions_IsHandled()
+    {
+        var id = Guid.NewGuid();
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = $"caa-agent-{id:N}"[..21],
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                    ["caa/work-item-id"] = id.ToString()
+                }
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = new V1JobStatus { Failed = 1, Conditions = [] }
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReconcileOnce_FailedJob_ErrorMessageFromCondition()
+    {
+        // When conditions include a Failed condition with a Message, that message is passed through
+        var id = Guid.NewGuid();
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = $"caa-agent-{id:N}"[..21],
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                    ["caa/work-item-id"] = id.ToString()
+                }
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = new V1JobStatus
+            {
+                Failed = 1,
+                Conditions =
+                [
+                    new V1JobCondition
+                    {
+                        Type = "Failed",
+                        Status = "True",
+                        Message = "BackoffLimitExceeded"
+                    }
+                ]
+            }
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.ErrorMessage == "BackoffLimitExceeded"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReconcileOnce_ActiveJob_NoAction()
+    {
+        var id = Guid.NewGuid();
+        var job = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = $"caa-agent-{id:N}"[..21],
+                Labels = new Dictionary<string, string>
+                {
+                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                    ["caa/work-item-id"] = id.ToString()
+                }
+            },
+            Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
+            Status = new V1JobStatus { Active = 1 } // still running
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── EnforceTimeoutsAsync error paths ────────────────────────────────
+
+    [Fact]
+    public async Task EnforceTimeouts_WhenGetActiveThrows_DoesNotPropagate()
+    {
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("DB unavailable"));
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // No status posted — exception caught
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnforceTimeouts_WhenPostStatusThrows_ContinuesToNextItem()
+    {
+        var id1 = Guid.NewGuid();
+        var id2 = Guid.NewGuid();
+
+        var item1 = new ActiveWorkItemDto
+        {
+            Id = id1,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatSessionMaxDurationSeconds + 1)),
+            AgentSelector = "dotnet",
+            IssueIdentifier = "owner/repo#1"
+        };
+        var item2 = new ActiveWorkItemDto
+        {
+            Id = id2,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatSessionMaxDurationSeconds + 1)),
+            AgentSelector = "dotnet",
+            IssueIdentifier = "owner/repo#2"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatSessionMaxDurationSeconds), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item1, item2]);
+
+        // First call throws, second should still be attempted
+        _workItemClient.SetupSequence(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("DB transient"))
+            .Returns(Task.CompletedTask);
+
+        _k8sClient.Setup(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Both items were attempted (first threw, second succeeded)
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task EnforceTimeouts_DispatchedItem_IsSkipped()
+    {
+        // Only Running items should be timed out by EnforceTimeoutsAsync
+        var id = Guid.NewGuid();
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Dispatched, // not Running
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatSessionMaxDurationSeconds + 1)),
+            AgentSelector = "dotnet",
+            IssueIdentifier = "owner/repo#1"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatSessionMaxDurationSeconds), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── EnforceDispatchedTimeoutAsync error paths ────────────────────────
+
+    [Fact]
+    public async Task EnforceDispatchedTimeout_WhenGetActiveThrows_DoesNotPropagate()
+    {
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("DB unavailable"));
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnforceDispatchedTimeout_WhenListJobsThrows_DoesNotPropagate()
+    {
+        var id = Guid.NewGuid();
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet",
+            IssueIdentifier = "owner/repo#1"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("k8s unavailable"));
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnforceDispatchedTimeout_WhenJobExists_NoStatusPosted()
+    {
+        var id = Guid.NewGuid();
+        var expectedJobName = $"caa-agent-{id:N}"[..21];
+
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet",
+            IssueIdentifier = "owner/repo#1"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        // K8s Job exists for this work item
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList
+            {
+                Items =
+                [
+                    new V1Job { Metadata = new V1ObjectMeta { Name = expectedJobName } }
+                ]
+            });
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnforceDispatchedTimeout_NoDispatchedItems_NoJobListQuery()
+    {
+        // If no items are Dispatched after filtering, skip the ListJobsAsync call entirely
+        var id = Guid.NewGuid();
+        var runningItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running, // not Dispatched
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet",
+            IssueIdentifier = "owner/repo#1"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([runningItem]);
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        _k8sClient.Verify(c => c.ListJobsAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── CleanupOrphansAsync error paths ──────────────────────────────────
+
+    [Fact]
+    public async Task CleanupOrphans_WhenListJobsThrows_DoesNotPropagate()
+    {
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("k8s unavailable"));
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CleanupOrphans_WhenGetActiveThrows_DoesNotPropagate()
+    {
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("DB unavailable"));
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CleanupOrphans_WhenDeleteJobThrows_DoesNotPropagate()
+    {
+        var orphanJob = MakeJob("caa-agent-orphan000000", workItemId: null, active: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [orphanJob] });
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _k8sClient.Setup(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("k8s error"));
+
+        var loop = CreateLoop();
+
+        // Should not throw — delete exception is swallowed
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task CleanupOrphans_JobWithActiveWorkItem_IsNotDeleted()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-agent-{id:N}"[..21];
+        var job = MakeJob(jobName, id, active: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        // Work item is still active
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                new ActiveWorkItemDto
+                {
+                    Id = id,
+                    Status = WorkItemStatus.Running,
+                    DispatchedAt = DateTimeOffset.UtcNow,
+                    AgentSelector = "dotnet",
+                    IssueIdentifier = "owner/repo#1"
+                }
+            ]);
+
+        var loop = CreateLoop();
+        await loop.CleanupOrphansAsync(CancellationToken.None);
+
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            jobName, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── CancellationToken respected ─────────────────────────────────────
+
+    [Fact]
+    public async Task ReconcileOnce_CancellationToken_StopsProcessing()
+    {
+        var id1 = Guid.NewGuid();
+        var id2 = Guid.NewGuid();
+        var job1 = MakeJob($"caa-agent-{id1:N}"[..21], id1, succeeded: true);
+        var job2 = MakeJob($"caa-agent-{id2:N}"[..21], id2, succeeded: true);
+
+        using var cts = new CancellationTokenSource();
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job1, job2] });
+
+        // Cancel after first PostStatusAsync
+        _workItemClient.Setup(c => c.PostStatusAsync(id1, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => cts.Cancel());
+
+        var loop = CreateLoop();
+        await loop.ReconcileOnceAsync(cts.Token);
+
+        // Only first item processed before cancellation
+        _workItemClient.Verify(c => c.PostStatusAsync(id1, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Once);
+        _workItemClient.Verify(c => c.PostStatusAsync(id2, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── Helpers ──────────────────────────────────────────────────────────
+
+    private static V1Job MakeJob(
+        string name,
+        Guid? workItemId,
+        bool succeeded = false,
+        bool failed = false,
+        bool active = false,
+        string? pvcName = null)
+    {
+        var labels = new Dictionary<string, string>
+        {
+            ["app.kubernetes.io/managed-by"] = "caa-orchestrator"
+        };
+        if (workItemId.HasValue)
+            labels["caa/work-item-id"] = workItemId.Value.ToString();
+
+        V1JobStatus status;
+        if (succeeded)
+            status = new V1JobStatus { Succeeded = 1, Conditions = [new V1JobCondition { Type = "Complete", Status = "True" }] };
+        else if (failed)
+            status = new V1JobStatus { Failed = 1, Conditions = [new V1JobCondition { Type = "Failed", Status = "True" }] };
+        else
+            status = new V1JobStatus { Active = active ? 1 : 0 };
+
+        var volumes = new List<V1Volume>();
+        if (pvcName is not null)
+        {
+            volumes.Add(new V1Volume
+            {
+                Name = "kiro-cli-data",
+                PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource { ClaimName = pvcName }
+            });
+        }
+
+        return new V1Job
+        {
+            Metadata = new V1ObjectMeta { Name = name, Labels = labels },
+            Spec = new V1JobSpec
+            {
+                Template = new V1PodTemplateSpec
+                {
+                    Spec = new V1PodSpec { Volumes = volumes }
+                }
+            },
+            Status = status
+        };
+    }
+}
