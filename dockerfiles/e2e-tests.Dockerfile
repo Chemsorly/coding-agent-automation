@@ -25,7 +25,8 @@ COPY Directory.Packages.props ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
 COPY src/CodingAgentWebUI.Pipeline.CodeReview/CodingAgentWebUI.Pipeline.CodeReview.csproj src/CodingAgentWebUI.Pipeline.CodeReview/
-COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj src/CodingAgentWebUI.Infrastructure/
+COPY src/CodingAgentWebUI.Infrastructure.Persistence/CodingAgentWebUI.Infrastructure.Persistence.csproj src/CodingAgentWebUI.Infrastructure.Persistence/
+COPY src/CodingAgentWebUI.Infrastructure.Providers/CodingAgentWebUI.Infrastructure.Providers.csproj src/CodingAgentWebUI.Infrastructure.Providers/
 COPY src/CodingAgentWebUI.Orchestration/CodingAgentWebUI.Orchestration.csproj src/CodingAgentWebUI.Orchestration/
 # Added by Specs 042/043 — the harness runs the Pipeline API alongside the Blazor app, so the
 # API, its shared hub library, its typed client and the K8s toolkit all take part in the restore.
