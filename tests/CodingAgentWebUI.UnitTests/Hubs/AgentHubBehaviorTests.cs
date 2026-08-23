@@ -570,9 +570,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
             }
         };
 
-        await hub.ReportConsolidationComplete(result);
+        var act = async () => await hub.ReportConsolidationComplete(result);
 
-        // Badge counting is now inside IHubConsolidationOperations
+        // Badge counting is now inside IHubConsolidationOperations — verify no exception is thrown
+        await act.Should().NotThrowAsync();
     }
 
     #endregion

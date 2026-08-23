@@ -67,17 +67,6 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     }
 
     /// <inheritdoc />
-    public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
-    {
-        var runIdStr = runId.ToString();
-        lock (_lock)
-        {
-            var summary = _runHistory.FirstOrDefault(s => s.RunId == runIdStr);
-            return Task.FromResult(summary);
-        }
-    }
-
-    /// <inheritdoc />
     public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
     {
         if (!feedbackOnly)
@@ -103,6 +92,17 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 PageSize = pageSize,
                 HasMore = hasMore
             });
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        var runIdStr = runId.ToString();
+        lock (_lock)
+        {
+            var summary = _runHistory.FirstOrDefault(s => s.RunId == runIdStr);
+            return Task.FromResult(summary);
         }
     }
 

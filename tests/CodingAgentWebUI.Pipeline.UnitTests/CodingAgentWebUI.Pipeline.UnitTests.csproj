@@ -41,6 +41,7 @@
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Api.Client\CodingAgentWebUI.Api.Client.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure.Providers\CodingAgentWebUI.Infrastructure.Providers.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure.Persistence\CodingAgentWebUI.Infrastructure.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.JobController\CodingAgentWebUI.JobController.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Pipeline.CodeReview\CodingAgentWebUI.Pipeline.CodeReview.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Orchestration\CodingAgentWebUI.Orchestration.csproj" />

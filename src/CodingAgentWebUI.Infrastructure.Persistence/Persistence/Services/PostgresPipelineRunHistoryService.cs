@@ -105,18 +105,6 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
-    public async Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
-    {
-        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
-        var entity = await db.PipelineRuns
-            .AsNoTracking()
-            .Where(r => r.RunId == runId)
-            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
-
-        return entity is null ? null : DeserializeSummary(entity);
-    }
-
-    /// <inheritdoc />
     public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
@@ -127,6 +115,18 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             return await GetRunHistoryAsync(page, pageSize, ct).ConfigureAwait(false);
 
         return await GetRunHistoryPagedWithFeedbackFilterInternalAsync(page, pageSize, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+        var entity = await db.PipelineRuns
+            .AsNoTracking()
+            .Where(r => r.RunId == runId)
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+
+        return entity is null ? null : DeserializeSummary(entity);
     }
 
     /// <inheritdoc />

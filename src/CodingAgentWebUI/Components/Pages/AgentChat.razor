@@ -194,60 +194,62 @@
         }
 
         // Register hub push handlers.
-        // OnChatResponse: accumulate streaming lines into _streamingContent.
         _chatResponseSub = HubConnection.On<string, IReadOnlyList<string>>(
-            HubMethodNames.OnChatResponse,
-            (sessionId, lines) =>
-            {
-                if (sessionId != _activeSessionId) return;
-                InvokeAsync(() =>
-                {
-                    foreach (var line in lines)
-                    {
-                        if (_streamingContent.Length > 0) _streamingContent.AppendLine();
-                        _streamingContent.Append(line);
-                    }
-                    StateHasChanged();
-                    _ = ScrollToBottom();
-                });
-            });
+            HubMethodNames.OnChatResponse, HandleChatResponseReceived);
 
-        // OnChatCompleted: finalise the message, release the waiting state.
         _chatCompletedSub = HubConnection.On<string, int, string?>(
-            HubMethodNames.OnChatCompleted,
-            (sessionId, exitCode, error) =>
+            HubMethodNames.OnChatCompleted, HandleChatCompleted);
+    }
+
+    // OnChatResponse: accumulate streaming lines into _streamingContent.
+    private void HandleChatResponseReceived(string sessionId, IReadOnlyList<string> lines)
+    {
+        if (sessionId != _activeSessionId) return;
+        InvokeAsync(() =>
+        {
+            foreach (var line in lines)
             {
-                if (sessionId != _activeSessionId) return;
-                InvokeAsync(() =>
+                if (_streamingContent.Length > 0) _streamingContent.AppendLine();
+                _streamingContent.Append(line);
+            }
+            StateHasChanged();
+            _ = ScrollToBottom();
+        });
+    }
+
+    // OnChatCompleted: finalise the message, release the waiting state.
+    private void HandleChatCompleted(string sessionId, int exitCode, string? error)
+    {
+        if (sessionId != _activeSessionId) return;
+        InvokeAsync(() =>
+        {
+            var content = _streamingContent.ToString();
+            if (!string.IsNullOrWhiteSpace(content))
+            {
+                _messages.Add(new ChatMessage
                 {
-                    var content = _streamingContent.ToString();
-                    if (!string.IsNullOrWhiteSpace(content))
-                    {
-                        _messages.Add(new ChatMessage
-                        {
-                            Role = ChatRole.Agent,
-                            Content = content,
-                            Timestamp = DateTime.UtcNow
-                        });
-                    }
-                    if (!string.IsNullOrEmpty(error))
-                    {
-                        _messages.Add(new ChatMessage
-                        {
-                            Role = ChatRole.System,
-                            Content = $"⚠️ {error} (exit code: {exitCode})",
-                            Timestamp = DateTime.UtcNow
-                        });
-                    }
-                    _streamingContent.Clear();
-                    _isWaitingForResponse = false;
-                    // Do NOT clear _activeSessionId here — the chat session is still active and
-                    // waiting for the next prompt. Clearing it would prevent EndChat/DisposeAsync
-                    // from unsubscribing from the correct hub group. It is only cleared in EndChat.
-                    StateHasChanged();
-                    _ = ScrollToBottom();
+                    Role = ChatRole.Agent,
+                    Content = content,
+                    Timestamp = DateTime.UtcNow
                 });
-            });
+            }
+            if (!string.IsNullOrEmpty(error))
+            {
+                _messages.Add(new ChatMessage
+                {
+                    Role = ChatRole.System,
+                    Content = $"⚠️ {error} (exit code: {exitCode})",
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            _streamingContent.Clear();
+            _isWaitingForResponse = false;
+            // Do NOT clear _activeSessionId here — the chat session is still active and
+            // waiting for the next prompt. Clearing it would prevent EndChat/DisposeAsync
+            // from unsubscribing from the correct hub group. It is only cleared in EndChat.
+            StateHasChanged();
+            _ = ScrollToBottom();
+        });
     }
 
     // ── Project selection handler (shared by both modes) ─────────────────────
