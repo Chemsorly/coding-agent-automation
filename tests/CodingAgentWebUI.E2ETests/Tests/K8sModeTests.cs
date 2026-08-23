@@ -82,7 +82,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var workItemId = await InsertPendingWorkItemAsync("k8s-dispatch-200", "kiro,dotnet");
 
         // Act: manually transition to Dispatched (simulating what DispatchService does)
-        var transitionService = Fixture.Factory.Services.GetRequiredService<CodingAgentWebUI.Infrastructure.Persistence.Services.WorkItemTransitionService>();
+        var transitionService = Fixture.ApiServices.GetRequiredService<CodingAgentWebUI.Infrastructure.Persistence.Services.WorkItemTransitionService>();
         var transitioned = await transitionService.TransitionAsync(
             workItemId, WorkItemStatus.Dispatched,
             w =>
@@ -187,7 +187,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         var workItemId = Guid.Parse(result.WorkItemId!);
 
         // Transition to Dispatched (as DispatchService would do)
-        var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
+        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
             w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
 
@@ -258,7 +258,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
-        var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
+        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
             w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
 
@@ -319,7 +319,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
-        var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
+        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
             w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
@@ -465,7 +465,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
-        var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
+        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
             w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
@@ -511,7 +511,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
-        var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
+        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
             w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
@@ -903,7 +903,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         }
 
         // ── Step 2: Simulate DispatchService transitioning to Dispatched ──
-        var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
+        var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
         var dispatched = await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
             w =>
             {

@@ -95,10 +95,14 @@ public sealed class AgentConnectionManagerReconnectionTests
     public void UpdateCurrentStep_MultipleUpdates_DoesNotThrow()
     {
         var (manager, _) = CreateManager();
-        manager.UpdateCurrentStep(PipelineStep.CloningRepository);
-        manager.UpdateCurrentStep(PipelineStep.GeneratingCode);
-        manager.UpdateCurrentStep(null);
-        // No assertion needed beyond no throw — volatile write has no observable state here
+        var act = () =>
+        {
+            manager.UpdateCurrentStep(PipelineStep.CloningRepository);
+            manager.UpdateCurrentStep(PipelineStep.GeneratingCode);
+            manager.UpdateCurrentStep(null);
+        };
+        // Volatile write has no observable state; assert no exception is the correct contract check
+        act.Should().NotThrow();
     }
 
     // ── UpdateRegistration ────────────────────────────────────────────────
@@ -352,11 +356,11 @@ public sealed class AgentConnectionManagerReconnectionTests
         // Act: fire terminal close and immediately dispose
         _ = fakeHub_SimulateClosed(hub);
         await Task.Delay(5); // let the loop start one attempt
-        await manager.DisposeAsync();
+        var disposeAct = async () => await manager.DisposeAsync();
 
         // Assert: DisposeAsync must complete without throwing (no ObjectDisposedException, no NRE)
         // — the CAS in the reconnect loop ensures the orphaned manager is disposed cleanly
-    }
+        await disposeAct.Should().NotThrowAsync();
 
     // ── B5: StopApplication called on reconnection exhaustion ─────────────
 
