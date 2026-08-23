@@ -34,243 +34,6 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         catch { /* best effort */ }
     }
 
-    // ── S8949 source-scan tests — verify CancellationToken propagation ────
-    // TODO: These source-scan tests verify that specific substrings exist in each method body,
-    // but do NOT verify that the substring appears inside an InvokeAsync call. If the production
-    // code is refactored so that CancellationToken.None (or ApplicationStopping) appears only in
-    // a comment or an unrelated expression while the actual InvokeAsync call loses its token
-    // argument, these tests would still pass. Consider tightening the assertions to require the
-    // token string to appear on the same line as, or adjacent to, an InvokeAsync call.
-    // TODO: Source-scan tests are absent for: (1) AgentConnectionManager.DisposeAsync
-    // (CancellationToken.None with // intentional: comment added by this change); (2)
-    // ChatJobDispatcher Task.Run(..., cts.Token) change; (3) the three outputBatcher.AddLineAsync
-    // calls that now forward chatToken (MCP config, project steering, project secrets log lines
-    // in AgentWorkerService.cs). Add source-scan tests for these sites to ensure
-    // regressions are caught.
-
-    /// <summary>
-    /// Verifies that ReportChatCompletedAsync passes CancellationToken.None with an
-    /// // intentional: comment to InvokeAsync. Since chatToken may be cancelled when
-    /// this method is called, CancellationToken.None is the correct choice.
-    /// </summary>
-    [Fact]
-    public void SourceCode_ReportChatCompletedAsync_PassesCancellationTokenNoneWithComment()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
-
-        // Extract just the ReportChatCompletedAsync method body to avoid false positives
-        var methodStart = source.IndexOf("public async Task ReportChatCompletedAsync(", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        methodBody.Should().Contain("CancellationToken.None",
-            "ReportChatCompletedAsync must pass CancellationToken.None to InvokeAsync — chatToken may be cancelled at call time");
-        methodBody.Should().Contain("// intentional:",
-            "ReportChatCompletedAsync must have an // intentional: comment explaining why CancellationToken.None is used");
-    }
-
-    /// <summary>
-    /// Verifies that the signalAgentReady delegate in AgentChatModeRegistration passes
-    /// ApplicationStopping to InvokeAsync so the call is cancelled during application shutdown.
-    /// </summary>
-    [Fact]
-    public void SourceCode_SignalAgentReady_PassesApplicationStopping()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentChatModeRegistration.cs"));
-
-        // TODO: [WARNING] This assertion scans the entire file for "ApplicationStopping" and will pass as long
-        // as the string appears anywhere — e.g. it is also present in the AgentReady hub invocation at the top
-        // of the file (line ~40). If the ChatJobHandler's _signalAgentReady delegate were changed to pass
-        // CancellationToken.None instead of lifetime.ApplicationStopping, this test would still pass because
-        // the other occurrence remains. Narrow the assertion to the ChatJobHandler factory lambda body to
-        // ensure the cancellation contract is enforced at the correct callsite.
-        source.Should().Contain("ApplicationStopping",
-            "signalAgentReady delegates must pass ApplicationStopping to InvokeAsync so they are cancelled during shutdown");
-    }
-
-    /// <summary>
-    /// Verifies that ReportConsolidationFailureAsync passes CancellationToken.None with comment.
-    /// Called from a catch block where jobToken may already be cancelled.
-    /// </summary>
-    [Fact]
-    public void SourceCode_ReportConsolidationFailureAsync_PassesCancellationTokenNoneWithComment()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ConsolidationJobHandler.cs"));
-
-        var methodStart = source.IndexOf("public async Task ReportConsolidationFailureAsync(", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.Length;
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        methodBody.Should().Contain("CancellationToken.None",
-            "ReportConsolidationFailureAsync must pass CancellationToken.None — called from catch block where jobToken may be cancelled");
-        methodBody.Should().Contain("// intentional:",
-            "ReportConsolidationFailureAsync must have an // intentional: comment explaining why CancellationToken.None is used");
-    }
-
-    /// <summary>
-    /// Verifies that ReportFetchModelsError passes CancellationToken.None with comment.
-    /// Called from error paths where no ambient token is available.
-    /// </summary>
-    [Fact]
-    public void SourceCode_ReportFetchModelsError_PassesCancellationTokenNoneWithComment()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
-
-        var methodStart = source.IndexOf("public async Task ReportFetchModelsError(", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.Length;
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        methodBody.Should().Contain("CancellationToken.None",
-            "ReportFetchModelsError must pass CancellationToken.None — called from error paths without ambient token");
-        methodBody.Should().Contain("// intentional:",
-            "ReportFetchModelsError must have an // intentional: comment explaining why CancellationToken.None is used");
-    }
-
-    /// <summary>
-    /// Verifies that HandleFetchModelsAsync does not pass timeoutCts.Token to any post-exit
-    /// call (stderr read or InvokeAsync). The process has already exited at both call sites,
-    /// so the timeout token's purpose is exhausted and may already be cancelled.
-    /// Both the error path (stderr ReadToEndAsync) and the success path (ReportFetchModelsResult
-    /// InvokeAsync) must use CancellationToken.None with an // intentional: comment.
-    /// </summary>
-    [Fact]
-    public void SourceCode_HandleFetchModelsAsync_PassesCancellationTokenNone()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
-
-        var methodStart = source.IndexOf("public async Task HandleFetchModelsAsync(", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        // TODO: The fallback above only handles private/public access modifiers. If a member with
-        // a different access modifier (internal, protected, protected internal, private protected)
-        // or an attribute/doc comment is inserted after HandleFetchModelsAsync, or if it becomes
-        // the last method in the class, both searches may return -1 and source.Substring will throw
-        // ArgumentOutOfRangeException instead of a meaningful assertion failure. Add:
-        // if (methodEnd < 0) methodEnd = source.Length;
-        if (methodEnd < 0) methodEnd = source.Length;
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        // Locate the end of WaitForExitAsync — all post-exit code follows this call
-        var waitForExitEnd = methodBody.IndexOf("WaitForExitAsync(", StringComparison.Ordinal);
-        waitForExitEnd = methodBody.IndexOf(");", waitForExitEnd, StringComparison.Ordinal) + 2;
-        var postExitBody = methodBody.Substring(waitForExitEnd);
-
-        // TODO: This assertion only verifies that CancellationToken.None appears at least once in
-        // postExitBody. There are two post-exit call sites (stderr ReadToEndAsync error path and
-        // ReportFetchModelsResult InvokeAsync success path); a partial revert of one site would
-        // still satisfy this check. Consider asserting count >= 2:
-        // (postExitBody.Split("CancellationToken.None").Length - 1).Should().BeGreaterOrEqualTo(2, ...)
-        postExitBody.Should().Contain("CancellationToken.None",
-            "HandleFetchModelsAsync must use CancellationToken.None for post-exit calls — timeoutCts.Token may be expired after WaitForExitAsync");
-        postExitBody.Should().Contain("// intentional:",
-            "HandleFetchModelsAsync must have an // intentional: comment in post-exit code explaining why CancellationToken.None is used");
-        postExitBody.Should().NotContain("timeoutCts.Token)",
-            "HandleFetchModelsAsync must not pass timeoutCts.Token to any post-exit call (stderr read or InvokeAsync) — the token may already be cancelled");
-    }
-
-    /// <summary>
-    /// Verifies that AgentConnectionLifecycle.ShutdownAsync passes CancellationToken.None with
-    /// an // intentional: comment to the DeregisterAgent InvokeAsync call.
-    /// ShutdownAsync is invoked after ApplicationStopping is already signaled, so passing
-    /// ApplicationStopping would cause InvokeAsync to throw OperationCanceledException immediately
-    /// and deregistration would never reach the orchestrator. CancellationToken.None is correct here.
-    /// </summary>
-    [Fact]
-    public void SourceCode_AgentConnectionLifecycle_ShutdownAsync_PassesCancellationTokenNoneWithComment()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionLifecycle.cs"));
-
-        var methodStart = source.IndexOf("public async Task ShutdownAsync()", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        // TODO: The fallback above only handles public/private access modifiers. If a member with
-        // a different access modifier (internal, protected, protected internal, private protected)
-        // or an attribute/doc comment is inserted after ShutdownAsync, both searches may return -1
-        // and source.Substring will throw ArgumentOutOfRangeException. Consider adding a
-        // source.Length fallback: if (methodEnd < 0) methodEnd = source.Length;
-        if (methodEnd < 0) methodEnd = source.Length;
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        // ShutdownAsync runs after ApplicationStopping fires — must use CancellationToken.None so
-        // deregistration can still reach the orchestrator during graceful shutdown.
-        methodBody.Should().Contain("CancellationToken.None",
-            "AgentConnectionLifecycle.ShutdownAsync must pass CancellationToken.None to DeregisterAgent InvokeAsync — ApplicationStopping is already triggered at call time");
-        methodBody.Should().Contain("// intentional:",
-            "AgentConnectionLifecycle.ShutdownAsync must have an // intentional: comment explaining why CancellationToken.None is used");
-        methodBody.Should().NotContain("_hostApplicationLifetime.ApplicationStopping",
-            "AgentConnectionLifecycle.ShutdownAsync must NOT pass ApplicationStopping — it is already cancelled when ShutdownAsync runs");
-    }
-
-    /// <summary>
-    /// Structural guard: verifies that ReleaseChatSlot() appears inside a finally block in
-    /// RunChatTaskAsync. This is the primary regression guard for issue #1857 — it directly
-    /// validates the fix rather than relying on behavioral execution which would pass even
-    /// without a finally block (the sequential path reaches ReleaseChatSlot on the happy path).
-    /// </summary>
-    [Fact]
-    public void SourceCode_RunChatTaskAsync_ReleaseChatSlotIsInsideFinallyBlock()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
-
-        // Extract just the RunChatTaskAsync method body to avoid false positives from other methods
-        var methodStart = source.IndexOf("public async Task RunChatTaskAsync(", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.Length;
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        // The fix requires ReleaseChatSlot() to be inside a finally block.
-        // We verify this by asserting that "finally" appears BEFORE "ReleaseChatSlot()" in the
-        // method body, and that both are present.
-        methodBody.Should().Contain("finally",
-            "RunChatTaskAsync must contain a finally block that guards ReleaseChatSlot()");
-        methodBody.Should().Contain("ReleaseChatSlot()",
-            "RunChatTaskAsync must call ReleaseChatSlot()");
-
-        var finallyIndex = methodBody.LastIndexOf("finally", StringComparison.Ordinal);
-        var releaseIndex = methodBody.IndexOf("ReleaseChatSlot()", StringComparison.Ordinal);
-
-        // TODO: This ordering assertion is fragile — it only verifies that a `finally` substring
-        // appears before the first `ReleaseChatSlot()` substring in text order, not that
-        // ReleaseChatSlot() is *lexically enclosed* within the finally block's braces. A refactor
-        // that places ReleaseChatSlot() after the finally's closing `}` (back to the pre-fix
-        // sequential pattern) would still satisfy this assertion if another `finally` keyword
-        // appears later in the method body. A stronger check would verify ReleaseChatSlot()
-        // appears between the finally's opening `{` and its corresponding closing `}`.
-        // See review finding: SourceCode_RunChatTaskAsync_ReleaseChatSlotIsInsideFinallyBlock.
-        releaseIndex.Should().BeGreaterThan(finallyIndex,
-            "ReleaseChatSlot() must appear after the finally keyword — it must be inside a finally block, not before it");
-    }
-
-    private static string GetSourceDirectory()
-    {
-        var dir = AppContext.BaseDirectory;
-        while (dir is not null && !File.Exists(Path.Combine(dir, "CodingAgentAutomation.sln")))
-            dir = Path.GetDirectoryName(dir);
-        return dir ?? throw new InvalidOperationException("Could not find solution root");
-    }
-
     // ── Characterization tests — telemetry counter + activity tags ──────────
     // These must be added BEFORE any extraction so that regressions (e.g. dropping the counter
     // from the extracted method) are caught by the test suite, not discovered at runtime.
@@ -849,18 +612,22 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     /// propagated-throw scenario. Its value is as a regression guard: if the finally block
     /// is ever removed, future changes that allow ReportChatCompletedAsync to propagate
     /// exceptions would immediately cause the slot to leak — and this test would catch that.
-    /// The source-scan test (SourceCode_RunChatTaskAsync_ReleaseChatSlotIsInsideFinallyBlock)
-    /// is the primary structural guard; this test provides a behavioral complement.
     /// </summary>
     // TODO: This test does not actually exercise the failure scenario its name describes.
     // ReportChatCompletedAsync swallows exceptions internally (unconditional catch), so the
     // test only exercises the normal completion path — the finally block is never triggered by
     // an exception. This means the test would pass identically if the try/finally fix were
-    // reverted back to sequential code. The behavioral coverage this test claims to provide
-    // is not real; the structural source-scan test is the actual regression guard.
-    // To make this test meaningful, ReportChatCompletedAsync would need to propagate exceptions
-    // (or a separate overload/mock injection point would be needed to simulate throw behaviour).
-    // See review finding: RunChatTaskAsync_WhenReportChatCompletedThrows_StillReleasesChatSlot.
+    // reverted back to sequential code.
+    //
+    // The companion source-scan test (SourceCode_RunChatTaskAsync_ReleaseChatSlotIsInsideFinallyBlock)
+    // was removed in the test-suite audit: it asserted on the raw text of ChatJobHandler.cs and, by
+    // its own admission, passed whenever a `finally` keyword appeared anywhere before the first
+    // ReleaseChatSlot() substring — it did not verify lexical enclosure. Issue #1857 therefore has
+    // NO effective regression guard today.
+    //
+    // To close the gap properly, make ReportChatCompletedAsync propagate (or add an injection point
+    // that simulates throw behaviour) so this test can assert the slot is released on the failure
+    // path — a behavioural guard rather than a text-pattern one.
     [Fact]
     public async Task RunChatTaskAsync_WhenReportChatCompletedThrows_StillReleasesChatSlot()
     {

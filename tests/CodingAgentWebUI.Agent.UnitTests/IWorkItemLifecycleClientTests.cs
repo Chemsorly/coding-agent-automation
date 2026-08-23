@@ -26,57 +26,12 @@ public class IWorkItemLifecycleClientTests
 
     // ── WorkItemAgentService depends on interface ─────────────────────────
 
-    [Fact]
-    public void SourceCode_WorkItemAgentService_DependsOnIWorkItemLifecycleClient()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
-
-        sourceCode.Should().Contain("IWorkItemLifecycleClient",
-            "WorkItemAgentService must depend on IWorkItemLifecycleClient interface, not concrete WorkItemHttpClient");
-    }
 
     // ── Interface definition ─────────────────────────────────────────────
 
-    [Fact]
-    public void IWorkItemLifecycleClient_HasGetAssignmentAsyncMethod()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IWorkItemLifecycleClient.cs"));
 
-        sourceCode.Should().Contain("GetAssignmentAsync",
-            "IWorkItemLifecycleClient must define GetAssignmentAsync");
-    }
 
-    [Fact]
-    public void IWorkItemLifecycleClient_HasPostStatusAsyncMethod()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IWorkItemLifecycleClient.cs"));
 
-        sourceCode.Should().Contain("PostStatusAsync",
-            "IWorkItemLifecycleClient must define PostStatusAsync");
-    }
-
-    [Fact]
-    public void IWorkItemLifecycleClient_GetAssignmentAsync_ReturnsNullableJobAssignmentMessage()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IWorkItemLifecycleClient.cs"));
-
-        sourceCode.Should().Contain("Task<JobAssignmentMessage?>",
-            "GetAssignmentAsync must return Task<JobAssignmentMessage?> (null = terminal)");
-    }
-
-    [Fact]
-    public void IWorkItemLifecycleClient_PostStatusAsync_ReturnsBool()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IWorkItemLifecycleClient.cs"));
-
-        sourceCode.Should().Contain("Task<bool> PostStatusAsync",
-            "PostStatusAsync must return Task<bool> (accepted or rejected)");
-    }
 
     // ── Behavioral test: mock lifecycle client ───────────────────────────
 

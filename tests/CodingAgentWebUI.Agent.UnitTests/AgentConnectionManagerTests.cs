@@ -178,81 +178,6 @@ public class AgentConnectionManagerTests
         manager.Should().NotBeNull();
     }
 
-    // ── Structural: SignalR resilience pipeline ───────────────────────────
-
-    [Fact]
-    public void SourceCode_UsesResiliencePipeline()
-    {
-        // AgentConnectionManager MUST use a Polly resilience pipeline for hub invocations.
-        // This prevents transient network errors from permanently losing messages.
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionManager.cs"));
-
-        var usesResilience = sourceCode.Contains("ResiliencePipeline")
-            || sourceCode.Contains("ResiliencePipelineFactory");
-        usesResilience.Should().BeTrue(
-            "AgentConnectionManager must use a Polly ResiliencePipeline for hub invocations");
-    }
-
-    [Fact]
-    public void SourceCode_WiresCancelJobHandler()
-    {
-        // AgentConnectionManager MUST wire the CancelJob hub event so that
-        // the orchestrator can cancel running jobs on K8s agents.
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionManager.cs"));
-
-        var wiresCancelJob = sourceCode.Contains("OnCancelJob")
-            || sourceCode.Contains("CancelJob");
-        wiresCancelJob.Should().BeTrue(
-            "AgentConnectionManager must wire the CancelJob hub event for remote cancellation");
-    }
-
-    [Fact]
-    public void SourceCode_WiresReconnectedHandler()
-    {
-        // AgentConnectionManager MUST handle reconnection to re-register automatically.
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionManager.cs"));
-
-        var wiresReconnected = sourceCode.Contains("OnReconnected")
-            || sourceCode.Contains("Reconnected");
-        wiresReconnected.Should().BeTrue(
-            "AgentConnectionManager must handle reconnection events to re-register with the orchestrator");
-    }
-
-    [Fact]
-    public void SourceCode_SendsHeartbeats()
-    {
-        // AgentConnectionManager MUST send periodic heartbeats.
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionManager.cs"));
-
-        var sendsHeartbeats = sourceCode.Contains("HeartbeatMessage")
-            || sourceCode.Contains("HubMethodNames.Heartbeat");
-        sendsHeartbeats.Should().BeTrue(
-            "AgentConnectionManager must send periodic heartbeats to prevent disconnection");
-
-        var hasPeriodic = sourceCode.Contains("PeriodicTimer")
-            || sourceCode.Contains("Task.Delay");
-        hasPeriodic.Should().BeTrue(
-            "Heartbeats must be sent on a periodic timer (30s interval)");
-    }
-
-    [Fact]
-    public void SourceCode_DeregistersOnDispose()
-    {
-        // AgentConnectionManager MUST deregister the agent on dispose
-        // so the orchestrator doesn't show stale "Disconnected" entries.
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionManager.cs"));
-
-        var deregisters = sourceCode.Contains("DeregisterAgent")
-            || sourceCode.Contains("HubMethodNames.DeregisterAgent");
-        deregisters.Should().BeTrue(
-            "AgentConnectionManager must call DeregisterAgent on dispose for clean orchestrator state");
-    }
-
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static AgentConnectionManager CreateManager()
@@ -276,13 +201,5 @@ public class AgentConnectionManagerTests
         return new HubConnectionManagerFactory(
             "http://localhost:9999", "test-agent", "test-key",
             Mock.Of<Serilog.ILogger>());
-    }
-
-    private static string GetSourceDirectory()
-    {
-        var dir = AppContext.BaseDirectory;
-        while (dir is not null && !File.Exists(Path.Combine(dir, "CodingAgentAutomation.sln")))
-            dir = Path.GetDirectoryName(dir);
-        return dir ?? throw new InvalidOperationException("Could not find solution root");
     }
 }

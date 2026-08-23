@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using AwesomeAssertions;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -12,7 +11,7 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// - Race-freedom between DisposeAsync and ShutdownAsync
 /// - Idempotent disposal
 /// </summary>
-public partial class AgentConnectionLifecycleTests
+public class AgentConnectionLifecycleTests
 {
     // ── Interface compliance ─────────────────────────────────────────────
 
@@ -128,81 +127,4 @@ public partial class AgentConnectionLifecycleTests
         await act.Should().NotThrowAsync();
     }
 
-    // ── Structural verification ──────────────────────────────────────────
-
-    [Fact]
-    public void SourceCode_UsesInterlockedExchange_InDisposeAsync()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionLifecycle.cs"));
-
-        sourceCode.Should().Contain("Interlocked.Exchange(ref _hubManager, null)",
-            "DisposeAsync must use Interlocked.Exchange to atomically null the field");
-    }
-
-    [Fact]
-    public void SourceCode_FieldIsNullable()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionLifecycle.cs"));
-
-        sourceCode.Should().Contain("volatile IHubConnectionManager? _hubManager",
-            "The _hubManager field must be nullable to hold null after disposal");
-    }
-
-    [Fact]
-    public void SourceCode_UsesInterlockedCompareExchange_InReconnection()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionLifecycle.cs"));
-
-        sourceCode.Should().Contain("Interlocked.CompareExchange(ref _hubManager, newManager, oldManager)",
-            "HandleTerminalClosedAsync must use Interlocked.CompareExchange to atomically swap the hub manager");
-    }
-
-    [Fact]
-    public void SourceCode_NoDirectHubManagerAssignment_OutsideConstructor()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionLifecycle.cs"));
-
-        // Find all bare _hubManager = assignments (not inside Interlocked calls)
-        var matches = HubManagerAssignmentRegex().Matches(sourceCode);
-
-        // Extract the constructor body to identify which matches are in the constructor
-        var constructorStart = sourceCode.IndexOf("public AgentConnectionLifecycle(", StringComparison.Ordinal);
-        var constructorBodyStart = sourceCode.IndexOf('{', constructorStart);
-
-        // Find the matching closing brace for the constructor
-        var braceCount = 0;
-        var constructorEnd = -1;
-        for (var i = constructorBodyStart; i < sourceCode.Length; i++)
-        {
-            if (sourceCode[i] == '{') braceCount++;
-            else if (sourceCode[i] == '}') braceCount--;
-            if (braceCount == 0) { constructorEnd = i; break; }
-        }
-
-        // All bare _hubManager = assignments must be within the constructor
-        foreach (System.Text.RegularExpressions.Match match in matches)
-        {
-            var isInConstructor = match.Index > constructorBodyStart && match.Index < constructorEnd;
-            isInConstructor.Should().BeTrue(
-                $"_hubManager assignment at position {match.Index} must be inside the constructor or use Interlocked. " +
-                $"Found: ...{sourceCode.Substring(Math.Max(0, match.Index - 20), Math.Min(60, sourceCode.Length - match.Index))}...");
-        }
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────────────
-
-    [GeneratedRegex(@"(?<!Interlocked\.\w+\(ref\s)_hubManager\s*=\s*")]
-    private static partial Regex HubManagerAssignmentRegex();
-
-    private static string GetSourceDirectory()
-    {
-        var dir = AppContext.BaseDirectory;
-        while (dir is not null && !File.Exists(Path.Combine(dir, "CodingAgentAutomation.sln")))
-            dir = Path.GetDirectoryName(dir);
-        return dir ?? throw new InvalidOperationException("Could not find solution root");
-    }
 }

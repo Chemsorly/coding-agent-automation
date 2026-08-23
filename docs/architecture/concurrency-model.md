@@ -76,25 +76,16 @@ replicas), the in-process lock guarantees no longer apply — distributed coordi
 **File:** `src/CodingAgentWebUI.Orchestration/Dispatch/JobDeduplicationGuardService.cs`
 **Hosted in:** `CodingAgentWebUI.Api`
 
+> **T18 note (arch-audit 2026-08-22):** All in-memory queue methods (`EnqueueJob`, `DequeueForAgent`,
+> `GetJobPriority`, `IsIssueQueued`, `GetQueuedJobs`, `ReEnqueue`, `RemoveFromQueue`, `RemoveJob`,
+> `MarkIssueComplete`, `QueueLength`) were deleted. The deduplication queue was a dead no-op with no
+> production writers. Only `SelectAgent` and `ResolveRequiredLabels` remain.
+
 ### Data structures
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `_jobQueue` | `ConcurrentQueue<PendingJob>` | FIFO job queue |
-| `_processingIssues` | `ConcurrentDictionary<string, bool>` | Deduplication — prevents same issue from being queued twice |
-| `_queueLock` | `object` | Guards compound queue operations (scan-and-re-enqueue) |
 | `_selectionLock` | `object` | Serializes agent selection to prevent double-selection |
-
-### Lock: `_queueLock`
-
-Guards methods that perform **compound operations** on `_jobQueue`:
-
-- **`DequeueForAgent()`** — Dequeue items one by one, check compatibility, re-enqueue non-matches
-- **`RemoveFromQueue()`** — Dequeue all items, skip the target, re-enqueue the rest
-- **`Reset()`** — Drain the entire queue (test helper)
-
-These operations are not atomic on `ConcurrentQueue` because they involve multiple
-`TryDequeue`/`Enqueue` calls that must appear as a single operation.
 
 ### Lock: `_selectionLock`
 
@@ -109,14 +100,9 @@ agent. Inside this lock, the code:
 
 ### Lock-free operations
 
-These use `ConcurrentQueue`/`ConcurrentDictionary` atomic APIs and do NOT acquire any lock:
+These use `ConcurrentDictionary` atomic APIs and do NOT acquire any lock:
 
-- `EnqueueJob()` — `_processingIssues.TryAdd()` + `_jobQueue.Enqueue()`
-- `IsIssueQueued()` — `_processingIssues.ContainsKey()`
-- `MarkIssueComplete()` — `_processingIssues.TryRemove()`
-- `ReEnqueue()` — `_jobQueue.Enqueue()`
-- `QueueLength` — `_jobQueue.Count`
-- `GetQueuedJobs()` — `_jobQueue.ToArray()`
+- `ResolveRequiredLabels()` — pure static computation, no shared state
 
 ## AgentRegistryService
 
@@ -164,11 +150,7 @@ across process boundaries.
 |---------|------|-------|
 | `AgentRegistryService` | `Orchestration/Registry/AgentRegistryService.cs` | `Register()`, `UpdateHeartbeat()`, `TransitionStatus()` |
 | `JobDeduplicationGuardService` | `Orchestration/Dispatch/JobDeduplicationGuardService.cs` | `SelectAgent()` — nested inside `_selectionLock` |
-| `HeartbeatMonitorService` | `Orchestration/Registry/HeartbeatMonitorService.cs` | Delegates status transitions and orphan cleanup to `IRunLifecycleManager` sweep phases, which acquire `SyncRoot` internally |
 | `RunLifecycleManager` | `Orchestration/RunLifecycleManager.cs` | `ActiveJobId` mutation on job assignment/completion |
-| `DisconnectedAgentSweepPhase` | `Orchestration/Registry/SweepPhases/DisconnectedAgentSweepPhase.cs` | Reads `DisconnectedAt`; clears `ActiveJobId` on orphan cleanup |
-| `ProgressTimeoutSweepPhase` | `Orchestration/Registry/SweepPhases/ProgressTimeoutSweepPhase.cs` | Reads `BusySince`; clears `ActiveJobId` on timeout/race-lost cleanup |
-| `OrphanRestoredJobSweepPhase` | `Orchestration/Registry/SweepPhases/OrphanRestoredJobSweepPhase.cs` | Reads `OrphanRestoredAt`; clears `ActiveJobId` on race-lost cleanup |
 | `AgentOrphanRecoveryService` | `Hub/AgentOrphanRecoveryService.cs` | Check-and-set `ActiveJobId` on reconnect; sets `OrphanRestoredAt` when no active job reported |
 | `AgentEndpoints` | `Api/AgentEndpoints.cs` | Sets `ActiveChatSessionId` on chat-resume path |
 
@@ -196,7 +178,7 @@ code path that holds two locks simultaneously. The code comment at the nesting s
 - `_selectionLock` is only acquired in `SelectAgent()`
 - Inside `_selectionLock`, the code acquires `entry.SyncRoot` (inner lock)
 - No other code path acquires `_selectionLock` while holding `entry.SyncRoot`
-- `HeartbeatMonitorService` and `RunLifecycleManager`
+- `AgentOrphanRecoveryService`, `RunLifecycleManager`, and `AgentEndpoints`
   all acquire `entry.SyncRoot` in isolation — they never hold `_selectionLock`
 - Therefore, no circular wait is possible
 
@@ -207,64 +189,7 @@ The current code never nests these two locks. They guard independent concerns:
 - `_queueLock` → queue scan operations
 - `_selectionLock` → agent selection
 
-Do not introduce nesting between them. If a future change requires both, establish and
-document the ordering here before implementing.
-
-## Why ConcurrentQueue + lock
-
-At first glance, wrapping a `ConcurrentQueue` with a lock appears redundant. It is not.
-
-### The compound operation problem
-
-`ConcurrentQueue<T>` guarantees atomic `Enqueue` and `TryDequeue`, but does NOT support:
-
-> "Dequeue the first item matching a predicate, and re-enqueue all non-matches."
-
-`DequeueForAgent()` performs exactly this:
-
-```csharp
-lock (_queueLock)
-{
-    var count = _jobQueue.Count;
-    for (var i = 0; i < count; i++)
-    {
-        if (!_jobQueue.TryDequeue(out var job))
-            break;
-
-        if (LabelMatchHelper.IsLabelMatch(agent.Labels, job.RequiredLabels))
-            return job;   // Found a match — don't re-enqueue
-
-        _jobQueue.Enqueue(job);  // Not compatible — put it back
-    }
-}
-```
-
-Without `_queueLock`, two concurrent callers could both dequeue the same job, or items
-could be duplicated/lost during the scan-and-re-enqueue cycle.
-
-### Why not just use `Queue<T>` + lock everywhere?
-
-Because `QueueLength` and `GetQueuedJobs()` are called from the UI without acquiring
-`_queueLock`:
-
-```csharp
-public int QueueLength => _jobQueue.Count;
-public IReadOnlyList<PendingJob> GetQueuedJobs() => _jobQueue.ToArray().ToList().AsReadOnly();
-```
-
-`ConcurrentQueue.Count` and `ConcurrentQueue.ToArray()` are thread-safe **without** a
-lock. If we replaced `ConcurrentQueue` with plain `Queue<T>`, these read-only operations
-would need to acquire `_queueLock` too, increasing contention on a hot read path.
-
-### Summary
-
-| Operation | Lock required? | Why |
-|-----------|---------------|-----|
-| `Enqueue` | No | Single atomic operation |
-| `TryDequeue` | No | Single atomic operation |
-| `Count` | No | Thread-safe snapshot |
-| `ToArray()` | No | Thread-safe snapshot |
-| Scan-and-re-enqueue | **Yes** (`_queueLock`) | Compound multi-step operation |
+Do **not** acquire `_selectionLock` inside `_queueLock`.
 
 ## The Release-Then-Reacquire Pattern
 
@@ -310,29 +235,15 @@ Job Controller, or between the Orchestrator and Agent pods.
 
 ## Anti-patterns — Don't Do This
 
-### ❌ Don't replace `ConcurrentQueue` with `Queue<T>`
-
-This breaks `QueueLength` and `GetQueuedJobs()`, which are called without `_queueLock`
-from the UI layer. You would need to add locking to every read, increasing contention.
-
-### ❌ Don't remove `_queueLock`
-
-This breaks `DequeueForAgent()` and `RemoveFromQueue()`. The scan-and-re-enqueue pattern
-requires mutual exclusion — without it, concurrent scans would corrupt the queue.
-
 ### ❌ Don't remove `_selectionLock`
 
 Without it, two concurrent dispatch paths could both snapshot the same idle agent,
 both verify it's idle, and both transition it to Busy — double-booking.
 
-### ❌ Don't acquire `_selectionLock` inside `_queueLock`
+### ❌ Don't acquire `_selectionLock` while holding `entry.SyncRoot`
 
-The current code never nests these. Introducing nesting without establishing ordering
-risks deadlock if another path acquires them in reverse order.
-
-### ❌ Don't acquire `_queueLock` inside `_selectionLock`
-
-Same reason. Keep these locks independent.
+The current lock ordering is `_selectionLock` → `entry.SyncRoot`. Reversing this (holding
+`SyncRoot` first and then acquiring `_selectionLock`) creates a potential circular wait.
 
 ### ❌ Don't merge the release-then-reacquire into one lock scope
 

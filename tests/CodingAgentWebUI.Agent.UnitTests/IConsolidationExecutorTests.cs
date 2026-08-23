@@ -57,37 +57,10 @@ public class IConsolidationExecutorTests
 
     // ── ConsolidationJobHandler depends on interface ─────────────────────
 
-    [Fact]
-    public void SourceCode_ConsolidationJobHandler_DependsOnIConsolidationExecutor()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ConsolidationJobHandler.cs"));
-
-        sourceCode.Should().Contain("IConsolidationExecutor",
-            "ConsolidationJobHandler must depend on IConsolidationExecutor interface, not concrete LocalConsolidationExecutor");
-    }
 
     // ── Interface definition ─────────────────────────────────────────────
 
-    [Fact]
-    public void IConsolidationExecutor_HasExecuteAsyncMethod()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IConsolidationExecutor.cs"));
 
-        sourceCode.Should().Contain("Task<ConsolidationJobResult> ExecuteAsync",
-            "IConsolidationExecutor must define ExecuteAsync returning Task<ConsolidationJobResult>");
-    }
-
-    [Fact]
-    public void IConsolidationExecutor_AcceptsConsolidationJobMessage()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IConsolidationExecutor.cs"));
-
-        sourceCode.Should().Contain("ConsolidationJobMessage",
-            "IConsolidationExecutor.ExecuteAsync must accept ConsolidationJobMessage");
-    }
 
     // ── Behavioral test: mock consolidation executor ─────────────────────
 

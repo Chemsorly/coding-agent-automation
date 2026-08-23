@@ -275,6 +275,51 @@ public class AgentJobSlotManagerCancellationTests
         }
     }
 
+    // ── Disposed-CTS guard, deterministic ───────────────────────────────
+    //
+    // The two Parallel.Invoke tests above only reach the `catch (ObjectDisposedException)`
+    // arms of JobCancellationToken/ChatCancellationToken when the race happens to land, so
+    // that branch was covered only intermittently. The release paths null the field via
+    // Interlocked.Exchange, which makes the getter return early on the null check and never
+    // reach the catch — so the disposed-but-still-referenced state has to be built directly.
+
+    [Fact]
+    public void JobCancellationToken_WhenCtsDisposedButStillReferenced_ReturnsNull()
+    {
+        var slotManager = CreateSlotManager();
+        slotManager.TryAcquireJobSlot("job-1", out _);
+        DisposeCtsInPlace(slotManager, "_jobCts");
+
+        slotManager.JobCancellationToken.Should().BeNull(
+            "a disposed CancellationTokenSource must be reported as no active token, not throw");
+    }
+
+    [Fact]
+    public void ChatCancellationToken_WhenCtsDisposedButStillReferenced_ReturnsNull()
+    {
+        var slotManager = CreateSlotManager();
+        slotManager.TryAcquireChatSlot("session-1", out _);
+        DisposeCtsInPlace(slotManager, "_chatCts");
+
+        slotManager.ChatCancellationToken.Should().BeNull(
+            "a disposed CancellationTokenSource must be reported as no active token, not throw");
+    }
+
+    /// <summary>
+    /// Disposes the CancellationTokenSource held by <paramref name="fieldName"/> while leaving the
+    /// field pointing at it, reproducing the window the accessors' catch arms exist to survive.
+    /// </summary>
+    private static void DisposeCtsInPlace(AgentJobSlotManager slotManager, string fieldName)
+    {
+        var field = typeof(AgentJobSlotManager).GetField(
+            fieldName, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        field.Should().NotBeNull($"{fieldName} must exist for this test to be meaningful");
+
+        var cts = (CancellationTokenSource?)field!.GetValue(slotManager);
+        cts.Should().NotBeNull("the slot must be held before the CTS can be disposed");
+        cts!.Dispose();
+    }
+
     // ── No public CTS properties ────────────────────────────────────────
 
     [Fact]

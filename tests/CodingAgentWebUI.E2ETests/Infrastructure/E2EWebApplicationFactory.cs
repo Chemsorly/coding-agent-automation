@@ -19,6 +19,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Moq;
 
 namespace CodingAgentWebUI.E2ETests.Infrastructure;
 
@@ -181,10 +182,13 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // Leadership is a cluster lease the harness has no way to win, and the work gated on
             // it here — DatabaseMaintenanceService, the consolidation sweep — silently does
             // nothing without it. The API host needs the same treatment for chat dispatch.
-            // This is the production always-leader implementation, not a test double: a single
-            // test process is exactly the case it exists for.
+            // T21 (arch-audit 2026-08-22): replaced AlwaysLeaderElectionService (now deleted) with
+            // an inline Moq double — same semantics, no production dependency on a test helper.
             services.RemoveAll<ILeaderElectionService>();
-            services.AddSingleton<ILeaderElectionService>(new AlwaysLeaderElectionService());
+            var leaderMock = new Mock<ILeaderElectionService>();
+            leaderMock.SetupGet(l => l.IsLeader).Returns(true);
+            leaderMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
+            services.AddSingleton(leaderMock.Object);
             ReplaceService<IProviderFactory>(services, FakeProviders);
             ReplaceService<IQualityGateValidator>(services, QualityGateValidator);
             ReplaceService<IPipelineRunHistoryService>(services, HistoryService);

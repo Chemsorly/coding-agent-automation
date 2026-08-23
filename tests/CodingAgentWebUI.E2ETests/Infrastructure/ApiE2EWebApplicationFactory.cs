@@ -160,11 +160,14 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
             // ChatJobDispatcher refuses to dispatch unless this replica holds the leader lease, and
             // the real LeaderElectionService is a hosted service that RemoveAll<IHostedService>()
             // above has just deleted — so without this every chat dispatch throws "this
-            // orchestrator replica is not the leader". A single test process is exactly the case
-            // the production always-leader implementation exists for, so this is that type, not a
-            // test double.
+            // orchestrator replica is not the leader".
+            // T21 (arch-audit 2026-08-22): replaced AlwaysLeaderElectionService (now deleted) with
+            // an inline Moq double — same semantics, no production dependency on a test helper.
             services.RemoveAll<ILeaderElectionService>();
-            services.AddSingleton<ILeaderElectionService>(new AlwaysLeaderElectionService());
+            var leaderMock = new Mock<ILeaderElectionService>();
+            leaderMock.SetupGet(l => l.IsLeader).Returns(true);
+            leaderMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
+            services.AddSingleton(leaderMock.Object);
         });
     }
 

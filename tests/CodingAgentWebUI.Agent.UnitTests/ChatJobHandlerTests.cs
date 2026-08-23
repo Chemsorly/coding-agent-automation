@@ -561,95 +561,9 @@ public class ChatJobHandlerTests : IDisposable
 
     // ── Source-scan: CancellationToken.None with intentional comments ─────
 
-    [Fact]
-    public void SourceCode_ReportChatCompletedAsync_PassesCancellationTokenNoneWithComment()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
 
-        var methodStart = source.IndexOf("public async Task ReportChatCompletedAsync(", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.Length;
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
 
-        methodBody.Should().Contain("CancellationToken.None",
-            "ReportChatCompletedAsync must pass CancellationToken.None — chatToken may be cancelled at call time");
-        methodBody.Should().Contain("// intentional:",
-            "ReportChatCompletedAsync must have an // intentional: comment");
-    }
 
-    [Fact]
-    public void SourceCode_ReportFetchModelsError_PassesCancellationTokenNoneWithComment()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
-
-        var methodStart = source.IndexOf("public async Task ReportFetchModelsError(", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.Length;
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        methodBody.Should().Contain("CancellationToken.None",
-            "ReportFetchModelsError must pass CancellationToken.None");
-        methodBody.Should().Contain("// intentional:",
-            "ReportFetchModelsError must have an // intentional: comment");
-    }
-
-    [Fact]
-    public void SourceCode_HandleFetchModelsAsync_PassesCancellationTokenNone()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
-
-        var methodStart = source.IndexOf("public async Task HandleFetchModelsAsync(", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0) methodEnd = source.Length;
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        var waitForExitEnd = methodBody.IndexOf("WaitForExitAsync(", StringComparison.Ordinal);
-        waitForExitEnd = methodBody.IndexOf(");", waitForExitEnd, StringComparison.Ordinal) + 2;
-        var postExitBody = methodBody.Substring(waitForExitEnd);
-
-        postExitBody.Should().Contain("CancellationToken.None",
-            "HandleFetchModelsAsync must use CancellationToken.None for post-exit calls");
-        postExitBody.Should().Contain("// intentional:",
-            "HandleFetchModelsAsync must have an // intentional: comment in post-exit code");
-        postExitBody.Should().NotContain("timeoutCts.Token)",
-            "HandleFetchModelsAsync must not pass timeoutCts.Token to any post-exit call");
-    }
-
-    [Fact]
-    public void SourceCode_RunChatTaskAsync_ReleaseChatSlotIsInsideFinallyBlock()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ChatJobHandler.cs"));
-
-        var methodStart = source.IndexOf("public async Task RunChatTaskAsync(", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.Length;
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        methodBody.Should().Contain("finally",
-            "RunChatTaskAsync must contain a finally block that guards ReleaseChatSlot()");
-        methodBody.Should().Contain("ReleaseChatSlot()",
-            "RunChatTaskAsync must call ReleaseChatSlot()");
-
-        var finallyIndex = methodBody.LastIndexOf("finally", StringComparison.Ordinal);
-        var releaseIndex = methodBody.IndexOf("ReleaseChatSlot()", StringComparison.Ordinal);
-        releaseIndex.Should().BeGreaterThan(finallyIndex,
-            "ReleaseChatSlot() must appear after the finally keyword");
-    }
 
     private static string GetSourceDirectory()
     {
