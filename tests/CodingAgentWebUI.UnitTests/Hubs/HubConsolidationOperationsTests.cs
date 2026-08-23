@@ -240,7 +240,7 @@ public sealed class HubConsolidationOperationsTests
         await sut.HandleConsolidationCompleteAsync(result, null);
 
         _mockConsolidation.Verify(c => c.UpdateRunAsync(
-            "crun-success",
+            new RunId("crun-success"),
             ConsolidationRunStatus.Succeeded,
             "Brain updated",
             It.IsAny<CancellationToken>(),
@@ -261,7 +261,7 @@ public sealed class HubConsolidationOperationsTests
         await sut.HandleConsolidationCompleteAsync(result, null);
 
         _mockConsolidation.Verify(c => c.UpdateRunAsync(
-            "crun-fail",
+            new RunId("crun-fail"),
             ConsolidationRunStatus.Failed,
             "agent crashed",
             It.IsAny<CancellationToken>(),
@@ -273,7 +273,7 @@ public sealed class HubConsolidationOperationsTests
     {
         _mockConsolidation
             .Setup(c => c.UpdateRunAsync(
-                It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
+                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(), It.IsAny<long>()))
             .ThrowsAsync(new InvalidOperationException("DB unavailable"));
 
@@ -292,9 +292,9 @@ public sealed class HubConsolidationOperationsTests
         long capturedTokens = -1;
         _mockConsolidation
             .Setup(c => c.UpdateRunAsync(
-                It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
+                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .Callback<string, ConsolidationRunStatus, string?, CancellationToken, long>(
+            .Callback<RunId, ConsolidationRunStatus, string?, CancellationToken, long>(
                 (_, _, _, _, tokens) => capturedTokens = tokens)
             .Returns(Task.CompletedTask);
 
@@ -319,9 +319,9 @@ public sealed class HubConsolidationOperationsTests
         long capturedTokens = -1;
         _mockConsolidation
             .Setup(c => c.UpdateRunAsync(
-                It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
+                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .Callback<string, ConsolidationRunStatus, string?, CancellationToken, long>(
+            .Callback<RunId, ConsolidationRunStatus, string?, CancellationToken, long>(
                 (_, _, _, _, tokens) => capturedTokens = tokens)
             .Returns(Task.CompletedTask);
 
@@ -344,9 +344,9 @@ public sealed class HubConsolidationOperationsTests
         long capturedTokens = -1;
         _mockConsolidation
             .Setup(c => c.UpdateRunAsync(
-                It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
+                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
                 It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .Callback<string, ConsolidationRunStatus, string?, CancellationToken, long>(
+            .Callback<RunId, ConsolidationRunStatus, string?, CancellationToken, long>(
                 (_, _, _, _, tokens) => capturedTokens = tokens)
             .Returns(Task.CompletedTask);
 
@@ -489,7 +489,7 @@ public sealed class HubConsolidationOperationsTests
         var debugInfo = await sut.HandleConsolidationCompleteAsync(result, agent);
 
         debugInfo.Should().Contain("agentFound=True");
-        debugInfo.Should().Contain(agent.AgentId); // AgentId is string
+        debugInfo.Should().Contain(agent.AgentId.Value); // AgentId is string
     }
 
     [Fact]
