@@ -407,68 +407,21 @@
         var prompt = _currentPrompt.Trim();
         _currentPrompt = "";
 
-        _messages.Add(new ChatMessage
-        {
-            Role = ChatRole.User,
-            Content = prompt,
-            Timestamp = DateTime.UtcNow
-        });
-
+        _messages.Add(new ChatMessage { Role = ChatRole.User, Content = prompt, Timestamp = DateTime.UtcNow });
         _isWaitingForResponse = true;
         _streamingContent.Clear();
 
-        // Agent existence / connectivity is validated server-side by POST /api/agents/{agentId}/chat-prompt.
-        // The API resolves the agent from its live registry (written by the hub in the same process),
-        // so there is no stale-snapshot race. A 404 or 409 response surfaces as HttpRequestException
-        // and is caught below.
-
         try
         {
-            // Unsubscribe from the previous prompt's hub group before subscribing to the new one.
-            // Each prompt has its own session ID and group; leaving old subscriptions open would
-            // cause duplicate events if the server re-uses a group name (unlikely but defensive).
-            if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
-            {
-                try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
-                catch (Exception ex) { Log.Warning(ex, "AgentChat: failed to unsubscribe previous session {SessionId}", _activeSessionId); }
-            }
-
+            await UnsubscribePreviousSessionAsync();
             _activeSessionId = Guid.NewGuid().ToString();
-
-            var message = ChatPromptBuilder.Build(new ChatPromptParameters(
-                SessionId: _activeSessionId,
-                Prompt: prompt,
-                IsFirstPrompt: _isFirstPrompt,
-                ChatWindowId: _chatWindowId,
-                ResolvedProfile: _resolvedProfile,
-                SelectedProject: _selectedProject,
-                ResolvedMcpConfigPath: _resolvedMcpConfigPath
-            ));
-
-            // Subscribe to the hub chat-session group so OnChatResponse/OnChatCompleted
-            // events are pushed to this circuit by the API hub.
-            if (HubConnection.State == HubConnectionState.Connected)
-            {
-                await HubConnection.InvokeAsync(
-                    HubMethodNames.SubscribeToChatSession, _activeSessionId, CancellationToken.None);
-            }
-
-            // ActiveChatSessionId is stamped server-side by POST /api/agents/{agentId}/chat-prompt.
-            // The API always stamps ActiveChatSessionId = message.SessionId regardless of UseResume.
-            await AgentClient.AssignChatPromptAsync(_selectedAgentId, message, CancellationToken.None);
+            await SubscribeAndSendPromptAsync(prompt);
             _isFirstPrompt = false;
         }
         catch (Exception ex)
         {
-            // Unsubscribe from the hub group we just subscribed to — the prompt never reached
-            // the agent so there will be no OnChatResponse/OnChatCompleted for this session.
-            if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
-            {
-                try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
-                catch (Exception unsubEx) { Log.Warning(unsubEx, "AgentChat: failed to unsubscribe after send failure for session {SessionId}", _activeSessionId); }
-            }
+            await UnsubscribeCurrentSessionOnErrorAsync();
             _activeSessionId = null;
-
             _messages.Add(new ChatMessage
             {
                 Role = ChatRole.System,
@@ -479,6 +432,41 @@
         }
 
         await ScrollToBottom();
+    }
+
+    private async Task UnsubscribePreviousSessionAsync()
+    {
+        // Leave the previous session's hub group before opening a new one to prevent duplicate events.
+        if (string.IsNullOrEmpty(_activeSessionId) || HubConnection.State != HubConnectionState.Connected) return;
+        try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
+        catch (Exception ex) { Log.Warning(ex, "AgentChat: failed to unsubscribe previous session {SessionId}", _activeSessionId); }
+    }
+
+    private async Task SubscribeAndSendPromptAsync(string prompt)
+    {
+        // Agent existence validated server-side; 404/409 surfaces as HttpRequestException.
+        var message = ChatPromptBuilder.Build(new ChatPromptParameters(
+            SessionId: _activeSessionId!,
+            Prompt: prompt,
+            IsFirstPrompt: _isFirstPrompt,
+            ChatWindowId: _chatWindowId,
+            ResolvedProfile: _resolvedProfile,
+            SelectedProject: _selectedProject,
+            ResolvedMcpConfigPath: _resolvedMcpConfigPath
+        ));
+
+        if (HubConnection.State == HubConnectionState.Connected)
+            await HubConnection.InvokeAsync(HubMethodNames.SubscribeToChatSession, _activeSessionId, CancellationToken.None);
+
+        await AgentClient.AssignChatPromptAsync(_selectedAgentId, message, CancellationToken.None);
+    }
+
+    private async Task UnsubscribeCurrentSessionOnErrorAsync()
+    {
+        // Prompt never reached the agent — no OnChatResponse/OnChatCompleted will fire for this session.
+        if (string.IsNullOrEmpty(_activeSessionId) || HubConnection.State != HubConnectionState.Connected) return;
+        try { await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromChatSession, _activeSessionId, CancellationToken.None); }
+        catch (Exception unsubEx) { Log.Warning(unsubEx, "AgentChat: failed to unsubscribe after send failure for session {SessionId}", _activeSessionId); }
     }
 
     // ── Response handlers ─────────────────────────────────────────────────────

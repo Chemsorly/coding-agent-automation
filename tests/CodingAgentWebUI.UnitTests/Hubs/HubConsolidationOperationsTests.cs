@@ -46,6 +46,26 @@ public sealed class HubConsolidationOperationsTests
         _mockChangeNotifier.Object,
         _mockLogger.Object);
 
+    private static HarnessSuggestions MakeSuggestions(params string[] texts) => new()
+    {
+        BasedOnRunCount = 5,
+        GeneratedAtUtc = DateTime.UtcNow,
+        SuccessRate = 0.8m,
+        Suggestions = texts.Select(t => new HarnessSuggestion
+        {
+            Frequency = 1,
+            Rationale = "test",
+            Text = t
+        }).ToList()
+    };
+
+    private static CreatedIssueInfo MakeIssue(string id) => new()
+    {
+        Identifier = id,
+        Title = "Test Issue",
+        Url = $"https://github.com/org/repo/issues/{id}"
+    };
+
     private static AgentEntry CreateAgent(string agentId = "agent-1") => new()
     {
         AgentId = agentId,
@@ -350,15 +370,7 @@ public sealed class HubConsolidationOperationsTests
     [Fact]
     public async Task HandleConsolidationComplete_WithHarnessSuggestions_SavesAndIncrementsBadge()
     {
-        var suggestions = new HarnessSuggestions
-        {
-            Suggestions = new List<HarnessSuggestion>
-            {
-                new() { Description = "Add test A" },
-                new() { Description = "Add test B" },
-                new() { Description = "Add test C" }
-            }
-        };
+        var suggestions = MakeSuggestions("Add test A", "Add test B", "Add test C");
 
         var result = new ConsolidationJobResult
         {
@@ -401,10 +413,7 @@ public sealed class HubConsolidationOperationsTests
         {
             JobId = "crun-save-throws",
             Success = true,
-            HarnessSuggestions = new HarnessSuggestions
-            {
-                Suggestions = new List<HarnessSuggestion> { new() { Description = "X" } }
-            }
+            HarnessSuggestions = MakeSuggestions("X")
         };
         var sut = CreateSut();
 
@@ -423,8 +432,8 @@ public sealed class HubConsolidationOperationsTests
             Success = true,
             CreatedIssues = new List<CreatedIssueInfo>
             {
-                new() { IssueIdentifier = "org/repo#10" },
-                new() { IssueIdentifier = "org/repo#11" }
+                MakeIssue("10"),
+                MakeIssue("11")
             }
         };
         var sut = CreateSut();
@@ -480,7 +489,7 @@ public sealed class HubConsolidationOperationsTests
         var debugInfo = await sut.HandleConsolidationCompleteAsync(result, agent);
 
         debugInfo.Should().Contain("agentFound=True");
-        debugInfo.Should().Contain(agent.AgentId);
+        debugInfo.Should().Contain(agent.AgentId); // AgentId is string
     }
 
     [Fact]
@@ -503,18 +512,8 @@ public sealed class HubConsolidationOperationsTests
         {
             JobId = "crun-both",
             Success = true,
-            HarnessSuggestions = new HarnessSuggestions
-            {
-                Suggestions = new List<HarnessSuggestion>
-                {
-                    new() { Description = "A" },
-                    new() { Description = "B" }
-                }
-            },
-            CreatedIssues = new List<CreatedIssueInfo>
-            {
-                new() { IssueIdentifier = "org/repo#5" }
-            }
+            HarnessSuggestions = MakeSuggestions("A", "B"),
+            CreatedIssues = new List<CreatedIssueInfo> { MakeIssue("5") }
         };
         var sut = CreateSut();
 

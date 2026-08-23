@@ -22,12 +22,13 @@ public sealed class AgentConnectionLifecycleAdditionalTests
 {
     // ── ShouldDropBufferedMessage (static predicate) ──────────────────────
 
+    private static JobCompletionPayload MakePayload(PipelineStep step = PipelineStep.Completed)
+        => new() { FinalStep = step, CompletedAt = DateTimeOffset.UtcNow };
+
     [Fact]
     public void ShouldDropBufferedMessage_AttemptsBeforeMax_ReturnsFalse()
     {
-        var msg = new BufferedJobCompleted("job-1",
-            new JobCompletionPayload { FinalStep = PipelineStep.Completed },
-            DateTimeOffset.UtcNow);
+        var msg = new BufferedJobCompleted("job-1", MakePayload(), DateTimeOffset.UtcNow);
         // DrainAttempts starts at 0; maxDrainAttempts = 3
         AgentConnectionLifecycle.ShouldDropBufferedMessage(msg, maxDrainAttempts: 3)
             .Should().BeFalse("0 < 3 — message should be kept");
@@ -36,9 +37,7 @@ public sealed class AgentConnectionLifecycleAdditionalTests
     [Fact]
     public void ShouldDropBufferedMessage_AttemptsEqualMax_ReturnsTrue()
     {
-        var msg = new BufferedJobCompleted("job-1",
-            new JobCompletionPayload { FinalStep = PipelineStep.Failed },
-            DateTimeOffset.UtcNow);
+        var msg = new BufferedJobCompleted("job-1", MakePayload(PipelineStep.Failed), DateTimeOffset.UtcNow);
         // Simulate 3 prior drain attempts
         for (var i = 0; i < 3; i++) msg = msg with { DrainAttempts = msg.DrainAttempts + 1 };
 
@@ -49,9 +48,7 @@ public sealed class AgentConnectionLifecycleAdditionalTests
     [Fact]
     public void ShouldDropBufferedMessage_AttemptsExceedMax_ReturnsTrue()
     {
-        var msg = new BufferedJobCompleted("job-1",
-            new JobCompletionPayload { FinalStep = PipelineStep.Cancelled },
-            DateTimeOffset.UtcNow);
+        var msg = new BufferedJobCompleted("job-1", MakePayload(PipelineStep.Cancelled), DateTimeOffset.UtcNow);
         for (var i = 0; i < 5; i++) msg = msg with { DrainAttempts = msg.DrainAttempts + 1 };
 
         AgentConnectionLifecycle.ShouldDropBufferedMessage(msg, maxDrainAttempts: 3)
@@ -69,7 +66,7 @@ public sealed class AgentConnectionLifecycleAdditionalTests
     public void ShouldDropBufferedMessage_VariousAttemptCounts(int attempts, int max, bool shouldDrop)
     {
         var msg = new BufferedJobCompleted("job-x",
-            new JobCompletionPayload { FinalStep = PipelineStep.Completed },
+            MakePayload(),
             DateTimeOffset.UtcNow) { DrainAttempts = attempts };
 
         AgentConnectionLifecycle.ShouldDropBufferedMessage(msg, max)

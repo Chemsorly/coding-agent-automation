@@ -2056,6 +2056,9 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var hub = CreateHubWithOrchestration();
         await hub.JobRejected("job-requeue-dedup", "Agent is busy");
+
+        // Job must be re-queued so drain can re-dispatch it
+        _mockFacade.Verify(f => f.RequeueWorkItemAsync("job-requeue-dedup", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion
