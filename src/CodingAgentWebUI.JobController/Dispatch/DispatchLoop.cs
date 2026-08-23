@@ -172,7 +172,7 @@ public sealed class DispatchLoop
         // Claim the item (atomic — 409 if already claimed)
         var claimed = await _workItemClient.ClaimAsync(
             item.Id,
-            new ClaimWorkItemRequest { AssignedAgentId = jobName, DispatchedAt = DateTimeOffset.UtcNow },
+            new ClaimWorkItemRequest { AssignedAgentId = jobName, K8sJobName = jobName, DispatchedAt = DateTimeOffset.UtcNow },
             ct);
 
         if (claimed is null)

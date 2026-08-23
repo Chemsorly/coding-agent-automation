@@ -764,6 +764,85 @@ public sealed class ReconciliationLoopErrorTests
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    /// <summary>
+    /// Regression test: consolidation/brain runs are dispatched by the API's DispatchLifecycleService
+    /// which uses a different job name format ("caa-{first8hex}") from DispatchLoop ("caa-agent-{first11hex}").
+    /// The reconciliation must use the stored K8sJobName from the DTO, not recompute it —
+    /// otherwise it kills live pods after 120s even though they are running fine.
+    /// </summary>
+    [Fact]
+    public async Task EnforceDispatchedTimeout_WhenK8sJobNameSetAndJobExists_UsesStoredNameNotComputed()
+    {
+        var id = Guid.NewGuid();
+        // API-format name (DispatchLifecycleService): "caa-{first8hex}"
+        var apiGeneratedJobName = $"caa-{id:N}"[..12]; // "caa-" + 8 hex chars
+        // Job controller format (DispatchLoop.GenerateJobName): "caa-agent-{first11hex}"
+        var controllerGeneratedJobName = $"caa-agent-{id:N}"[..21];
+
+        // K8sJobName is set to the API-format name (as stored in the DB by DispatchLifecycleService)
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet,dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            K8sJobName = apiGeneratedJobName
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        // Only the API-format job exists in K8s (controller-format name is absent)
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList
+            {
+                Items = [new V1Job { Metadata = new V1ObjectMeta { Name = apiGeneratedJobName } }]
+            });
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        // Must NOT post Failed — the job exists under its stored name
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnforceDispatchedTimeout_WhenK8sJobNameSetButJobMissing_StillMarksFailed()
+    {
+        var id = Guid.NewGuid();
+        var apiGeneratedJobName = $"caa-{id:N}"[..12];
+
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet,dotnet10,opencode",
+            IssueIdentifier = "owner/repo#1",
+            K8sJobName = apiGeneratedJobName
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        // No jobs exist at all
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        var loop = CreateLoop();
+        await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+
+        // Job is genuinely missing — should still mark Failed
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task EnforceDispatchedTimeout_NoDispatchedItems_NoJobListQuery()
     {

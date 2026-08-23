@@ -73,4 +73,10 @@ internal sealed class FakeHubConnectionManager : IHubConnectionManager
     public Task SimulateClosedAsync(Exception? error = null)
         => OnClosed?.Invoke(error) ?? Task.CompletedTask;
 
+    public Task SimulateCancelJobAsync(string jobId)
+        => OnCancelJob?.Invoke(jobId) ?? Task.CompletedTask;
+
+    public Task SimulateForceDisconnectAsync()
+        => OnForceDisconnect?.Invoke() ?? Task.CompletedTask;
+
 }

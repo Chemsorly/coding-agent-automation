@@ -109,12 +109,17 @@ public sealed class ReconciliationLoop
                     FailureReason = "Timeout"
                 }, ct);
 
+                // Use the stored K8sJobName when available — the API's DispatchLifecycleService uses
+                // a different naming format ("caa-{first8hex}") than the job controller's DispatchLoop
+                // ("caa-agent-{first11hex}"). Recomputing via DispatchLoop.GenerateJobName would miss
+                // jobs created by the API path (consolidation/brain runs) and leave live pods running.
+                var jobName = item.K8sJobName ?? DispatchLoop.GenerateJobName(item.Id);
+
                 WorkDistributionTelemetry.LogTerminalStatus(
                     item.Id, WorkItemStatus.Failed,
-                    duration: null, agentId: DispatchLoop.GenerateJobName(item.Id),
+                    duration: null, agentId: jobName,
                     failureReason: FailureReason.Timeout);
 
-                var jobName = DispatchLoop.GenerateJobName(item.Id);
                 await SafeDeleteJobAsync(jobName, ct);
             }
             catch (Exception ex)
@@ -167,7 +172,11 @@ public sealed class ReconciliationLoop
         {
             if (ct.IsCancellationRequested) break;
 
-            var expectedJobName = DispatchLoop.GenerateJobName(item.Id);
+            // Use the stored K8sJobName when available — the API's DispatchLifecycleService uses
+            // a different naming format ("caa-{first8hex}") than the job controller's DispatchLoop
+            // ("caa-agent-{first11hex}"). Recomputing via DispatchLoop.GenerateJobName would miss
+            // jobs created by the API path (consolidation/brain runs) and kill live pods.
+            var expectedJobName = item.K8sJobName ?? DispatchLoop.GenerateJobName(item.Id);
             if (liveJobNames.Contains(expectedJobName)) continue; // job exists, not orphaned
 
             Log.Warning("WorkItem {Id} stuck in Dispatched for >{Seconds}s with no K8s Job — marking Failed",
