@@ -31,30 +31,30 @@ public sealed record ChatPromptParameters(
 /// </summary>
 public sealed class ChatPromptBuilder : IChatPromptBuilder
 {
-    public ChatPromptMessage Build(ChatPromptParameters p)
+    public ChatPromptMessage Build(ChatPromptParameters parameters)
     {
         // Merge MCP servers: project-level overrides profile-level.
         // Null project → passthrough profile servers unchanged.
-        var mergedMcpServers = p.SelectedProject is not null
+        var mergedMcpServers = parameters.SelectedProject is not null
             ? DispatchOrchestrationService.MergeMcpServers(
-                p.ResolvedProfile?.McpServers ?? [],
-                p.SelectedProject.McpServers)
-            : (p.ResolvedProfile?.McpServers ?? []);
+                parameters.ResolvedProfile?.McpServers ?? [],
+                parameters.SelectedProject.McpServers)
+            : (parameters.ResolvedProfile?.McpServers ?? []);
 
         return new ChatPromptMessage
         {
-            SessionId = p.SessionId,
-            Prompt = p.Prompt,
-            UseResume = !p.IsFirstPrompt,
+            SessionId = parameters.SessionId,
+            Prompt = parameters.Prompt,
+            UseResume = !parameters.IsFirstPrompt,
             McpServers = mergedMcpServers,
-            McpConfigPath = p.ResolvedMcpConfigPath ?? "/home/ubuntu/.kiro/settings/mcp.json",
-            ChatWindowId = p.ChatWindowId,
+            McpConfigPath = parameters.ResolvedMcpConfigPath ?? "/home/ubuntu/.kiro/settings/mcp.json",
+            ChatWindowId = parameters.ChatWindowId,
             // Secrets, steering, and project identity are only sent on first prompt
             // to limit sensitive wire exposure on subsequent messages.
-            ProjectSecrets = p.IsFirstPrompt ? p.SelectedProject?.Secrets : null,
-            ProjectSteeringContent = p.IsFirstPrompt ? p.SelectedProject?.SteeringContent : null,
-            ProjectId = p.IsFirstPrompt ? p.SelectedProject?.Id : null,
-            ProjectName = p.IsFirstPrompt ? p.SelectedProject?.Name : null,
+            ProjectSecrets = parameters.IsFirstPrompt ? parameters.SelectedProject?.Secrets : null,
+            ProjectSteeringContent = parameters.IsFirstPrompt ? parameters.SelectedProject?.SteeringContent : null,
+            ProjectId = parameters.IsFirstPrompt ? parameters.SelectedProject?.Id : null,
+            ProjectName = parameters.IsFirstPrompt ? parameters.SelectedProject?.Name : null,
         };
     }
 }

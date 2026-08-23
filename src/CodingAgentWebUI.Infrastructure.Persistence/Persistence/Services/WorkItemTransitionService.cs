@@ -144,14 +144,14 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     {
         if (_resiliencePipeline is not null)
             return await _resiliencePipeline.ExecuteAsync(
-                async token => await TransitionIfCoreAsync(workItemId, expectedCurrent, target, mutate, token, 3), ct);
+                async token => await TransitionIfCoreAsync(workItemId, expectedCurrent, target, mutate, 3, token), ct);
 
-        return await TransitionIfCoreAsync(workItemId, expectedCurrent, target, mutate, ct, 3);
+        return await TransitionIfCoreAsync(workItemId, expectedCurrent, target, mutate, 3, ct);
     }
 
     private async Task<bool> TransitionIfCoreAsync(
         Guid workItemId, WorkItemStatus expectedCurrent, WorkItemStatus target,
-        Action<WorkItemEntity>? mutate, CancellationToken ct, int maxRetries)
+        Action<WorkItemEntity>? mutate, int maxRetries, CancellationToken ct)
     {
         for (int attempt = 0; attempt <= maxRetries; attempt++)
         {

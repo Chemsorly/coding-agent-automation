@@ -65,7 +65,7 @@ builder.Services.AddApiAuthentication(agentApiKey, Log.Logger);
 builder.Host.ConfigureApiSerilog();
 
 // ── ASPNETCORE_URLS defaults to port 8090 (avoids monolith's 8080) ──────────
-builder.WebHost.UseUrls("http://+:8090");
+builder.WebHost.UseUrls("http://+:8090"); // NOSONAR S1075 — port is runtime infrastructure config, not a business URL
 
 // ── OpenTelemetry ─────────────────────────────────────────────────────────────
 var otelServiceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-api";
@@ -135,5 +135,5 @@ app.MapChatEndpoints();
 await app.RunAsync();
 
 // Make Program accessible for WebApplicationFactory in integration tests
-public partial class Program { }
+public partial class Program { } // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests
 

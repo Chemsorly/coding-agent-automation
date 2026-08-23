@@ -103,7 +103,7 @@ public sealed class AgentHubFacadeRetryBehaviorTests
         {
             while (!advanceCts.IsCancellationRequested)
             {
-                Thread.Sleep(1);
+                Thread.Sleep(1); // NOSONAR S2925 — background thread advancing FakeTimeProvider requires real wall-clock pause
                 _timeProvider.Advance(TimeSpan.FromSeconds(3));
             }
         }) { IsBackground = true };
@@ -169,7 +169,7 @@ public sealed class AgentHubFacadeRetryBehaviorTests
         {
             while (!advanceCts.IsCancellationRequested)
             {
-                Thread.Sleep(1);
+                Thread.Sleep(1); // NOSONAR S2925 — background thread advancing FakeTimeProvider requires real wall-clock pause
                 _timeProvider.Advance(TimeSpan.FromSeconds(3));
             }
         }) { IsBackground = true };

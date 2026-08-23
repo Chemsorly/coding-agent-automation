@@ -174,20 +174,11 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
     /// static analysis, since nothing in this codebase ever writes it.</summary>
     private sealed record RetryCountResponse(int RetryCount);
 
-    private sealed record K8sJobNameResponse
-    {
-        public string? JobName { get; init; }
-    }
+    private sealed record K8sJobNameResponse(string? JobName);
 
-    private sealed record WorkItemStatusResponse
-    {
-        public WorkItemStatus Status { get; init; }
-    }
+    private sealed record WorkItemStatusResponse(WorkItemStatus Status);
 
-    private sealed record IsDistributedResponse
-    {
-        public bool IsDistributed { get; init; }
-    }
+    private sealed record IsDistributedResponse(bool IsDistributed);
 
     private sealed record ActiveIdentifierDto
     {

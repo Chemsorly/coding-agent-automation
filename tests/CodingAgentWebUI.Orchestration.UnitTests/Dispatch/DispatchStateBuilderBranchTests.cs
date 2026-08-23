@@ -50,6 +50,7 @@ public class DispatchStateBuilderBranchTests : IDisposable
     {
         using var db = new TestPipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
+        GC.SuppressFinalize(this);
     }
 
     // ── IsAtConcurrencyLimit — static helper ─────────────────────────────

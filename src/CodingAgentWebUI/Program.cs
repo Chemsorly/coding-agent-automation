@@ -16,6 +16,7 @@ using Serilog.Enrichers.Span;
 
 // Bootstrap logger: captures log output during service registration (before UseSerilog takes over at Build())
 // TODO: Add integration test verifying ResolveApiKey log messages appear in output (review-findings #953)
+const string AgentApiKeyConfigKey = "AGENT_API_KEY"; // S1192: single source for repeated literal
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
@@ -50,8 +51,8 @@ builder.Services.AddOptions<MonolithRuntimeOptions>()
         if (loopDelay.HasValue)
             opts.PipelineLoopStartupDelaySeconds = loopDelay.Value;
 
-        opts.AgentApiKey = cfg.GetValue<string>("AGENT_API_KEY")
-            ?? Environment.GetEnvironmentVariable("AGENT_API_KEY")
+        opts.AgentApiKey = cfg.GetValue<string>(AgentApiKeyConfigKey)
+            ?? Environment.GetEnvironmentVariable(AgentApiKeyConfigKey)
             ?? "";
     })
     .ValidateDataAnnotations()
@@ -71,8 +72,8 @@ if (string.IsNullOrEmpty(apiBaseUrl))
     return;
 }
 
-var agentApiKey = builder.Configuration.GetValue<string>("AGENT_API_KEY")
-    ?? Environment.GetEnvironmentVariable("AGENT_API_KEY")
+var agentApiKey = builder.Configuration.GetValue<string>(AgentApiKeyConfigKey)
+    ?? Environment.GetEnvironmentVariable(AgentApiKeyConfigKey)
     ?? "";
 
 builder.Services.AddPipelineApiClient(new PipelineApiClientOptions

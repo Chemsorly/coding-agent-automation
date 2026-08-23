@@ -403,7 +403,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             // Job was deleted from K8s — treat as terminal (job gone), not a transient error.
             // Without this guard the watcher loops forever on 404, and its orphaned session blocks
             // new dispatches and eventually kills a newly-connected agent via ForceDeleteAndCleanupAsync.
-            _logger.Information(
+            _logger.Information(ex,
                 "ChatJobDispatcher: job {JobName} no longer exists in K8s — treating as terminal",
                 jobName);
             return (null, false);

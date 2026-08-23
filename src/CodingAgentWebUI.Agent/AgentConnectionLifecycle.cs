@@ -84,7 +84,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// <summary>Fired when the orchestrator assigns a consolidation job.</summary>
     public event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
 
-    public AgentConnectionLifecycle(
+    public AgentConnectionLifecycle( // NOSONAR S107 — constructor consolidates all DI-resolved deps for this lifecycle manager
         IHubConnectionManager hubManager,
         IHubConnectionManagerFactory hubManagerFactory,
         SignalRCompletionReporter completionReporter,

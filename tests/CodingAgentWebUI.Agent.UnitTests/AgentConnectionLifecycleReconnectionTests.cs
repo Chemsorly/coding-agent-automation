@@ -178,8 +178,8 @@ public class AgentConnectionLifecycleReconnectionTests
     private static (AgentConnectionLifecycle Lifecycle, FakeHubConnectionManager InitialManager, FakeHubConnectionManagerFactory Factory)
         CreateLifecycle(
             Action? stopApplication = null,
-            CancellationToken appStoppingToken = default,
-            Func<IHubConnectionManager>? factoryFunc = null)
+            Func<IHubConnectionManager>? factoryFunc = null,
+            CancellationToken appStoppingToken = default)
     {
         var mockLogger = new Mock<Serilog.ILogger>().Object;
         var initialManager = new FakeHubConnectionManager();

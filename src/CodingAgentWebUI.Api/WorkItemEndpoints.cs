@@ -47,7 +47,7 @@ public static class WorkItemEndpoints
                    HttpContext httpContext,
                    CancellationToken ct) =>
                 await AuthorizeAgentForWorkItemAsync(httpContext, id, dbFactory, ct)
-                    ?? await GetAssignment(id, dbFactory, projectStore));
+                    ?? await GetAssignment(id, dbFactory, projectStore, ct));
 
         group.MapPost("/{id:guid}/status",
             async (Guid id, [FromBody] WorkItemStatusRequest request,
@@ -359,6 +359,8 @@ public static class WorkItemEndpoints
             {
                 entity.AssignedAgentId = request.AssignedAgentId;
                 entity.DispatchedAt = request.DispatchedAt;
+                if (request.K8sJobName is not null)
+                    entity.K8sJobName = request.K8sJobName;
                 payloadJson = entity.Payload;
             },
             ct: ct);
@@ -527,7 +529,8 @@ public static class WorkItemEndpoints
                 Status = w.Status,
                 DispatchedAt = w.DispatchedAt,
                 AgentSelector = w.AgentSelector,
-                IssueIdentifier = w.IssueIdentifier
+                IssueIdentifier = w.IssueIdentifier,
+                K8sJobName = w.K8sJobName
             })
             .ToListAsync(ct);
 

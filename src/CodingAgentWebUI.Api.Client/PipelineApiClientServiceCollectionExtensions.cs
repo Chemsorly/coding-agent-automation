@@ -8,6 +8,7 @@ namespace CodingAgentWebUI.Api.Client;
 /// </summary>
 public static class PipelineApiClientServiceCollectionExtensions
 {
+    private const string BearerScheme = "Bearer";
     /// <summary>
     /// Registers all five typed HTTP clients, the <see cref="IAgentHubConnection"/> factory,
     /// and the <see cref="PipelineApiClientOptions"/> singleton.
@@ -28,7 +29,7 @@ public static class PipelineApiClientServiceCollectionExtensions
         {
             client.BaseAddress = new Uri(options.BaseUrl);
             client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", options.AgentApiKey);
+                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler();
 
         // Run history client — authenticated
@@ -36,7 +37,7 @@ public static class PipelineApiClientServiceCollectionExtensions
         {
             client.BaseAddress = new Uri(options.BaseUrl);
             client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", options.AgentApiKey);
+                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler();
 
         // Config client — authenticated
@@ -44,7 +45,7 @@ public static class PipelineApiClientServiceCollectionExtensions
         {
             client.BaseAddress = new Uri(options.BaseUrl);
             client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", options.AgentApiKey);
+                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler();
 
         // Agent registry client — authenticated. /api/agents requires the OPERATOR policy, so this
@@ -54,7 +55,7 @@ public static class PipelineApiClientServiceCollectionExtensions
         {
             client.BaseAddress = new Uri(options.BaseUrl);
             client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", options.AgentApiKey);
+                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler();
 
         // Health client — no auth (healthz/readyz are anonymous)
@@ -68,7 +69,7 @@ public static class PipelineApiClientServiceCollectionExtensions
         {
             client.BaseAddress = new Uri(options.BaseUrl);
             client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", options.AgentApiKey);
+                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler();
 
         // Harness suggestion client — authenticated (operator tier; master key required)
@@ -76,7 +77,7 @@ public static class PipelineApiClientServiceCollectionExtensions
         {
             client.BaseAddress = new Uri(options.BaseUrl);
             client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", options.AgentApiKey);
+                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler();
 
         // Chat client — authenticated (operator tier; master key required).
@@ -88,7 +89,7 @@ public static class PipelineApiClientServiceCollectionExtensions
         {
             client.BaseAddress = new Uri(options.BaseUrl);
             client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", options.AgentApiKey);
+                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
             client.Timeout = TimeSpan.FromMinutes(5);
         });
 

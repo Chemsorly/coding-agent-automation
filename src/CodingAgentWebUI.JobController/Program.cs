@@ -100,7 +100,7 @@ builder.Services.AddOpenTelemetry()
     });
 
 // ── ASPNETCORE_URLS defaults to port 8091 ────────────────────────────────────
-builder.WebHost.UseUrls("http://+:8091");
+builder.WebHost.UseUrls("http://+:8091"); // NOSONAR S1075 — port is runtime infrastructure config, not a business URL
 
 // ── Shutdown timeout ─────────────────────────────────────────────────────────
 builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(30));
@@ -117,4 +117,4 @@ app.MapGet("/readyz", (ILeaderElectionService leaderElection) =>
 await app.RunAsync();
 
 // Make Program accessible for WebApplicationFactory in integration tests
-public partial class Program { }
+public partial class Program { } // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests

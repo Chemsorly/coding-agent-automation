@@ -94,7 +94,7 @@ public sealed class ApiAgentRegistryService : IAgentRegistryService
     /// <inheritdoc />
     public AgentEntry? GetByAgentId(AgentId agentId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId));
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
         return Current.ById.GetValueOrDefault(agentId.Value);
     }
 

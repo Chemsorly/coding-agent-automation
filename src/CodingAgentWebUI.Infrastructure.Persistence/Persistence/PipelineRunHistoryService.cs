@@ -214,6 +214,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     /// Attempts to delete a workspace directory. Logs but does not throw on failure.
     /// Validates the path is a subdirectory of the workspace base and not a symlink.
     /// </summary>
+
     public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory)
     {
         if (string.IsNullOrEmpty(workspacePath) || !Directory.Exists(workspacePath))

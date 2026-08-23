@@ -47,7 +47,7 @@ internal sealed class ApiBackedWorkItemFallbackTransitionService : IWorkItemFall
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.BadRequest)
         {
             // 400 = transition rejected (already terminal or invalid transition) — not an error
-            _logger.Debug(
+            _logger.Debug(ex,
                 "ApiBackedWorkItemFallbackTransitionService: WorkItem {WorkItemId} → {Status} rejected (already terminal or invalid)",
                 workItemId, status);
             return false;
@@ -55,7 +55,7 @@ internal sealed class ApiBackedWorkItemFallbackTransitionService : IWorkItemFall
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             // 404 = work item doesn't exist in the API — can happen for test/legacy runs
-            _logger.Debug(
+            _logger.Debug(ex,
                 "ApiBackedWorkItemFallbackTransitionService: WorkItem {WorkItemId} not found (404), skipping transition to {Status}",
                 workItemId, status);
             return false;
@@ -63,9 +63,9 @@ internal sealed class ApiBackedWorkItemFallbackTransitionService : IWorkItemFall
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex,
-                "ApiBackedWorkItemFallbackTransitionService: WorkItem {WorkItemId} transition to {Status} failed",
+                "ApiBackedWorkItemFallbackTransitionService: WorkItem {WorkItemId} transition to {Status} failed — rethrowing for caller retry",
                 workItemId, status);
-            throw; // Let callers apply retry logic (RunLifecycleManager / AgentHubFacade)
+            throw;
         }
     }
 }
