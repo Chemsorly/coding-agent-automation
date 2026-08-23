@@ -46,3 +46,14 @@ internal sealed class ApiBackedPendingWorkQuery : IPendingWorkQuery
         }).ToList();
     }
 }
+
+/// <summary>
+/// No-op fallback used when <see cref="IPipelineApiWorkItemClient"/> is not registered (e.g. test environments).
+/// Returns an empty list so the Agent Monitoring page renders without crashing.
+/// </summary>
+internal sealed class EmptyPendingWorkQuery : IPendingWorkQuery
+{
+    public int PendingCount => 0;
+    public Task<IReadOnlyList<PendingJob>> GetPendingJobsAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PendingJob>>(Array.Empty<PendingJob>());
+}

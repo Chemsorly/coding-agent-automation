@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -370,7 +369,7 @@ public sealed class AgentConnectionManagerReconnectionTests
     [Fact]
     public async Task TerminalClose_AllAttemptsExhausted_CallsStopApplication()
     {
-        // Arrange: factory always fails → exhausts all 10 attempts quickly via StartException
+        // Arrange: factory always fails → maxAttempts=1 to avoid real exponential delays
         var factory = new FakeHubConnectionManagerFactory(() =>
             new FakeHubConnectionManager { StartException = new InvalidOperationException("cannot connect") });
         var hub = new FakeHubConnectionManager();
@@ -382,16 +381,11 @@ public sealed class AgentConnectionManagerReconnectionTests
         var manager = new AgentConnectionManager(hub, factory, new AgentId("agent-1"),
             Mock.Of<Serilog.ILogger>(), lifetimeMock.Object);
 
-        // Act: fire terminal close and wait for all 10 attempts to exhaust
-        // (FakeHubConnectionManager.StartAsync throws immediately so no real delays)
-        _ = fakeHub_SimulateClosed(hub);
-
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
-        while (!stopCalled && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(50);
+        // Act: call HandleTerminalClosedAsync directly with maxAttempts=1 to avoid real delays
+        await manager.HandleTerminalClosedAsync(null, maxAttempts: 1);
 
         // Assert
-        stopCalled.Should().BeTrue("StopApplication must be called after all 10 reconnection attempts fail");
+        stopCalled.Should().BeTrue("StopApplication must be called after all reconnection attempts fail");
 
         await manager.DisposeAsync();
     }

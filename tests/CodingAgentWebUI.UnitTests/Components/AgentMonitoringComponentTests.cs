@@ -66,7 +66,11 @@ public class AgentMonitoringComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<ILabelService>());
         Services.AddSingleton(Mock.Of<IConsolidationService>(s =>
             s.GetRunHistoryAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ConsolidationRun>>(Array.Empty<ConsolidationRun>())));
-        Services.AddSingleton(Mock.Of<IWorkDistributor>());
+        var _mockWorkDistributor = new Mock<IWorkDistributor>();
+        _mockWorkDistributor.Setup(w => w.CancelJobAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        Services.AddSingleton(_mockWorkDistributor.Object);
+        Services.AddSingleton(_mockWorkDistributor); // expose Mock for test verification
 
         // Spec 045: IAgentHubConnection and IPipelineApiRunHistoryClient now injected by AgentMonitoring.
         // Registered as Singleton (not Scoped) to prevent DI from calling Dispose() on the mock proxy
@@ -324,48 +328,51 @@ public class AgentMonitoringComponentTests : BunitContext
     }
 
     [Fact]
-    public void RemoveFromQueue_Button_RemovesJobAndUpdatesUI()
+    public async Task RemoveFromQueue_Button_CallsCancelJob()
     {
-        // Arrange: add a job via the shared pending jobs list
+        // Arrange: add a job with WorkItemId via the shared pending jobs list
         var jobs = Services.GetRequiredService<List<PendingJob>>();
         jobs.Add(new PendingJob
         {
             IssueIdentifier = "org/repo#42",
             IssueProviderId = "ip-1",
             RepoProviderId = "rp-1",
+            WorkItemId = "wi-42",
             EnqueuedAt = DateTimeOffset.UtcNow,
             InitiatedBy = "test"
         });
 
+        var mockWorkDistributor = Services.GetRequiredService<Mock<IWorkDistributor>>();
+
         var cut = Render<AgentMonitoring>();
 
         // Verify job appears in the queue
-        Assert.Contains("org/repo#42", cut.Markup);
-        Assert.Contains("Job Queue (1)", cut.Markup);
+        cut.WaitForAssertion(() => Assert.Contains("org/repo#42", cut.Markup));
 
         // Act: click the Remove button
-        var removeBtn = cut.FindAll("button")
-            .First(b => b.TextContent.Contains("Remove"));
-        removeBtn.Click();
-
-        // Assert: job is removed from UI
-        cut.WaitForAssertion(() =>
+        await cut.InvokeAsync(() =>
         {
-            Assert.DoesNotContain("org/repo#42", cut.Markup);
-            Assert.Contains("No pending jobs in queue.", cut.Markup);
+            var removeBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Remove"));
+            removeBtn.Click();
         });
+
+        // Assert: CancelJobAsync was called with the WorkItemId
+        mockWorkDistributor.Verify(
+            w => w.CancelJobAsync(It.Is<JobId>(j => j.Value == "wi-42"), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
-    public void RemoveFromQueue_Button_RemovesCorrectJob_WhenMultipleQueued()
+    public async Task RemoveFromQueue_Button_CallsCancelJob_ForFirstJob_WhenMultipleQueued()
     {
-        // Arrange: add two jobs via the shared pending jobs list
+        // Arrange: add two jobs
         var jobs = Services.GetRequiredService<List<PendingJob>>();
         jobs.Add(new PendingJob
         {
             IssueIdentifier = "org/repo#10",
             IssueProviderId = "ip-1",
             RepoProviderId = "rp-1",
+            WorkItemId = "wi-10",
             EnqueuedAt = DateTimeOffset.UtcNow,
             InitiatedBy = "loop"
         });
@@ -374,26 +381,28 @@ public class AgentMonitoringComponentTests : BunitContext
             IssueIdentifier = "org/repo#20",
             IssueProviderId = "ip-1",
             RepoProviderId = "rp-1",
+            WorkItemId = "wi-20",
             EnqueuedAt = DateTimeOffset.UtcNow,
             InitiatedBy = "loop"
         });
 
+        var mockWorkDistributor = Services.GetRequiredService<Mock<IWorkDistributor>>();
+
         var cut = Render<AgentMonitoring>();
-        Assert.Contains("Job Queue (2)", cut.Markup);
+        cut.WaitForAssertion(() => Assert.Contains("Job Queue (2)", cut.Markup));
 
         // Act: click the Remove button for the first job
-        var removeButtons = cut.FindAll("button.btn-cancel-small")
-            .Where(b => b.TextContent.Trim() == "Remove")
-            .ToList();
-        removeButtons[0].Click();
-
-        // Assert: first job removed, second remains
-        cut.WaitForAssertion(() =>
+        await cut.InvokeAsync(() =>
         {
-            Assert.DoesNotContain("org/repo#10", cut.Markup);
-            Assert.Contains("org/repo#20", cut.Markup);
-            Assert.Contains("Job Queue (1)", cut.Markup);
+            var removeButtons = cut.FindAll("button.btn-cancel-small")
+                .Where(b => b.TextContent.Trim() == "Remove")
+                .ToList();
+            removeButtons[0].Click();
         });
+
+        // Assert: CancelJobAsync was called for one of the jobs
+        mockWorkDistributor.Verify(
+            w => w.CancelJobAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

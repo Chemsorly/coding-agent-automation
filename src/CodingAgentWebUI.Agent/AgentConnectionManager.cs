@@ -167,7 +167,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         hubManager.OnCancelJob += HandleCancelJobAsync;
         hubManager.OnForceDisconnect += HandleForceDisconnectAsync;
         hubManager.OnReconnected += HandleReconnectedAsync;
-        hubManager.OnClosed += HandleTerminalClosedAsync;
+        hubManager.OnClosed += e => HandleTerminalClosedAsync(e);
     }
 
     private async Task HandleCancelJobAsync(string jobId)
@@ -246,11 +246,10 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         }
     }
 
-    private async Task HandleTerminalClosedAsync(Exception? error)
+    internal async Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10)
     {
         _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
 
-        const int maxAttempts = 10;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             var delay = ReconnectionHelper.CalculateReconnectionDelay(attempt);

@@ -96,11 +96,13 @@ public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
     }
 
     [Fact]
-    public void IPipelineRunHistoryService_IsPostgres_InDbMode()
+    public void IPipelineRunHistoryService_IsApiBacked_PostT8()
     {
+        // T8 (arch-audit 2026-08-22): IPipelineRunHistoryService in the monolith was replaced
+        // with ApiBackedPipelineRunHistoryService. Postgres-backed is now exclusively in the API host.
         var store = _factory.Services.GetRequiredService<IPipelineRunHistoryService>();
-        store.Should().BeOfType<PostgresPipelineRunHistoryService>(
-            "IPipelineRunHistoryService is still Postgres-backed (consolidation dependency)");
+        store.Should().BeOfType<ApiBackedPipelineRunHistoryService>(
+            "IPipelineRunHistoryService was migrated to API-backed in T8 (arch-audit 2026-08-22)");
     }
 
     [Fact]

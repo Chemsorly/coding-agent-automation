@@ -17,7 +17,11 @@ public static partial class ServiceCollectionExtensions
     public static IServiceCollection AddAgentMonitoringPageServiceDependencies(this IServiceCollection services)
     {
         services.AddSingleton<IPendingWorkQuery>(sp =>
-            new ApiBackedPendingWorkQuery(sp.GetRequiredService<IPipelineApiWorkItemClient>()));
+        {
+            var client = sp.GetService<IPipelineApiWorkItemClient>();
+            if (client is null) return new EmptyPendingWorkQuery();
+            return new ApiBackedPendingWorkQuery(client);
+        });
 
         services.AddScoped(sp => new AgentMonitoringPageServiceDependencies(
             sp.GetRequiredService<IAgentRegistryService>(),

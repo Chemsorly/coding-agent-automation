@@ -151,6 +151,11 @@ public sealed class AgentHubConsolidationTests
     public async Task ReportConsolidationComplete_AgentNull_ReturnsDebugInfo()
     {
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
+        // T10: IHubConsolidationOperations.HandleConsolidationCompleteAsync owns the debug info contract
+        _mockConsolidationOps
+            .Setup(c => c.HandleConsolidationCompleteAsync(
+                It.IsAny<ConsolidationJobResult>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync("agentFound=False");
 
         var hub = CreateHub();
         var result = new ConsolidationJobResult { JobId = "crun-1", Success = true };

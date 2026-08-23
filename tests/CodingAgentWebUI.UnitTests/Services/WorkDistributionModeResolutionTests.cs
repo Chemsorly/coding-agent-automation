@@ -32,8 +32,11 @@ public class WorkDistributionModeResolutionTests
     }
 
     [Fact]
-    public void KubernetesMode_Registers_WorkItemTransitionService()
+    public void KubernetesMode_WorkItemTransitionService_RegisteredInApiOnly()
     {
+        // T8 (arch-audit 2026-08-22): WorkItemTransitionService was moved out of the monolith's
+        // AddWorkDistribution and into the API host (ApiServiceCollectionExtensions.AddApiInfrastructure).
+        // The monolith no longer registers it — verified.
         var config = BuildConfig("localhost");
         var services = new ServiceCollection();
         services.AddLogging();
@@ -42,7 +45,7 @@ public class WorkDistributionModeResolutionTests
 
         var descriptor = services.FirstOrDefault(d =>
             d.ServiceType == typeof(CodingAgentWebUI.Infrastructure.Persistence.Services.WorkItemTransitionService));
-        descriptor.Should().NotBeNull();
+        descriptor.Should().BeNull("WorkItemTransitionService is now registered in the API host only");
     }
 
     [Fact]

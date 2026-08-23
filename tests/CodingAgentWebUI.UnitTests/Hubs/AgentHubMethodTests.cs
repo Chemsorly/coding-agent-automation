@@ -265,10 +265,10 @@ public sealed class AgentHubMethodTests
         var hub = CreateHub();
         await hub.ReportConsolidationComplete(result);
 
-        // Agent should be transitioned to Idle and ActiveJobId cleared
+        // Agent should be transitioned to Idle and ActiveJobId cleared (happens in Hub before delegation)
         agent.ActiveJobId.Should().BeNull();
         _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), AgentStatus.Idle), Times.Once);
-        _changeNotifier.Verify(n => n.NotifyChange(), Times.Once);
+        // NotifyChange is called inside IHubConsolidationOperations (T10 extraction) — not at Hub level
         _mockConsolidationOps.Verify(
             c => c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "job-42"), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
             Times.Once);

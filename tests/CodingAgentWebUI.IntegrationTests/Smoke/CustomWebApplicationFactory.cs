@@ -143,6 +143,13 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             var dispatchOrchestrationMock = new Mock<IDispatchOrchestrationService>();
             services.AddSingleton(dispatchOrchestrationMock.Object);
 
+            // Replace IPipelineApiWorkItemClient with a mock to prevent real HTTP calls.
+            var workItemClientMock = new Mock<IPipelineApiWorkItemClient>();
+            workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<PendingWorkItemDto>)Array.Empty<PendingWorkItemDto>());
+            services.RemoveAll<IPipelineApiWorkItemClient>();
+            services.AddSingleton(workItemClientMock.Object);
+
             // Spec 045: IPipelineApiConfigClient is registered by AddPipelineApiClient() and points
             // to a stub URL. Replace it with a mock to prevent real HTTP calls during startup.
             var configClientMock = new Mock<IPipelineApiConfigClient>();

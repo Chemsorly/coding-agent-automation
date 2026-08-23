@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using Moq;
 using Serilog;
 using System.Text.Json;

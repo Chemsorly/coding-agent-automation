@@ -85,7 +85,7 @@ try
     var agentProviderType = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "";
     builder.Services.AddHttpClient(AgentDefaults.OpenCodeHttpClientName, (sp, client) =>
     {
-        var runtimeOpts = builder.Services.BuildServiceProvider().GetRequiredService<AgentRuntimeOptions>();
+        var runtimeOpts = sp.GetRequiredService<AgentRuntimeOptions>();
         var baseUrl = runtimeOpts.OpenCodeBaseUrl ?? AgentDefaults.OpenCodeBaseUrl;
         client.BaseAddress = new Uri(baseUrl);
         // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
