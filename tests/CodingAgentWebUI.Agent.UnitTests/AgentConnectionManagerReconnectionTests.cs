@@ -361,6 +361,7 @@ public sealed class AgentConnectionManagerReconnectionTests
         // Assert: DisposeAsync must complete without throwing (no ObjectDisposedException, no NRE)
         // — the CAS in the reconnect loop ensures the orphaned manager is disposed cleanly
         await disposeAct.Should().NotThrowAsync();
+    }
 
     // ── B5: StopApplication called on reconnection exhaustion ─────────────
 

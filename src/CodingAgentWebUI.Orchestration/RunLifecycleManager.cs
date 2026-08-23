@@ -26,7 +26,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IAgentRegistryService _registry;
     private readonly ILabelService _labelService;
-    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly ILogger _logger;
     private readonly IJobCleanupStrategy? _jobCleanup;
 
@@ -46,7 +45,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         _historyService = deps.HistoryService;
         _registry = deps.Registry;
         _labelService = deps.LabelService;
-        _dispatcher = deps.Dispatcher;
         _logger = deps.Logger;
         _jobCleanup = deps.JobCleanup;
     }

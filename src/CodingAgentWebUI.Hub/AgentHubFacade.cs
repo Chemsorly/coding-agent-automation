@@ -20,7 +20,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
 {
     private readonly IAgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IProviderConfigStore _configStore;
     private readonly IProviderFactory _providerFactory;
@@ -44,7 +43,6 @@ public sealed class AgentHubFacade : IAgentHubFacade
 
         _registry = deps.Registry;
         _runService = deps.RunService;
-        _dispatcher = deps.Dispatcher;
         _historyService = deps.HistoryService;
         _configStore = deps.ConfigStore;
         _providerFactory = deps.ProviderFactory;

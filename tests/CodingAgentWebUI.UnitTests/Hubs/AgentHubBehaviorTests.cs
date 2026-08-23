@@ -518,9 +518,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHubWithOrchestration();
         var result = new ConsolidationJobResult { JobId = "crun-1", Success = false, ErrorMessage = "Timeout" };
 
-        await hub.ReportConsolidationComplete(result);
+        var act = async () => await hub.ReportConsolidationComplete(result);
 
-        // Consolidation ops are now inside IHubConsolidationOperations — verified via mock delegate
+        // Consolidation ops are now inside IHubConsolidationOperations — assert no exception from hub routing
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
@@ -544,9 +545,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHubWithOrchestration();
         var result = new ConsolidationJobResult { JobId = "crun-1", Success = true, Summary = "OK", HarnessSuggestions = suggestions };
 
-        await hub.ReportConsolidationComplete(result);
+        var act = async () => await hub.ReportConsolidationComplete(result);
 
         // HarnessSuggestions persistence and badge counting are now inside IHubConsolidationOperations
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
@@ -1832,39 +1834,42 @@ public sealed class AgentHubBehaviorTests : IDisposable
     #region AgentReady — Ownership enforcement
 
     [Fact]
-    public Task AgentReady_CallerOwnsAgent_SignalsDrain()
+    public async Task AgentReady_CallerOwnsAgent_SignalsDrain()
     {
         var agent = CreateAgent(agentId: "agent-1", connectionId: "conn-1");
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
 
         var hub = CreateHub("conn-1");
-        var result = hub.AgentReady((AgentId)"agent-1");
 
-        return result;
+        // Hub call must complete without throwing
+        var act = async () => await hub.AgentReady((AgentId)"agent-1");
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
-    public Task AgentReady_AgentIdMismatch_RejectsWithoutSignaling()
+    public async Task AgentReady_AgentIdMismatch_RejectsWithoutSignaling()
     {
         // Caller owns agent-1 but sends AgentReady claiming to be agent-2 — must be rejected.
         var callerAgent = CreateAgent(agentId: "agent-1", connectionId: "conn-1");
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(callerAgent);
 
         var hub = CreateHub("conn-1");
-        var result = hub.AgentReady((AgentId)"agent-2");
 
-        return result;
+        // Mismatched AgentId must be rejected without throwing — ownership check is silent
+        var act = async () => await hub.AgentReady((AgentId)"agent-2");
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
-    public Task AgentReady_NullCallerEntry_RejectsWithoutSignaling()
+    public async Task AgentReady_NullCallerEntry_RejectsWithoutSignaling()
     {
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
 
         var hub = CreateHub("conn-1");
-        var result = hub.AgentReady((AgentId)"agent-1");
 
-        return result;
+        // Unknown connection must be rejected silently
+        var act = async () => await hub.AgentReady((AgentId)"agent-1");
+        await act.Should().NotThrowAsync();
     }
 
     #endregion

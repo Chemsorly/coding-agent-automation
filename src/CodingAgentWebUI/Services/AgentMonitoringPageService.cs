@@ -39,7 +39,6 @@ public class AgentMonitoringPageService
     ];
 
     private readonly IAgentRegistryService _registry;
-    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly IPipelineApiConfigClient _configClient;
     private readonly IConsolidationService _consolidationService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
@@ -49,7 +48,6 @@ public class AgentMonitoringPageService
     public AgentMonitoringPageService(AgentMonitoringPageServiceDependencies deps)
     {
         _registry = deps.Registry;
-        _dispatcher = deps.Dispatcher;
         _configClient = deps.ConfigClient;
         _consolidationService = deps.ConsolidationService;
         _pendingWorkQuery = deps.PendingWorkQuery;
