@@ -61,9 +61,9 @@ internal static class PipelineLoopAutoStartExtensions
             {
                 return await configClient.GetPipelineConfigAsync(stoppingToken);
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            catch (OperationCanceledException oce) when (stoppingToken.IsCancellationRequested)
             {
-                Log.Warning("AutoStartPipelineLoopAsync: startup cancelled by host shutdown");
+                Log.Warning(oce, "AutoStartPipelineLoopAsync: startup cancelled by host shutdown");
                 return new Pipeline.Models.PipelineConfiguration();
             }
             catch (Exception ex)

@@ -62,9 +62,8 @@ internal sealed class ApiBackedWorkItemFallbackTransitionService : IWorkItemFall
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.Warning(ex,
-                "ApiBackedWorkItemFallbackTransitionService: WorkItem {WorkItemId} transition to {Status} failed — rethrowing for caller retry",
-                workItemId, status);
+            // Rethrow for caller retry logic (RunLifecycleManager / AgentHubFacade).
+            // The caller logs the failure at its own appropriate severity level.
             throw;
         }
     }

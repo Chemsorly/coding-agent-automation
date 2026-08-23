@@ -22,7 +22,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 {
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly ILabelService _labelSwapper;
-    private readonly IPipelineCancellationFacade _cancellationFacade;
     private readonly Serilog.ILogger _logger;
 
     protected readonly PipelineProviderManager _providerManager;
@@ -44,7 +43,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
         _labelSwapper = labelSwapper;
         _logger = logger;
-        _cancellationFacade = cancellationFacade;
         _providerManager = new PipelineProviderManager(configurationStore, providerFactory, logger);
         _lifecycle = lifecycle;
     }

@@ -446,7 +446,7 @@
     {
         // Agent existence validated server-side; 404/409 surfaces as HttpRequestException.
         var message = ChatPromptBuilder.Build(new ChatPromptParameters(
-            SessionId: _activeSessionId!,
+            SessionId: _activeSessionId ?? throw new InvalidOperationException("_activeSessionId must be set before calling SubscribeAndSendPromptAsync"),
             Prompt: prompt,
             IsFirstPrompt: _isFirstPrompt,
             ChatWindowId: _chatWindowId,

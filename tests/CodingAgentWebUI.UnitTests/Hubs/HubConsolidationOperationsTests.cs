@@ -30,7 +30,7 @@ public sealed class HubConsolidationOperationsTests
     // Real instances (sealed — cannot mock)
     private readonly ConsolidationBadgeService _badgeService = new();
 
-    private ModelFetchService CreateModelFetchService()
+    private static ModelFetchService CreateModelFetchService()
     {
         // ModelFetchService needs AgentRegistryService and IAgentCommunication.
         // We build a minimal real AgentRegistryService (no I/O) and a mock IAgentCommunication.

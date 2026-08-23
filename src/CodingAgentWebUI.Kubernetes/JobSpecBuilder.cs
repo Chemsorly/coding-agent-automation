@@ -59,10 +59,9 @@ public static class JobSpecBuilder
     public static V1Job Build(JobTemplate template, BuildContext ctx)
     {
         var isKiroAgent = IsKiroAgent(template.ProviderType);
-        var isOpencodeAgent = IsOpencodeAgent(template.ProviderType);
 
         var envVars = BuildEnvVars(template, ctx);
-        var (volumeMounts, volumes) = BuildVolumeMountsAndVolumes(isKiroAgent, isOpencodeAgent, ctx);
+        var (volumeMounts, volumes) = BuildVolumeMountsAndVolumes(isKiroAgent, ctx);
 
         // ── Container ───────────────────────────────────────────────────────
         var container = new V1Container
@@ -280,7 +279,7 @@ public static class JobSpecBuilder
     /// is still mounted via file.
     /// </summary>
     private static (List<V1VolumeMount> mounts, List<V1Volume> volumes) BuildVolumeMountsAndVolumes(
-        bool isKiroAgent, bool isOpencodeAgent, BuildContext ctx)
+        bool isKiroAgent, BuildContext ctx)
     {
         var volumeMounts = new List<V1VolumeMount>();
         var volumes = new List<V1Volume>();

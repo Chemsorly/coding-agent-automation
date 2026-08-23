@@ -11,6 +11,7 @@ namespace CodingAgentWebUI.JobController.UnitTests.Dispatch;
 /// </summary>
 public sealed class DispatchServiceOptionsTests
 {
+    private static readonly string[] ExpectedPvcPool = ["pvc-1", "pvc-2"];
     // ── ValidateAndClamp ─────────────────────────────────────────────────────
 
     [Fact]
@@ -150,7 +151,7 @@ public sealed class DispatchServiceOptionsFactoryTests
 
         var opts = DispatchServiceOptionsFactory.Create(config);
 
-        opts.KiroPvcPool.Should().BeEquivalentTo(new[] { "pvc-1", "pvc-2" });
+        opts.KiroPvcPool.Should().BeEquivalentTo(ExpectedPvcPool);
     }
 
     [Fact]

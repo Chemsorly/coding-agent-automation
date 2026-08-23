@@ -108,8 +108,8 @@
 
 @code {
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
-    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
-    [Parameter, EditorRequired] public GitHubValidationService GitHubValidator { get; set; } = default!;
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    [Parameter, EditorRequired] public GitHubValidationService GitHubValidator { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
     [Parameter] public GitLabValidationService? GitLabValidator { get; set; }
     [Parameter] public EventCallback<string> OnDelete { get; set; }
     [Parameter] public EventCallback<ProviderConfig> OnSaved { get; set; }

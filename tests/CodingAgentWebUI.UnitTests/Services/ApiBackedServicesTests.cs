@@ -13,6 +13,8 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// </summary>
 public sealed class ApiBackedServicesTests
 {
+    private static readonly string[] KiroDotnetLabels = ["kiro", "dotnet"];
+    private static readonly string[] KiroDotnetLinuxLabels = ["kiro", "dotnet", "linux"];
     // ── ApiBackedPendingWorkQuery ─────────────────────────────────────────
 
     [Fact]
@@ -46,7 +48,7 @@ public sealed class ApiBackedServicesTests
         job.IssueIdentifier.Should().Be((IssueIdentifier)"org/repo#42");
         job.IssueProviderId.Should().Be(new ProviderConfigId("provider-1"));
         job.EnqueuedAt.Should().Be(createdAt);
-        job.RequiredLabels.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
+        job.RequiredLabels.Should().BeEquivalentTo(KiroDotnetLabels);
         job.TaskType.Should().Be(WorkItemTaskType.Implementation);
         job.RunType.Should().Be(PipelineRunType.Implementation);
     }
@@ -133,7 +135,7 @@ public sealed class ApiBackedServicesTests
         var sut = new ApiBackedPendingWorkQuery(client.Object);
         var result = await sut.GetPendingJobsAsync();
 
-        result[0].RequiredLabels.Should().BeEquivalentTo(new[] { "kiro", "dotnet", "linux" },
+        result[0].RequiredLabels.Should().BeEquivalentTo(KiroDotnetLinuxLabels,
             "spaces around commas must be trimmed");
     }
 

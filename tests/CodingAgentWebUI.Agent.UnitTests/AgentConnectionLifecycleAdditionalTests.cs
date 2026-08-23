@@ -210,8 +210,8 @@ public sealed class AgentConnectionLifecycleAdditionalTests
         FakeHubConnectionManagerFactory Factory) CreateLifecycle(
             Action? stopApplication = null,
             Func<IHubConnectionManager>? factoryFunc = null,
-            CancellationToken appStoppingToken = default,
-            AgentRuntimeOptions? runtimeOptions = null)
+            AgentRuntimeOptions? runtimeOptions = null,
+            CancellationToken appStoppingToken = default)
     {
         var mockLogger = new Mock<Serilog.ILogger>().Object;
         var initialManager = new FakeHubConnectionManager();

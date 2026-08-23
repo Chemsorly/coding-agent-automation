@@ -253,10 +253,10 @@ public static class ApiServiceCollectionExtensions
 
                 return new k8s.Kubernetes(config);
             }
-            catch
+            catch (Exception ex)
             {
-                Log.Warning("API: Kubernetes client unavailable — leader election inactive. " +
-                            "DatabaseMaintenanceService sweep runs ungated.");
+                Log.Warning(ex, "API: Kubernetes client unavailable — leader election inactive. " +
+                                "DatabaseMaintenanceService sweep runs ungated.");
                 return null!;
             }
         });

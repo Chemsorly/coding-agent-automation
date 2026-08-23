@@ -26,6 +26,9 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class AgentMonitoringAdditionalTests : BunitContext
 {
+    private static readonly string[] OneLine = ["line1"];
+    private static readonly string[] DiffLine = ["different-run-line"];
+    private static readonly string[] TwoLines = ["hello", "world"];
     private readonly Mock<IAgentHubConnection> _mockHub = new();
     private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistoryClient = new();
     private readonly Mock<IConsolidationService> _mockConsolidation = new();

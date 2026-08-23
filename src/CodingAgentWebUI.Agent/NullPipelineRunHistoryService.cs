@@ -22,9 +22,6 @@ public sealed class NullPipelineRunHistoryService : IPipelineRunHistoryService
             HasMore = false
         });
 
-    public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
-        => Task.FromResult<PipelineRunSummary?>(null);
-
     public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
         => Task.FromResult(new PagedResult<PipelineRunSummary>
         {
@@ -33,6 +30,9 @@ public sealed class NullPipelineRunHistoryService : IPipelineRunHistoryService
             PageSize = pageSize,
             HasMore = false
         });
+
+    public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+        => Task.FromResult<PipelineRunSummary?>(null);
 
     public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
         => Task.CompletedTask;

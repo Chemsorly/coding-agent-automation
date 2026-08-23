@@ -17,6 +17,7 @@ namespace CodingAgentWebUI.UnitTests.Components;
 // - Test for graceful degradation when injected services throw (verify catch block prevents render failures)
 public class SidebarHealthIndicatorsTests : BunitContext
 {
+    private static readonly string[] DotnetLabels = ["dotnet"];
     private readonly Mock<ILogger> _mockLogger = new();
 
     private static InfrastructureHealthService CreateHealthService(
@@ -181,7 +182,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
         {
             AgentId = "agent-1",
             Hostname = "host-1",
-            Labels = new[] { "dotnet" }
+            Labels = DotnetLabels
         }, "conn-1");
         RegisterServices(CreateHealthService(), registry);
 
@@ -201,13 +202,13 @@ public class SidebarHealthIndicatorsTests : BunitContext
         {
             AgentId = "agent-1",
             Hostname = "host-1",
-            Labels = new[] { "dotnet" }
+            Labels = DotnetLabels
         }, "conn-1");
         registry.Register(new AgentRegistrationMessage
         {
             AgentId = "agent-2",
             Hostname = "host-2",
-            Labels = new[] { "dotnet" }
+            Labels = DotnetLabels
         }, "conn-2");
 
         RegisterServices(CreateHealthService(dbConfigured: true), registry);
@@ -229,13 +230,13 @@ public class SidebarHealthIndicatorsTests : BunitContext
         {
             AgentId = "agent-1",
             Hostname = "host-1",
-            Labels = new[] { "dotnet" }
+            Labels = DotnetLabels
         }, "conn-1");
         registry.Register(new AgentRegistrationMessage
         {
             AgentId = "agent-2",
             Hostname = "host-2",
-            Labels = new[] { "dotnet" }
+            Labels = DotnetLabels
         }, "conn-2");
         registry.TransitionStatus("agent-2", AgentStatus.Disconnected);
 
@@ -258,7 +259,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
         {
             AgentId = "agent-1",
             Hostname = "host-1",
-            Labels = new[] { "dotnet" }
+            Labels = DotnetLabels
         }, "conn-1");
         registry.TransitionStatus("agent-1", AgentStatus.Disconnected);
 
@@ -310,7 +311,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
         {
             AgentId = "agent-1",
             Hostname = "host-1",
-            Labels = new[] { "dotnet" }
+            Labels = DotnetLabels
         }, "conn-1");
         RegisterServices(CreateHealthService(), registry);
 
@@ -330,7 +331,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
         {
             AgentId = "agent-1",
             Hostname = "host-1",
-            Labels = new[] { "dotnet" }
+            Labels = DotnetLabels
         }, "conn-1");
 
         RegisterServices(registry: registry);

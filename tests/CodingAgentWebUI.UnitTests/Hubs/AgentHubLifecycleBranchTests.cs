@@ -17,6 +17,8 @@ namespace CodingAgentWebUI.UnitTests.Hubs;
 /// </summary>
 public sealed class AgentHubLifecycleBranchTests
 {
+    private static readonly string[] TwoLines = ["line1", "line2"];
+    private static readonly string[] OneLine = ["line1"];
     private readonly Mock<IAgentHubFacade> _facade = new();
     private readonly Mock<IChangeNotifier> _changeNotifier = new();
     private readonly Mock<IHubIssueOperations> _issueOps = new();
@@ -125,7 +127,7 @@ public sealed class AgentHubLifecycleBranchTests
             .Returns(new OutputRingBuffer());
 
         var hub = CreateHub();
-        await hub.ReportOutputLines(new JobId { Value = "job-1" }, new[] { "line1", "line2" });
+        await hub.ReportOutputLines(new JobId { Value = "job-1" }, TwoLines);
 
         run.OutputLines.Count.Should().Be(2);
         _changeNotifier.Verify(n => n.NotifyChange(), Times.Once);
@@ -139,7 +141,7 @@ public sealed class AgentHubLifecycleBranchTests
         _facade.Setup(f => f.GetOutputBuffer(It.IsAny<JobId>())).Returns(buffer);
 
         var hub = CreateHub();
-        var act = () => hub.ReportOutputLines(new JobId { Value = "job-ghost" }, new[] { "line1" });
+        var act = () => hub.ReportOutputLines(new JobId { Value = "job-ghost" }, OneLine);
 
         await act.Should().NotThrowAsync("null run must not throw");
         buffer.Count.Should().Be(1, "buffer should still be filled even when run is null");

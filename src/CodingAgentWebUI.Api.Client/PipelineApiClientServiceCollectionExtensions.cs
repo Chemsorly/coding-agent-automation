@@ -48,9 +48,9 @@ public static class PipelineApiClientServiceCollectionExtensions
                 new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler();
 
-        // Agent registry client — authenticated. /api/agents requires the OPERATOR policy, so this
-        // client only works when AgentApiKey is the master key (the monolith and Job Controller);
-        // a caller configured with a per-pod derived key gets 403.
+        // Agent registry client — authenticated. /api/agents requires the OPERATOR policy.
+        // Only works when AgentApiKey is the master key (monolith and Job Controller).
+        // Per-pod derived keys receive HTTP 403 from this endpoint.
         services.AddHttpClient<IPipelineApiAgentClient, PipelineApiAgentClient>(client =>
         {
             client.BaseAddress = new Uri(options.BaseUrl);
