@@ -116,7 +116,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
                 RepoProviderConfigId = "",
                 InitiatedBy = ConsolidationConstants.InitiatedBy,
                 TaskType = WorkItemTaskType.Consolidation,
-                AgentSelector = string.Join(",", agentSelectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
+                AgentSelector = AgentSelectorKey.From(agentSelectorLabels),
                 TimeoutSeconds = (int)liveConfig.AgentTimeout.TotalSeconds,
                 ConsolidationRunType = type,
                 ConsolidationTemplateId = templateId?.Value,

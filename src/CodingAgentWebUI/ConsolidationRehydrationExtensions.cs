@@ -75,7 +75,7 @@ internal static class ConsolidationRehydrationExtensions
                     RepoProviderConfigId = "",
                     InitiatedBy = ConsolidationConstants.InitiatedBy,
                     TaskType = WorkItemTaskType.Consolidation,
-                    AgentSelector = string.Join(",", selectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
+                    AgentSelector = AgentSelectorKey.From(selectorLabels),
                     TimeoutSeconds = (int)liveConfig.AgentTimeout.TotalSeconds,
                     ConsolidationRunType = run.Type,
                     ConsolidationTemplateId = run.TemplateId,

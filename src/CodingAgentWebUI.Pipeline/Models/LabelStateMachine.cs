@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// Validation is observational only — invalid transitions log a warning but do NOT block execution.
 /// </summary>
 /// <remarks>
-/// The valid transition map is documented in <c>.kiro/decisions.md</c>.
+/// The valid transition map is documented in <c>docs/internals/decisions.md</c>.
 /// Human-initiated transitions (re-labeling in GitHub UI) bypass this system and are not validated.
 /// The <c>agent:generated</c> label is orthogonal (can coexist with any state) and is excluded.
 /// </remarks>

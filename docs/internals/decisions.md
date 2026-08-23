@@ -7,6 +7,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Intent Extraction Sessions -->
 <!-- Session: 12 | Last run: 2026-08-14 | Decisions captured: 64 -->
 <!-- Session: 14 | Last run: 2026-08-22 | Updates: T12 audit — marked #2027/#2028/#2025/#1058/#1059 resolved; fixed ConsolidationDispatchHandler→ConsolidationWorkItemDispatchService; T10 decision added; T11 decisions added -->
+<!-- Session: 15 | Last run: 2026-08-22 | Updates: T22 — AgentSelectorKey.From() extracted; ScanPagedAsync private helper extracted in PostgresPipelineRunHistoryService; T6/T15/T16/T20 closed; LabelStateMachine.cs stale path fixed -->
 <!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition -->
 
 ---
@@ -1361,6 +1362,26 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 **T4 test guard:** `LayerBoundaryTests.AllBackgroundServices_AreRegisteredOrRetired` includes `HeartbeatMonitorService` in its retired allowlist with a "DELETED — do not add back" comment. The guard will fail if the class is ever re-introduced without a corresponding `AddHostedService` call.
 
 ---
+
+### AgentSelectorKey: canonical label-to-selector serialization (T22, arch-audit 2026-08-22)
+
+**Date:** 2026-08-22
+**Category:** architecture
+
+**Decision:** Extracted `AgentSelectorKey.From(IEnumerable<string>? labels)` into `CodingAgentWebUI.Pipeline.Models.AgentSelectorKey`. It normalises a label list into the comma-separated, ordinally-sorted string stored in `WorkItemEntity.AgentSelector` and `JobDistributionRequest.AgentSelector`.
+
+**Rationale:** Two callers (`ConsolidationDispatchService.cs` and `ConsolidationRehydrationExtensions.cs`) had byte-identical logic that had already co-changed 4 times. Divergence in sort order or separator would cause agent selection to silently return `null` — the lookup in `JobDeduplicationGuardService.SelectAgent` uses the same serialization to build the candidate key. A difference causes a silent no-match rather than a compile error. Centralising makes the invariant visible.
+
+**Reassess when:** A third call site appears, or the separator changes (both must move together).
+
+### ScanPagedAsync: shared over-fetch paging loop for PostgresPipelineRunHistoryService (T22, arch-audit 2026-08-22)
+
+**Date:** 2026-08-22
+**Category:** architecture
+
+**Decision:** Extracted `private ScanPagedAsync(db, page, pageSize, fetchBatch, include, ct)` in `PostgresPipelineRunHistoryService`. The two paged-scan methods (`GetRunHistoryPagedInternalAsync` and `GetRunHistoryPagedWithFeedbackFilterInternalAsync`) differed only by their fetch delegate (LINQ vs `FromSqlRaw`) and an optional extra predicate for feedback-only. Three shared bugfix commits had already touched both.
+
+**Reassess when:** A third paged query with a different fetch strategy is added — extend the same helper.
 
 ### Agent mode naming: ChatMode and WorkItemMode replace SignalRMode and K8sMode (T23, arch-audit 2026-08-22)
 
