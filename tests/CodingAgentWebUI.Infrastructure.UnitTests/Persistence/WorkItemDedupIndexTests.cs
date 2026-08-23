@@ -27,7 +27,7 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 /// What this does not cover is Postgres actually honouring the index; that is not the risk. The
 /// risk is the declaration drifting, and specifically the ordinals below.
 /// </summary>
-public class WorkItemDedupIndexTests
+public partial class WorkItemDedupIndexTests
 {
     private static IModel BuildModel()
     {
@@ -105,7 +105,7 @@ public class WorkItemDedupIndexTests
         // Parse the ordinals rather than substring-matching them: once any status reaches 10,
         // Contain("1") would be satisfied by "13" and the assertion would quietly stop meaning
         // anything.
-        var excluded = System.Text.RegularExpressions.Regex.Matches(filter, @"\d+")
+        var excluded = DigitsRegex().Matches(filter)
             .Select(m => int.Parse(m.Value))
             .ToHashSet();
 
@@ -116,4 +116,10 @@ public class WorkItemDedupIndexTests
             "would let a second work item be created while the first is still live, and omitting a " +
             "terminal one would block re-dispatch of an issue whose run had already ended");
     }
+}
+
+public partial class WorkItemDedupIndexTests
+{
+    [System.Text.RegularExpressions.GeneratedRegex(@"\d+")]
+    private static partial System.Text.RegularExpressions.Regex DigitsRegex();
 }

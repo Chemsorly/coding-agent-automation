@@ -157,7 +157,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             _mockLogger.Object);
     }
 
-    private KubernetesWorkDistributor CreateDistributor()
+    private static KubernetesWorkDistributor CreateDistributor()
     {
         var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
         mockApiClient

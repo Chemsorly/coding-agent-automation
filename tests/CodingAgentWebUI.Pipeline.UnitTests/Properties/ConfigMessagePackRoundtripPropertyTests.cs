@@ -20,6 +20,12 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Properties;
 /// </summary>
 public class ConfigMessagePackRoundtripPropertyTests
 {
+    private static readonly string[] CompilationArgs = ["build", "--no-restore"];
+    private static readonly string[] TestArgs = ["--no-build", "--logger", "trx"];
+    private static readonly string[] CoberturaPaths = ["TestResults/**/coverage.cobertura.xml"];
+    private static readonly string[] BlacklistPaths = ["node_modules/", ".git/"];
+    private static readonly string[] RequiredLabels = ["dotnet", "ci"];
+
     // Match production SignalR configuration
     private static readonly MessagePackSerializerOptions MsgPackOptions =
         ContractlessStandardResolverAllowPrivate.Options;
@@ -52,15 +58,15 @@ public class ConfigMessagePackRoundtripPropertyTests
                 DisplayName = displayName,
                 MatchLabels = labels.Take(labelCount).ToList(),
                 CompilationCommand = compilationCmd,
-                CompilationArguments = compilationCmd != null ? new[] { "build", "--no-restore" } : null,
+                CompilationArguments = compilationCmd != null ? CompilationArgs : null,
                 TestCommand = testCmd,
-                TestArguments = testCmd != null ? new[] { "--no-build", "--logger", "trx" } : null,
+                TestArguments = testCmd != null ? TestArgs : null,
                 CoverageThreshold = coverage,
                 Enabled = enabled,
                 ExecutionOrder = order,
                 CoverageReportFormat = format,
                 CoverageReportPaths = format == "cobertura"
-                    ? new[] { "TestResults/**/coverage.cobertura.xml" }
+                    ? CoberturaPaths
                     : null
             };
 
@@ -167,7 +173,7 @@ public class ConfigMessagePackRoundtripPropertyTests
                 Kind = kind,
                 ProviderType = providerType,
                 RepositoryRole = role,
-                BlacklistedPaths = hasBlacklist ? new[] { "node_modules/", ".git/" } : null,
+                BlacklistedPaths = hasBlacklist ? BlacklistPaths : null,
                 Secrets = hasSecrets
                     ? new Dictionary<string, string> { ["TOKEN"] = "secret-value", ["API_KEY"] = "key-123" }
                     : null,
@@ -179,7 +185,7 @@ public class ConfigMessagePackRoundtripPropertyTests
                 },
                 SetupSteps = hasSetupSteps ? steps.Take(stepCount).ToList() : null,
                 SteeringContent = hasSteeringContent ? "## Agent Guidelines\n\nFollow TDD." : null,
-                RequiredLabels = hasRequiredLabels ? new[] { "dotnet", "ci" } : null
+                RequiredLabels = hasRequiredLabels ? RequiredLabels : null
             };
 
         return Prop.ForAll(gen.ToArbitrary(), original =>

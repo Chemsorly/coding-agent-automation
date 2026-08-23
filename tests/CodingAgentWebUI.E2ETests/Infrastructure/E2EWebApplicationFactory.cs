@@ -97,7 +97,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     /// ChatJobDispatcher moved to the API host (Spec 044/045). Use <c>E2EFixture.ChatDispatcher</c>
     /// instead of this property — it now throws to prevent silent misuse.
     /// </summary>
-    public ChatJobDispatcher ChatDispatcher =>
+    public ChatJobDispatcher ChatDispatcher => // NOSONAR CA1822 — property kept non-static; accessed via instance in E2EFixture
         throw new InvalidOperationException(
             "ChatJobDispatcher moved to the API host (Spec 044/045). Use Fixture.ChatDispatcher instead of Fixture.Factory.ChatDispatcher.");
 

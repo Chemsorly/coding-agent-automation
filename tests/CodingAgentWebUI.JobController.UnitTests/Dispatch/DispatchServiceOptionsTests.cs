@@ -95,6 +95,8 @@ public sealed class DispatchServiceOptionsTests
 /// </summary>
 public sealed class DispatchServiceOptionsFactoryTests
 {
+    private static readonly string[] ExpectedPvcPool = ["pvc-1", "pvc-2"];
+
     private static IConfiguration BuildConfig(Dictionary<string, string?> values) =>
         new ConfigurationBuilder()
             .AddInMemoryCollection(values)

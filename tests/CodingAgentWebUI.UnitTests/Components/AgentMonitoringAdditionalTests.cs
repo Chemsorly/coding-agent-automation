@@ -142,7 +142,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
         Assert.NotNull(_onOutputLines);
 
         // No run selected — _selectedRunId is null → handler must return early
-        await cut.InvokeAsync(() => _onOutputLines!("some-run-id", new[] { "line1" }));
+        await cut.InvokeAsync(() => _onOutputLines!("some-run-id", OneLine));
 
         // Modal is not open — output lines not visible
         Assert.DoesNotContain("line1", cut.Markup);
@@ -163,7 +163,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
         });
 
         // Send output lines for a different run — should be ignored
-        await cut.InvokeAsync(() => _onOutputLines!("run-B", new[] { "different-run-line" }));
+        await cut.InvokeAsync(() => _onOutputLines!("run-B", DiffLine));
 
         // The output should not be added (run-B lines filtered out)
         var lines = GetField<List<string>>(cut.Instance, "_activeModalOutputLines");
@@ -185,7 +185,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
         });
 
         // Send output lines for the correct run
-        await cut.InvokeAsync(() => _onOutputLines!("run-C", new[] { "hello", "world" }));
+        await cut.InvokeAsync(() => _onOutputLines!("run-C", TwoLines));
 
         var lines = GetField<List<string>>(cut.Instance, "_activeModalOutputLines");
         lines.Should().HaveCount(2);

@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Architecture;
 /// - Agent projects must NOT reference Orchestration
 /// - Agent must NOT reference Infrastructure.Persistence (T9 invariant — compile-time enforcement)
 /// </summary>
-public class LayerBoundaryTests
+public partial class LayerBoundaryTests
 {
     // Assembly anchors for each layer
     private static readonly System.Reflection.Assembly PipelineAssembly =
@@ -351,15 +351,15 @@ public class LayerBoundaryTests
             {
                 if (!line.Contains("AddHostedService")) continue;
                 // Extract from AddHostedService<TypeName>
-                var genericMatch = System.Text.RegularExpressions.Regex.Match(line, @"AddHostedService<([A-Za-z0-9_.]+)>");
+                var genericMatch = AddHostedServiceRegex().Match(line);
                 if (genericMatch.Success)
                     registeredTypes.Add(genericMatch.Groups[1].Value.Split('.')[^1]);
                 // Extract from sp.GetRequiredService<TypeName>() in lambda
-                var lambdaMatch = System.Text.RegularExpressions.Regex.Match(line, @"GetRequiredService<([A-Za-z0-9_.]+)>\s*\(\)");
+                var lambdaMatch = GetRequiredServiceRegex().Match(line);
                 if (lambdaMatch.Success)
                     registeredTypes.Add(lambdaMatch.Groups[1].Value.Split('.')[^1]);
                 // Extract from new TypeName(
-                var newMatch = System.Text.RegularExpressions.Regex.Match(line, @"new ([A-Za-z0-9_.]+)\s*\(");
+                var newMatch = NewInstanceRegex().Match(line);
                 if (newMatch.Success)
                     registeredTypes.Add(newMatch.Groups[1].Value.Split('.')[^1]);
             }
@@ -381,8 +381,7 @@ public class LayerBoundaryTests
             var content = File.ReadAllText(file);
             if (!content.Contains(": BackgroundService") && !content.Contains(": LeaderElectedPollingService")) continue;
 
-            var classMatch = System.Text.RegularExpressions.Regex.Match(content,
-                @"(?:public|internal)\s+sealed?\s+(?:partial\s+)?class\s+([A-Za-z0-9_]+)");
+            var classMatch = ClassNameRegex().Match(content);
             if (!classMatch.Success) continue;
 
             var typeName = classMatch.Groups[1].Value;
@@ -417,8 +416,7 @@ public class LayerBoundaryTests
             foreach (var line in lines)
             {
                 if (!line.Contains("AddHostedService")) continue;
-                var match = System.Text.RegularExpressions.Regex.Match(line,
-                    @"GetRequiredService<([A-Za-z0-9_.]+)>\s*\(\)");
+                var match = GetRequiredServiceRegex().Match(line);
                 if (match.Success)
                     registeredTypes.Add(match.Groups[1].Value.Split('.')[^1]);
             }
@@ -462,4 +460,20 @@ public class LayerBoundaryTests
             $"{string.Join(", ", violations)}. " +
             "Complete T8 to remove these references.");
     }
+}
+
+// Source-generated regexes (SYSLIB1045) — must be in a partial class
+public partial class LayerBoundaryTests
+{
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?:public|internal)\s+sealed?\s+(?:partial\s+)?class\s+([A-Za-z0-9_]+)")]
+    private static partial System.Text.RegularExpressions.Regex ClassNameRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"AddHostedService<([A-Za-z0-9_.]+)>")]
+    private static partial System.Text.RegularExpressions.Regex AddHostedServiceRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"GetRequiredService<([A-Za-z0-9_.]+)>\s*\(\)")]
+    private static partial System.Text.RegularExpressions.Regex GetRequiredServiceRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"new ([A-Za-z0-9_.]+)\s*\(")]
+    private static partial System.Text.RegularExpressions.Regex NewInstanceRegex();
 }

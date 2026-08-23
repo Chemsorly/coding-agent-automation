@@ -34,7 +34,7 @@ public class EfKeyValueStoreTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private IKeyValueStore CreateStore()
+    private EfKeyValueStore CreateStore()
         => new EfKeyValueStore(new EfKeyValueStoreTestDbContextFactory(_dbOptions));
 
     // ── GetAsync ─────────────────────────────────────────────────────────

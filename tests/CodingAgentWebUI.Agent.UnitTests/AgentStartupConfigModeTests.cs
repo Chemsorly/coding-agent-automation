@@ -12,7 +12,7 @@ public class AgentStartupConfigModeTests
     // ── Setup: AGENT_API_KEY and ORCHESTRATOR_URL are required by ResolveAsync.
     // We inject them via environment variables within each test to avoid polluting the test host.
 
-    private static IDisposable SetRequiredEnvVars(string? agentApiKey = "test-key", string? orchestratorUrl = "http://localhost:5000")
+    private static EnvVarCleanup SetRequiredEnvVars(string? agentApiKey = "test-key", string? orchestratorUrl = "http://localhost:5000")
     {
         Environment.SetEnvironmentVariable(AgentDefaults.EnvAgentApiKey, agentApiKey);
         Environment.SetEnvironmentVariable(AgentDefaults.EnvOrchestratorUrl, orchestratorUrl);

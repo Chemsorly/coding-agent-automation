@@ -29,6 +29,8 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class AgentCodingAdditionalTests : BunitContext
 {
+    private static readonly string[] DefaultTemplateIds = ["t-1"];
+
     private readonly Mock<IConfigurationStore> _mockStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();

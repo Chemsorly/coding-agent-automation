@@ -13,6 +13,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 [Collection(E2ECollection.Name)]
 public sealed class PrReviewPipelineTests : E2ETestBase
 {
+    private static readonly string[] AgentNextLabel = ["agent:next"];
+
     public PrReviewPipelineTests(E2EFixture fixture) : base(fixture) { }
 
     /// <summary>
@@ -34,7 +36,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase
             Identifier = identifier,
             Title = title,
             Description = description,
-            Labels = new[] { "agent:next" }
+            Labels = AgentNextLabel
         });
 
     [Fact]
@@ -47,7 +49,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase
             Identifier = "99",
             Title = "Fix null reference in handler",
             Description = "Resolves #42",
-            Labels = new[] { "agent:next" },
+            Labels = AgentNextLabel,
             BranchName = "fix/null-ref",
             TargetBranch = "main",
             Url = "https://github.com/e2e-org/e2e-repo/pull/99",
@@ -148,7 +150,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase
             Identifier = "77",
             Title = "Add logging middleware",
             Description = "Adds structured logging",
-            Labels = new[] { "agent:next" },
+            Labels = AgentNextLabel,
             BranchName = "feature/logging",
             TargetBranch = "main",
             Url = "https://github.com/e2e-org/e2e-repo/pull/77",
@@ -228,7 +230,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase
             Identifier = "55",
             Title = "Update dependencies",
             Description = "Bumps all packages",
-            Labels = new[] { "agent:next" },
+            Labels = AgentNextLabel,
             BranchName = "chore/deps",
             TargetBranch = "main",
             Url = "https://github.com/e2e-org/e2e-repo/pull/55",

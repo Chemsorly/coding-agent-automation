@@ -17,6 +17,13 @@ namespace CodingAgentWebUI.Api.IntegrationTests;
 [Collection(ApiIntegrationTestCollection.Name)]
 public sealed class ConfigEndpointTests
 {
+    private static readonly System.Text.Json.JsonSerializerOptions CaseInsensitiveOptions =
+        new() { PropertyNameCaseInsensitive = true };
+    private static readonly System.Text.Json.JsonSerializerOptions CamelCaseEnumOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
     private readonly ApiWebApplicationFactory _factory;
     private readonly HttpClient _client;
 
@@ -421,7 +428,7 @@ public sealed class ConfigEndpointTests
 
         // Deserialize the bundle and inspect the ProviderConfig blob
         var bundle = JsonSerializer.Deserialize<ConfigBundle>(json,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            CaseInsensitiveOptions);
         bundle.Should().NotBeNull();
         bundle!.ProviderConfigs.Should().NotBeNullOrEmpty();
 
@@ -600,11 +607,7 @@ public sealed class ConfigEndpointTests
             }
         };
 
-        var bundleJson = JsonSerializer.Serialize(bundle, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-        });
+        var bundleJson = JsonSerializer.Serialize(bundle, CamelCaseEnumOptions);
 
         using var content = new MultipartFormDataContent();
         content.Add(new ByteArrayContent(Encoding.UTF8.GetBytes(bundleJson))
@@ -617,7 +620,7 @@ public sealed class ConfigEndpointTests
             "POST /api/config/import must succeed with a valid bundle");
 
         var importResult = await importResponse.Content.ReadFromJsonAsync<ImportExportResult>(
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            CaseInsensitiveOptions);
         importResult.Should().NotBeNull();
         importResult!.Success.Should().BeTrue();
 
