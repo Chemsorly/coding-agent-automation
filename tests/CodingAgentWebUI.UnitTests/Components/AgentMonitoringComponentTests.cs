@@ -97,7 +97,7 @@ public class AgentMonitoringComponentTests : BunitContext
         // Expose the list for test use via a container tag
         Services.AddSingleton(pendingJobsList);
 
-        Services.AddSingleton(TimeProvider.System);
+        Services.AddSingleton<TimeProvider>(new FakeTimeProvider());
 
         // Register AgentMonitoringPageServiceDependencies so DI can auto-construct AgentMonitoringPageService.
         // Spec 045: IActiveRunQueryService removed — active runs derived from IPipelineApiRunHistoryClient.
@@ -599,19 +599,18 @@ public class AgentMonitoringComponentTests : BunitContext
 
         var cut = Render<AgentMonitoring>();
 
-        // Advance fake clock past 30s staleness threshold.
-        // _lastSuccessfulRefresh was set at init (fake time T=0), so Clock.GetUtcNow() - _lastSuccessfulRefresh > 30s.
-        // _lastRefreshFailed remains false — this tests the pure clock-based staleness path.
-        // TODO: Race condition — the real System.Threading.Timer (1s initial, 2s interval) could fire between Advance and assertion, resetting _lastSuccessfulRefresh to T+31 and making staleness 0s. Consider disposing the timer or mocking RefreshDataAsync to prevent successful refresh after init.
-        fakeTime.Advance(TimeSpan.FromSeconds(31));
-
-        // Force a re-render so the component re-evaluates the staleness expression
+        // Set _lastSuccessfulRefresh directly to 31s in the past so Clock.GetUtcNow() - _lastSuccessfulRefresh > 30s.
+        // We do NOT call fakeTime.Advance() because that would also fire the component's ITimer (1s due time),
+        // triggering RefreshTick which would reset _lastSuccessfulRefresh and defeat the test.
         await cut.InvokeAsync(() =>
         {
-            // TODO: Using reflection to call StateHasChanged is brittle; consider bUnit's cut.Render() if available in future versions
-            var method = typeof(Microsoft.AspNetCore.Components.ComponentBase)
+            var field = cut.Instance.GetType()
+                .GetField("_lastSuccessfulRefresh", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            field.SetValue(cut.Instance, fakeTime.GetUtcNow().Subtract(TimeSpan.FromSeconds(31)));
+
+            var stateChanged = typeof(Microsoft.AspNetCore.Components.ComponentBase)
                 .GetMethod("StateHasChanged", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-            method.Invoke(cut.Instance, null);
+            stateChanged.Invoke(cut.Instance, null);
         });
 
         var indicator = cut.Find(".freshness-indicator");
@@ -629,34 +628,27 @@ public class AgentMonitoringComponentTests : BunitContext
 
         var cut = Render<AgentMonitoring>();
 
-        // After init succeeds, change mock to throw on subsequent timer-triggered calls
+        // After init succeeds, make subsequent refreshes throw
         _mockRunHistoryClient.Setup(c => c.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("connection lost"));
 
-        // Wait for real timer to fire (fires after 1s initially) — it will throw and set _lastRefreshFailed.
-        // The timer callback is async void so we poll until the flag is set, with a generous timeout for CI.
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(250));
-
-            // Check if the component has set _lastRefreshFailed via reflection
-            var failedField = cut.Instance.GetType()
-                .GetField("_lastRefreshFailed", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (failedField is not null && (bool)failedField.GetValue(cut.Instance)!)
-                break;
-        }
-
-        // Force a re-render so the component re-evaluates the staleness expression
+        // Fire RefreshTick directly — no real timer needed.
+        // RefreshTick is async void; invoking it via InvokeAsync ensures bUnit processes
+        // the resulting StateHasChanged before we assert.
         await cut.InvokeAsync(() =>
         {
-            var method = typeof(Microsoft.AspNetCore.Components.ComponentBase)
-                .GetMethod("StateHasChanged", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-            method.Invoke(cut.Instance, null);
+            var method = cut.Instance.GetType()
+                .GetMethod("RefreshTick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            method.Invoke(cut.Instance, [null]);
         });
 
-        var indicator = cut.Find(".freshness-indicator");
-        Assert.Contains("freshness-warning", indicator.ClassName);
+        // Wait for the async void RefreshTick to complete and re-render
+        cut.WaitForAssertion(() =>
+        {
+            var indicator = cut.Find(".freshness-indicator");
+            Assert.Contains("freshness-warning", indicator.ClassName);
+        }, timeout: TimeSpan.FromSeconds(5));
+
         Assert.Contains("(refresh failed)", cut.Markup);
     }
 
@@ -669,9 +661,6 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public async Task FreshnessIndicator_RendersWarningAutomatically_WhenRefreshFails()
     {
-        // FakeTimeProvider registered for consistency with other freshness tests in this class.
-        // The System.Threading.Timer uses real wall-clock time (not injected TimeProvider),
-        // so this doesn't affect timer firing — it only controls Clock.GetUtcNow() in the render path.
         var fakeTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
         Services.AddSingleton<TimeProvider>(fakeTime);
 
@@ -681,15 +670,21 @@ public class AgentMonitoringComponentTests : BunitContext
         _mockRunHistoryClient.Setup(c => c.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("connection lost"));
 
-        // Wait for the timer to fire and the component to self-render with the failure state.
-        // We do NOT manually invoke StateHasChanged via reflection — the fix should make
-        // the component re-render itself.
+        // Fire RefreshTick directly; its async void body calls StateHasChanged after the throw,
+        // so WaitForAssertion below picks up the re-render without manual StateHasChanged.
+        await cut.InvokeAsync(() =>
+        {
+            var method = cut.Instance.GetType()
+                .GetMethod("RefreshTick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            method.Invoke(cut.Instance, [null]);
+        });
+
         cut.WaitForAssertion(() =>
         {
             var indicator = cut.Find(".freshness-indicator");
             Assert.Contains("freshness-warning", indicator.ClassName);
             Assert.Contains("(refresh failed)", cut.Markup);
-        }, timeout: TimeSpan.FromSeconds(10));
+        }, timeout: TimeSpan.FromSeconds(5));
     }
 
     /// <summary>
@@ -775,22 +770,22 @@ public class AgentMonitoringComponentTests : BunitContext
         runningRun.Status = ConsolidationRunStatus.Succeeded;
         runningRun.CompletedAtUtc = DateTimeOffset.UtcNow;
 
-        // Wait for the real timer to fire (1s initial delay, then 5s interval).
-        // Poll until the consolidation run disappears from markup.
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        var disappeared = false;
-        while (DateTime.UtcNow < deadline)
+        // Fire RefreshTick directly instead of waiting for the real timer.
+        // RefreshTick calls RefreshDataAsync(includeConsolidation: true), which polls the mock
+        // and updates the consolidation run list. InvokeAsync drains the render queue before returning.
+        await cut.InvokeAsync(() =>
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(500));
-            if (!cut.Markup.Contains(runningRun.RunId[..8]))
-            {
-                disappeared = true;
-                break;
-            }
-        }
+            var method = cut.Instance.GetType()
+                .GetMethod("RefreshTick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            method.Invoke(cut.Instance, [null]);
+        });
 
-        // Assert: the completed consolidation run is no longer shown as active
-        Assert.True(disappeared,
+        // Wait for the async void RefreshTick body to complete and the component to re-render
+        cut.WaitForAssertion(
+            () => Assert.DoesNotContain(runningRun.RunId[..8], cut.Markup),
+            timeout: TimeSpan.FromSeconds(5));
+
+        Assert.True(!cut.Markup.Contains(runningRun.RunId[..8]),
             "Completed consolidation run should disappear from Active Runs after RefreshTick polls — " +
             "indicates RefreshTick includes consolidation state in its polling cycle.");
     }

@@ -53,7 +53,7 @@ public partial class AgentMonitoring : IAsyncDisposable
     private PipelineRunSummary? _selectedHistoryRun;
     private bool _showHistoryDetailModal;
     private bool _disposed;
-    private Timer? _refreshTimer;
+    private ITimer? _refreshTimer;
     private bool _showDisconnectConfirm;
     private DateTimeOffset _lastSuccessfulRefresh;
     private bool _lastRefreshFailed;
@@ -99,7 +99,7 @@ public partial class AgentMonitoring : IAsyncDisposable
         }
 
         // Refresh every 5 seconds for heartbeat/elapsed updates
-        _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
+        _refreshTimer = Clock.CreateTimer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
 
         await PageService.InitializeAsync();
     }
@@ -439,7 +439,7 @@ public partial class AgentMonitoring : IAsyncDisposable
         _stepTransitionSub?.Dispose();
         _runCompletedSub?.Dispose();
 
-        _refreshTimer?.Dispose(); // NOSONAR — System.Threading.Timer has no DisposeAsync
+        _refreshTimer?.Dispose();
         ConsolidationService.OnChange -= HandleStateChanged;
 
         // Unsubscribe from the run group if a modal is still open (circuit disconnect / tab close)

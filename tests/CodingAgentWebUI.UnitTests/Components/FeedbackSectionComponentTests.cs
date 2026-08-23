@@ -9,6 +9,7 @@ using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.JSInterop;
 using Moq;
 using Serilog;
@@ -63,7 +64,7 @@ public class FeedbackSectionComponentTests : BunitContext
         Services.AddSingleton<IPendingWorkQuery>(Mock.Of<IPendingWorkQuery>(q =>
             q.GetPendingJobsAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<PendingJob>>(Array.Empty<PendingJob>())));
 
-        Services.AddSingleton(TimeProvider.System);
+        Services.AddSingleton<TimeProvider>(new FakeTimeProvider());
 
         // Spec 045: IAgentHubConnection and IPipelineApiRunHistoryClient now injected by AgentMonitoring.
         // Registered as Singleton (not Scoped) to prevent DI from calling Dispose() on the mock proxy

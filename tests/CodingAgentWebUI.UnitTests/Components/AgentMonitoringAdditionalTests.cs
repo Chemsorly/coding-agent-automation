@@ -10,6 +10,7 @@ using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.JSInterop;
 using Moq;
 using Serilog;
@@ -118,7 +119,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
         Services.AddSingleton<IPendingWorkQuery>(Mock.Of<IPendingWorkQuery>(q =>
             q.GetPendingJobsAsync(It.IsAny<CancellationToken>()) ==
             Task.FromResult<IReadOnlyList<PendingJob>>(Array.Empty<PendingJob>())));
-        Services.AddSingleton(TimeProvider.System);
+        Services.AddSingleton<TimeProvider>(new FakeTimeProvider());
         Services.AddSingleton<IAgentHubConnection>(_mockHub.Object);
         Services.AddSingleton<IPipelineApiRunHistoryClient>(_mockRunHistoryClient.Object);
 
@@ -705,8 +706,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
             await (Task)method!.Invoke(cut.Instance, [("org/repo#300", "ip-1")])!;
         });
 
-        // Verify RemoveFromQueueAsync was called via the PageService
-        // The job should disappear after the re-render (the mock now returns empty list)
+        // Verify the component rendered without exceptions after RemoveFromQueueAsync.
         Assert.NotNull(cut.Markup);
     }
 
