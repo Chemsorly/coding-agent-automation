@@ -6,9 +6,11 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Architecture;
 /// Enforces layer dependency rules to prevent architectural erosion.
 /// These tests encode the project dependency direction rules from the architecture analysis:
 /// - Pipeline must NOT reference Infrastructure or Orchestration
-/// - Infrastructure must NOT reference Orchestration or WebUI
+/// - Infrastructure.Providers must NOT reference Orchestration or WebUI
+/// - Infrastructure.Persistence must NOT reference Orchestration or WebUI
+/// - Infrastructure.Persistence references Providers (one-way)
 /// - Agent projects must NOT reference Orchestration
-/// - Agent (main) must NOT reference Infrastructure (confirmed violation — tracked here to prevent regression)
+/// - Agent must NOT reference Infrastructure.Persistence (T9 invariant — compile-time enforcement)
 /// </summary>
 public class LayerBoundaryTests
 {
@@ -16,8 +18,14 @@ public class LayerBoundaryTests
     private static readonly System.Reflection.Assembly PipelineAssembly =
         typeof(Pipeline.Services.PipelineOrchestrationService).Assembly;
 
-    private static readonly System.Reflection.Assembly InfrastructureAssembly =
+    // T9 split: Infrastructure is now two assemblies.
+    // Providers: no EF Core, no Npgsql — safe for untrusted agent pods.
+    // Persistence: EF Core + Npgsql — API and orchestrator only.
+    private static readonly System.Reflection.Assembly InfrastructureProvidersAssembly =
         typeof(CodingAgentWebUI.Infrastructure.GitHub.GitHubRepositoryProvider).Assembly;
+
+    private static readonly System.Reflection.Assembly InfrastructurePersistenceAssembly =
+        typeof(CodingAgentWebUI.Infrastructure.Persistence.PipelineDbContext).Assembly;
 
     private static readonly System.Reflection.Assembly AgentAssembly =
         typeof(CodingAgentWebUI.Agent.WorkItemAgentService).Assembly;
@@ -92,29 +100,45 @@ public class LayerBoundaryTests
     [Fact]
     public void Infrastructure_ShouldNot_DependOnOrchestration()
     {
-        var result = Types.InAssembly(InfrastructureAssembly)
-            .ShouldNot()
-            .HaveDependencyOn("CodingAgentWebUI.Orchestration")
-            .GetResult();
+        // Check both Providers and Persistence assemblies — neither should reach Orchestration.
+        foreach (var (assembly, name) in new[]
+        {
+            (InfrastructureProvidersAssembly, "Infrastructure.Providers"),
+            (InfrastructurePersistenceAssembly, "Infrastructure.Persistence"),
+        })
+        {
+            var result = Types.InAssembly(assembly)
+                .ShouldNot()
+                .HaveDependencyOn("CodingAgentWebUI.Orchestration")
+                .GetResult();
 
-        Assert.True(result.IsSuccessful,
-            $"Infrastructure must not reference Orchestration. Violating types: {FormatViolations(result)}");
+            Assert.True(result.IsSuccessful,
+                $"{name} must not reference Orchestration. Violating types: {FormatViolations(result)}");
+        }
     }
 
     [Fact]
     public void Infrastructure_ShouldNot_DependOnWebUI()
     {
-        var result = Types.InAssembly(InfrastructureAssembly)
-            .ShouldNot()
-            .HaveDependencyOnAny(
-                "CodingAgentWebUI.Hubs",
-                "CodingAgentWebUI.Services",
-                "CodingAgentWebUI.Components",
-                "CodingAgentWebUI.Models")
-            .GetResult();
+        // Check both Providers and Persistence assemblies — neither should reach WebUI.
+        foreach (var (assembly, name) in new[]
+        {
+            (InfrastructureProvidersAssembly, "Infrastructure.Providers"),
+            (InfrastructurePersistenceAssembly, "Infrastructure.Persistence"),
+        })
+        {
+            var result = Types.InAssembly(assembly)
+                .ShouldNot()
+                .HaveDependencyOnAny(
+                    "CodingAgentWebUI.Hubs",
+                    "CodingAgentWebUI.Services",
+                    "CodingAgentWebUI.Components",
+                    "CodingAgentWebUI.Models")
+                .GetResult();
 
-        Assert.True(result.IsSuccessful,
-            $"Infrastructure must not reference WebUI namespaces. Violating types: {FormatViolations(result)}");
+            Assert.True(result.IsSuccessful,
+                $"{name} must not reference WebUI namespaces. Violating types: {FormatViolations(result)}");
+        }
     }
 
     [Fact]
@@ -250,6 +274,44 @@ public class LayerBoundaryTests
             "and this allowlist, and confirm they do not violate the lock-ordering rules.");
     }
 
+    // ── T9: Agent must not depend on Infrastructure.Persistence ───────────
+    // Guard test: ensures the Agent assembly never gains a dependency on the
+    // Persistence assembly. The T9 split is complete — this test now uses a
+    // typeof() anchor against the real Persistence assembly.
+    // Starts green and must stay green. Regression guard, not a red-first test.
+
+    [Fact]
+    public void Agent_ShouldNot_DependOnInfrastructurePersistence()
+    {
+        var result = Types.InAssembly(AgentAssembly)
+            .ShouldNot()
+            .HaveDependencyOn("CodingAgentWebUI.Infrastructure.Persistence")
+            .GetResult();
+
+        Assert.True(result.IsSuccessful,
+            $"Agent must not reference Infrastructure.Persistence. " +
+            $"The Agent runs in untrusted job pods — Npgsql and EF Core must never " +
+            $"appear in its dependency graph. Violating types: {FormatViolations(result)}");
+    }
+
+    // ── T9 structural rule: Persistence must not reference Providers in reverse ─
+    // Providers references nothing in Persistence. Persistence references Providers (one-way).
+    // This test catches if someone accidentally adds a Providers → Persistence dependency.
+
+    [Fact]
+    public void InfrastructureProviders_ShouldNot_DependOnInfrastructurePersistence()
+    {
+        var result = Types.InAssembly(InfrastructureProvidersAssembly)
+            .ShouldNot()
+            .HaveDependencyOn("CodingAgentWebUI.Infrastructure.Persistence")
+            .GetResult();
+
+        Assert.True(result.IsSuccessful,
+            $"Infrastructure.Providers must not reference Infrastructure.Persistence. " +
+            $"The dependency is one-way: Persistence → Providers. " +
+            $"Violating types: {FormatViolations(result)}");
+    }
+
     private static string FormatViolations(TestResult result)
     {
         if (result.IsSuccessful || result.FailingTypes == null)
@@ -266,17 +328,11 @@ public class LayerBoundaryTests
     [Fact]
     public void AllBackgroundServices_AreRegisteredOrRetired()
     {
-        // ── Step 1: discover all concrete BackgroundService/IHostedService types across src/ ──
-        var srcAssemblies = new[]
-        {
-            typeof(CodingAgentWebUI.Orchestration.RunLifecycleManager).Assembly,
-            typeof(CodingAgentWebUI.Api.ApiHostMarker).Assembly,
-            typeof(CodingAgentWebUI.Agent.WorkItemAgentService).Assembly,
-            typeof(CodingAgentWebUI.Infrastructure.GitHub.GitHubRepositoryProvider).Assembly,
-            typeof(Pipeline.Services.PipelineOrchestrationService).Assembly,
-        };
-
-        // Also source-scan the monolith and JobController assemblies
+        // ── Step 1: source-scan src/ for AddHostedService registrations ──
+        // (reflection-based assembly scanning is not used here — the T4 check is
+        // intentionally source-file-based to catch services that compile but are
+        // never registered. The srcAssemblies variable that previously appeared
+        // here was dead code and has been removed — T9 2026-08-23.)
         var srcDir = Path.Combine(RepoRoot, "src");
 
         var registeredTypes = new HashSet<string>(StringComparer.Ordinal);
@@ -317,11 +373,7 @@ public class LayerBoundaryTests
             // "HeartbeatMonitorService", // DELETED — do not add back
         };
 
-        // ── Step 3: find all concrete BackgroundService subclasses in src assemblies ──
-        var backgroundServiceType = typeof(Microsoft.Extensions.Hosting.BackgroundService);
-        var hostedServiceType = typeof(Microsoft.Extensions.Hosting.IHostedService);
-
-        // Also scan for classes in source files that inherit BackgroundService
+        // ── Step 3: find all concrete BackgroundService subclasses in src files ──
         var unregistered = new List<string>();
         foreach (var file in Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))

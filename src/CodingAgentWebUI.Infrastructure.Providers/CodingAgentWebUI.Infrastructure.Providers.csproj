@@ -7,10 +7,11 @@
   </PropertyGroup>
 
   <!--
-    InternalsVisibleTo: Standard pattern for unit testing sealed services with external dependencies.
-    Internal constructors accept factory/mock parameters (e.g., GitHubAppAuthService accepts a
-    Func<string, Uri, IGitHubClient> clientFactory), and test projects access them via this attribute.
-    Prefer this approach over making types non-sealed or exposing public test-only constructors.
+    InternalsVisibleTo: copied from CodingAgentWebUI.Infrastructure as a starting point.
+    Audit which test projects actually access internal Providers types and trim accordingly.
+    InProcessDistributedLockProvider and PostgresDistributedLockProvider (both internal) have
+    moved to Infrastructure.Persistence — those test projects may not need access to Providers
+    internals at all, but the entries are harmless.
   -->
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
@@ -20,13 +21,11 @@
 
   <ItemGroup>
     <PackageReference Include="LibGit2Sharp" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Resilience" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
     <PackageReference Include="NGitLab" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Octokit" />
     <PackageReference Include="Serilog" />
     <PackageReference Include="Serilog.Sinks.OpenTelemetry" />

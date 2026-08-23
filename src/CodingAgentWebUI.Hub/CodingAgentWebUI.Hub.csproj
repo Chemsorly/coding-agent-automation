@@ -16,7 +16,8 @@
   <ItemGroup>
     <ProjectReference Include="..\CodingAgentWebUI.Orchestration\CodingAgentWebUI.Orchestration.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
-    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure.Providers\CodingAgentWebUI.Infrastructure.Providers.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure.Persistence\CodingAgentWebUI.Infrastructure.Persistence.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.Pipeline.CodeReview\CodingAgentWebUI.Pipeline.CodeReview.csproj" />
   </ItemGroup>
 </Project>

@@ -28,7 +28,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
-    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure.Providers\CodingAgentWebUI.Infrastructure.Providers.csproj" />
     <ProjectReference Include="..\KiroCliLib\KiroCliLib.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.Agent.KiroCli\CodingAgentWebUI.Agent.KiroCli.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.Agent.OpenCode\CodingAgentWebUI.Agent.OpenCode.csproj" />
