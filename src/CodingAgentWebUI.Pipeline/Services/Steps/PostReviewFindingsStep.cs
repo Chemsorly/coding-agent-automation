@@ -119,6 +119,24 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         // Step 5: Parse structured findings per agent + retry loop
         var allFindings = await ParseFindingsWithRetryAsync(context, inlineSettings, ct);
 
+        // Log per-agent parsing summary to diagnose missing inline comments
+        var totalParsed = allFindings.Count;
+        var withLocation = allFindings.Count(f => f.FilePath is not null && f.LineNumber > 0);
+        var withoutLocation = totalParsed - withLocation;
+        context.Logger.Information(
+            "PR #{PrNumber} inline comment pipeline: parsed {Total} findings total — " +
+            "{WithLocation} have file:line, {WithoutLocation} have no location (body-only)",
+            prNumber, totalParsed, withLocation, withoutLocation);
+
+        foreach (var group in allFindings.GroupBy(f => f.AgentName))
+        {
+            var loc = group.Count(f => f.FilePath is not null && f.LineNumber > 0);
+            var noLoc = group.Count(f => f.FilePath is null || f.LineNumber <= 0);
+            context.Logger.Debug(
+                "PR #{PrNumber} agent '{AgentName}': {Total} findings — {WithLoc} with location, {NoLoc} without",
+                prNumber, group.Key, group.Count(), loc, noLoc);
+        }
+
         // Step 6: Select/filter/cap/consolidate via FindingsSelector
         var findingsWithLocation = allFindings
             .Where(f => f.FilePath is not null && f.LineNumber > 0)
@@ -126,9 +144,30 @@ public sealed class PostReviewFindingsStep : IPipelineStep
 
         var (comments, excludedCount) = FindingsSelector.Select(findingsWithLocation, inlineSettings);
 
+        // Log how many were dropped by threshold and cap
+        var belowThreshold = findingsWithLocation.Count(
+            f => (int)f.Severity < (int)inlineSettings.SeverityThreshold);
+        context.Logger.Information(
+            "PR #{PrNumber} FindingsSelector: {EligibleIn} findings with location → " +
+            "{BelowThreshold} below severity threshold ({Threshold}), " +
+            "{ExcludedByCap} excluded by cap ({Cap}), " +
+            "{Selected} selected → {CommentCount} comment(s) after consolidation",
+            prNumber,
+            findingsWithLocation.Count,
+            belowThreshold,
+            inlineSettings.SeverityThreshold,
+            excludedCount,
+            inlineSettings.MaxInlineComments,
+            findingsWithLocation.Count - belowThreshold,
+            comments.Count);
+
         // Step 6.5: Filter comments to only those targeting lines within diff hunks.
         // GitHub's API returns 422 if a comment targets a line outside the diff.
         var validComments = await FilterCommentsToDiffHunksAsync(context, comments, ct);
+
+        context.Logger.Information(
+            "PR #{PrNumber} diff-hunk filter: {Before} comment(s) → {After} valid (targeting lines in diff)",
+            prNumber, comments.Count, validComments.Count);
 
         // Step 7: Build ReviewSubmission with CommitId
         string? commitId = null;
@@ -154,6 +193,9 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         {
             await context.RepoProvider.SubmitPullRequestReviewAsync(prNumber, submission, ct);
             context.Run.InlineCommentsPosted = validComments.Count;
+            context.Logger.Information(
+                "PR #{PrNumber} review submitted: {CommentCount} inline comment(s), type={ReviewType}, commitId={CommitId}",
+                prNumber, validComments.Count, reviewType, commitId ?? "none");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
