@@ -458,14 +458,8 @@ public partial class AgentMonitoring : IAsyncDisposable
 
         // Dispose the hub connection to release the SignalR connection on page navigation
         // rather than waiting for the entire circuit to tear down.
-        if (HubConnection is IAsyncDisposable asyncDisposable)
-        {
-            await asyncDisposable.DisposeAsync();
-        }
-        else if (HubConnection is IDisposable disposable)
-        {
-            disposable.Dispose();
-        }
+        // IAgentHubConnection extends IAsyncDisposable — call directly.
+        await HubConnection.DisposeAsync();
 
         GC.SuppressFinalize(this);
     }
