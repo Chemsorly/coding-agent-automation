@@ -372,30 +372,19 @@ Kubernetes liveness probe. Returns 200 if the process is running. Never checks e
 
 ```json
 {
-  "status": "healthy",
-  "timestamp": "2026-07-15T10:30:00Z"
+  "status": "ok"
 }
 ```
 
 ### GET /readyz
 
-Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during graceful shutdown drain or database connectivity loss.
+Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during graceful shutdown drain, database connectivity loss, or Redis backplane disconnection.
 
 **Example response (200):**
 
 ```json
 {
-  "status": "ready",
-  "timestamp": "2026-07-15T10:30:00Z"
-}
-```
-
-**Example response (503 — draining):**
-
-```json
-{
-  "status": "draining",
-  "timestamp": "2026-07-15T10:30:00Z"
+  "status": "ready"
 }
 ```
 
@@ -404,8 +393,16 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 ```json
 {
   "status": "unhealthy",
-  "reason": "database_unreachable",
-  "timestamp": "2026-07-15T10:30:00Z"
+  "reason": "database_unreachable"
+}
+```
+
+**Example response (503 — Redis backplane disconnected):**
+
+```json
+{
+  "status": "unhealthy",
+  "reason": "redis_backplane_disconnected"
 }
 ```
 

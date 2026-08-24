@@ -271,7 +271,11 @@ A background `DatabaseMaintenanceService` periodically deletes terminal records 
 | `DbRetentionSweepInterval` | `24h` | Interval between maintenance cycles. Minimum 1 minute. |
 | `WorkDistribution:Reconciliation:StaleRetentionDays` | `7` | Days to retain terminal `WorkItems` (`Succeeded`, `Failed`, `Cancelled`) before deletion. Set via env var. |
 
-> **Note:** The `WorkDistribution:Reconciliation:PipelineRunRetentionDays`, and `MaintenanceIntervalHours` config keys no longer exist. They were replaced by `PipelineRunRetentionCount`, `WorkItemRetentionCount`, and `DbRetentionSweepInterval` in `PipelineConfiguration`. `ConsolidationRunRetentionDays` still exists on `DatabaseMaintenanceOptions` (default: **30 days**) and controls how long consolidation run history is kept.
+> **Note:** Two retention mechanisms coexist for `PipelineRuns`:
+> - `PipelineRunRetentionCount` (in `PipelineConfiguration`) — count-based cap per project; default `-1` (disabled)
+> - `WorkDistribution:Reconciliation:PipelineRunRetentionDays` (on `DatabaseMaintenanceOptions`) — age-based deletion; default `30` days
+>
+> Both run on each maintenance sweep. Set `PipelineRunRetentionCount` to limit row count; set `PipelineRunRetentionDays` to limit row age. The `MaintenanceIntervalHours` config key no longer exists — it was replaced by `DbRetentionSweepInterval` in `PipelineConfiguration`. `ConsolidationRunRetentionDays` still exists on `DatabaseMaintenanceOptions` (default: **30 days**) and controls how long consolidation run history is kept.
 
 The maintenance service runs on first startup and then on the configured interval. In multi-replica deployments it gates behind leader election so only one replica runs cleanup at a time.
 

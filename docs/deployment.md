@@ -12,7 +12,8 @@ The application runs on Kubernetes as four distinct processes:
 Supporting libraries (shared, not deployed independently):
 
 - **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API.
-- **Infrastructure** (`CodingAgentWebUI.Infrastructure`) — Provider implementations (GitHub, GitLab, filesystem), EF Core context, config store. Linked into the Pipeline API, Orchestration, and Agent. The Blazor Orchestrator (`CodingAgentWebUI`) has no direct reference.
+- **Infrastructure.Persistence** (`CodingAgentWebUI.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Linked into the Pipeline API.
+- **Infrastructure.Providers** (`CodingAgentWebUI.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API and Agent. The Blazor Orchestrator (`CodingAgentWebUI`) and Job Controller have no direct reference.
 - **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, interfaces, constants. Linked into the Orchestrator and Pipeline API.
 - **Hub** (`CodingAgentWebUI.Hub`) — Full hub implementation: `AgentHub` (split across partial classes), authentication handlers (`AgentApiKeyAuthHandler`), `ChatJobDispatcher` (ephemeral chat pod dispatch), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), completion strategies, `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
 
@@ -89,7 +90,6 @@ The chart deploys:
 | `workDistribution.dispatch.intervalSeconds` | Seconds between dispatch cycles (default: `10`) |
 | `workDistribution.dispatch.rateLimitPerSecond` | Max dispatches per second (default: `10`) |
 | `workDistribution.reconciliation.intervalSeconds` | Seconds between reconciliation cycles (default: `30`) |
-| `workDistribution.reconciliation.timeoutEnforcementEnabled` | Whether to enforce agent timeouts via reconciliation (default: `true`) |
 | `workDistribution.reconciliation.staleRetentionDays` | Days to retain stale work items before cleanup (default: `7`) |
 | `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. `DispatchService` claims one PVC per Job at dispatch time. |
 | `signalr.redis.enabled` | Documents intent to enable Redis backplane (default: `false`). Note: the Helm templates only check `signalr.redis.connectionString` — setting `enabled: true` without a non-empty `connectionString` has no effect. To activate the backplane, set `signalr.redis.connectionString` to a non-empty value. |

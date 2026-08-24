@@ -45,7 +45,7 @@ boundaries.
 ┌──────────────────────┐     ┌─────────────────────────────────────────────┐
 │  Job Controller      │     │  Agent Pod (CodingAgentWebUI.Agent)          │
 │  (CodingAgentWebUI.  │     │  ─────────────                              │
-│   JobController)     │     │  Ephemeral K8s Job  (caa-agent-{11 hex})    │
+│   JobController)     │     │  Ephemeral K8s Job  (caa-agent-{11 hex} or caa-{8 hex}) │
 │  ─────────────────── │     │  Connects to API hub as Bearer AGENT_API_KEY│
 │  K8s Job dispatch    │     │  GET /api/work-items/{id}/assignment         │
 │  Lease: caa-{rel}-   │     │  POST /api/work-items/{id}/status           │
@@ -55,10 +55,9 @@ boundaries.
 
 ### Where the Locking-Critical Singletons Live
 
-All services described in this document now run exclusively in the **Pipeline API** process
-(`CodingAgentWebUI.Api`). They are **not present** in the Orchestrator, Job Controller, or
-Agent pods. This is important: the guarantee that `_selectionLock` and
-`AgentEntry.SyncRoot` prevent races holds only because all are in the same process.
+The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgentWebUI.Api`). The Orchestrator also registers local instances of `AgentRegistryService` and `OrchestratorRunService` — these are read-model replicas backed by `AgentRegistrySyncService` / `DistributedRunService` when Redis is configured, keeping the Blazor UI in sync without direct DB access. `AgentReservationService` (with `_selectionLock`) is registered in the Orchestrator as well, but dispatch decisions that actually reserve agents go through the API path.
+
+The Job Controller and Agent pods do **not** hold these singletons. This is important: the guarantee that `_selectionLock` and `AgentEntry.SyncRoot` prevent races on the authoritative dispatch path holds only because all authoritative instances are in the same Pipeline API process.
 
 If a future change splits any of these singletons across processes (e.g., separate API
 replicas without Redis), the in-process lock guarantees no longer apply — distributed
@@ -71,7 +70,7 @@ coordination (e.g., Postgres advisory locks, Redis `SETNX`) would be required.
 ## JobDeduplicationGuardService / AgentReservationService
 
 **File:** `src/CodingAgentWebUI.Orchestration/Dispatch/AgentReservationService.cs`
-**Hosted in:** `CodingAgentWebUI.Api`
+**Authoritative instance hosted in:** `CodingAgentWebUI.Api` (Pipeline API) — all actual dispatch decisions go through this process. The Orchestrator also registers a local `AgentReservationService` instance for its own routing lookups, but it does not participate in the authoritative agent-reservation path.
 
 > **Rename note (Spec 046):** `JobDeduplicationGuardService` was renamed to `AgentReservationService`. The old name survives as a `[Obsolete]` backward-compatibility alias defined in the same file. All new code should reference `AgentReservationService` directly.
 
