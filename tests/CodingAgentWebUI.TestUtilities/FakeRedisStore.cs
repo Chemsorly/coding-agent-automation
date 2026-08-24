@@ -94,6 +94,10 @@ public sealed class FakeRedisStore : IRedisStore
 
     public Task HashSetAsync(string key, HashEntry[] fields)
     {
+        // Clear any stale expiry — real Redis: HSET on a key with a past TTL resurrects it with no TTL.
+        // Without this, a HashSetAsync after ExpireAtAsync(past) leaves the stale expiry in place;
+        // the next HashGetAllAsync hits IsExpired → lazy-removes the hash → returns [] despite the write.
+        _expiries.TryRemove(key, out _);
         var hash = _hashes.GetOrAdd(key, _ => new ConcurrentDictionary<string, string>());
         foreach (var entry in fields)
             hash[(string)entry.Name!] = (string)entry.Value!;
@@ -102,6 +106,8 @@ public sealed class FakeRedisStore : IRedisStore
 
     public Task<bool> HashSetFieldAsync(string key, string field, string value)
     {
+        // Same as HashSetAsync: clear stale expiry on write to match real Redis semantics.
+        _expiries.TryRemove(key, out _);
         var hash = _hashes.GetOrAdd(key, _ => new ConcurrentDictionary<string, string>());
         var isNew = !hash.ContainsKey(field);
         hash[field] = value;
@@ -260,6 +266,20 @@ public sealed class FakeRedisStore : IRedisStore
         _sets.TryRemove(key, out _);
         _lists.TryRemove(key, out _);
         _expiries.TryRemove(key, out _);
+    }
+
+    /// <summary>
+    /// Wipes all state. Use in <c>IAsyncLifetime.InitializeAsync</c> of fixtures that share this
+    /// store across tests (e.g. multi-replica fixtures).
+    /// </summary>
+    public void Reset()
+    {
+        _strings.Clear();
+        _hashes.Clear();
+        _sets.Clear();
+        _lists.Clear();
+        _expiries.Clear();
+        ExpireAtCalls.Clear();
     }
 
     // ── Private helpers ───────────────────────────────────────────────

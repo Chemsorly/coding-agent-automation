@@ -7,10 +7,13 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Redis;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.TestUtilities;
+using InMemoryConfigurationStore = CodingAgentWebUI.E2ETests.Fakes.InMemoryConfigurationStore;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -45,13 +48,22 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
     private readonly FakeKubernetesJobClient _fakeK8sClient;
     private readonly string _apiKey;
 
+    /// <summary>
+    /// When non-null, the factory replaces <see cref="IAgentRegistryService"/>,
+    /// <see cref="IOrchestratorRunService"/>, and <see cref="AgentReservationService"/> with their
+    /// distributed implementations backed by this shared store. Used by
+    /// <see cref="MultiReplicaE2EFixture"/> to simulate two API replicas sharing Redis state.
+    /// </summary>
+    private readonly FakeRedisStore? _sharedRedisStore;
+
     public ApiE2EWebApplicationFactory(
         string dbName,
         InMemoryConfigurationStore configStore,
         InMemoryPipelineRunHistoryService historyService,
         FakeProviderFactory fakeProviders,
         FakeKubernetesJobClient fakeK8sClient,
-        string apiKey)
+        string apiKey,
+        FakeRedisStore? sharedRedisStore = null)
     {
         _dbName = dbName;
         _configStore = configStore;
@@ -59,6 +71,7 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
         _fakeProviders = fakeProviders;
         _fakeK8sClient = fakeK8sClient;
         _apiKey = apiKey;
+        _sharedRedisStore = sharedRedisStore;
         UseKestrel(0);
     }
 
@@ -168,6 +181,35 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
             leaderMock.SetupGet(l => l.IsLeader).Returns(true);
             leaderMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
             services.AddSingleton(leaderMock.Object);
+
+            // ── Multi-replica: inject distributed services backed by FakeRedisStore ──
+            // When a shared FakeRedisStore is provided (by MultiReplicaE2EFixture), replace the
+            // in-memory service registrations with their distributed Redis-backed equivalents.
+            // Both replica factories receive the *same* FakeRedisStore instance, so state written
+            // by one replica is immediately visible to the other — simulating shared Redis.
+            //
+            // The DI factories in AddApiOrchestration construct new RedisStore(mux.GetDatabase())
+            // directly rather than resolving IRedisStore, so we must replace the registrations
+            // here rather than registering IRedisStore into the container.
+            if (_sharedRedisStore is not null)
+            {
+                var store = _sharedRedisStore;
+
+                // IAgentRegistryService → DistributedAgentRegistryService
+                services.RemoveAll<IAgentRegistryService>();
+                var distributedRegistry = new DistributedAgentRegistryService(store, Serilog.Log.Logger);
+                services.AddSingleton<IAgentRegistryService>(distributedRegistry);
+
+                // IOrchestratorRunService → DistributedRunService
+                services.RemoveAll<IOrchestratorRunService>();
+                services.AddSingleton<IOrchestratorRunService>(sp =>
+                    new DistributedRunService(store, sp.GetRequiredService<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>(), Serilog.Log.Logger));
+
+                // AgentReservationService with the distributed Redis store
+                services.RemoveAll<AgentReservationService>();
+                services.AddSingleton<AgentReservationService>(sp =>
+                    new AgentReservationService(sp.GetRequiredService<IAgentRegistryService>(), Serilog.Log.Logger, store));
+            }
         });
     }
 
