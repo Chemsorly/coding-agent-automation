@@ -10,14 +10,6 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["create", "get", "update"]
-  # batch/jobs required for ChatJobDispatcher (still runs in orchestrator until Spec 044)
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  # pods get/list for startup failure detection in ChatJobDispatcher
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

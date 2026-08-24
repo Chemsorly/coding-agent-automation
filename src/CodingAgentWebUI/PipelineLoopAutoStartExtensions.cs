@@ -27,7 +27,8 @@ internal static class PipelineLoopAutoStartExtensions
         // (which has ClosedLoopAutoStart=false and would silently prevent the loop from auto-starting).
         // Do NOT pass pipelineConfig from Program.cs; always fetch the current value from the API.
         var configClient = app.Services.GetRequiredService<IPipelineApiConfigClient>();
-        var pipelineConfig = await LoadConfigWithRetryAsync(configClient, stoppingToken);
+        var timeProvider = app.Services.GetRequiredService<TimeProvider>();
+        var pipelineConfig = await LoadConfigWithRetryAsync(configClient, timeProvider, stoppingToken);
 
         if (pipelineConfig.ClosedLoopAutoStart)
         {
@@ -48,6 +49,7 @@ internal static class PipelineLoopAutoStartExtensions
     /// </summary>
     private static async Task<Pipeline.Models.PipelineConfiguration> LoadConfigWithRetryAsync(
         IPipelineApiConfigClient configClient,
+        TimeProvider timeProvider,
         CancellationToken stoppingToken)
     {
         var delays = new[] { 2, 5, 10, 30, 60, 120, 300 }; // seconds
@@ -82,7 +84,7 @@ internal static class PipelineLoopAutoStartExtensions
                     attempt + 1, delaySec, totalWaitedSeconds);
                 try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(delaySec), stoppingToken);
+                    await Task.Delay(TimeSpan.FromSeconds(delaySec), timeProvider, stoppingToken);
                 }
                 catch (OperationCanceledException)
                 {

@@ -14,14 +14,15 @@ public static partial class WorkDistributionRegistration
 {
     /// <summary>
     /// Registers services for Kubernetes work distribution:
-    /// - K8s infrastructure (IKubernetes, IKubernetesJobClient, IJobCleanupStrategy)
+    /// - K8s infrastructure (IKubernetes for leader election)
     /// - Leader election (ILeaderElectionService)
     /// - IWorkDistributor (KubernetesWorkDistributor — fully API-backed, no EF)
     /// - JobTemplateStore
     /// - Pipeline API client
     ///
-    /// Both KubernetesWorkDistributor and KubernetesJobCleanup are API-backed.
-    /// Remaining IDbContextFactory consumers are in WorkDistributionRegistration.cs.
+    /// IKubernetesJobClient and IJobCleanupStrategy are NOT registered here — they run
+    /// in CodingAgentWebUI.Api (RunLifecycleManager → KubernetesJobCleanup). The monolith
+    /// only needs IKubernetes for LeaderElectionService lease management.
     /// </summary>
     private static void RegisterConsolidationServices(IServiceCollection services, IConfiguration configuration)
     {
@@ -34,6 +35,8 @@ public static partial class WorkDistributionRegistration
         }
 
         // ── K8s client — in-cluster-first with kubeconfig fallback for local dev ──
+        // Required by LeaderElectionService for Lease-based leader election.
+        // IKubernetesJobClient is not registered here — job operations run in the API service.
         services.AddSingleton<IKubernetes>(_ =>
         {
             var inCluster = KubernetesClientConfiguration.IsInCluster();
@@ -66,20 +69,6 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<LeaderElectionService>();
         services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
         services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
-
-        // ── IKubernetesJobClient ─────────────────────────────────────────────
-        services.AddSingleton<IKubernetesJobClient>(sp => new KubernetesJobClient(sp.GetRequiredService<IKubernetes>()));
-
-        // ── IJobCleanupStrategy ──────────────────────────────────────────────
-        // KubernetesJobCleanup now uses IPipelineApiWorkItemClient.GetK8sJobNameAsync
-        // instead of IDbContextFactory — DB dependency removed.
-        services.AddSingleton<IJobCleanupStrategy>(sp => new KubernetesJobCleanup(
-            sp.GetRequiredService<IPipelineApiWorkItemClient>(),
-            sp.GetRequiredService<IKubernetesJobClient>(),
-            configuration.GetValue<string>("WorkDistribution:Namespace")
-                ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
-                ?? "default",
-            Log.Logger));
 
         // ── IWorkDistributor (KubernetesWorkDistributor) ─────────────────────
         // KubernetesWorkDistributor is now fully API-backed — no IDbContextFactory,

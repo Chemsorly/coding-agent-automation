@@ -428,8 +428,8 @@ public partial class AgentMonitoring : IAsyncDisposable
     // ── Dispose ──
 
     /// <summary>
-    /// Disposes hub event subscriptions, the refresh timer, and event handler registrations.
-    /// Unsubscribes from the active run group if the run detail modal was open.
+    /// Disposes hub event subscriptions, the refresh timer, event handler registrations,
+    /// and the hub connection itself to release the SignalR connection promptly on page navigation.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
@@ -454,6 +454,17 @@ public partial class AgentMonitoring : IAsyncDisposable
             {
                 Log.Warning(ex, "AgentMonitoring DisposeAsync: failed to unsubscribe from run {RunId}", _selectedRunId);
             }
+        }
+
+        // Dispose the hub connection to release the SignalR connection on page navigation
+        // rather than waiting for the entire circuit to tear down.
+        if (HubConnection is IAsyncDisposable asyncDisposable)
+        {
+            await asyncDisposable.DisposeAsync();
+        }
+        else if (HubConnection is IDisposable disposable)
+        {
+            disposable.Dispose();
         }
 
         GC.SuppressFinalize(this);

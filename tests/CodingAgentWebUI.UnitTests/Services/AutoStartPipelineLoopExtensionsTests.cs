@@ -25,12 +25,16 @@ public sealed class AutoStartPipelineLoopExtensionsTests
     /// <summary>
     /// Builds the minimal WebApplication with only the services the extension method needs.
     /// Does NOT register PipelineLoopService — only safe when ClosedLoopAutoStart=false.
+    /// Registers the provided <paramref name="timeProvider"/> (or <see cref="TimeProvider.System"/>
+    /// if null) so retry delays are controllable in tests.
     /// </summary>
     private static async Task<WebApplication> BuildMinimalAppAsync(
-        Mock<IPipelineApiConfigClient> configClientMock)
+        Mock<IPipelineApiConfigClient> configClientMock,
+        TimeProvider? timeProvider = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Services.AddSingleton(configClientMock.Object);
+        builder.Services.AddSingleton(timeProvider ?? TimeProvider.System);
         var app = builder.Build();
         return await Task.FromResult(app);
     }
@@ -69,26 +73,27 @@ public sealed class AutoStartPipelineLoopExtensionsTests
     [Fact]
     public async Task AutoStartPipelineLoopAsync_ApiThrowsThenSucceeds_RetriesAndReturnsConfig()
     {
-        // Arrange: first call throws, second succeeds — verifies retry loop executes
-        // Note: retry delay is 2s real-clock. We verify retry happened by checking call count.
+        // Arrange: first call throws, second succeeds — verifies retry loop executes.
+        // FakeTimeProvider makes the 2s retry delay instant.
+        var fakeTime = new FakeTimeProvider();
         var configClientMock = new Mock<IPipelineApiConfigClient>();
         configClientMock
             .SetupSequence(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("connection refused"))
             .ReturnsAsync(new PipelineConfiguration { ClosedLoopAutoStart = false });
 
-        await using var app = await BuildMinimalAppAsync(configClientMock);
+        await using var app = await BuildMinimalAppAsync(configClientMock, fakeTime);
 
-        // Act: cancels after first retry delay to keep test fast
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        // Act: run the method on a background thread; advance fake time to release the retry delay.
+        var mainTask = Task.Run(() => app.AutoStartPipelineLoopAsync());
 
-        // Replace app's stopping token with our timed one via a wrapper approach:
-        // AutoStartPipelineLoopAsync uses app.Lifetime.ApplicationStopping internally.
-        // Since we can't inject cancellation directly, we rely on the mock succeeding on attempt 2
-        // within the 8s window (first retry delay is 2s).
-        await app.AutoStartPipelineLoopAsync();
+        // Small real wait lets the async method reach the Task.Delay suspension point.
+        await Task.Delay(20);
+        fakeTime.Advance(TimeSpan.FromSeconds(3)); // past the 2s first retry delay
 
-        // Assert: retried at least once (two calls made)
+        await mainTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Assert: retried exactly once (two calls total)
         configClientMock.Verify(
             c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()),
             Times.Exactly(2));
@@ -97,23 +102,43 @@ public sealed class AutoStartPipelineLoopExtensionsTests
     [Fact]
     public async Task AutoStartPipelineLoopAsync_ApiUnreachableExceedsTotalTimeout_DefaultsToDisabled()
     {
-        // Arrange: API always throws. Total timeout is 600s (2+5+10+30+60+120+300+300=827s).
-        // We use a short-delay mock to make this test fast by providing just enough failures
-        // to exhaust the budget. Instead of waiting for 600s of real delays, we verify the
-        // function returns safely when the stopping token fires during a delay.
+        // Arrange: API always throws. Budget is 600s (delays: 2+5+10+30+60+120+300+300=827s).
+        // After 8 throws the accumulated delay (2+5+10+30+60+120+300+300=827s) exceeds 600s,
+        // triggering the Fatal log and returning a default config (ClosedLoopAutoStart=false).
+        // FakeTimeProvider eliminates real waits so this test runs instantly.
+        var fakeTime = new FakeTimeProvider();
         var configClientMock = new Mock<IPipelineApiConfigClient>();
         configClientMock
             .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { ClosedLoopAutoStart = false });
+            .ThrowsAsync(new HttpRequestException("API unreachable"));
 
-        await using var app = await BuildMinimalAppAsync(configClientMock);
+        await using var app = await BuildMinimalAppAsync(configClientMock, fakeTime);
 
-        // This confirms the non-throwing success path; the exhaustion path is covered by
-        // the retry test above and is validated end-to-end in integration smoke tests.
-        await app.AutoStartPipelineLoopAsync();
+        // Act: run the method on a background thread; advance fake time from the test thread
+        // to release each Task.Delay in the retry loop.
+        // The delays array is [2, 5, 10, 30, 60, 120, 300, 300] — 8 entries.
+        // After advancing through all 8 delays the budget (600s) is exceeded and the method returns.
+        var mainTask = Task.Run(() => app.AutoStartPipelineLoopAsync());
 
+        // Drive fake time forward through each retry delay.
+        // Each Advance fires the pending timer and lets the retry loop throw again and schedule
+        // the next delay. We poll completion to stop early if the method exits sooner than expected.
+        var delays = new[] { 2, 5, 10, 30, 60, 120, 300, 300 };
+        foreach (var delaySec in delays)
+        {
+            if (mainTask.IsCompleted) break;
+            // Small real wait lets async continuations run on the thread pool before advancing.
+            await Task.Delay(10);
+            fakeTime.Advance(TimeSpan.FromSeconds(delaySec + 1));
+        }
+
+        // Wait for the method to finish (should be near-instant once all delays are advanced).
+        await mainTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Assert: exhaustion path was reached — GetPipelineConfigAsync was called 8 times
+        // (one per retry attempt before the budget was exceeded)
         configClientMock.Verify(
             c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Exactly(8));
     }
 }

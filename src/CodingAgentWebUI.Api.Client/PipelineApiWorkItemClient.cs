@@ -34,9 +34,16 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
             PipelineJsonOptions.Default,
             ct);
 
-        if (response.StatusCode == System.Net.HttpStatusCode.Conflict ||
-            response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        // 409 Conflict — expected contention: another instance claimed first. Caller should skip.
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
             return null;
+
+        // 404 Not Found — unexpected: item was in the pending list but no longer exists.
+        // This indicates a data race (deleted between GetPendingAsync and ClaimAsync) or a
+        // bug in the pending query. Throw so the caller can log a distinct warning rather
+        // than silently treating it as a normal 409 contention case.
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            throw new WorkItemNotFoundException(workItemId);
 
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<WorkItemClaimResponse>(PipelineJsonOptions.Default, ct);

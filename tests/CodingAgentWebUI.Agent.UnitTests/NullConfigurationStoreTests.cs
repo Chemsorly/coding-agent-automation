@@ -495,6 +495,17 @@ public class NullConfigurationStoreTests
         await act.Should().NotThrowAsync();
     }
 
+    [Fact]
+    public async Task SaveProjectAsync_DoesNotPersistState_SubsequentLoadReturnsEmpty()
+    {
+        var project = new PipelineProject { Id = Guid.NewGuid().ToString(), Name = "Test Project" };
+        await _sut.SaveProjectAsync(project, CancellationToken.None);
+
+        var result = await _sut.LoadProjectsAsync(CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
     // ── DeleteProjectAsync ───────────────────────────────────────────────
 
     [Fact]
@@ -503,6 +514,16 @@ public class NullConfigurationStoreTests
         var act = () => _sut.DeleteProjectAsync("some-id", CancellationToken.None);
 
         await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task DeleteProjectAsync_DoesNotPersistState_SubsequentLoadReturnsEmpty()
+    {
+        await _sut.DeleteProjectAsync("some-id", CancellationToken.None);
+
+        var result = await _sut.LoadProjectsAsync(CancellationToken.None);
+
+        result.Should().BeEmpty();
     }
 
     // ── LoadTemplatesForProjectAsync ─────────────────────────────────────
@@ -545,6 +566,23 @@ public class NullConfigurationStoreTests
         await act.Should().NotThrowAsync();
     }
 
+    [Fact]
+    public async Task SaveTemplateAsync_DoesNotPersistState_SubsequentLoadReturnsEmpty()
+    {
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "Test Template",
+            IssueProviderId = "issue-provider-1",
+            RepoProviderId = "repo-provider-1"
+        };
+        await _sut.SaveTemplateAsync("some-project-id", template, CancellationToken.None);
+
+        var result = await _sut.LoadAllTemplatesAsync(CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
     // ── DeleteTemplateAsync ──────────────────────────────────────────────
 
     [Fact]
@@ -555,6 +593,16 @@ public class NullConfigurationStoreTests
         await act.Should().NotThrowAsync();
     }
 
+    [Fact]
+    public async Task DeleteTemplateAsync_DoesNotPersistState_SubsequentLoadReturnsEmpty()
+    {
+        await _sut.DeleteTemplateAsync("some-project-id", new TemplateId("some-template-id"), CancellationToken.None);
+
+        var result = await _sut.LoadAllTemplatesAsync(CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
     // ── MoveTemplateAsync ────────────────────────────────────────────────
 
     [Fact]
@@ -563,6 +611,16 @@ public class NullConfigurationStoreTests
         var act = () => _sut.MoveTemplateAsync("source-project", "target-project", new TemplateId("some-template-id"), CancellationToken.None);
 
         await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task MoveTemplateAsync_DoesNotPersistState_SubsequentLoadReturnsEmpty()
+    {
+        await _sut.MoveTemplateAsync("source-project", "target-project", new TemplateId("some-template-id"), CancellationToken.None);
+
+        var result = await _sut.LoadAllTemplatesAsync(CancellationToken.None);
+
+        result.Should().BeEmpty();
     }
 
     // ── HasEnabledTemplatesAsync ─────────────────────────────────────────

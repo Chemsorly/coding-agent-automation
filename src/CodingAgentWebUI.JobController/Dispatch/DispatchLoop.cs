@@ -169,11 +169,23 @@ public sealed class DispatchLoop
         // WorkItem through AssignedAgentId when serving /assignment and /status.
         var jobName = GenerateJobName(item.Id);
 
-        // Claim the item (atomic — 409 if already claimed)
-        var claimed = await _workItemClient.ClaimAsync(
-            item.Id,
-            new ClaimWorkItemRequest { AssignedAgentId = jobName, K8sJobName = jobName, DispatchedAt = DateTimeOffset.UtcNow },
-            ct);
+        // Claim the item (atomic — 409 if already claimed by another instance)
+        WorkItemClaimResponse? claimed;
+        try
+        {
+            claimed = await _workItemClient.ClaimAsync(
+                item.Id,
+                new ClaimWorkItemRequest { AssignedAgentId = jobName, K8sJobName = jobName, DispatchedAt = DateTimeOffset.UtcNow },
+                ct);
+        }
+        catch (WorkItemNotFoundException)
+        {
+            // Item was in the pending list but no longer exists — data race (deleted between
+            // GetPendingAsync and ClaimAsync) or a bug in the pending query. Skip with a
+            // warning so it is distinguishable from normal 409 contention in the logs.
+            Log.Warning("WorkItem {Id} not found during claim (404) — item may have been deleted between poll and claim, skipping", item.Id);
+            return;
+        }
 
         if (claimed is null)
         {

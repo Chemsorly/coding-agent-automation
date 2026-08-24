@@ -123,16 +123,18 @@ public sealed class PipelineApiWorkItemClientTests
     }
 
     [Fact]
-    public async Task ClaimAsync_OnNotFound_ReturnsNull()
+    public async Task ClaimAsync_OnNotFound_ThrowsWorkItemNotFoundException()
     {
         var (client, handler) = Create();
         handler.Respond = _ => Empty(HttpStatusCode.NotFound);
 
-        var result = await client.ClaimAsync(Guid.NewGuid(), new ClaimWorkItemRequest
+        var workItemId = Guid.NewGuid();
+        var act = () => client.ClaimAsync(workItemId, new ClaimWorkItemRequest
         {
             DispatchedAt = DateTimeOffset.UtcNow
         });
-        result.Should().BeNull();
+        await act.Should().ThrowAsync<WorkItemNotFoundException>()
+            .Where(ex => ex.WorkItemId == workItemId);
     }
 
     // ── GetAssignmentAsync ────────────────────────────────────────────────

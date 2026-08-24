@@ -37,9 +37,12 @@ public static partial class ServiceCollectionExtensions
                 Log.Logger));
         services.AddSingleton<IDispatchRunCreator>(sp => sp.GetRequiredService<DispatchRunCreationService>());
 
-        // IChangeNotifier removed from monolith DI — change notification arrives via IAgentHubConnection
-        // hub events (OnStepTransition, OnRunCompleted). IChangeNotifier is still registered in
-        // CodingAgentWebUI.Hub for AgentHub internals.
+        // IChangeNotifier: NullChangeNotifier registered as a null-object for shared libraries
+        // that declare an IChangeNotifier constructor dependency. The monolith no longer drives
+        // state-change notifications directly — change events arrive via IAgentHubConnection
+        // hub push events (OnStepTransition, OnRunCompleted). IChangeNotifier is still registered
+        // with a real implementation in CodingAgentWebUI.Hub for AgentHub internals.
+        services.AddSingleton<IChangeNotifier, NullChangeNotifier>();
         services.AddSingleton<IChatNotifier>(sp =>
             sp.GetRequiredService<PipelineRunLifecycleService>());
     }

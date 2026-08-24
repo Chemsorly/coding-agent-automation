@@ -22,6 +22,12 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(jobId);
 
+        // Validate jobId is a well-formed GUID (max 36 chars, parseable). This prevents
+        // operator-authenticated connections from accumulating subscriptions to arbitrary
+        // strings (very long, special characters, etc.) before the ownership check applies.
+        if (!Guid.TryParse(jobId, out _))
+            throw new HubException($"Invalid jobId format: must be a valid GUID (e.g. '3fa85f64-5717-4562-b3fc-2c963f66afa6').");
+
         // Agent connections carry an agentId query parameter. UI/operator connections do not.
         var callerAgentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
         if (!string.IsNullOrEmpty(callerAgentId))
@@ -66,6 +72,8 @@ public sealed partial class AgentHub
     public Task UnsubscribeFromRun(string jobId)
     {
         ArgumentNullException.ThrowIfNull(jobId);
+        if (!Guid.TryParse(jobId, out _))
+            throw new HubException($"Invalid jobId format: must be a valid GUID.");
         return Groups.RemoveFromGroupAsync(Context.ConnectionId, $"run-{jobId}");
     }
 }
