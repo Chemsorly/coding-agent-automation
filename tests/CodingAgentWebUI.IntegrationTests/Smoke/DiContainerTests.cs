@@ -121,10 +121,19 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     {
         var guard = _factory.Services.GetRequiredService<JobDeduplicationGuardService>();
 
-        var registryField = typeof(JobDeduplicationGuardService)
+        // JobDeduplicationGuardService is a backward-compat wrapper around AgentReservationService (_inner).
+        // The actual registry reference lives on the inner service.
+        var innerField = typeof(JobDeduplicationGuardService)
+            .GetField("_inner", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(innerField);
+
+        var inner = innerField!.GetValue(guard);
+        Assert.NotNull(inner);
+
+        var registryField = typeof(CodingAgentWebUI.Orchestration.Dispatch.AgentReservationService)
             .GetField("_registry", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(registryField);
 
-        Assert.IsType<AgentRegistryService>(registryField!.GetValue(guard));
+        Assert.IsType<AgentRegistryService>(registryField!.GetValue(inner));
     }
 }

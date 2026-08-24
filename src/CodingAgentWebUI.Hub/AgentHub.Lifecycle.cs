@@ -65,7 +65,9 @@ public sealed partial class AgentHub
             _logger.Information(
                 "Agent {AgentId} reported progress on job {JobId}, clearing orphan-restored state",
                 agent.AgentId, jobId.Value);
-            // Use UpdateAgentFieldAsync so the write is visible to all replicas under distributed registry
+            // Clear on the local object immediately (for in-memory tests and single-replica deployments)
+            agent.OrphanRestoredAt = null;
+            // Also propagate to distributed registry so the write is visible to other replicas
             _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "orphanRestoredAt", null);
         }
 
@@ -105,15 +107,24 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(lines);
 
-        // AppendOutputLines writes to the ring buffer (in-memory mode) or Redis List (distributed mode).
-        // Do NOT also call buffer.AddRange — AppendOutputLines already handles the ring buffer write.
+        // Write to ring buffer (in-memory) and/or Redis List (distributed).
+        // GetOutputBuffer ensures the buffer exists; AddRange writes the lines.
+        // AppendOutputLines handles distributed (Redis) persistence when configured.
+        var buffer = _facade.GetOutputBuffer(jobId);
+        buffer.AddRange(lines);
         _facade.AppendOutputLines(jobId, lines);
 
-        // NOTE: run.OutputLines.Enqueue is intentionally NOT called here under distributed mode
-        // because GetRun() returns a deserialized snapshot — any enqueue would be a dead write.
-        // The hub push below delivers lines to live UI circuits. Backlog for late joiners comes
-        // from GetOutputBacklogAsync (Redis LRANGE) via SubscribeToRun.
-        _changeNotifier.NotifyChange();
+        var run = _facade.GetRun(jobId);
+        if (run is not null)
+        {
+            // Also enqueue into run.OutputLines for in-memory consumers (UI components, tests).
+            // Under distributed mode GetRun() returns a local snapshot; this write is best-effort
+            // and the authoritative backlog comes from GetOutputBacklogAsync (Redis LRANGE).
+            foreach (var line in lines)
+                run.OutputLines.Enqueue(line);
+
+            _changeNotifier.NotifyChange();
+        }
 
         // Push output lines to subscribed UI circuits (Req 2.4, 5.2)
         await _uiContext.Clients.Group($"run-{jobId.Value}")

@@ -169,7 +169,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <inheritdoc />
     public void AppendOutputLines(RunId runId, IReadOnlyList<string> lines)
     {
-        // In-memory path: write to the ring buffer directly.
-        GetOutputBuffer(runId).AddRange(lines);
+        // No-op: the hub writes directly to the buffer via GetOutputBuffer(jobId).AddRange(lines).
+        // DistributedRunService overrides this to write to Redis (distributed persistence).
     }
 }
