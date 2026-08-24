@@ -84,7 +84,7 @@ The chart deploys:
 | `database.host` | PostgreSQL hostname (required) |
 | `database.port` | PostgreSQL port (default: `5432`) |
 | `database.auth.existingSecret` | K8s Secret containing database credentials (keys: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) |
-| `database.migrateOnStartup` | **Has no effect — the Helm templates hardcode `Database__MigrateOnStartup=false` on both the Orchestrator and the Pipeline API.** EF Core migrations are applied automatically by the Pipeline API on startup via `RunApiMigrationsAsync`. If pending migrations are detected on the API, it throws and restarts until the schema is current; the Orchestrator does the same fast-fail check and will not start against an unmigrated schema. Run migrations manually only via `kubectl exec` into the API pod (not the Orchestrator). |
+| `database.migrateOnStartup` | Apply EF Core migrations on Pipeline API startup (default: `true`). Set `false` only for blue/green deployments where you apply migrations manually via `kubectl exec` into the API pod before cutover. The Orchestrator always performs a fast-fail schema check and will refuse to start against an unmigrated schema. |
 | `database.sslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. Defaults to `Require` in production if not set. Use `Disable` for in-cluster Postgres without TLS. |
 | `workDistribution.dispatch.intervalSeconds` | Seconds between dispatch cycles (default: `10`) |
 | `workDistribution.dispatch.rateLimitPerSecond` | Max dispatches per second (default: `10`) |
@@ -129,11 +129,17 @@ jobTemplates:
         effect: NoSchedule
 ```
 
+### Leader Election in Non-Kubernetes (SignalR) Mode
+
+When deployed without Kubernetes (e.g., local dev or SignalR-only mode), `ILeaderElectionService` is not registered in the DI container. `PipelineLoopService` null-checks the leader gate: when the gate is `null`, the loop runs unconditionally without any leadership check. This is the intended behavior — non-K8s deployments are typically single-instance and need no leader gate.
+
+The previous `AlwaysLeaderElectionService` stub (an explicit always-leader no-op) was removed in the arch-audit; the null-check achieves the same behavior without polluting the DI container.
+
 ### Graceful Shutdown
 
 The chart supports zero-downtime rolling updates:
 - Orchestrator uses `readinessDrainDelaySeconds` (default: 15s) to stop accepting traffic before terminating
-- `pipelineLoopStartupDelaySeconds` (Helm default: **0**, application default: 90s) delays `PipelineLoopService` startup after the process is ready — set to 0 because the API now owns `IOrchestratorRunService` and rehydrates on its own startup; the Orchestrator no longer dispatches directly (Spec 044)
+- `pipelineLoopStartupDelaySeconds` (default: **0**, range: 0–300) delays `PipelineLoopService` startup after the process is ready. The Helm default is 0 — the API now owns `IOrchestratorRunService` and rehydrates on its own startup, so the Orchestrator no longer needs a startup delay before dispatching (Spec 044)
 - Let in-flight agent Jobs finish before upgrading — no drain hook exists
 
 ### Leader Election
@@ -198,15 +204,9 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["create", "get", "update"]
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list"]
 ```
 
-> **Note:** The Orchestrator retains `batch/jobs` RBAC for backwards compatibility with `ChatJobDispatcher`, which now runs in the Pipeline API (Hub library). Work-item dispatch was moved to the Job Controller.
+The Orchestrator only needs leader-election Lease access. It has no direct K8s Job dispatch — `ChatJobDispatcher` and work-item dispatch both run in the Pipeline API and Job Controller respectively.
 
 **Pipeline API** (`CodingAgentWebUI.Api`) ServiceAccount:
 

@@ -88,6 +88,16 @@ These control in-memory bounded data structures for each pipeline run. Rarely ne
 |---------|---------|-------------|
 | `modelFetchTimeoutSeconds` | 120 | Timeout in seconds for the model-fetch K8s Job (`caa-models-*`). Increase on slow setups where image pull or pod scheduling takes longer than the default. Range: 30–600. |
 
+### Chat Pod Lifecycle
+
+These settings control the lifetime of ephemeral chat session pods dispatched by `ChatJobDispatcher`. They map to `workDistribution.dispatch.*` in `values.yaml` and are bound via `WorkDistribution:Dispatch:*` environment variables on the Pipeline API and Job Controller.
+
+| values.yaml key / env var | Default | Description |
+|---------------------------|---------|-------------|
+| `workDistribution.dispatch.chatSessionMaxDurationSeconds` | 7200 | Maximum lifetime (seconds) of a chat pod K8s Job. Sets `activeDeadlineSeconds` on the Job spec — the pod is forcibly terminated by Kubernetes when this deadline passes. Minimum: 60s. |
+| `workDistribution.dispatch.chatPodConnectTimeoutSeconds` | 120 | Maximum time (seconds) the dispatcher waits for a chat pod to connect to the hub after the Job is created before aborting and returning an error to the caller. Minimum: 5s. |
+| `workDistribution.dispatch.chatTerminationGracePeriodSeconds` | 120 | `terminationGracePeriodSeconds` on the chat pod spec — time Kubernetes allows for graceful shutdown before SIGKILL. Minimum: 5s. |
+
 ## Quality Gate Settings
 
 Quality gates are configured per-stack via Quality Gate Configurations (see [Label Routing](label-routing.md#quality-gate-configurations)). Each QGC has these fields:
@@ -100,6 +110,19 @@ Quality gates are configured per-stack via Quality Gate Configurations (see [Lab
 | `coverageReportFormat` | `cobertura` or `jacoco` — determines how coverage reports are parsed |
 | `coverageReportPaths` | Explicit file globs for coverage reports. When not specified, convention-based discovery is used. |
 | `processTimeoutSeconds` | Maximum execution time in seconds for quality gate processes (compilation, tests). Default: `600` (10 minutes). Processes exceeding this limit are killed (entire process tree) and the gate is reported as failed. |
+
+### Provider Error Handling in the Retry Loop
+
+The retry loop classifies agent failures into categories to distinguish provider-side transient errors from code-level problems. This affects how retry budget is consumed:
+
+| Error Category | HTTP Status | Retry Budget Consumed? | Behavior |
+|----------------|-------------|------------------------|----------|
+| `ProviderRateLimit` | 429 | **No** | `RetryCount` is rolled back. Loop waits 30 seconds then retries from the same position without burning a fix attempt. No cap on consecutive transient retries — only the overall job timeout (`agentTimeout`) bounds this. |
+| `ProviderOverload` | 503 | **No** | Same as `ProviderRateLimit` — 30s delay, no budget consumed. |
+| `PermanentAuthFailure` | 401/403 | Yes (1 attempt counted) | Loop aborts immediately — credentials cannot be fixed by retrying. |
+| `None` (default) | — | **Yes** | Normal code-fix attempt: `RetryCount` incremented, QG re-run after fix. |
+
+> **Operator note:** A sustained 429/503 storm from the upstream LLM provider causes the retry loop to spin indefinitely until the job's `agentTimeout` fires. If you observe stalled runs with no code changes, check agent logs for repeated `ProviderRateLimit` or `ProviderOverload` classifications and investigate your LLM provider's rate limits or quota.
 
 ## Code Review Settings
 
@@ -202,7 +225,7 @@ These environment variables are used by the Kubernetes deployment.
 | `Database__Password` | PostgreSQL password |
 | `Database__Name` | PostgreSQL database name (default: `coding_agent_automation`). |
 | `Database__SslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. The application normalizes `Prefer` to `Require` in production environments when no explicit value is set. Use `Disable` for local/in-cluster Postgres without TLS. |
-| `Database__MigrateOnStartup` | **Has no effect — the Helm templates hardcode this to `false`.** EF Core migrations are applied automatically by the Pipeline API on startup. Set this only when running migrations manually via `kubectl exec` into the API pod. |
+| `Database__MigrateOnStartup` | Apply EF Core migrations on Pipeline API startup. The Helm default is `true` (applied automatically). Set `false` only for blue/green deployments where you apply migrations manually via `kubectl exec` into the API pod before cutover. |
 
 ### Config Import/Export
 
@@ -225,7 +248,7 @@ For full request/response examples, authentication details, and query parameters
 |----------|-------------|
 | `AGENT_API_KEY` | Shared secret for authenticating agent connections. Each agent derives its actual auth key via HMAC(master_key, agent_id). |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
-| `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 90, range: 0–600). Prevents dispatching to agents mid-termination during rolling updates. |
+| `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 0, range: 0–300). The API now owns `IOrchestratorRunService` and rehydrates independently, so the Orchestrator no longer needs a startup delay. Increase only when a rolling-restart race condition is observed. |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
 | `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. |
 | `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8090`). **Required.** Used by `IPipelineApiConfigClient` to load pipeline configuration and by `IAgentHubConnection` as the fallback hub URL base. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
@@ -248,7 +271,7 @@ A background `DatabaseMaintenanceService` periodically deletes terminal records 
 | `DbRetentionSweepInterval` | `24h` | Interval between maintenance cycles. Minimum 1 minute. |
 | `WorkDistribution:Reconciliation:StaleRetentionDays` | `7` | Days to retain terminal `WorkItems` (`Succeeded`, `Failed`, `Cancelled`) before deletion. Set via env var. |
 
-> **Note:** The `WorkDistribution:Reconciliation:PipelineRunRetentionDays`, and `MaintenanceIntervalHours` config keys no longer exist. They were replaced by `PipelineRunRetentionCount`, `WorkItemRetentionCount`, and `DbRetentionSweepInterval` in `PipelineConfiguration`. `ConsolidationRunRetentionDays` still exists on `ReconciliationServiceOptions` (default: 90 days) and controls how long consolidation run history is kept.
+> **Note:** The `WorkDistribution:Reconciliation:PipelineRunRetentionDays`, and `MaintenanceIntervalHours` config keys no longer exist. They were replaced by `PipelineRunRetentionCount`, `WorkItemRetentionCount`, and `DbRetentionSweepInterval` in `PipelineConfiguration`. `ConsolidationRunRetentionDays` still exists on `DatabaseMaintenanceOptions` (default: **30 days**) and controls how long consolidation run history is kept.
 
 The maintenance service runs on first startup and then on the configured interval. In multi-replica deployments it gates behind leader election so only one replica runs cleanup at a time.
 

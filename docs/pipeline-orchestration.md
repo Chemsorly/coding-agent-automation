@@ -91,7 +91,8 @@ stateDiagram-v2
         Agent gets error feedback and fixes before re-check
     end note
     note left of CreatingPullRequest
-        Draft PR sets agent error label. Normal PR adds agent done label.
+        Draft PR leaves issue as agent:in-progress. Normal PR swaps to agent:done.
+        agent:error label is set only on unexpected exceptions, not retry exhaustion.
     end note
     note left of ReflectingOnRun
         Only if brain repo configured and not read-only.
@@ -184,7 +185,7 @@ External CI is only evaluated after local gates (compilation, tests, coverage) p
 
 The retry prompt includes the full gate failure details and points the agent to diagnostic output files. Each retry attempt is a `--resume` call, so the agent has full conversation history.
 
-If all retries are exhausted, a **draft PR** is created with the failing code, and the issue is labeled `agent:error`.
+If all retries are exhausted, a **draft PR** is created with the failing code. The issue label is **not** changed to `agent:error` on normal retry exhaustion — the pipeline completes with `FailureCategory = QualityGateExhausted` and the PR is left as a draft. `agent:error` is only applied when an unexpected exception escapes the pipeline's error boundary (e.g., unhandled infrastructure failure), not when retries run out cleanly.
 
 ## Label Transitions
 

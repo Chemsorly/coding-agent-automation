@@ -33,7 +33,7 @@ boundaries.
 │  AgentHub  — real-time hub for agent pods and Blazor circuits               │
 │  AgentRegistryService  ─┐                                                  │
 │  OrchestratorRunService ├── singleton in-memory state (locking applies)    │
-│  JobDeduplicationGuardService ─┘                                           │
+│  AgentReservationService ─┘  (JobDeduplicationGuardService is an alias)    │
 │  PipelineDbContext (EF Core)  — authoritative Postgres access               │
 │  WorkItemEndpoints, ConfigEndpoints, PipelineRunEndpoints                  │
 │  DatabaseMaintenanceService, WorkItemMetricsBackgroundService              │
@@ -61,20 +61,19 @@ Agent pods. This is important: the guarantee that `_selectionLock` and
 `AgentEntry.SyncRoot` prevent races holds only because all are in the same process.
 
 If a future change splits any of these singletons across processes (e.g., separate API
-replicas), the in-process lock guarantees no longer apply — distributed coordination
-(e.g., Postgres advisory locks, Redis `SETNX`) would be required.
+replicas without Redis), the in-process lock guarantees no longer apply — distributed
+coordination (e.g., Postgres advisory locks, Redis `SETNX`) would be required.
 
-> **api.replicas must remain 1.** The SignalR Redis backplane enables hub message delivery
-> across replicas but does NOT make multiple API replicas safe. `AgentRegistryService`,
-> `OrchestratorRunService`, and `JobDeduplicationGuardService` are in-memory singletons.
-> Do not scale the API beyond one replica without replacing these with distributed equivalents.
+> **api.replicas must remain 1 without Redis.** `AgentRegistryService`, `OrchestratorRunService`, and `AgentReservationService` (formerly `JobDeduplicationGuardService`) are in-memory singletons. With Redis configured (`signalr.redis.connectionString`), `AgentRegistryService` and `OrchestratorRunService` automatically switch to distributed Redis-backed implementations — multi-replica is supported in that mode (Spec 046). Without Redis, do not scale the API beyond one replica.
 
 ---
 
-## JobDeduplicationGuardService
+## JobDeduplicationGuardService / AgentReservationService
 
-**File:** `src/CodingAgentWebUI.Orchestration/Dispatch/JobDeduplicationGuardService.cs`
+**File:** `src/CodingAgentWebUI.Orchestration/Dispatch/AgentReservationService.cs`
 **Hosted in:** `CodingAgentWebUI.Api`
+
+> **Rename note (Spec 046):** `JobDeduplicationGuardService` was renamed to `AgentReservationService`. The old name survives as a `[Obsolete]` backward-compatibility alias defined in the same file. All new code should reference `AgentReservationService` directly.
 
 > **T18 note (arch-audit 2026-08-22):** All in-memory queue methods (`EnqueueJob`, `DequeueForAgent`,
 > `GetJobPriority`, `IsIssueQueued`, `GetQueuedJobs`, `ReEnqueue`, `RemoveFromQueue`, `RemoveJob`,
@@ -149,7 +148,7 @@ across process boundaries.
 | Service | File | Usage |
 |---------|------|-------|
 | `AgentRegistryService` | `Orchestration/Registry/AgentRegistryService.cs` | `Register()`, `UpdateHeartbeat()`, `TransitionStatus()` |
-| `JobDeduplicationGuardService` | `Orchestration/Dispatch/JobDeduplicationGuardService.cs` | `SelectAgent()` — nested inside `_selectionLock` |
+| `JobDeduplicationGuardService` | `Orchestration/Dispatch/AgentReservationService.cs` | `SelectAgent()` — nested inside `_selectionLock` |
 | `RunLifecycleManager` | `Orchestration/RunLifecycleManager.cs` | `ActiveJobId` mutation on job assignment/completion |
 | `AgentOrphanRecoveryService` | `Hub/AgentOrphanRecoveryService.cs` | Check-and-set `ActiveJobId` on reconnect; sets `OrphanRestoredAt` when no active job reported |
 | `AgentEndpoints` | `Api/AgentEndpoints.cs` | Sets `ActiveChatSessionId` on chat-resume path |
@@ -248,9 +247,9 @@ If a new service needs to acquire `AgentEntry.SyncRoot`, add it to the "Authoriz
 consumers" table above and verify it doesn't introduce lock nesting that violates the
 ordering rules.
 
-### ❌ Don't scale the API beyond one replica without replacing in-memory singletons
+### ❌ Don't scale the API beyond one replica without Redis
 
-`AgentRegistryService`, `OrchestratorRunService`, and `JobDeduplicationGuardService` are
-process-local singletons. A second API replica would have a separate, divergent copy of
-each. Horizontal scaling requires replacing these with distributed state (e.g., Postgres
-tables, Redis structures) and removing the in-process lock guarantees entirely.
+`AgentRegistryService`, `OrchestratorRunService`, and `AgentReservationService` are
+process-local singletons without Redis. With Redis, the first two switch to distributed
+implementations automatically. `AgentReservationService` remains in-process even with
+Redis — its locking guarantees depend on single-process execution.

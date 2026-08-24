@@ -66,6 +66,32 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `failure_reason` | `quality_gate_exhausted`, `agent_error`, `timeout`, `infrastructure_failure`, `token_refresh_failure`, `exit_code_failure`, `unknown` | Job failure classification — only present on `pipeline.jobs.failed` |
 | `repo_provider_id` | provider config UUID | Repository provider config ID — only present on `pipeline.housekeeping.*` metrics |
 
+### Prompt Cache and Per-Phase Token Data
+
+Each `PipelineRun` accumulates token and cost data beyond the simple totals exposed by `agent.tokens.used` and `agent.cost.usd`. This richer data is available on `PipelineRunSummary` objects returned by `GET /api/pipeline-runs` and `GET /api/export/runs.json`, and is visible in the UI sidebars.
+
+#### Cache Token Fields
+
+| Field | Description |
+|-------|-------------|
+| `CacheReadTokens` | Tokens served from the upstream LLM's prompt cache across all agent invocations in this run |
+| `CacheWriteTokens` | Tokens written into the prompt cache across all agent invocations in this run |
+
+**Provider support:** Cache token fields are populated only for **OpenCode** agents. KiroCli agents always report 0 for both fields (the KiroCli provider does not expose cache token breakdowns).
+
+#### Per-Phase Breakdown
+
+`PipelineRunSummary.PhaseBreakdown` is a dictionary keyed by phase name (e.g., `"Analysis"`, `"CodeGeneration"`, `"Review.Correctness"`). Each entry contains:
+
+| Property | Description |
+|----------|-------------|
+| `Tokens` | Total tokens consumed during this phase |
+| `Cost` | Cost in USD for this phase, or `null` if unavailable |
+
+The breakdown is rendered in the active-run sidebar (collapsible "Cost Breakdown" table sorted by cost descending) and in the history run detail modal. It is `null` for runs recorded before this feature was introduced.
+
+**API exposure:** `PhaseBreakdown` is included in the `GET /api/export/runs.json` export. Fields will be absent (`null`) for runs that pre-date the phase breakdown feature.
+
 ### Histogram Bucket Boundaries
 
 Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instrument creation time:
