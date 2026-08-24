@@ -39,7 +39,8 @@ public partial class AgentMonitoring : IAsyncDisposable
     private IReadOnlyList<PendingJob> _queuedJobs => PageService.QueuedJobs;
     private IReadOnlyList<ConsolidationRun> _activeConsolidationRuns => PageService.ActiveConsolidationRuns;
     private IReadOnlyList<ConsolidationRun> _queuedConsolidationRuns => PageService.QueuedConsolidationRuns;
-    private IReadOnlyList<PipelineRunSummary> _runHistory => PageService.RunHistory;
+    private IReadOnlyList<PipelineRunSummary> _runHistory =>
+        PageService.RunHistory.Where(r => r.FinalStep.IsTerminal()).ToList();
     private int _maxRetries => PageService.MaxRetries;
 
     // ── UI-only state ──
