@@ -101,6 +101,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         // Step 3: If inline comments are disabled, submit body-only and return
         if (!inlineSettings.Enabled)
         {
+            context.Logger.Information("PR #{PrNumber} inline comments disabled by config, submitting body-only review", prNumber);
             await SubmitWithOwnPrFallbackAsync(context, prNumber, body, reviewType, ct);
             return;
         }
@@ -111,6 +112,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         // inlineSettings.Enabled is always true — the guard is implicit and the behavior is preserved.
         if (!supportsInline)
         {
+            context.Logger.Information("PR #{PrNumber} provider does not support inline comments (SupportsInlineReviewComments=false), appending location section to body", prNumber);
             body = AppendLocationSection(body, context.Run.CodeReviewAgentFindings);
             await SubmitWithOwnPrFallbackAsync(context, prNumber, body, reviewType, ct);
             return;
@@ -257,7 +259,12 @@ public sealed class PostReviewFindingsStep : IPipelineStep
     {
         var diffPath = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.FullDiffFilePath);
         if (!File.Exists(diffPath))
+        {
+            context.Logger.Warning(
+                "Diff file not found at {DiffPath} — skipping hunk validation, all {Count} comment(s) submitted unvalidated (may 422)",
+                diffPath, comments.Count);
             return comments;
+        }
 
         try
         {
@@ -342,7 +349,12 @@ public sealed class PostReviewFindingsStep : IPipelineStep
             var agentOutput = kvp.Value;
 
             if (string.IsNullOrEmpty(agentOutput))
+            {
+                context.Logger.Warning(
+                    "Agent '{AgentName}' produced empty findings output — skipping inline comment parsing for this agent",
+                    agentName);
                 continue;
+            }
 
             // Initial parse
             var findings = FindingsParser.Parse(agentOutput, agentName);
@@ -358,6 +370,18 @@ public sealed class PostReviewFindingsStep : IPipelineStep
                 {
                     findings = await RetryAgentForStructuredOutputAsync(
                         context, agentName, agentOutput, maxRetries, ct);
+                }
+            }
+            else if (!hasLocationFindings && maxRetries == 0)
+            {
+                var severityCounts = SeverityParser.Parse(agentOutput.Split('\n'));
+                var hasMarkers = severityCounts.Critical > 0 || severityCounts.Warning > 0 || severityCounts.Suggestion > 0;
+                if (hasMarkers)
+                {
+                    context.Logger.Information(
+                        "Agent '{AgentName}' has {Critical}C/{Warning}W/{Suggestion}S findings but no file:line references — " +
+                        "retries disabled (MaxRetries=0), findings will be body-only",
+                        agentName, severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
                 }
             }
 
@@ -439,7 +463,8 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         }
 
         // All retries exhausted — return original parse (findings without location)
-        context.Logger.Debug("All {MaxRetries} retries exhausted for agent '{AgentName}', using original findings",
+        context.Logger.Warning(
+            "All {MaxRetries} retries exhausted for agent '{AgentName}' without producing file:line findings — findings will be body-only",
             maxRetries, agentName);
         return FindingsParser.Parse(originalOutput, agentName);
     }
