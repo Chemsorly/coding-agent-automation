@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 
 namespace CodingAgentWebUI.Orchestration;
@@ -11,9 +12,9 @@ namespace CodingAgentWebUI.Orchestration;
 public sealed record RunLifecycleManagerDependencies(
     IOrchestratorRunService RunService,
     IPipelineRunHistoryService HistoryService,
-    Registry.AgentRegistryService Registry,
+    IAgentRegistryService Registry,
     ILabelService LabelService,
-    JobDeduplicationGuardService Dispatcher,
+    AgentReservationService Dispatcher,
     Serilog.ILogger Logger,
     IJobCleanupStrategy? JobCleanup = null,
     IWorkItemFallbackTransitionService? WorkItemFallbackTransition = null);

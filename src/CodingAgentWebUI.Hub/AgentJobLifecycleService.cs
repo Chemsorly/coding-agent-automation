@@ -92,6 +92,8 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         {
             agent.ActiveJobId = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null);
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", DateTimeOffset.UtcNow.ToString("O"));
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
     }
@@ -202,6 +204,9 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             agent.ActiveJobId = null;
             agent.OrphanRestoredAt = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null);
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "orphanRestoredAt", null);
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", DateTimeOffset.UtcNow.ToString("O"));
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
 

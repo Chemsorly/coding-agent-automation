@@ -52,12 +52,11 @@ public sealed partial class AgentHub
         _logger.Debug("Connection {ConnectionId} subscribed to run-{JobId}", Context.ConnectionId, jobId);
 
         // Push buffered output lines to the new subscriber immediately (Req 3.4a).
-        // This ensures a Blazor circuit navigating to a mid-run page sees existing output
-        // without a separate backlog fetch — the normal OnOutputLines handler receives them.
-        var buffer = _facade.GetOutputBuffer(new Pipeline.Models.JobId(jobId));
-        if (buffer.Count > 0)
+        // Uses GetOutputBacklogAsync which reads from Redis in distributed mode (cross-replica),
+        // or the in-memory ring buffer in single-replica mode.
+        var lines = await _facade.GetOutputBacklogAsync(new Pipeline.Models.JobId(jobId));
+        if (lines.Count > 0)
         {
-            var lines = buffer.GetAll();
             await _uiContext.Clients.Client(Context.ConnectionId)
                 .SendAsync(HubMethodNames.OnOutputLines, jobId, lines);
             _logger.Debug("Pushed {LineCount} buffered output lines to new subscriber for run-{JobId}",

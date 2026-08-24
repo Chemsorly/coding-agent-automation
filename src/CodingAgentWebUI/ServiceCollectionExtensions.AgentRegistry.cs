@@ -51,12 +51,14 @@ public static partial class ServiceCollectionExtensions
             Log.Logger));
 
         // Pinned to the LOCAL registry, not IAgentRegistryService. SelectAgent reserves an agent by
-        // transitioning it to Busy in the same lock that picked it; that reservation is meaningless
-        // against a read-only replica, so pointing the guard at the API-backed view would let it
-        // hand the same agent to two callers. Dispatch to agents belongs to the API process, and
-        // this keeps the monolith's guard behaving exactly as it does today.
+        // The monolith's registry is a read-only replica (ApiAgentRegistryService). SelectAgent here
+        // is meaningless — dispatch belongs to the API process. Register both the backward-compat
+        // alias and AgentReservationService so ConsolidationDispatchDependencies can resolve.
+        services.AddSingleton<AgentReservationService>(sp => new AgentReservationService(
+            sp.GetRequiredService<IAgentRegistryService>(),
+            Log.Logger));
         services.AddSingleton(sp => new JobDeduplicationGuardService(
-            sp.GetRequiredService<AgentRegistryService>(),
+            sp.GetRequiredService<IAgentRegistryService>(),
             Log.Logger));
     }
 }

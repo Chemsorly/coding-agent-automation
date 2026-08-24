@@ -240,11 +240,13 @@ api:
   image:
     repository: chemsorly/coding-agent
     tag: coding-agent-api
-  # api.replicas MUST remain 1. AgentRegistryService, OrchestratorRunService, and all
-  # in-memory locking state is per-process. A second replica gets a divergent copy of each.
-  # The deployment uses strategy: Recreate (not RollingUpdate) to prevent a ~20-30s
-  # two-pod overlap on rollout — see templates/api-deployment.yaml.
+  # Spec 046: api.replicas > 1 is supported when signalr.redis.connectionString is set.
+  # AgentRegistryService and OrchestratorRunService are now Redis-backed (distributed mode).
+  # When signalr.redis.connectionString is empty the API falls back to in-memory implementations
+  # and replicas must remain 1. A startup warning is logged if replicas > 1 and Redis is absent.
   replicas: 1
+  # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
+  annotations: {}
   service:
     type: ClusterIP
     port: 8090
@@ -286,7 +288,10 @@ jobController:
   # replicas: leader election (caa-dispatch-lock) handles multi-replica safety.
   # Only the leader pod dispatches and reconciles; others idle waiting for leadership.
   replicas: 1
+  # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
+  annotations: {}
   service:
+    type: ClusterIP
     port: 8091
   resources:
     requests:

@@ -32,7 +32,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private readonly IKubernetesJobClient _jobClient;
     private readonly IHubContext<AgentHub, IAgentHubClient> _hubContext;
     private readonly JobTemplateStore _templateStore;
-    private readonly AgentRegistryService _registry;
+    private readonly IAgentRegistryService _registry;
     private readonly DispatchServiceOptions _options;
     private readonly ILeaderElectionService _leaderElection;
     private readonly ILogger _logger;
@@ -60,7 +60,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         IKubernetesJobClient jobClient,
         IHubContext<AgentHub, IAgentHubClient> hubContext,
         JobTemplateStore templateStore,
-        AgentRegistryService registry,
+        IAgentRegistryService registry,
         DispatchServiceOptions options,
         ILeaderElectionService leaderElection,
         ILogger logger)

@@ -253,10 +253,10 @@ public partial class LayerBoundaryTests
         {
             "AgentEntry.cs",                        // declares SyncRoot
             "AgentRegistryService.cs",              // Register(), UpdateHeartbeat(), TransitionStatus()
-            "JobDeduplicationGuardService.cs",      // SelectAgent() — nested inside _selectionLock
+            "AgentReservationService.cs",           // SelectAgent() — renamed from JobDeduplicationGuardService
             "RunLifecycleManager.cs",               // ActiveJobId mutation on assignment/completion
-            "AgentOrphanRecoveryService.cs",        // check-and-set ActiveJobId on reconnect
-            "AgentEndpoints.cs",                    // sets ActiveChatSessionId on chat-resume
+            "AgentOrphanRecoveryService.cs",        // check-and-set ActiveJobId on reconnect; Spec 046 partial migration
+            "AgentEndpoints.cs",                    // sets ActiveChatSessionId on chat-resume; Spec 046 partial migration
         };
 
         var srcDir = Path.Combine(RepoRoot, "src");
@@ -371,6 +371,13 @@ public partial class LayerBoundaryTests
             // Removed in arch-audit wave 1 (2026-08-22). ReconciliationService (JobController)
             // handles timeout enforcement.
             // "HeartbeatMonitorService", // DELETED — do not add back
+
+            // Spec 046: conditionally registered via AddHostedService lambda pattern.
+            // When signalr.redis.connectionString is set these run; when absent a NoOpHostedService
+            // substitutes. The T4 scanner cannot detect the conditional GetService<T> lambda pattern
+            // so these are listed here as "conditionally registered, not retired".
+            "AgentRegistryCleanupService",
+            "RunServiceCleanupService",
         };
 
         // ── Step 3: find all concrete BackgroundService subclasses in src files ──

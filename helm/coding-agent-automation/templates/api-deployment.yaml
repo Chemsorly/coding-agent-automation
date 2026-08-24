@@ -6,22 +6,23 @@ metadata:
   labels:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
-spec:
-  # api.replicas MUST remain 1 — Redis backplane handles message delivery but not
-  # in-memory singleton state (AgentRegistryService, OrchestratorRunService, etc.).
-  # See Req 9.8a. Do NOT increase without completing Spec 045 Task 13a.
-  {{- if gt (int .Values.api.replicas) 1 }}
-  {{- fail "api.replicas must be 1. AgentRegistryService, OrchestratorRunService and JobDeduplicationGuardService are in-memory singletons; a second replica gets a divergent copy of each. See docs/architecture/concurrency-model.md." }}
+  {{- with .Values.api.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
   {{- end }}
+spec:
+  # Spec 046: api.replicas > 1 is now safe. AgentRegistryService, OrchestratorRunService, and
+  # JobDeduplicationGuardService are backed by Redis when signalr.redis.connectionString is set.
+  # If signalr.redis.connectionString is empty and replicas > 1, a startup warning is logged.
   replicas: {{ .Values.api.replicas }}
-  # Recreate avoids a ~20-30s incorrect two-pod overlap during rollout.
-  # At replicas=1 the Kubernetes default RollingUpdate would surge to 2 pods,
-  # giving two API processes a divergent view of AgentRegistryService,
-  # OrchestratorRunService and JobDeduplicationGuardService.
-  # Recreate trades the overlap for a clean ~20-30s outage, which is correct for
-  # a batch system with infinitely-reconnecting agents and durable Postgres work items.
+  # RollingUpdate is safe after Spec 046. signalr.redis.connectionString must be set for
+  # multi-replica deployments to avoid divergent in-memory state between old and new pods
+  # during the rollout overlap window.
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}

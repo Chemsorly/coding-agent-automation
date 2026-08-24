@@ -56,4 +56,18 @@ public interface IAgentRegistryService
     /// Returns the count of agents currently in <see cref="AgentStatus.Busy"/> status.
     /// </summary>
     int GetBusyAgentCount();
+
+    /// <summary>
+    /// Returns all agents whose labels contain <c>{labelKey}={labelValue}</c>.
+    /// Used by <c>ChatJobDispatcher</c> to find a newly-connected chat pod.
+    /// </summary>
+    IReadOnlyList<AgentEntry> GetAgentsByLabel(string labelKey, string labelValue);
+
+    /// <summary>
+    /// Updates a single field on the agent's registry entry.
+    /// Callers that previously mutated <see cref="AgentEntry"/> properties directly must use this
+    /// instead — under <c>DistributedAgentRegistryService</c>, <see cref="GetByAgentId"/> returns
+    /// a deserialized snapshot and direct mutations are silently lost.
+    /// </summary>
+    Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value);
 }

@@ -85,7 +85,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
 
         // 5. Clear agent state
-        ClearAgentState(run.AgentId);
+        await ClearAgentStateAsync(run.AgentId);
 
         // 6. Swap label to error
         await _labelService.TrySwapLabelAsync(run, AgentLabels.Error, _logger, "RunLifecycleManager", ct);
@@ -184,7 +184,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
 
         // 5. Clear agent state
-        ClearAgentState(run.AgentId);
+        await ClearAgentStateAsync(run.AgentId);
 
         // 6. Swap label
         await _labelService.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "RunLifecycleManager", ct);
@@ -222,10 +222,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         var agent = _registry.GetByAgentId(agentId);
         if (agent is not null)
         {
-            lock (agent.SyncRoot)
-            {
-                agent.ActiveJobId = runId.Value;
-            }
+            await _registry.UpdateAgentFieldAsync(agentId, "activeJobId", runId.Value);
             _registry.TransitionStatus(agentId, AgentStatus.Busy);
         }
 
@@ -275,22 +272,24 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         }
     }
 
-    private void ClearAgentState(string? agentId)
+    private async Task ClearAgentStateAsync(string? agentId)
     {
         if (string.IsNullOrEmpty(agentId))
             return;
 
         var agent = _registry.GetByAgentId(agentId);
         if (agent is null)
-            return;
-
-        lock (agent.SyncRoot)
         {
-            agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null; // cleared on successful completion
+            _logger.Warning(
+                "ClearAgentState: agent {AgentId} not found in registry (hash expired or agent deregistered) — skipping status transition",
+                agentId);
+            return;
         }
 
-        _registry.TransitionStatus(agentId, AgentStatus.Idle);
+        await _registry.UpdateAgentFieldAsync(new AgentId(agentId), "activeJobId", null);
+        await _registry.UpdateAgentFieldAsync(new AgentId(agentId), "orphanRestoredAt", null);
+
+        _registry.TransitionStatus(new AgentId(agentId), AgentStatus.Idle);
     }
 
 }

@@ -165,4 +165,11 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
         _outputBuffers.Clear();
         _recentlyCompleted.Clear();
     }
+
+    /// <inheritdoc />
+    public void AppendOutputLines(RunId runId, IReadOnlyList<string> lines)
+    {
+        // In-memory path: write to the ring buffer directly.
+        GetOutputBuffer(runId).AddRange(lines);
+    }
 }

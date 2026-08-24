@@ -167,6 +167,29 @@ public sealed class ApiAgentRegistryService : IAgentRegistryService
             agentId, newStatus);
     }
 
+    /// <inheritdoc />
+    public IReadOnlyList<AgentEntry> GetAgentsByLabel(string labelKey, string labelValue)
+    {
+        var target = $"{labelKey}={labelValue}";
+        return Current.Agents
+            .Where(a => a.Labels?.Any(l => string.Equals(l, target, StringComparison.OrdinalIgnoreCase)) == true)
+            .ToList()
+            .AsReadOnly();
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// No-op — field writes are owned by the Pipeline API. The snapshot is rebuilt on the next
+    /// <see cref="RefreshAsync"/> call from <see cref="AgentRegistrySyncService"/>.
+    /// </remarks>
+    public Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value)
+    {
+        _logger.Debug(
+            "UpdateAgentFieldAsync({AgentId}, {Field}={Value}) called on the API-backed registry — ignored (read-only replica).",
+            agentId, field, value);
+        return Task.CompletedTask;
+    }
+
     // ── Snapshot ────────────────────────────────────────────────────────────
 
     /// <summary>

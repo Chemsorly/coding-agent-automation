@@ -122,6 +122,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         if (consolEntry is not null)
         {
             consolEntry.ActiveJobId = activeJob.RunId;
+            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
             _facade.TransitionStatus(agentId, AgentStatus.Busy);
         }
 
@@ -146,6 +147,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         if (restoredEntry is not null)
         {
             restoredEntry.ActiveJobId = activeJob.RunId;
+            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
             _facade.TransitionStatus(agentId, AgentStatus.Busy);
         }
 
@@ -235,6 +237,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
                     if (trackedEntry.ActiveJobId is null)
                     {
                         trackedEntry.ActiveJobId = activeJob.RunId;
+                        _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
                     }
                 }
                 if (trackedEntry.ActiveJobId == activeJob.RunId)
@@ -269,6 +272,8 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
                 {
                     entry.ActiveJobId = mostRecent.RunId;
                     entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
+                    _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", mostRecent.RunId);
+                    _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"));
                 }
             }
 
@@ -302,6 +307,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             lock (entry.SyncRoot)
             {
                 entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
+                _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"));
             }
             _logger.Warning(
                 "Agent {AgentId} re-registered without active job but orchestrator has {JobId} assigned (crash recovery). " +

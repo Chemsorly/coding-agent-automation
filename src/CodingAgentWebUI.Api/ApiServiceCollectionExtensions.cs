@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Hub;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
@@ -17,6 +18,7 @@ using CodingAgentWebUI.Pipeline.Services;
 using k8s;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -151,15 +153,80 @@ public static class ApiServiceCollectionExtensions
             new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
 
         // ── AgentRegistryService + IAgentRegistryService ────────────────────
+        // Use DistributedAgentRegistryService when Redis is available (multi-replica mode);
+        // fall back to in-memory AgentRegistryService for local dev without Redis.
         services.AddSingleton<AgentRegistryService>();
-        services.AddSingleton<IAgentRegistryService>(sp => sp.GetRequiredService<AgentRegistryService>());
+        services.AddSingleton<IAgentRegistryService>(sp =>
+        {
+            var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
+            if (mux is not null)
+            {
+                var store = new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase());
+                Log.Information("AgentRegistry: distributed (Redis)");
+                return new DistributedAgentRegistryService(store, Log.Logger);
+            }
+            Log.Information("AgentRegistry: in-memory (local development — Redis not configured)");
+            return sp.GetRequiredService<AgentRegistryService>();
+        });
 
         // ── OrchestratorRunService + IOrchestratorRunService ────────────────
+        // Use DistributedRunService when Redis is available; fall back to in-memory.
         services.AddSingleton<OrchestratorRunService>(sp => new OrchestratorRunService(Log.Logger));
-        services.AddSingleton<IOrchestratorRunService>(sp => sp.GetRequiredService<OrchestratorRunService>());
+        services.AddSingleton<IOrchestratorRunService>(sp =>
+        {
+            var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
+            if (mux is not null)
+            {
+                var store = new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase());
+                return new DistributedRunService(store, sp.GetRequiredService<IPipelineApiWorkItemClient>(), Log.Logger);
+            }
+            return sp.GetRequiredService<OrchestratorRunService>();
+        });
 
-        // ── JobDeduplicationGuardService ────────────────────────────────────
-        services.AddSingleton<JobDeduplicationGuardService>();
+        // ── AgentReservationService (renamed from JobDeduplicationGuardService) ────────
+        services.AddSingleton<AgentReservationService>(sp =>
+        {
+            var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
+            CodingAgentWebUI.Orchestration.Redis.IRedisStore? store = mux is not null
+                ? new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase())
+                : null;
+            return new AgentReservationService(sp.GetRequiredService<IAgentRegistryService>(), Log.Logger, store);
+        });
+        // Backward-compat: JobDeduplicationGuardService resolves to AgentReservationService
+        services.AddSingleton<JobDeduplicationGuardService>(sp =>
+            new JobDeduplicationGuardService(sp.GetRequiredService<IAgentRegistryService>(), Log.Logger));
+
+        // ── Redis cleanup background services (only registered when Redis is configured) ──
+        // AddHostedService<T> uses TryAddEnumerable which requires a non-IHostedService concrete type.
+        // We check for Redis at registration time via a post-configure callback or simply skip
+        // registration when Redis is absent, since these services are no-ops without Redis.
+        {
+            var hasMuxDescriptor = services.Any(d => d.ServiceType == typeof(StackExchange.Redis.IConnectionMultiplexer));
+            // Always register the singletons (factory returns null when Redis absent — GC'd).
+            services.AddSingleton<CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService>(sp =>
+            {
+                var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
+                if (mux is null) return null!;
+                var store = new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase());
+                return new CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService(store, Log.Logger);
+            });
+            services.AddSingleton<RunServiceCleanupService>(sp =>
+            {
+                var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
+                if (mux is null) return null!;
+                var store = new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase());
+                return new RunServiceCleanupService(store, Log.Logger);
+            });
+            // Use concrete-type AddHostedService to avoid IHostedService ambiguity.
+            // The singletons above return null when Redis absent; GetService returns null; hosted service is a no-op at startup.
+            services.AddHostedService<CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService>(
+                sp => sp.GetService<CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService>()
+                      ?? new CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService(
+                             new CodingAgentWebUI.Orchestration.Redis.NullRedisStore(), Log.Logger));
+            services.AddHostedService<RunServiceCleanupService>(
+                sp => sp.GetService<RunServiceCleanupService>()
+                      ?? new RunServiceCleanupService(new CodingAgentWebUI.Orchestration.Redis.NullRedisStore(), Log.Logger));
+        }
 
         // ── ITokenVendingService ─────────────────────────────────────────────
         services.AddHttpClient("TokenVending")
@@ -202,7 +269,7 @@ public static class ApiServiceCollectionExtensions
 
         // ── ModelFetchService ────────────────────────────────────────────────
         services.AddSingleton<ModelFetchService>(sp => new ModelFetchService(
-            sp.GetRequiredService<AgentRegistryService>(),
+            sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IAgentCommunication>(),
             Log.Logger));
 
@@ -224,9 +291,9 @@ public static class ApiServiceCollectionExtensions
             new RunLifecycleManagerDependencies(
                 sp.GetRequiredService<IOrchestratorRunService>(),
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<AgentRegistryService>(),
+                sp.GetRequiredService<IAgentRegistryService>(),
                 sp.GetRequiredService<ILabelService>(),
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
+                sp.GetRequiredService<AgentReservationService>(),
                 Log.Logger,
                 sp.GetService<IJobCleanupStrategy>(),
                 sp.GetRequiredService<IWorkItemFallbackTransitionService>())));
@@ -398,7 +465,7 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IKubernetesJobClient>(),
                 sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub, IAgentHubClient>>(),
                 sp.GetRequiredService<JobTemplateStore>(),
-                sp.GetRequiredService<AgentRegistryService>(),
+                sp.GetRequiredService<IAgentRegistryService>(),
                 options,
                 sp.GetRequiredService<ILeaderElectionService>(),
                 Log.Logger);

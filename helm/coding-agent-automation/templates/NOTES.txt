@@ -286,16 +286,13 @@ Single-replica mode. Scale to multiple replicas with:
 
 ## Pipeline API (api.enabled=true)
 
-**REQUIRED for multi-replica API:** signalr.redis.enabled: true
-Without Redis, hub group events (OnOutputLines, OnStepTransition, etc.) are
-process-local and will not reach UI circuits connected to a different replica —
-runs will appear frozen in the UI.
+**Multi-replica API (api.replicas > 1):** Requires signalr.redis.connectionString to be set.
+With Redis, AgentRegistryService and OrchestratorRunService use distributed Redis-backed
+implementations (Spec 046). Without Redis, the API falls back to in-memory mode and
+api.replicas must be 1.
 
-**api.replicas must remain 1.**
-The SignalR Redis backplane (signalr.redis.enabled) enables hub message delivery across
-replicas but does NOT make multiple API replicas safe. AgentRegistryService,
-OrchestratorRunService, and all in-memory locking state are per-process singletons.
-Do NOT scale to replicas > 1 before Spec 045 completes its concurrency model rewrite.
+For api.replicas > 1: set signalr.redis.connectionString and ensure all replicas can
+reach the same Redis instance.
 
 **Expected restarts during schema upgrades (Req 9.5b).**
 When the orchestrator is applying database migrations, the API pod will repeatedly log:

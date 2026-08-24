@@ -31,7 +31,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
     private readonly WorkItemTransitionService _transitionService;
     private readonly OrchestratorRunService _runService;
     private readonly AgentRegistryService _registry;
-    private readonly JobDeduplicationGuardService _dispatcher;
+    private readonly AgentReservationService _dispatcher;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
     private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<ILogger> _mockLogger;
@@ -55,7 +55,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         _mockLogger = new Mock<ILogger>();
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
+        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
         _mockLabelService = new Mock<ILabelService>();
 

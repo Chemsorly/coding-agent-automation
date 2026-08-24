@@ -46,7 +46,8 @@ public sealed partial class AgentHub
         // Transition agent to Idle BEFORE delegating to slow I/O
         if (agent is not null)
         {
-            agent.ActiveJobId = null;
+            agent.ActiveJobId = null; // local snapshot update
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null); // distributed write
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
 

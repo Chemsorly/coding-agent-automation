@@ -59,8 +59,22 @@ internal static class ApiStartupExtensions
     public static IEndpointRouteBuilder MapApiHealthEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Liveness: Is the process alive?
-        endpoints.MapGet("/healthz", () =>
-            Results.Ok(new { status = "ok" })).AllowAnonymous();
+        // Also checks Redis connectivity when backplane is configured — a process that cannot
+        // reach Redis will silently drop hub messages in multi-replica mode.
+        endpoints.MapGet("/healthz", async ([FromServices] IConnectionMultiplexer? redis) =>
+        {
+            if (redis is not null)
+            {
+                try { await redis.GetDatabase().PingAsync(); }
+                catch
+                {
+                    return Results.Json(
+                        new { status = "unhealthy", reason = "redis_ping_failed" },
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
+            }
+            return Results.Ok(new { status = "ok" });
+        }).AllowAnonymous();
 
         // Readiness: Can this pod serve traffic?
         // Returns 503 when:

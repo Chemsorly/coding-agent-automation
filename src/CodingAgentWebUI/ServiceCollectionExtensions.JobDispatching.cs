@@ -45,7 +45,7 @@ public static partial class ServiceCollectionExtensions
             Log.Logger));
 
         services.AddSingleton<ModelFetchService>(sp => new ModelFetchService(
-            sp.GetRequiredService<AgentRegistryService>(),
+            sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IAgentCommunication>(),
             Log.Logger));
     }

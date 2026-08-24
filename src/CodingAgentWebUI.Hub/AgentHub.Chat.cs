@@ -92,7 +92,8 @@ public sealed partial class AgentHub
             throw new HubException($"Session {message.SessionId} not assigned to agent {agentId}");
         }
 
-        agent!.ActiveChatSessionId = null;
+        agent!.ActiveChatSessionId = null; // Also write to registry for cross-replica visibility
+        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "activeChatSessionId", null);
 
         _logger.Information("Chat prompt completed for session {SessionId} on agent {AgentId} (exit={ExitCode})",
             message.SessionId, agent.AgentId, message.ExitCode);

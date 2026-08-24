@@ -27,6 +27,7 @@
     <PackageReference Include="OpenTelemetry.Api" />
     <PackageReference Include="Polly.Core" />
     <PackageReference Include="Serilog" />
+    <PackageReference Include="StackExchange.Redis" />
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 

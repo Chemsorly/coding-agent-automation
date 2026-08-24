@@ -16,7 +16,7 @@ namespace CodingAgentWebUI.Hub;
 /// </summary>
 public sealed record AgentHubFacadeDependencies(
     IAgentRegistryService Registry,
-    OrchestratorRunService RunService,
+    IOrchestratorRunService RunService,
     JobDeduplicationGuardService Dispatcher,
     IPipelineRunHistoryService HistoryService,
     IProviderConfigStore ConfigStore,

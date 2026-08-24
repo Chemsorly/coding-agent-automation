@@ -105,8 +105,8 @@ public static partial class ServiceCollectionExtensions
 
         services.AddSingleton<IConsolidationDispatchService>(sp => new ConsolidationDispatchService(
             new ConsolidationDispatchDependencies(
-                sp.GetRequiredService<AgentRegistryService>(),
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
+                sp.GetRequiredService<IAgentRegistryService>(),
+                sp.GetRequiredService<AgentReservationService>(),
                 sp.GetRequiredService<IAgentCommunication>(),
                 sp.GetRequiredService<IConfigurationStore>(),
                 sp.GetRequiredService<IProjectStore>(),

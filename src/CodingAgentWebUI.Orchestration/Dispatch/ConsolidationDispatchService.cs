@@ -14,7 +14,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 public sealed record ConsolidationDispatchDependencies(
     IAgentRegistryService Registry,
-    JobDeduplicationGuardService JobDispatcher,
+    AgentReservationService JobDispatcher,
     IAgentCommunication AgentComm,
     IConfigurationStore ConfigStore,
     IProjectStore ProjectStore,
@@ -34,7 +34,7 @@ public sealed record ConsolidationDispatchDependencies(
 public sealed class ConsolidationDispatchService : IConsolidationDispatchService
 {
     private readonly IAgentRegistryService _registry;
-    private readonly JobDeduplicationGuardService _jobDispatcher;
+    private readonly AgentReservationService _jobDispatcher;
     private readonly IAgentCommunication _agentComm;
     private readonly IConfigurationStore _configStore;
     private readonly IProjectStore _projectStore;
@@ -155,6 +155,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
 
             // Reset agent status on failure
             agent.ActiveJobId = null;
+            _ = _registry.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null);
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
             return ConsolidationDispatchResult.Failed;
@@ -241,6 +242,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
                 runId, agentId);
 
             agent.ActiveJobId = null;
+            _ = _registry.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null);
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
             return false;
         }
@@ -301,6 +303,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
 
         // Assign the job to the agent
         agent.ActiveJobId = ctx.Run.RunId;
+        _ = _registry.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", ctx.Run.RunId);
         _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
 
         await _agentComm.AssignConsolidationJobAsync(agent.ConnectionId, agent.AgentId, message, ct);

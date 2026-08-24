@@ -6,6 +6,10 @@ metadata:
   labels:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
     app.kubernetes.io/component: jobcontroller
+  {{- with .Values.jobController.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.jobController.replicas | default 1 }}
   # Recreate avoids a readiness deadlock on every rolling update.

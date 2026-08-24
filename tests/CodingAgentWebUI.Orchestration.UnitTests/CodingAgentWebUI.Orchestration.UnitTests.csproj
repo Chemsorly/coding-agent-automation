@@ -32,6 +32,7 @@
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Api\CodingAgentWebUI.Api.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Orchestration\CodingAgentWebUI.Orchestration.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.TestUtilities\CodingAgentWebUI.TestUtilities.csproj" />
   </ItemGroup>
 
 </Project>

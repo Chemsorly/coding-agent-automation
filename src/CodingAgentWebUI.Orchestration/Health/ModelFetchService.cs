@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Orchestration.Health;
 /// </summary>
 public sealed class ModelFetchService : IModelFetchReceiver
 {
-    private readonly AgentRegistryService _registry;
+    private readonly IAgentRegistryService _registry;
     private readonly IAgentCommunication _agentComm;
     private readonly ILogger _logger;
 
@@ -19,7 +19,7 @@ public sealed class ModelFetchService : IModelFetchReceiver
     private IReadOnlyList<AgentModelInfo>? _cachedModels;
 
     public ModelFetchService(
-        AgentRegistryService registry,
+        IAgentRegistryService registry,
         IAgentCommunication agentComm,
         ILogger logger)
     {

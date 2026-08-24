@@ -20,8 +20,8 @@ public static class AgentHubServiceCollectionExtensions
     public static IServiceCollection AddAgentHubServices(this IServiceCollection services)
     {
         services.AddSingleton<AgentHubFacadeDependencies>(sp => new AgentHubFacadeDependencies(
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<OrchestratorRunService>(),
+            sp.GetRequiredService<IAgentRegistryService>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IProviderConfigStore>(),

@@ -23,7 +23,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
-    private readonly JobDeduplicationGuardService _dispatcher;
+    private readonly AgentReservationService _dispatcher;
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
@@ -40,7 +40,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     public ConsolidationDispatchServiceTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
+        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
         _tempDir = Path.Combine(Path.GetTempPath(), $"cds-test-{Guid.NewGuid():N}");
 
         _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
@@ -97,7 +97,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 
     private static ConsolidationDispatchDependencies MakeDeps(
         IAgentRegistryService? registry = null,
-        JobDeduplicationGuardService? dispatcher = null,
+        AgentReservationService? dispatcher = null,
         IAgentCommunication? agentComm = null,
         IConfigurationStore? configStore = null,
         IProjectStore? projectStore = null,
@@ -109,7 +109,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         IConsolidationRunStore? runStore = null)
     {
         var defaultRegistry = new AgentRegistryService(Mock.Of<ILogger>());
-        var defaultDispatcher = new JobDeduplicationGuardService(defaultRegistry, Mock.Of<ILogger>());
+        var defaultDispatcher = new AgentReservationService(defaultRegistry, Mock.Of<ILogger>());
         return new ConsolidationDispatchDependencies(
             registry ?? defaultRegistry,
             dispatcher ?? defaultDispatcher,

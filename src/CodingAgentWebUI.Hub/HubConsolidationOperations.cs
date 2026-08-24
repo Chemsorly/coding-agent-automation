@@ -90,7 +90,8 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         if (agent is not null)
         {
             agent.ActiveJobId = null;
-            // Note: TransitionStatus is on IAgentRegistryService; callers set it directly via AgentEntry.
+            // Note: The distributed write (_facade.UpdateAgentFieldAsync) is performed by the
+            // calling hub method (AgentHub.Consolidation.cs) before delegating here.
             // The facade's TransitionStatus is called by the Hub before delegating here.
         }
 

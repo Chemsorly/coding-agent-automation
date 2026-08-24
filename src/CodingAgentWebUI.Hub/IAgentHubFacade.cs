@@ -84,6 +84,20 @@ public interface IAgentHubFacade
     OutputRingBuffer GetOutputBuffer(JobId jobId);
 
     /// <summary>
+    /// Appends output lines to the run's persistent storage.
+    /// For in-memory mode: writes to the OutputRingBuffer.
+    /// For distributed mode: writes to Redis List for cross-replica backlog.
+    /// </summary>
+    void AppendOutputLines(JobId jobId, IReadOnlyList<string> lines);
+
+    /// <summary>
+    /// Returns the full output backlog for a run. For distributed mode, reads from Redis List;
+    /// for in-memory mode, reads from the OutputRingBuffer.
+    /// Used by <c>SubscribeToRun</c> to push backlog to late-joining UI circuits.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetOutputBacklogAsync(JobId jobId);
+
+    /// <summary>
     /// Removes a pipeline run from the active runs collection.
     /// </summary>
     void RemoveRun(JobId jobId);
@@ -171,4 +185,11 @@ public interface IAgentHubFacade
     /// </summary>
     Task<(string IssueIdentifier, string IssueProviderConfigId)?> GetWorkItemIssueMetadataAsync(
         JobId jobId, CancellationToken ct);
+
+    /// <summary>
+    /// Updates a single field on the agent's registry entry.
+    /// Use instead of direct <see cref="AgentEntry"/> property mutation so writes are
+    /// visible to all replicas under <c>DistributedAgentRegistryService</c>.
+    /// </summary>
+    Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value);
 }

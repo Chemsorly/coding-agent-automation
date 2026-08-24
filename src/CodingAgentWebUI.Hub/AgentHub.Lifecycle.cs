@@ -65,7 +65,8 @@ public sealed partial class AgentHub
             _logger.Information(
                 "Agent {AgentId} reported progress on job {JobId}, clearing orphan-restored state",
                 agent.AgentId, jobId.Value);
-            agent.OrphanRestoredAt = null;
+            // Use UpdateAgentFieldAsync so the write is visible to all replicas under distributed registry
+            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "orphanRestoredAt", null);
         }
 
         // Push step transition event to subscribed UI circuits (Req 5.2)
@@ -104,18 +105,15 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(lines);
 
-        var buffer = _facade.GetOutputBuffer(jobId);
-        buffer.AddRange(lines);
+        // AppendOutputLines writes to the ring buffer (in-memory mode) or Redis List (distributed mode).
+        // Do NOT also call buffer.AddRange — AppendOutputLines already handles the ring buffer write.
+        _facade.AppendOutputLines(jobId, lines);
 
-        // Also add to the run's OutputLines for UI streaming
-        var run = _facade.GetRun(jobId);
-        if (run is not null)
-        {
-            foreach (var line in lines)
-                run.OutputLines.Enqueue(line);
-
-            _changeNotifier.NotifyChange();
-        }
+        // NOTE: run.OutputLines.Enqueue is intentionally NOT called here under distributed mode
+        // because GetRun() returns a deserialized snapshot — any enqueue would be a dead write.
+        // The hub push below delivers lines to live UI circuits. Backlog for late joiners comes
+        // from GetOutputBacklogAsync (Redis LRANGE) via SubscribeToRun.
+        _changeNotifier.NotifyChange();
 
         // Push output lines to subscribed UI circuits (Req 2.4, 5.2)
         await _uiContext.Clients.Group($"run-{jobId.Value}")
