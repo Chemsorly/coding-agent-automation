@@ -122,18 +122,20 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
     }
 
     [Fact]
-    public async Task ClaimAsync_NotFound_ReturnsNull()
+    public async Task ClaimAsync_NotFound_ThrowsWorkItemNotFoundException()
     {
         var workItemId = Guid.NewGuid();
         _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/claim").UsingPost())
             .RespondWith(Response.Create().WithStatusCode(404));
 
-        var result = await _sut.ClaimAsync(workItemId, new ClaimWorkItemRequest
+        var act = () => _sut.ClaimAsync(workItemId, new ClaimWorkItemRequest
         {
             DispatchedAt = DateTimeOffset.UtcNow
         });
 
-        result.Should().BeNull("404 Not Found must be treated as a no-op, not an error");
+        await act.Should().ThrowAsync<WorkItemNotFoundException>()
+            .Where(ex => ex.WorkItemId == workItemId,
+                "404 during claim indicates a deleted/missing work item — distinct from 409 contention");
     }
 
     // ── GetAssignmentAsync ────────────────────────────────────────────────
