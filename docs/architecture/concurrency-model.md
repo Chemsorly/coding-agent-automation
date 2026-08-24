@@ -57,8 +57,8 @@ boundaries.
 
 All services described in this document now run exclusively in the **Pipeline API** process
 (`CodingAgentWebUI.Api`). They are **not present** in the Orchestrator, Job Controller, or
-Agent pods. This is important: the guarantee that `_selectionLock`, `_queueLock`, and
-`AgentEntry.SyncRoot` prevent races holds only because all three are in the same process.
+Agent pods. This is important: the guarantee that `_selectionLock` and
+`AgentEntry.SyncRoot` prevent races holds only because all are in the same process.
 
 If a future change splits any of these singletons across processes (e.g., separate API
 replicas), the in-process lock guarantees no longer apply — distributed coordination
@@ -181,15 +181,6 @@ code path that holds two locks simultaneously. The code comment at the nesting s
 - `AgentOrphanRecoveryService`, `RunLifecycleManager`, and `AgentEndpoints`
   all acquire `entry.SyncRoot` in isolation — they never hold `_selectionLock`
 - Therefore, no circular wait is possible
-
-### Additional rule: `_queueLock` and `_selectionLock` are independent
-
-The current code never nests these two locks. They guard independent concerns:
-
-- `_queueLock` → queue scan operations
-- `_selectionLock` → agent selection
-
-Do **not** acquire `_selectionLock` inside `_queueLock`.
 
 ## The Release-Then-Reacquire Pattern
 

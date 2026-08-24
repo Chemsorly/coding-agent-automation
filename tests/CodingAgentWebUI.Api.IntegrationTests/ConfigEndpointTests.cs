@@ -681,4 +681,144 @@ public sealed class ConfigEndpointTests
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
             "POST /api/config/import with malformed JSON must return 400");
     }
+
+    // ── QualityGateConfigs ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task QualityGateConfigs_PutGetDelete_RoundTrip()
+    {
+        var config = new QualityGateConfiguration
+        {
+            Id = Guid.NewGuid().ToString(),
+            DisplayName = "Test Gate",
+            Enabled = true
+        };
+
+        var put = await _client.PutAsJsonAsync("/api/config/quality-gate-configs", config, PipelineJsonOptions.Default);
+        put.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var get = await _client.GetAsync("/api/config/quality-gate-configs");
+        get.StatusCode.Should().Be(HttpStatusCode.OK);
+        var configs = await get.Content.ReadFromJsonAsync<List<QualityGateConfiguration>>(PipelineJsonOptions.Default);
+        configs!.Should().Contain(c => c.Id == config.Id);
+
+        var delete = await _client.DeleteAsync($"/api/config/quality-gate-configs/{config.Id}");
+        delete.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ── ReviewerConfigs ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ReviewerConfigs_PutGetDelete_RoundTrip()
+    {
+        var config = new ReviewerConfiguration
+        {
+            Id = Guid.NewGuid().ToString(),
+            DisplayName = "Test Reviewer",
+            Agents = [new ReviewAgent { Name = "Reviewer", Prompt = "Review this." }],
+            Enabled = true
+        };
+
+        var put = await _client.PutAsJsonAsync("/api/config/reviewer-configs", config, PipelineJsonOptions.Default);
+        put.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var get = await _client.GetAsync("/api/config/reviewer-configs");
+        get.StatusCode.Should().Be(HttpStatusCode.OK);
+        var configs = await get.Content.ReadFromJsonAsync<List<ReviewerConfiguration>>(PipelineJsonOptions.Default);
+        configs!.Should().Contain(c => c.Id == config.Id);
+
+        var delete = await _client.DeleteAsync($"/api/config/reviewer-configs/{config.Id}");
+        delete.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ReviewerConfigs_ResetToDefaults_Returns200()
+    {
+        var response = await _client.PostAsync("/api/config/reviewer-configs/reset-to-defaults", null);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ── Projects ──────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Projects_PutGetByIdDelete_RoundTrip()
+    {
+        var project = new PipelineProject
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "Test Project",
+            Description = "Integration test project",
+            Enabled = true
+        };
+
+        var put = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+        put.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var getAll = await _client.GetAsync("/api/config/projects");
+        getAll.StatusCode.Should().Be(HttpStatusCode.OK);
+        var projects = await getAll.Content.ReadFromJsonAsync<List<PipelineProject>>(PipelineJsonOptions.Default);
+        projects!.Should().Contain(p => p.Id == project.Id);
+
+        var getById = await _client.GetAsync($"/api/config/projects/{project.Id}");
+        getById.StatusCode.Should().Be(HttpStatusCode.OK);
+        var fetched = await getById.Content.ReadFromJsonAsync<PipelineProject>(PipelineJsonOptions.Default);
+        fetched!.Name.Should().Be(project.Name);
+
+        var delete = await _client.DeleteAsync($"/api/config/projects/{project.Id}");
+        delete.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task GetProjectById_Returns404_WhenNotFound()
+    {
+        var response = await _client.GetAsync($"/api/config/projects/{Guid.NewGuid()}");
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    // ── AgentProfiles DELETE ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AgentProfiles_Delete_Returns200()
+    {
+        var profileId = Guid.NewGuid().ToString();
+        var profile = new AgentProfile
+        {
+            Id = profileId,
+            DisplayName = "Profile To Delete",
+            AgentProviderConfigId = "prov-delete-test"
+        };
+        await _client.PutAsJsonAsync("/api/config/agent-profiles", profile, PipelineJsonOptions.Default);
+
+        var delete = await _client.DeleteAsync($"/api/config/agent-profiles/{profileId}");
+        delete.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ── ProviderConfig by id / includeSecrets ─────────────────────────────────────
+
+    [Fact]
+    public async Task ProviderConfigById_Returns200_WhenIncludeSecrets()
+    {
+        var configId = Guid.NewGuid().ToString();
+        var config = new ProviderConfig
+        {
+            Id = configId,
+            Kind = ProviderKind.Issue,
+            DisplayName = "Secrets Test Provider",
+            ProviderType = "github",
+            Secrets = new Dictionary<string, string> { ["token"] = "real-token" }
+        };
+        await _client.PutAsJsonAsync("/api/config/provider-configs", config, PipelineJsonOptions.Default);
+
+        var response = await _client.GetAsync($"/api/config/provider-configs/{configId}?kind=Issue&includeSecrets=true");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var fetched = await response.Content.ReadFromJsonAsync<ProviderConfig>(PipelineJsonOptions.Default);
+        fetched!.Secrets!["token"].Should().Be("real-token");
+    }
+
+    [Fact]
+    public async Task ProviderConfigById_Returns404_WhenNotFound()
+    {
+        var response = await _client.GetAsync($"/api/config/provider-configs/{Guid.NewGuid()}?kind=Issue");
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
 }

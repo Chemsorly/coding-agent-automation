@@ -561,4 +561,130 @@ public sealed class WorkItemEndpointTests
             PipelineJsonOptions.Default);
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
+
+    // ── RequeueWorkItem — Cancelled→Pending ───────────────────────────────────────
+
+    [Fact]
+    public async Task RequeueWorkItem_CancelledToPending_IncrementsRetryCount()
+    {
+        var entity = SeedEntity(WorkItemStatus.Cancelled);
+        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(entity.Id);
+        updated!.Status.Should().Be(WorkItemStatus.Pending);
+        updated.RetryCount.Should().Be(entity.RetryCount + 1);
+    }
+
+    // ── GetWorkItemStatus — GET /{id}/status ──────────────────────────────────────
+
+    [Fact]
+    public async Task GetWorkItemStatus_Returns200_WithCurrentStatus()
+    {
+        var entity = SeedEntity(WorkItemStatus.Dispatched);
+
+        var response = await _client.GetAsync($"/api/work-items/{entity.Id}/status");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(PipelineJsonOptions.Default);
+        body.GetProperty("status").GetString().Should().Be("Dispatched");
+    }
+
+    [Fact]
+    public async Task GetWorkItemStatus_Returns404_WhenNotFound()
+    {
+        var response = await _client.GetAsync($"/api/work-items/{Guid.NewGuid()}/status");
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    // ── GetK8sJobName — GET /{id}/k8s-job-name ───────────────────────────────────
+
+    [Fact]
+    public async Task GetK8sJobName_Returns200_WhenJobNameSet()
+    {
+        var entity = SeedEntity(WorkItemStatus.Dispatched);
+
+        // Write the K8sJobName directly — not exposed via the creation API
+        using (var db = _factory.CreateDbContext())
+        {
+            var row = await db.WorkItems.FindAsync(entity.Id);
+            row!.K8sJobName = "k8s-job-abc123";
+            await db.SaveChangesAsync();
+        }
+
+        var response = await _client.GetAsync($"/api/work-items/{entity.Id}/k8s-job-name");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(PipelineJsonOptions.Default);
+        body.GetProperty("jobName").GetString().Should().Be("k8s-job-abc123");
+    }
+
+    [Fact]
+    public async Task GetK8sJobName_Returns404_WhenJobNameAbsent()
+    {
+        // SeedEntity does not set K8sJobName — should return 404
+        var entity = SeedEntity(WorkItemStatus.Pending);
+        var response = await _client.GetAsync($"/api/work-items/{entity.Id}/k8s-job-name");
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    // ── GetIsDistributed — recent-terminal path ───────────────────────────────────
+
+    [Fact]
+    public async Task GetIsDistributed_ReturnsTrue_WhenRecentlyTerminated()
+    {
+        // Seed a Succeeded work item completed just now — within dedup cooldown window
+        var issueId = $"dist-{Guid.NewGuid():N}";
+        var entity = SeedEntity(WorkItemStatus.Succeeded, issueIdentifier: issueId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var response = await _client.GetAsync(
+            $"/api/work-items/is-distributed?issueIdentifier={issueId}&issueProviderConfigId=prov-seed");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(PipelineJsonOptions.Default);
+        body.GetProperty("isDistributed").GetBoolean().Should().BeTrue(
+            "a recently completed work item should still be considered distributed (dedup window)");
+    }
+
+    [Fact]
+    public async Task GetIsDistributed_ReturnsFalse_WhenNoMatchingItem()
+    {
+        var response = await _client.GetAsync(
+            $"/api/work-items/is-distributed?issueIdentifier=nonexistent-{Guid.NewGuid():N}&issueProviderConfigId=prov-x");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(PipelineJsonOptions.Default);
+        body.GetProperty("isDistributed").GetBoolean().Should().BeFalse();
+    }
+
+    // ── GetActiveIdentifiers ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetActiveIdentifiers_IncludesRecentlyTerminatedItems()
+    {
+        var issueId = $"actid-{Guid.NewGuid():N}";
+        // Seed a recently completed item — within the dedup cooldown window
+        SeedEntity(WorkItemStatus.Succeeded, issueIdentifier: issueId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var response = await _client.GetAsync("/api/work-items/active-identifiers");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain(issueId,
+            "recently terminated items must appear in active-identifiers for dedup purposes");
+    }
+
+    // ── RequeueWorkItem — Succeeded → 409 ────────────────────────────────────────
+
+    [Fact]
+    public async Task RequeueWorkItem_Returns409_WhenSucceeded()
+    {
+        var entity = SeedEntity(WorkItemStatus.Succeeded);
+        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
+        // Succeeded is not Failed or Cancelled — requeue must return 409 Conflict
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
 }

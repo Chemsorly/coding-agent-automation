@@ -235,4 +235,54 @@ public sealed class PipelineRunEndpointTests
         runs.Should().NotContain(r => r.RunId == withFeedback1.ToString());
         runs.Should().NotContain(r => r.RunId == withFeedback2.ToString());
     }
+
+    // ── POST /api/pipeline-runs (CreateRunSummary) ────────────────────────────────
+
+    [Fact]
+    public async Task CreateRunSummary_Returns201_AndPersistsRun()
+    {
+        var runId = Guid.NewGuid();
+        var summary = new PipelineRunSummary
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = new IssueIdentifier($"create-{Guid.NewGuid():N}"),
+            IssueTitle = "Created via POST",
+            FinalStep = PipelineStep.Completed,
+#pragma warning disable CS0618
+            StartedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+#pragma warning restore CS0618
+            StartedAtOffset = DateTimeOffset.UtcNow,
+            CompletedAtOffset = DateTimeOffset.UtcNow
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/pipeline-runs", summary, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created,
+            "POST /api/pipeline-runs should return 201 Created when operator-authenticated");
+
+        // Confirm the run is now retrievable
+        var getResponse = await _client.GetAsync($"/api/pipeline-runs/{runId}");
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var retrieved = await getResponse.Content.ReadFromJsonAsync<PipelineRunSummary>(PipelineJsonOptions.Default);
+        retrieved!.RunId.Should().Be(runId.ToString());
+    }
+
+    // ── GET /api/pipeline-runs?includeActive=true ─────────────────────────────────
+
+    [Fact]
+    public async Task GetRunHistory_IncludeActive_NoActiveRuns_ReturnsHistoryOnly()
+    {
+        // Seed two completed runs in history; no in-flight runs exist.
+        SeedRun();
+        SeedRun();
+
+        // includeActive=true with no active runs hits the inFlightSummaries.Count == 0 early-return path.
+        var response = await _client.GetAsync("/api/pipeline-runs?includeActive=true");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content.ReadFromJsonAsync<PagedResult<PipelineRunSummary>>(PipelineJsonOptions.Default);
+        body.Should().NotBeNull();
+        body!.Items.Should().NotBeNull();
+    }
 }
