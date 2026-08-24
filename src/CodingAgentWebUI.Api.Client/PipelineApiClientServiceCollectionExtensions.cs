@@ -32,7 +32,9 @@ public static class PipelineApiClientServiceCollectionExtensions
                 new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler();
 
-        // Run history client — authenticated
+        // Run history client — authenticated. /api/pipeline-runs requires the OPERATOR policy
+        // after W0-04. Only works when AgentApiKey is the master key (orchestrator process).
+        // Per-pod derived keys receive HTTP 403 — same constraint as IPipelineApiAgentClient above.
         services.AddHttpClient<IPipelineApiRunHistoryClient, PipelineApiRunHistoryClient>(client =>
         {
             client.BaseAddress = new Uri(options.BaseUrl);

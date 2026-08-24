@@ -8,6 +8,14 @@ metadata:
     app.kubernetes.io/component: jobcontroller
 spec:
   replicas: {{ .Values.jobController.replicas | default 1 }}
+  # Recreate avoids a readiness deadlock on every rolling update.
+  # /readyz is gated on leaderElection.IsLeader — the new pod cannot become Ready while
+  # the old pod still renews the caa-dispatch-lock lease, and with the Kubernetes default
+  # RollingUpdate (maxUnavailable=0, maxSurge=1) the old pod can never be evicted.
+  # Recreate trades the overlap for a clean outage, which is correct for a single-replica
+  # leader-elected controller. Matches api-deployment.yaml strategy for the same reason.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
@@ -28,6 +36,16 @@ spec:
             - name: http
               containerPort: {{ .Values.jobController.service.port }}
               protocol: TCP
+          # Startup probe gives the Job Controller up to 150 seconds to initialise
+          # (30 × 5 s) before liveness kicks in. Without this, liveness kills the pod
+          # after 40 s (initialDelaySeconds=10 + 3×10 s), which is too short for cold
+          # starts that include leader-election lease acquisition. Matches api-deployment.yaml.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.jobController.service.port }}
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz

@@ -16,8 +16,12 @@ public static class PipelineRunEndpoints
     /// </summary>
     public static void MapPipelineRunEndpoints(this IEndpointRouteBuilder app)
     {
+        // All /api/pipeline-runs routes are operator-gated.
+        // GET routes carry issue identifiers and project names — must not be exposed to agent-tier keys.
+        // POST (CreateRunSummary) is called by the orchestrator (ApiBackedPipelineRunHistoryService),
+        // which authenticates with the operator key. See W0-04 remediation.
         var group = app.MapGroup("/api/pipeline-runs")
-            .RequireAuthorization(ApiAuthPolicies.Agent);
+            .RequireAuthorization(ApiAuthPolicies.Operator);
 
         // Paginated history with optional feedbackOnly filter (DB-side filter)
         group.MapGet("/", GetRunHistory);
@@ -25,11 +29,10 @@ public static class PipelineRunEndpoints
         // Single run by GUID
         group.MapGet("/{runId:guid}", GetRunById);
 
-        // Create: persists a completed run summary. Called by the orchestrator (ApiBackedPipelineRunHistoryService)
-        // instead of writing to Postgres directly.
+        // Create: persists a completed run summary. Called by the orchestrator.
         group.MapPost("/", CreateRunSummary);
 
-        // Run history export — requires operator authentication.
+        // Run history export — operator-authenticated file download.
         // Returns pipeline run summaries including issue identifiers and project names;
         // these must not be exposed to unauthenticated callers.
         app.MapGet("/api/export/runs.json", ExportRunsJson)

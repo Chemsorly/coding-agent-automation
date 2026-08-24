@@ -83,11 +83,16 @@ public static class WorkDistributionTelemetry
     /// <summary>
     /// Gauge: epoch seconds of the last DispatchService poll cycle.
     /// Used for alerting on silent dispatch failures (stale poll = dispatch starvation).
+    /// Emits no measurement when <see cref="RecordLastPollEpoch"/> has never been called
+    /// (i.e. this process is not a dispatcher). This prevents the API and Orchestrator from
+    /// permanently exporting 0, which would fire the DispatcherStalled alert from boot.
     /// </summary>
     public static readonly ObservableGauge<double> DispatcherLastPollEpoch =
-        Meter.CreateObservableGauge(
+        Meter.CreateObservableGauge<double>(
             "workdistribution.dispatcher_last_poll_epoch_seconds",
-            observeValue: () => _lastPollEpochSeconds,
+            observeValues: () => _pollEpochRecorded
+                ? [new Measurement<double>(_lastPollEpochSeconds)]
+                : [],
             unit: "s",
             description: "Epoch seconds of the last DispatchService poll cycle");
 
@@ -149,6 +154,7 @@ public static class WorkDistributionTelemetry
     // ── Observable gauge backing state ──────────────────────────────────────
 
     private static double _lastPollEpochSeconds;
+    private static bool _pollEpochRecorded;  // explicit init flag — avoids magic zero sentinel
     private static int _credentialPoolAvailable;
     private static int _credentialPoolClaimed;
     private static Func<IEnumerable<Measurement<long>>>? _workItemsByStatusCallback;
@@ -170,6 +176,7 @@ public static class WorkDistributionTelemetry
     public static void RecordLastPollEpoch()
     {
         _lastPollEpochSeconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+        _pollEpochRecorded = true;
     }
 
     /// <summary>

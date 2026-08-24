@@ -27,6 +27,37 @@ public sealed class PipelineRunEndpointTests
             new AuthenticationHeaderValue("Bearer", ApiWebApplicationFactory.ApiKey);
     }
 
+    // ── Auth tier enforcement (W0-04) ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Verifies that all /api/pipeline-runs routes require the Operator tier.
+    /// A request signed with a per-pod derived key (agentId present → auth_kind=agent)
+    /// must receive 403 Forbidden on every method — GET list, GET by id, and POST.
+    /// </summary>
+    [Theory]
+    [InlineData("GET",  "/api/pipeline-runs")]
+    [InlineData("GET",  "/api/pipeline-runs/00000000-0000-0000-0000-000000000001")]
+    [InlineData("POST", "/api/pipeline-runs")]
+    public async Task PipelineRunEndpoints_AgentDerivedKey_ReturnsForbidden(string method, string path)
+    {
+        // Derive a key the same way AgentApiKeyAuthHandler does: HMAC-SHA256(masterKey, agentId)
+        const string agentId = "test-agent-id";
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes(ApiWebApplicationFactory.ApiKey));
+        var derivedKey = Convert.ToHexString(
+            hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(agentId))).ToLowerInvariant();
+
+        var request = new HttpRequestMessage(new HttpMethod(method), $"{path}?agentId={agentId}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", derivedKey);
+        if (method == "POST")
+            request.Content = JsonContent.Create(new { }, options: PipelineJsonOptions.Default);
+
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            $"{method} {path} must reject agent-tier derived keys after W0-04 — operator-only endpoint");
+    }
+
     private Guid SeedRun(bool hasFeedback = false)
     {
         var runId = Guid.NewGuid();

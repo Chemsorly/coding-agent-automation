@@ -4,7 +4,13 @@
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">
         <Configuration>
-          <Include>[CodingAgentWebUI]*,[CodingAgentWebUI.Orchestration]*,[CodingAgentWebUI.TestUtilities]*</Include>
+          <!--
+            IMPORTANT: Coverlet matches on exact assembly name, not on a namespace prefix.
+            [CodingAgentWebUI]* covers ONLY the assembly literally named "CodingAgentWebUI"
+            (the Blazor host). It does NOT cover CodingAgentWebUI.Hub, CodingAgentWebUI.Api.Client,
+            etc. — those require their own explicit tokens, as shown below.
+          -->
+          <Include>[CodingAgentWebUI]*,[CodingAgentWebUI.Orchestration]*,[CodingAgentWebUI.TestUtilities]*,[CodingAgentWebUI.Hub]*,[CodingAgentWebUI.Api.Client]*</Include>
           <Exclude>[CodingAgentWebUI.Pipeline]*,[CodingAgentWebUI.Infrastructure.Providers]*,[CodingAgentWebUI.Infrastructure.Persistence]*,[CodingAgentWebUI.Agent]*,[CodingAgentWebUI.Agent.*]*</Exclude>
           <IncludeTestAssembly>false</IncludeTestAssembly>
           <SkipAutoProps>true</SkipAutoProps>

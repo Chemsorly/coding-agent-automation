@@ -45,6 +45,14 @@ public class PipelineDbContext : DbContext
                 .IsUnique();
             e.Property(w => w.Payload).HasColumnType(JsonbColumnType);
             e.Property(w => w.Result).HasColumnType(JsonbColumnType);
+            // Partial index for the per-project retention sweep (DatabaseMaintenanceService).
+            // The sweep partitions by ProjectId and orders by CompletedAt DESC — without this index
+            // the ROW_NUMBER() window function performs a full sequential scan on every sweep cycle.
+            // Scoped to ProjectId IS NOT NULL AND Status IN (3,4,5) AND CompletedAt IS NOT NULL.
+            e.HasIndex(w => new { w.ProjectId, w.CompletedAt })
+                .IsDescending(false, true)
+                .HasFilter("\"ProjectId\" IS NOT NULL AND \"Status\" IN (3, 4, 5) AND \"CompletedAt\" IS NOT NULL")
+                .HasDatabaseName("IX_WorkItems_ProjectId_CompletedAt_Terminal");
         });
 
         modelBuilder.Entity<PipelineRunEntity>(e =>
@@ -55,6 +63,14 @@ public class PipelineDbContext : DbContext
             e.HasIndex(r => r.StartedAt).IsDescending();
             e.HasIndex(r => r.AgentId);
             e.HasIndex(r => new { r.FinalStep, r.CompletedAt });
+            // Partial index for the per-project retention sweep (DatabaseMaintenanceService).
+            // The sweep partitions by ProjectId and orders by StartedAt DESC — without this index
+            // the ROW_NUMBER() window function performs a full sequential scan on every sweep cycle.
+            // Scoped to ProjectId IS NOT NULL AND CompletedAt IS NOT NULL (eligible rows only).
+            e.HasIndex(r => new { r.ProjectId, r.StartedAt })
+                .IsDescending(false, true)
+                .HasFilter("\"ProjectId\" IS NOT NULL AND \"CompletedAt\" IS NOT NULL")
+                .HasDatabaseName("IX_PipelineRuns_ProjectId_StartedAt");
         });
 
         modelBuilder.Entity<ProjectEntity>(e =>

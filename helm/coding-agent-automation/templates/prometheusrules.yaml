@@ -96,6 +96,21 @@ spec:
             summary: "Dispatch service stalled"
             description: "Dispatcher has not polled for pending work items in over 2 minutes."
 
+        # Alert when the dispatcher metric is entirely absent (Job Controller dead or not scraping).
+        # Complements DispatcherStalled: a dead process stops exporting the series entirely,
+        # so time()-based staleness detection resolves after ~5 min. This rule fires instead.
+        # Scoped to .Release.Namespace to prevent a live Job Controller in another namespace
+        # suppressing this alert when multiple releases share a Prometheus instance.
+        - alert: DispatcherMetricAbsent
+          expr: |
+            absent(workdistribution_dispatcher_last_poll_epoch_seconds{namespace="{{ .Release.Namespace }}"})
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Dispatcher metric absent — Job Controller may be down"
+            description: "workdistribution_dispatcher_last_poll_epoch_seconds has not been scraped for 2 minutes in namespace {{ "{{ $labels.namespace }}" }}. The Job Controller may be crashed or not running."
+
 {{- if .Values.jobController.enabled }}
         # Alert when the Job Controller pod is Running but not Ready.
         # Most likely cause: leader election lease not yet acquired (e.g. slow K8s API,
