@@ -238,8 +238,11 @@ public static class WorkItemEndpoints
 
         // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
         // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
+        // CancellationToken.None: the task runs independently of the HTTP request lifetime;
+        // using the request-scoped ct would cause spurious OperationCanceledException warnings
+        // when ASP.NET Core cancels the token as soon as the response is sent.
         if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-            _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, ct);
+            _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
 
         return TypedResults.Ok();
     }
@@ -404,7 +407,9 @@ public static class WorkItemEndpoints
 
     /// <summary>
     /// POST /api/work-items/{id}/requeue
-    /// Transitions Failed/Cancelled → Pending, incrementing RetryCount.
+    /// Transitions Failed/Cancelled/Dispatched → Pending, incrementing RetryCount.
+    /// Dispatched→Pending covers the case where Job creation fails after a successful claim
+    /// (ProcessItemAsync calls SafeRequeueAsync while the item is still in Dispatched state).
     /// 200, 409 Conflict (wrong state), 404.
     /// </summary>
     internal static async Task<IResult> RequeueWorkItem(
@@ -413,7 +418,7 @@ public static class WorkItemEndpoints
         IDbContextFactory<PipelineDbContext> dbFactory,
         CancellationToken ct)
     {
-        // Try both Failed and Cancelled → Pending (use TransitionIfAsync for each)
+        // Try Failed → Pending
         var succeededFromFailed = await transitionService.TransitionIfAsync(
             id,
             expectedCurrent: WorkItemStatus.Failed,
@@ -429,6 +434,7 @@ public static class WorkItemEndpoints
         if (succeededFromFailed)
             return TypedResults.Ok();
 
+        // Try Cancelled → Pending
         var succeededFromCancelled = await transitionService.TransitionIfAsync(
             id,
             expectedCurrent: WorkItemStatus.Cancelled,
@@ -444,6 +450,26 @@ public static class WorkItemEndpoints
         if (succeededFromCancelled)
             return TypedResults.Ok();
 
+        // Try Dispatched → Pending — handles Job creation failures where ClaimAsync succeeded
+        // but the K8s Job could not be created (API server unreachable, invalid spec, no PVC).
+        // Without this, the item stays stuck in Dispatched until EnforceDispatchedTimeoutAsync
+        // marks it Failed (losing the retry rather than re-queuing it).
+        var succeededFromDispatched = await transitionService.TransitionIfAsync(
+            id,
+            expectedCurrent: WorkItemStatus.Dispatched,
+            target: WorkItemStatus.Pending,
+            mutate: entity =>
+            {
+                entity.RetryCount++;
+                entity.DispatchedAt = null;
+                entity.AssignedAgentId = null;
+                entity.K8sJobName = null;
+            },
+            ct: ct);
+
+        if (succeededFromDispatched)
+            return TypedResults.Ok();
+
         // Check existence to differentiate 404 from 409
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var item = await db.WorkItems.AsNoTracking()
@@ -454,7 +480,7 @@ public static class WorkItemEndpoints
         if (item is null)
             return TypedResults.NotFound();
 
-        // Item exists but is in wrong state (e.g. Pending/Dispatched/Running/Succeeded)
+        // Item exists but is in wrong state (e.g. Pending/Running/Succeeded)
         return TypedResults.Conflict($"Cannot requeue work item in status '{item.Status}'.");
     }
 

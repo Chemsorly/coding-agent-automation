@@ -32,9 +32,10 @@ public sealed class ApiKeyFilterTests
     }
 
     [Fact]
-    public async Task WhenExpectedKeyIsEmpty_CallsNext()
+    public async Task WhenExpectedKeyIsEmpty_Returns503AndDoesNotCallNext()
     {
-        // No API key configured → fail-open (dev/test mode)
+        // No API key configured → fail-closed (503 Service Unavailable).
+        // Prevents unauthenticated loop control in production due to misconfiguration.
         var filter = CreateFilter("");
         var nextCalled = false;
         EndpointFilterDelegate next = _ =>
@@ -43,9 +44,11 @@ public sealed class ApiKeyFilterTests
             return ValueTask.FromResult<object?>(null);
         };
 
-        await filter.InvokeAsync(MakeContext(null), next);
+        var result = await filter.InvokeAsync(MakeContext(null), next);
 
-        nextCalled.Should().BeTrue("empty expected key must pass through to next");
+        nextCalled.Should().BeFalse("unconfigured key must not pass through to next");
+        result.Should().NotBeNull();
+        result.Should().BeAssignableTo<IResult>("must return a 503 IResult");
     }
 
     [Fact]

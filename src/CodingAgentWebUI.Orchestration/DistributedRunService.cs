@@ -139,8 +139,25 @@ return hash
             return null;
         }
 
-        // Reconstruct run from hash values returned by Lua
+        // Reconstruct run from hash values returned by Lua.
+        // Guard against empty or malformed HGETALL results (e.g. key expired between SREM and
+        // HGETALL in a degraded Redis state, or corruption producing an odd-length array).
+        // An empty result means the run was removed from the active set but its hash is gone —
+        // log a warning and return null so the caller can handle the orphan rather than
+        // silently dropping it with a partial/zero-initialized HashEntry array.
         var entries = (RedisResult[])result!;
+        if (entries.Length == 0)
+        {
+            _logger.Warning("RemoveRun: run {RunId} removed from active set but HGETALL returned empty — hash may have already expired", runId);
+            return null;
+        }
+
+        if (entries.Length % 2 != 0)
+        {
+            _logger.Warning("RemoveRun: run {RunId} HGETALL returned odd-length array ({Length}) — Redis data may be corrupted, skipping deserialization", runId, entries.Length);
+            return null;
+        }
+
         var hashEntries = new HashEntry[entries.Length / 2];
         for (var i = 0; i < entries.Length - 1; i += 2)
             hashEntries[i / 2] = new HashEntry((string)entries[i]!, (string)entries[i + 1]!);

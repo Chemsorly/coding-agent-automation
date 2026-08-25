@@ -137,6 +137,13 @@ public sealed class ReconciliationLoopTests
         var loop = CreateLoop();
         await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
 
+        // Verify GetActiveAsync was called with the correct timeout parameter.
+        // Without this, a wrong parameter would cause the mock to return empty, PostStatusAsync
+        // would never be called, and the test would silently pass as a false green.
+        _workItemClient.Verify(c => c.GetActiveAsync(
+            It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds),
+            It.IsAny<CancellationToken>()), Times.Once);
+
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed"),

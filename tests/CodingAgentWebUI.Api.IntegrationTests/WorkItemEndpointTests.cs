@@ -687,4 +687,29 @@ public sealed class WorkItemEndpointTests
         // Succeeded is not Failed or Cancelled — requeue must return 409 Conflict
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
+
+    // ── RequeueWorkItem — Dispatched→Pending ─────────────────────────────────────
+
+    /// <summary>
+    /// Guards the fix for the CRITICAL finding: when K8s Job creation fails after ClaimAsync
+    /// succeeds, SafeRequeueAsync is called on a Dispatched item. Without Dispatched→Pending
+    /// support the item would be stuck until EnforceDispatchedTimeoutAsync marks it Failed,
+    /// losing the retry entirely.
+    /// </summary>
+    [Fact]
+    public async Task RequeueWorkItem_DispatchedToPending_IncrementsRetryCount()
+    {
+        var entity = SeedEntity(WorkItemStatus.Dispatched);
+        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(entity.Id);
+        updated!.Status.Should().Be(WorkItemStatus.Pending);
+        updated.RetryCount.Should().Be(entity.RetryCount + 1);
+        updated.DispatchedAt.Should().BeNull("DispatchedAt must be cleared on requeue from Dispatched");
+        updated.AssignedAgentId.Should().BeNull("AssignedAgentId must be cleared on requeue from Dispatched");
+        updated.K8sJobName.Should().BeNull("K8sJobName must be cleared on requeue from Dispatched");
+    }
 }

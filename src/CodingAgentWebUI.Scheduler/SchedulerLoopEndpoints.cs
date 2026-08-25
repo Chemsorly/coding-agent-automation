@@ -113,7 +113,15 @@ public static class SchedulerLoopEndpoints
         public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext ctx, EndpointFilterDelegate next)
         {
             if (string.IsNullOrEmpty(_expectedKey))
-                return await next(ctx); // no key configured — allow (dev/test)
+            {
+                // No key configured — fail closed to prevent unauthenticated access in production.
+                // If AGENT_API_KEY is missing (misconfiguration or partial local config), returning
+                // 503 is safer than allowing unrestricted loop control to anyone on the network.
+                return Results.Problem(
+                    title: "Service Unavailable",
+                    detail: "AGENT_API_KEY is not configured. Loop control endpoints are disabled.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
 
             if (!ctx.HttpContext.Request.Headers.TryGetValue("X-Api-Key", out var provided)
                 || provided != _expectedKey)
