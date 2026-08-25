@@ -201,6 +201,20 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
                 services.AddSingleton<IAgentRegistryService>(distributedRegistry);
 
                 // IOrchestratorRunService → DistributedRunService
+                // DistributedRunService requires IPipelineApiWorkItemClient (for IsIssueDistributedAsync).
+                // The real HTTP client is not wired in test DI, so register a no-op mock that returns false
+                // (no active work item) — correct for all multi-replica test scenarios.
+                services.RemoveAll<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>();
+                // Scoped to dedup only: DistributedRunService calls IsIssueDistributedAsync in its
+                // IsIssueDistributedAsync override — no other IPipelineApiWorkItemClient methods are
+                // invoked by any multi-replica code path. All other methods throw to surface scope
+                // violations loudly if test coverage ever expands into dispatch/claim territory.
+                var workItemClientMock = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>(MockBehavior.Strict);
+                workItemClientMock
+                    .Setup(c => c.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(false);
+                services.AddSingleton(workItemClientMock.Object);
+
                 services.RemoveAll<IOrchestratorRunService>();
                 services.AddSingleton<IOrchestratorRunService>(sp =>
                     new DistributedRunService(store, sp.GetRequiredService<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>(), Serilog.Log.Logger));

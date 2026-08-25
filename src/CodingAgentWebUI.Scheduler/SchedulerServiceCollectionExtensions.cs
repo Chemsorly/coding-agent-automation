@@ -251,6 +251,7 @@ public static class SchedulerServiceCollectionExtensions
             sp.GetRequiredService<IPipelineApiConfigClient>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
+            sp.GetService<ILeaderElectionService>(),
             Log.Logger));
 
         // ── Redis cleanup services (null-safe) ────────────────────────────────

@@ -645,6 +645,168 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         await service.StopAsync(CancellationToken.None);
     }
 
+    // ── Leader gate tests ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task LeaderGate_WhenNotLeader_InitialSweepSkipped()
+    {
+        // Arrange: gate says not-leader — even the initial sweep (after grace period) must be skipped.
+        // This verifies the gate lives inside RecoverOrphanedLabelsAsync, not only in the timer loop.
+        var mockGate = new Mock<ILeaderGate>();
+        mockGate.SetupGet(g => g.IsLeader).Returns(false);
+        mockGate.SetupGet(g => g.LeaderToken).Returns(CancellationToken.None);
+
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+        SetupIssueProvider("provider-1", new IssueSummary
+        {
+            Identifier = "42",
+            Title = "Orphaned issue",
+            Labels = InProgressLabels
+        });
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>())).Returns(false);
+
+        using var service = CreateServiceWithGate(mockGate.Object);
+        await service.StartAsync(_cts.Token);
+
+        // Wait well past grace period + time for sweep to have run
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+
+        // Assert: no swap — non-leader skips entirely
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(),
+                It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "non-leader must not call SwapLabelAsync on the initial sweep");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task LeaderGate_WhenLeader_SweepRuns()
+    {
+        // Arrange: gate says is-leader — sweeps must execute normally.
+        // Regression guard: verifies the gate check doesn't accidentally block leaders.
+        var mockGate = new Mock<ILeaderGate>();
+        mockGate.SetupGet(g => g.IsLeader).Returns(true);
+        mockGate.SetupGet(g => g.LeaderToken).Returns(CancellationToken.None);
+
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+        SetupIssueProvider("provider-1", new IssueSummary
+        {
+            Identifier = "42",
+            Title = "Orphaned issue",
+            Labels = InProgressLabels
+        });
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>())).Returns(false);
+
+        var swapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync("provider-1", "42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => swapCalled.TrySetResult());
+
+        using var service = CreateServiceWithGate(mockGate.Object);
+        await service.StartAsync(_cts.Token);
+
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+
+        completed.Should().BeSameAs(swapCalled.Task, "leader must run the sweep and call SwapLabelAsync");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task LeaderGate_WhenNull_SweepRunsUnconditionally()
+    {
+        // Arrange: null gate (dev / single-replica) — sweep must run without any gate check.
+        // The existing CreateService() already passes null, but this test makes the intent explicit.
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+        SetupIssueProvider("provider-1", new IssueSummary
+        {
+            Identifier = "42",
+            Title = "Orphaned issue",
+            Labels = InProgressLabels
+        });
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>())).Returns(false);
+
+        var swapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync("provider-1", "42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => swapCalled.TrySetResult());
+
+        // Explicitly create with null gate
+        using var service = CreateServiceWithGate(null);
+        await service.StartAsync(_cts.Token);
+
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+
+        completed.Should().BeSameAs(swapCalled.Task, "null gate must not suppress the sweep");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task LeaderGate_WhenLeadershipLostMidSweep_SweepCancelled()
+    {
+        // Arrange: leader starts a sweep; LeaderToken is cancelled mid-sweep (simulates leadership loss).
+        // The in-flight sweep should be cancelled rather than completing on the former leader.
+        using var leaderCts = new CancellationTokenSource();
+
+        var mockGate = new Mock<ILeaderGate>();
+        mockGate.SetupGet(g => g.IsLeader).Returns(true);
+        mockGate.SetupGet(g => g.LeaderToken).Returns(() => leaderCts.Token);
+
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+
+        // Issue provider blocks until leaderCts is cancelled — simulates slow API call mid-sweep
+        var sweepStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (int _, int _, IReadOnlyList<string>? _, CancellationToken ct) =>
+            {
+                sweepStarted.TrySetResult();
+                await Task.Delay(Timeout.Infinite, ct); // blocks until leadership lost
+                return new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 100, HasMore = false };
+            });
+        mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        using var service = CreateServiceWithGate(mockGate.Object);
+        await service.StartAsync(_cts.Token);
+
+        // Wait for sweep to reach the blocking API call
+        var started = await Task.WhenAny(sweepStarted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        started.Should().BeSameAs(sweepStarted.Task, "sweep should have started and reached the API call");
+
+        // Cancel leadership — simulates losing the K8s lease
+        await leaderCts.CancelAsync();
+
+        // Give the service time to handle the cancellation
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+
+        // Assert: no swap was ever called — the sweep was cancelled before completion
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(),
+                It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "sweep cancelled by LeaderToken loss must not produce any label writes");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private OrphanedLabelRecoveryService CreateService() => new(
@@ -652,6 +814,16 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         _mockConfigClient.Object,
         _mockProviderFactory.Object,
         _mockLabelService.Object,
+        null,
+        _mockLogger.Object,
+        TimeSpan.FromMilliseconds(50)); // Short grace period for fast tests
+
+    private OrphanedLabelRecoveryService CreateServiceWithGate(ILeaderGate? leaderGate) => new(
+        _mockRunService.Object,
+        _mockConfigClient.Object,
+        _mockProviderFactory.Object,
+        _mockLabelService.Object,
+        leaderGate,
         _mockLogger.Object,
         TimeSpan.FromMilliseconds(50)); // Short grace period for fast tests
 

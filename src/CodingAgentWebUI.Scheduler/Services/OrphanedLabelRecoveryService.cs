@@ -79,14 +79,6 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
             using var timer = new PeriodicTimer(TimeSpan.FromMinutes(intervalMinutes));
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                // Skip when not the leader so multiple replicas don't redundantly
-                // hammer the issue provider API. Null gate = unconditional (dev/single-replica).
-                if (_leaderGate is { IsLeader: false })
-                {
-                    _logger.Debug("OrphanedLabelRecovery: skipping tick — not the leader");
-                    continue;
-                }
-
                 try
                 {
                     await RecoverOrphanedLabelsAsync(stoppingToken);
@@ -145,7 +137,26 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
     private async Task RecoverOrphanedLabelsAsync(CancellationToken ct)
     {
-        var templates = await _configClient.GetAllTemplatesAsync(ct);
+        // Gate check: skip when not the leader so multiple replicas don't redundantly
+        // hammer the issue provider API. Null gate = unconditional (dev / single-replica).
+        // Placing the check here (rather than at each call site) ensures both the initial
+        // sweep and every periodic tick are gated consistently.
+        if (_leaderGate is { IsLeader: false })
+        {
+            _logger.Debug("OrphanedLabelRecovery: skipping sweep — not the leader");
+            return;
+        }
+
+        // Link LeaderToken so that in-flight label writes are cancelled immediately on
+        // leadership loss, preventing the former leader from racing the new leader.
+        // ILeaderGate.LeaderToken is documented as: "cancelled when leadership is lost —
+        // pass this token linked with the host stop token to in-flight work."
+        using var linked = _leaderGate is not null
+            ? CancellationTokenSource.CreateLinkedTokenSource(ct, _leaderGate.LeaderToken)
+            : null;
+        var sweepCt = linked?.Token ?? ct;
+
+        var templates = await _configClient.GetAllTemplatesAsync(sweepCt);
         if (templates.Count == 0)
         {
             _logger.Information("Orphaned label recovery: no templates configured, skipping");
@@ -167,7 +178,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         {
             try
             {
-                recoveredCount += await ScanProviderAsync(providerConfigId, ct);
+                recoveredCount += await ScanProviderAsync(providerConfigId, sweepCt);
             }
             catch (Exception ex)
             {
