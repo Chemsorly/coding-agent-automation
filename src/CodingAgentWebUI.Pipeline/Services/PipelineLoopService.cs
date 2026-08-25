@@ -270,15 +270,13 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
                 // CleanupAsync (in finally) will re-arm via the linked token check below.
                 // Fall through to finally, then re-enter the outer while to wait for leadership.
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!_stopRequested)
             {
-                // TODO [WARNING]: This catch block is reached when an OperationCanceledException
-                // surfaces from RunMultiTemplateLoopAsync due to _loopCts cancellation (StopLoop path),
-                // because _loopCts.Token is linked inside RunMultiTemplateLoopAsync but is NOT linked
-                // into the outer `linked` CTS. As a result, `linked.Token.IsCancellationRequested`
-                // is false, neither `when` filter above matches, and the OCE falls through here and
-                // is logged as an unexpected error — a false alarm. Fix: either link _loopCts.Token
-                // into the outer `linked` CTS, or add a dedicated catch filter for this path.
+                // _stopRequested is set by StopLoop() which cancels _loopCts. Because _loopCts.Token
+                // is NOT linked into the outer `linked` CTS, an OperationCanceledException from the
+                // StopLoop path has neither `linked.Token` nor `stoppingToken` cancelled, so it falls
+                // through the two when-filtered OCE catches above. The `!_stopRequested` guard here
+                // ensures that OCE is silently absorbed (CleanupAsync(false) still fires in finally).
                 _logger.Error(ex, "Pipeline loop encountered an unexpected error");
             }
             finally
@@ -318,7 +316,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             _loopCts?.Dispose();
             _loopCts = null;
 
-            if (rearmForLeaderReacquisition)
+            if (rearmForLeaderReacquisition && !_stopRequested)
             {
                 // Leadership was lost mid-run. Re-arm the activation signal and a fresh loop CTS
                 // so that ExecuteAsync automatically re-enters RunMultiTemplateLoopAsync as soon
@@ -328,13 +326,10 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
                 // preserved. The loop is not currently executing (waiting for leadership), but it
                 // will resume as soon as it becomes leader again.
                 //
-                // TODO [WARNING]: If StopLoop() is called between leadership loss and the next
-                // leadership acquisition, it will find IsLoopActive == true (re-armed here) and
-                // cancel the fresh _loopCts, but will not clear the pre-signalled _activationSignal.
-                // ExecuteAsync will then run one spurious short-circuit pass through
-                // RunMultiTemplateLoopAsync (which exits immediately because _stopRequested == true),
-                // and then CleanupAsync(false) fires. This is benign but wasteful. Fix: check
-                // `!_stopRequested` before re-arming, e.g. `if (rearmForLeaderReacquisition && !_stopRequested)`.
+                // Guard: if StopLoop() was called between leadership loss and this re-arm (setting
+                // _stopRequested = true), do NOT re-arm. Otherwise the pre-signalled _activationSignal
+                // would cause ExecuteAsync to run one spurious short-circuit pass through
+                // RunMultiTemplateLoopAsync before CleanupAsync(false) fires.
                 IsLoopActive = true;
                 _loopCts = new CancellationTokenSource();
                 _activationSignal.TrySetResult();

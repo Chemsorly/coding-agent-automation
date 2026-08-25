@@ -75,6 +75,9 @@ public static class WorkItemEndpoints
         group.MapGet("/staleness", GetStaleness).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization(ApiAuthPolicies.Operator);
+
+        // ── Metrics feed for the Scheduler's WorkItemCountsPoller ─────────────
+        group.MapGet("/counts-by-status", GetCountsByStatus).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/{id:guid}/k8s-job-name", GetK8sJobName).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/{id:guid}/status", GetWorkItemStatus).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/is-distributed", GetIsDistributed).RequireAuthorization(ApiAuthPolicies.Operator);
@@ -854,6 +857,32 @@ public static class WorkItemEndpoints
         // Use workItemId as the run ID (bytes rearranged to produce a v4-like GUID)
         // This is deterministic and stable across retries.
         return workItemId.ToString();
+    }
+
+    // ── GET /api/work-items/counts-by-status ─────────────────────────────────
+
+    /// <summary>
+    /// Returns work item counts grouped by (Status, AgentSelector).
+    /// Called by the Scheduler's WorkItemCountsPoller to feed Prometheus gauges.
+    /// </summary>
+    internal static async Task<IResult> GetCountsByStatus(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var counts = await db.WorkItems
+            .GroupBy(w => new { w.Status, w.AgentSelector })
+            .Select(g => new
+            {
+                Status = g.Key.Status.ToString(),
+                AgentSelector = g.Key.AgentSelector,
+                Count = (long)g.Count()
+            })
+            .ToListAsync(ct);
+
+        return Results.Ok(counts.Select(c =>
+            new CodingAgentWebUI.Api.Client.WorkItemCountDto(c.Status, c.AgentSelector, c.Count))
+            .ToArray());
     }
 }
 

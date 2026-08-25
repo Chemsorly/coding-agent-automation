@@ -131,6 +131,7 @@ app.MapConsolidationRunEndpoints();
 app.MapHarnessSuggestionEndpoints();
 app.MapAgentEndpoints();
 app.MapChatEndpoints();
+app.MapApiSchedulerEndpoints();
 
 await app.RunAsync();
 

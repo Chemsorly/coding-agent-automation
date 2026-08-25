@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Components.Pages;
 
 public partial class AgentCoding : IDisposable
 {
-    [Inject] private IPipelineLoopService LoopService { get; set; } = default!;
+    [Inject] private ILoopStatusService LoopService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [CascadingParameter] private MainLayout? Layout { get; set; }
@@ -277,9 +277,17 @@ public partial class AgentCoding : IDisposable
         }
     }
 
-    private async Task StopLoop() => await PageService.StopLoopAsync();
+    private async Task StopLoop()
+    {
+        var (success, error) = await PageService.StopLoopAsync();
+        if (!success) _errorMessage = error;
+    }
 
-    private void ResumeLoop() => PageService.ResumeLoop();
+    private async Task ResumeLoop()
+    {
+        var (success, error) = await PageService.ResumeLoopAsync();
+        if (!success) _errorMessage = error;
+    }
 
     // ── Drawer Mutual Exclusion ──
 

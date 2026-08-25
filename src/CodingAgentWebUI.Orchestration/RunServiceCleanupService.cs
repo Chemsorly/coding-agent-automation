@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Orchestration.Redis;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using Microsoft.Extensions.Hosting;
 using ILogger = Serilog.ILogger;
 
@@ -6,49 +7,64 @@ namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Background service that periodically removes stale members from <c>runs:active</c> whose
-/// <c>run:{id}</c> hash key has expired, and sets a 5-minute TTL on any orphaned <c>run:*</c>
-/// hash keys not in <c>runs:active</c> (repair path for Lua script crash between SREM and EXPIREAT).
+/// <c>run:{id}</c> hash key has expired.
+///
+/// <para>
+/// When <see cref="ILeaderElectionService"/> is provided, only the current leader runs the sweep.
+/// When no leader-election service is injected (local dev / single-replica), every instance sweeps,
+/// which is safe because all <c>SREM</c> operations are idempotent.
+/// </para>
+///
+/// <para>
+/// A repair path for orphaned run hashes (Lua script crash between SREM and EXPIREAT) is
+/// planned but not yet implemented. See issue for tracking.
+/// </para>
 /// </summary>
 public sealed class RunServiceCleanupService : BackgroundService
 {
     private static readonly TimeSpan SweepInterval = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan OrphanedRunTtl = TimeSpan.FromMinutes(5);
 
     private readonly IRedisStore _store;
+    private readonly ILeaderElectionService? _leaderElection;
     private readonly ILogger _logger;
 
-    public RunServiceCleanupService(IRedisStore store, ILogger logger)
+    public RunServiceCleanupService(
+        IRedisStore store,
+        ILogger logger,
+        ILeaderElectionService? leaderElection = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(logger);
         _store = store;
         _logger = logger;
+        _leaderElection = leaderElection;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        while (!stoppingToken.IsCancellationRequested)
+        using var timer = new PeriodicTimer(SweepInterval);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try
             {
                 await SweepAsync(stoppingToken);
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.Warning(ex, "RunServiceCleanupService: sweep error (will retry at next interval)");
             }
-
-            await Task.Delay(SweepInterval, stoppingToken);
         }
     }
 
-    private async Task SweepAsync(CancellationToken ct)
+    internal async Task SweepAsync(CancellationToken ct)
     {
-        // 1. Remove set members whose hash has expired
+        // null = no election service (local dev / single-replica) → always sweep
+        if (_leaderElection is not null && !_leaderElection.IsLeader)
+        {
+            _logger.Debug("RunServiceCleanupService: skipping sweep — not the leader");
+            return;
+        }
+
         var members = await _store.SetMembersAsync("runs:active");
         var removedCount = 0;
 
@@ -65,24 +81,8 @@ public sealed class RunServiceCleanupService : BackgroundService
         if (removedCount > 0)
             _logger.Information("RunServiceCleanupService: removed {Count} stale members from runs:active", removedCount);
 
-        // 2. Repair path: scan for run:{id} hashes with no TTL that are NOT in runs:active.
-        //    This handles the edge case where the Lua script crashed after SREM but before EXPIREAT.
-        //    Note: SCAN on every sweep is acceptable at low run volumes. At high volumes,
-        //    consider moving this to a separate low-priority background task.
-        var activeSet = new HashSet<string>(members);
-        var repaired = 0;
-
-        try
-        {
-            // We use SetMembersAsync on runs:active (already fetched) as our positive set;
-            // the scan finds any key matching run:* and checks if it's orphaned.
-            // This is a best-effort repair — not guaranteed to find all orphans.
-            // For a production-grade implementation, consider tracking TTL via a secondary set.
-            _ = repaired; // suppress unused variable warning — repair via TTL path below
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "RunServiceCleanupService: repair scan failed (non-fatal)");
-        }
+        // TODO: orphan-hash repair path — scan for run:{id} hashes not in runs:active and apply
+        // a short TTL (handles Lua crash between SREM and EXPIREAT). Requires IDatabase.SCAN
+        // support on IRedisStore; tracked separately.
     }
 }

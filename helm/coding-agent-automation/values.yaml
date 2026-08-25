@@ -305,3 +305,29 @@ jobController:
     # Empty (default) = release-scoped: caa-<release>-dispatch-lock
     # Set explicitly to use a fixed name across Helm releases (e.g. shared namespaces).
     dispatchLeaseName: ""
+
+# =============================================================================
+# Scheduler microservice (Spec 047)
+# Owns all scheduled/periodic background work. No direct Postgres connection.
+# =============================================================================
+scheduler:
+  enabled: true
+  replicas: 1
+  image:
+    repository: ghcr.io/chemsorly/coding-agent-automation/scheduler
+    # Tag is overridden at deploy time with the build SHA. Empty = fail fast on deploy.
+    tag: ""
+  service:
+    port: 8091
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  leaderElection:
+    # Scheduler-specific K8s Lease name — distinct from the API's lease.
+    # Empty (default) = release-scoped: caa-<release>-scheduler-lock
+    leaseName: ""
+  terminationGracePeriodSeconds: 90

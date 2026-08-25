@@ -40,6 +40,7 @@
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Hub\CodingAgentWebUI.Hub.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Orchestration\CodingAgentWebUI.Orchestration.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.Scheduler\CodingAgentWebUI.Scheduler.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.TestUtilities\CodingAgentWebUI.TestUtilities.csproj" />
   </ItemGroup>
 

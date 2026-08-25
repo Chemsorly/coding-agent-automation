@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Orchestration.Redis;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using Microsoft.Extensions.Hosting;
 using ILogger = Serilog.ILogger;
 
@@ -8,50 +9,62 @@ namespace CodingAgentWebUI.Orchestration.Registry;
 /// Background service that periodically removes stale members from <c>agents:all</c> and
 /// <c>agents:idle</c> whose <c>agent:{id}</c> hash key has expired (TTL elapsed without heartbeat).
 ///
-/// Runs every 2 minutes on all replicas concurrently — all SREM operations are idempotent.
+/// <para>
+/// When <see cref="ILeaderElectionService"/> is provided, only the current leader runs the sweep —
+/// consistent with <c>DatabaseMaintenanceService</c> and other periodic background services.
+/// When no leader-election service is injected (local dev / single-replica), every instance sweeps,
+/// which is safe because all <c>SREM</c> operations are idempotent.
+/// </para>
 ///
-/// NOTE: This also closes the cleanup-sweep/register race for <see cref="DistributedAgentRegistryService.UpdateHeartbeat"/>:
-/// if a member was pruned from the set during a brief hash expiry / re-register overlap, the next
-/// heartbeat restores membership via <c>SADD agents:all</c>.
+/// NOTE: Even when the sweep is leader-gated, <see cref="DistributedAgentRegistryService.GetIdleAgents"/>
+/// gracefully skips stale set members (<c>HGETALL</c> returns empty → continue), so stale entries
+/// are invisible to the dispatcher regardless of whether a cleanup sweep has run.
 /// </summary>
 public sealed class AgentRegistryCleanupService : BackgroundService
 {
     private static readonly TimeSpan SweepInterval = TimeSpan.FromMinutes(2);
 
     private readonly IRedisStore _store;
+    private readonly ILeaderElectionService? _leaderElection;
     private readonly ILogger _logger;
 
-    public AgentRegistryCleanupService(IRedisStore store, ILogger logger)
+    public AgentRegistryCleanupService(
+        IRedisStore store,
+        ILogger logger,
+        ILeaderElectionService? leaderElection = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(logger);
         _store = store;
         _logger = logger;
+        _leaderElection = leaderElection;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        while (!stoppingToken.IsCancellationRequested)
+        using var timer = new PeriodicTimer(SweepInterval);
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try
             {
                 await SweepAsync(stoppingToken);
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.Warning(ex, "AgentRegistryCleanupService: sweep error (will retry at next interval)");
             }
-
-            await Task.Delay(SweepInterval, stoppingToken);
         }
     }
 
-    private async Task SweepAsync(CancellationToken ct)
+    internal async Task SweepAsync(CancellationToken ct)
     {
+        // null = no election service (local dev / single-replica) → always sweep
+        if (_leaderElection is not null && !_leaderElection.IsLeader)
+        {
+            _logger.Debug("AgentRegistryCleanupService: skipping sweep — not the leader");
+            return;
+        }
+
         var members = await _store.SetMembersAsync("agents:all");
         var removed = 0;
 

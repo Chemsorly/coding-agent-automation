@@ -1,6 +1,5 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -12,27 +11,71 @@ namespace CodingAgentWebUI;
 public static partial class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers pipeline background services: orphaned label recovery, dependency checker,
-    /// pipeline loop service, and issue description parser.
+    /// Registers the WebUI pipeline background services.
+    ///
+    /// Spec 047: PipelineLoopService, HousekeepingService, OrphanedLabelRecoveryService,
+    /// IDependencyChecker, PipelineLoopServiceDependencies, IPipelineLoopService, and all
+    /// Api*Store shim registrations (ApiPipelineConfigStore, ApiProviderConfigStore,
+    /// ApiProjectStore) that were exclusively used by the loop have been REMOVED. They now
+    /// live in CodingAgentWebUI.Scheduler.
+    ///
+    /// RETAINED (consumed by drawer services and DispatchOrchestrationService):
+    /// - ApiConfigurationStore + IConfigurationStore + IAgentProfileStore +
+    ///   IQualityGateConfigStore + IReviewerConfigStore
+    /// - IDispatchOrchestrationService
+    ///
+    /// ADDED (Spec 047):
+    /// - ILoopStatusService / LoopStatusPollingService (polls Scheduler /loop/status)
+    /// - ISchedulerApiClient / HttpSchedulerApiClient (calls Scheduler loop endpoints)
     /// </summary>
     private static void RegisterPipelineBackgroundServices(IServiceCollection services)
     {
-        services.AddHostedService(sp => new OrphanedLabelRecoveryService(
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<IPipelineApiConfigClient>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILabelService>(),
-            Log.Logger));
+        // ── Spec 047: Loop status polling (replaces in-process PipelineLoopService) ──────────
+        // Polls GET /loop/status on the Scheduler every 3 seconds (configurable via
+        // SchedulerApi:StatusPollIntervalSeconds). MainLayout and AgentCoding inject
+        // ILoopStatusService instead of IPipelineLoopService — same read-only surface.
+        services.AddSingleton<ILoopStatusService>(sp =>
+        {
+            var client = sp.GetRequiredService<ISchedulerApiClient>();
+            var cfg = sp.GetService<IConfiguration>();
+            var intervalSec = cfg?.GetValue<int?>("SchedulerApi:StatusPollIntervalSeconds");
+            var interval = intervalSec is > 0 ? TimeSpan.FromSeconds(intervalSec.Value) : (TimeSpan?)null;
+            return new LoopStatusPollingService(client, Log.Logger, interval);
+        });
+        services.AddHostedService(sp =>
+            (LoopStatusPollingService)sp.GetRequiredService<ILoopStatusService>());
 
-        services.AddSingleton<IDependencyChecker>(sp => new DependencyChecker(Log.Logger));
-        services.AddSingleton<IHousekeepingService>(sp => new HousekeepingService(
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            Log.Logger));
+        // ── Spec 047: ISchedulerApiClient calls the Scheduler's loop control endpoints ────────
+        services.AddHttpClient<ISchedulerApiClient, HttpSchedulerApiClient>(c =>
+        {
+            // Base URL must be configured via SchedulerApi__BaseUrl env var.
+            // Injected via IHttpClientFactory and configured in AddHttpClient factory.
+        }).ConfigureHttpClient((sp, c) =>
+        {
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            var baseUrl = cfg.GetValue<string>("SchedulerApi__BaseUrl")
+                ?? cfg.GetValue<string>("SchedulerApi:BaseUrl")
+                ?? "http://localhost:8091";
 
-        // Spec 045 Req 4.2 Option B — API-backed store adapters with TTL caching (Req 4.3).
-        // These wrap IPipelineApiConfigClient to implement the store interfaces that
-        // PipelineLoopServiceDependencies requires. The TTL prevents excessive API calls
-        // during the tight polling loop. TTL is configurable via PipelineLoop:ConfigCacheTtlSeconds.
+            if (baseUrl == "http://localhost:8091")
+                Serilog.Log.Warning(
+                    "SchedulerApi__BaseUrl is not configured — using localhost:8091 fallback. " +
+                    "This is unreachable from WebUI pods in a Kubernetes deployment. " +
+                    "Set SchedulerApi__BaseUrl to the Scheduler service URL.");
+
+            c.BaseAddress = new Uri(baseUrl);
+            var apiKey = cfg.GetValue<string>("AGENT_API_KEY")
+                ?? cfg.GetValue<string>("AgentApiKey");
+            if (!string.IsNullOrEmpty(apiKey))
+                c.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
+        })
+        .AddStandardResilienceHandler();
+
+        // ── Spec 045 retained registrations (consumed by drawer services) ──────────────────
+        // ApiConfigurationStore composed from three narrow store shims. Required by
+        // LabelService, DispatchResolutionService, IssueDrawerService, PrReviewDrawerService,
+        // EpicDrawerService, and ConsolidationJobPreparationService.
+
         services.AddSingleton<ApiPipelineConfigStore>(sp =>
         {
             var store = new ApiPipelineConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>());
@@ -55,15 +98,8 @@ public static partial class ServiceCollectionExtensions
         });
         services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<ApiProjectStore>());
 
-        // Spec 045: Register the composite IConfigurationStore backed by IPipelineApiConfigClient.
-        // Required by LabelService, DispatchResolutionService, PipelineOrchestrationService,
-        // ConsolidationJobPreparationService, ConsolidationDispatchService, and DrawerServices.
-        // IConfigurationStore was PostgresConfigurationStore before Task 8 removed it.
         services.AddSingleton<ApiConfigurationStore>(sp =>
         {
-            // Composed from the three narrow stores registered above, not built alongside them:
-            // four independent caches over one client meant a save through IProviderConfigStore
-            // stayed invisible here until the TTL lapsed.
             var store = new ApiConfigurationStore(
                 sp.GetRequiredService<IPipelineApiConfigClient>(),
                 sp.GetRequiredService<ApiPipelineConfigStore>(),
@@ -73,17 +109,14 @@ public static partial class ServiceCollectionExtensions
             return store;
         });
         services.AddSingleton<IConfigurationStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
-        // Register all sub-interfaces as the same ApiConfigurationStore instance so callers that
-        // resolve IAgentProfileStore or IQualityGateConfigStore get the same cached object.
         services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
         services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
         services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
 
-        // Spec 045: Register IDispatchOrchestrationService.
-        // Used by IssueDrawerService, PrReviewDrawerService, EpicDrawerService for manual dispatch.
-        // IDispatchOrchestrationService was removed from DI in Task 8's "REMOVED" comment but
-        // the drawer services still constructor-inject it. Without this registration the DI
-        // container fails to build in Development mode (ValidateOnBuild catches it).
+        // IDispatchOrchestrationService — retained for drawer services.
+        // AgentCodingPageService now uses ISchedulerApiClient for loop controls; it no longer
+        // takes IPipelineLoopService. IDispatchOrchestrationService is still needed for
+        // manual dispatch via the issue/PR/epic drawers.
         services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
             new DispatchOrchestrationServiceDependencies(
                 sp.GetRequiredService<DispatchInfrastructure>(),
@@ -93,49 +126,9 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IPipelineConfigStore>()),
             Log.Logger));
 
-
-        services.AddSingleton<PipelineLoopServiceDependencies>(sp => new PipelineLoopServiceDependencies
-        {
-            Orchestration = sp.GetRequiredService<IDispatchRunCreator>(),
-            ProviderFactory = sp.GetRequiredService<IProviderFactory>(),
-            // Spec 045 Req 4.2: API-backed adapters satisfy the store interfaces.
-            // These delegate to IPipelineApiConfigClient with TTL caching (Req 4.3).
-            PipelineConfigStore = sp.GetRequiredService<IPipelineConfigStore>(),
-            ProviderConfigStore = sp.GetRequiredService<IProviderConfigStore>(),
-            ProjectStore = sp.GetRequiredService<IProjectStore>(),
-            Logger = Log.Logger,
-            WorkDistributor = sp.GetService<IWorkDistributor>(),
-            DispatchOrchestration = sp.GetService<IDispatchOrchestrationService>(),
-            DependencyChecker = sp.GetRequiredService<IDependencyChecker>(),
-            HousekeepingService = sp.GetRequiredService<IHousekeepingService>(),
-            // GetService returns null when ILeaderElectionService is not registered (test
-            // environments without leader election configured), causing the loop to run
-            // unconditionally. In production K8s deployments ILeaderElectionService implements
-            // ILeaderGate and the loop is leader-gated.
-            LeaderElection = sp.GetService<ILeaderElectionService>()
-        });
-        services.AddSingleton<PipelineLoopService>();
-        services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());
-        services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
-
-        // Spec 045 Req 1.2 (F6 — LoopStatePersistenceService / ILoopStateStore):
-        // Option B chosen: ILoopStateStore and LoopStatePersistenceService are not registered.
-        // Loop auto-start state is persisted in PipelineConfiguration.ClosedLoopAutoStart,
-        // which is loaded from the Pipeline API at startup via AutoStartPipelineLoopAsync()
-        // (Spec 045 Req 4.4). Both LoopStatePersistenceService and FileSystemLoopStateStore
-        // were deleted in T21 (arch-audit 2026-08-22).
-
         services.AddTransient<IssueDescriptionParser>();
     }
 
-    /// <summary>
-    /// Cache TTL shared by the API-backed store adapters, or null when unconfigured or negative
-    /// (in which case each store keeps its own default).
-    ///
-    /// The key is named once here rather than at each registration: four call sites repeated both
-    /// the literal and the same three-line read, and a typo in any one of them would have silently
-    /// left that store on the default TTL.
-    /// </summary>
     private static int? ResolveConfigCacheTtl(IServiceProvider sp)
     {
         var ttl = sp.GetService<IConfiguration>()?.GetValue<int>(ConfigCacheTtlKey);

@@ -18,14 +18,13 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// plus per-project count-based retention sweeps. Gates all work behind leader election
 /// (when available) for multi-replica safety.
 /// </summary>
-public class DatabaseMaintenanceService : BackgroundService
+public class DatabaseMaintenanceService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<DatabaseMaintenanceService>();
 
     // Protected so test subclasses can inject SQLite-compatible SQL overrides
     protected readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly IConsolidationService _consolidationService;
-    private readonly IServiceProvider _serviceProvider;
     private readonly DatabaseMaintenanceOptions _options;
     // Protected so test subclasses can inject SQLite-compatible SQL overrides
     protected readonly IPipelineConfigStore _configStore;
@@ -33,80 +32,52 @@ public class DatabaseMaintenanceService : BackgroundService
     public DatabaseMaintenanceService(
         IDbContextFactory<PipelineDbContext> dbFactory,
         IConsolidationService consolidationService,
-        IServiceProvider serviceProvider,
         IConfiguration configuration,
         IPipelineConfigStore configStore)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         _dbFactory = dbFactory;
         _consolidationService = consolidationService;
-        _serviceProvider = serviceProvider;
         _options = new DatabaseMaintenanceOptions();
         configuration.GetSection("WorkDistribution:Reconciliation").Bind(_options);
         _configStore = configStore;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    // ExecuteAsync is intentionally absent.
+    // Spec 047: DatabaseMaintenanceService is registered as a plain singleton (not AddHostedService).
+    // Sweeps are triggered exclusively by the Scheduler via POST /api/scheduler/maintenance/retention-sweep
+    // → RunRetentionSweepAsync. The PeriodicTimer-based timer path was removed to prevent accidental
+    // re-activation: adding AddHostedService back would run uncounted sweeps alongside the
+    // Scheduler-triggered path with no leader-gate coordination between them.
+
+    /// <summary>
+    /// Executes all five sweep operations and returns a result with deletion counts.
+    /// Used by the Scheduler's POST /api/scheduler/maintenance/retention-sweep endpoint.
+    /// Callers are responsible for leader-gate checks before calling this method.
+    /// </summary>
+    public async Task<RetentionSweepResult> RunRetentionSweepAsync(CancellationToken ct)
     {
-        // Read DbRetentionSweepInterval from pipeline config store.
-        // This replaces MaintenanceIntervalHours as the PeriodicTimer period.
-        // Falls back to 24h default if config cannot be read on startup.
-        var sweepInterval = TimeSpan.FromHours(24);
-        try
-        {
-            var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
-            sweepInterval = config.DbRetentionSweepInterval;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            Log.Warning(ex,
-                "DatabaseMaintenanceService: failed to read DbRetentionSweepInterval from config store — using default {Default}",
-                sweepInterval);
-        }
-
-        Log.Information(
-            "DatabaseMaintenanceService started — sweepInterval={SweepInterval}, " +
-            "workItem retention={WorkItemDays}d, pipelineRun retention={PipelineRunDays}d, " +
-            "consolidationRun retention={ConsolidationRunDays}d",
-            sweepInterval, _options.StaleRetentionDays,
-            _options.PipelineRunRetentionDays, _options.ConsolidationRunRetentionDays);
-
-        // Resolve ILeaderElectionService lazily — it may not be available at construction time.
-        var leaderElection = _serviceProvider.GetService(typeof(ILeaderElectionService)) as ILeaderElectionService;
-
-        using var timer = new PeriodicTimer(sweepInterval);
-
-        // Immediate first tick (per project convention)
-        await RunMaintenanceCycleAsync(leaderElection, stoppingToken);
-
-        while (await timer.WaitForNextTickAsync(stoppingToken))
-        {
-            await RunMaintenanceCycleAsync(leaderElection, stoppingToken);
-        }
+        var staleWi = await CleanupStaleWorkItemsAsync(ct);
+        var staleRuns = await CleanupStalePipelineRunsAsync(ct);
+        var staleConsolidation = await CleanupStaleConsolidationRunsAsync(ct);
+        var retentionRuns = await SweepPipelineRunRetentionAsync(ct);
+        var retentionWi = await SweepWorkItemRetentionAsync(ct);
+        return new RetentionSweepResult(staleWi, staleRuns, staleConsolidation, retentionRuns, retentionWi);
     }
 
-    protected virtual async Task RunMaintenanceCycleAsync(ILeaderElectionService? leaderElection, CancellationToken ct)
-    {
-        // Gate behind leader election if available (multi-replica safety)
-        if (leaderElection is not null && !leaderElection.IsLeader)
-        {
-            Log.Debug("DatabaseMaintenanceService: skipping cycle — not the leader");
-            return;
-        }
-
-        Log.Debug("DatabaseMaintenanceService: starting maintenance cycle");
-
-        await CleanupStaleWorkItemsAsync(ct);
-        await CleanupStalePipelineRunsAsync(ct);
-        await CleanupStaleConsolidationRunsAsync(ct);
-        await SweepPipelineRunRetentionAsync(ct);
-        await SweepWorkItemRetentionAsync(ct);
-    }
+    /// <summary>Counts and result for a full retention sweep.</summary>
+    public sealed record RetentionSweepResult(
+        int StaleWorkItemsDeleted,
+        int StalePipelineRunsDeleted,
+        int StaleConsolidationRunsDeleted,
+        int RetentionPipelineRunsDeleted,
+        int RetentionWorkItemsDeleted);
 
     /// <summary>
     /// Terminal WorkItems older than retention period → DELETE (server-side).
+    /// Returns the number of rows deleted.
     /// </summary>
-    internal async Task CleanupStaleWorkItemsAsync(CancellationToken ct)
+    internal async Task<int> CleanupStaleWorkItemsAsync(CancellationToken ct)
     {
         try
         {
@@ -126,21 +97,24 @@ public class DatabaseMaintenanceService : BackgroundService
                 Log.Information("DatabaseMaintenanceService: cleaned up {Count} stale work items (retention={Days}d)",
                     deletedCount, _options.StaleRetentionDays);
             }
+            return deletedCount;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Shutting down — expected
+            return 0;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "DatabaseMaintenanceService: failed to cleanup stale work items (non-fatal)");
+            return 0;
         }
     }
 
     /// <summary>
     /// PipelineRuns older than retention period → DELETE (server-side).
+    /// Returns the number of rows deleted.
     /// </summary>
-    internal async Task CleanupStalePipelineRunsAsync(CancellationToken ct)
+    internal async Task<int> CleanupStalePipelineRunsAsync(CancellationToken ct)
     {
         try
         {
@@ -156,26 +130,25 @@ public class DatabaseMaintenanceService : BackgroundService
                 Log.Information("DatabaseMaintenanceService: cleaned up {Count} stale pipeline runs (retention={Days}d)",
                     deletedCount, _options.PipelineRunRetentionDays);
             }
+            return deletedCount;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Shutting down — expected
+            return 0;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "DatabaseMaintenanceService: failed to cleanup stale pipeline runs (non-fatal)");
+            return 0;
         }
     }
 
     /// <summary>
     /// Terminal ConsolidationRuns older than retention period → DELETE via IConsolidationService.
-    /// Uses client-side filtering because CompletedAtUtc is stored inside JSONB (no server-side filter).
+    /// Returns the number of runs deleted.
     /// </summary>
     // Note: GetRunHistoryAsync → LoadAllRunsAsync is bounded to Take(1000) ordered by Id DESC.
-    // If >1000 consolidation runs exist, the oldest runs (most likely past retention) are excluded
-    // from the result set and become unreachable by cleanup in a single pass. Consider adding a
-    // dedicated unbounded cleanup query or paginated deletion for deployments with high run volume.
-    internal async Task CleanupStaleConsolidationRunsAsync(CancellationToken ct)
+    internal async Task<int> CleanupStaleConsolidationRunsAsync(CancellationToken ct)
     {
         try
         {
@@ -187,11 +160,9 @@ public class DatabaseMaintenanceService : BackgroundService
             {
                 if (ct.IsCancellationRequested) break;
 
-                // Only delete terminal runs
                 if (run.Status is not (ConsolidationRunStatus.Succeeded or ConsolidationRunStatus.Failed or ConsolidationRunStatus.Cancelled))
                     continue;
 
-                // Use CompletedAtUtc if available, fall back to StartedAtUtc
                 var anchor = run.CompletedAtUtc ?? run.StartedAtUtc;
                 if (anchor >= cutoff)
                     continue;
@@ -205,29 +176,24 @@ public class DatabaseMaintenanceService : BackgroundService
                 Log.Information("DatabaseMaintenanceService: cleaned up {Count} stale consolidation runs (retention={Days}d)",
                     deletedCount, _options.ConsolidationRunRetentionDays);
             }
+            return deletedCount;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Shutting down — expected
+            return 0;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "DatabaseMaintenanceService: failed to cleanup stale consolidation runs (non-fatal)");
+            return 0;
         }
     }
 
     /// <summary>
     /// Per-project count-based retention sweep for <c>PipelineRuns</c>.
-    /// Deletes the oldest completed runs beyond <see cref="PipelineConfiguration.PipelineRunRetentionCount"/>
-    /// per project. Rows with <c>ProjectId IS NULL</c> or <c>CompletedAt IS NULL</c> (active runs)
-    /// are never deleted.
+    /// Returns the number of rows deleted.
     /// </summary>
-    // Note: SweepPipelineRunRetentionAsync and SweepWorkItemRetentionAsync each call
-    // LoadPipelineConfigAsync independently, resulting in two config-store round-trips per maintenance
-    // cycle. If the store issues a DB query on each call (no in-memory cache), this doubles the load
-    // for no correctness benefit. Consider loading config once in RunMaintenanceCycleAsync and passing
-    // the counts as parameters, consistent with how _options is used by the CleanupStale* methods.
-    internal virtual async Task SweepPipelineRunRetentionAsync(CancellationToken ct)
+    internal virtual async Task<int> SweepPipelineRunRetentionAsync(CancellationToken ct)
     {
         try
         {
@@ -235,7 +201,7 @@ public class DatabaseMaintenanceService : BackgroundService
             var retentionCount = config.PipelineRunRetentionCount;
 
             if (retentionCount == -1)
-                return; // Disabled
+                return 0; // Disabled
 
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -278,25 +244,24 @@ public class DatabaseMaintenanceService : BackgroundService
                     deletedCount, retentionCount);
                 WorkDistributionTelemetry.DbRetentionPipelineRunsDeleted.Add(deletedCount);
             }
+            return deletedCount;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Shutting down — expected
+            return 0;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "DatabaseMaintenanceService: PipelineRuns retention sweep failed (non-fatal)");
+            return 0;
         }
     }
 
     /// <summary>
     /// Per-project count-based retention sweep for terminal <c>WorkItems</c>.
-    /// Deletes the oldest terminal rows beyond <see cref="PipelineConfiguration.WorkItemRetentionCount"/>
-    /// per project. Only rows with <c>Status IN (3,4,5)</c> AND <c>CompletedAt IS NOT NULL</c>
-    /// AND <c>ProjectId IS NOT NULL</c> are eligible. Non-terminal rows and rows with
-    /// <c>CompletedAt IS NULL</c> are never deleted.
+    /// Returns the number of rows deleted.
     /// </summary>
-    internal virtual async Task SweepWorkItemRetentionAsync(CancellationToken ct)
+    internal virtual async Task<int> SweepWorkItemRetentionAsync(CancellationToken ct)
     {
         try
         {
@@ -304,7 +269,7 @@ public class DatabaseMaintenanceService : BackgroundService
             var retentionCount = config.WorkItemRetentionCount;
 
             if (retentionCount == -1)
-                return; // Disabled
+                return 0; // Disabled
 
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -346,14 +311,16 @@ public class DatabaseMaintenanceService : BackgroundService
                     deletedCount, retentionCount);
                 WorkDistributionTelemetry.DbRetentionWorkItemsDeleted.Add(deletedCount);
             }
+            return deletedCount;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Shutting down — expected
+            return 0;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "DatabaseMaintenanceService: WorkItems retention sweep failed (non-fatal)");
+            return 0;
         }
     }
 }

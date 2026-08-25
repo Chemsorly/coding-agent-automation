@@ -3,6 +3,7 @@ using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -123,6 +124,15 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             // requires Kubernetes/hub infra that's not available in tests)
             services.RemoveAll<IConsolidationDispatchService>();
             services.AddSingleton<IConsolidationDispatchService>(new NoOpConsolidationDispatchService());
+
+            // Replace ILeaderElectionService with a mock that is always the leader.
+            // The real implementation needs K8s Lease — unavailable in test env.
+            // DatabaseMaintenanceService and ApiSchedulerEndpoints gate on IsLeader.
+            services.RemoveAll<ILeaderElectionService>();
+            var leaderMock = new Mock<ILeaderElectionService>();
+            leaderMock.SetupGet(l => l.IsLeader).Returns(true);
+            leaderMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
+            services.AddSingleton(leaderMock.Object);
         });
     }
 

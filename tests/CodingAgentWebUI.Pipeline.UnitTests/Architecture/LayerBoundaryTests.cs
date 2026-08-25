@@ -378,6 +378,16 @@ public partial class LayerBoundaryTests
             // so these are listed here as "conditionally registered, not retired".
             "AgentRegistryCleanupService",
             "RunServiceCleanupService",
+
+            // Spec 047: moved to CodingAgentWebUI.Scheduler — no longer registered in the WebUI or API.
+            // WorkItemMetricsBackgroundService is replaced by WorkItemCountsPoller in the Scheduler,
+            // which polls GET /api/work-items/counts-by-status instead of accessing EF directly.
+            "WorkItemMetricsBackgroundService",
+
+            // Spec 047: LoopStatusPollingService is registered in the WebUI via AddHostedService
+            // with a cast: AddHostedService(sp => (LoopStatusPollingService)sp.GetRequiredService<ILoopStatusService>()).
+            // The T4 scanner does not detect the cast pattern — service is actively registered.
+            "LoopStatusPollingService",
         };
 
         // ── Step 3: find all concrete BackgroundService subclasses in src files ──
@@ -408,7 +418,7 @@ public partial class LayerBoundaryTests
     public void T4_PositiveControl_PipelineLoopService_IsDetectedByScanner()
     {
         // PipelineLoopService is registered with AddHostedService in
-        // ServiceCollectionExtensions.PipelineBackgroundServices.cs.
+        // CodingAgentWebUI.Scheduler/SchedulerServiceCollectionExtensions.cs (Spec 047).
         // If the scanner does not find it, the T4 test above is vacuous.
         var srcDir = Path.Combine(RepoRoot, "src");
         var registeredTypes = new HashSet<string>(StringComparer.Ordinal);

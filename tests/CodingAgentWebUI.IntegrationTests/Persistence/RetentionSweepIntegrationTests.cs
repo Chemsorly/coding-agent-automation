@@ -310,9 +310,8 @@ public class RetentionSweepIntegrationTests : IDisposable
             .ReturnsAsync(new PipelineConfiguration { WorkItemRetentionCount = -1 });
 
         var faultFactory = new FaultingDbContextFactory(_dbFactory, throwOnFirstCall: true);
-        var mockProvider = new Mock<IServiceProvider>();
         var svc = new DatabaseMaintenanceService(
-            faultFactory, _mockConsolidation.Object, mockProvider.Object,
+            faultFactory, _mockConsolidation.Object,
             _configuration, _mockConfigStore.Object);
 
         await svc.Invoking(s => s.SweepPipelineRunRetentionAsync(CancellationToken.None))
@@ -337,9 +336,8 @@ public class RetentionSweepIntegrationTests : IDisposable
             .ReturnsAsync(new PipelineConfiguration { WorkItemRetentionCount = 10 });
 
         var faultFactory = new FaultingDbContextFactory(_dbFactory, throwOnFirstCall: true);
-        var mockProvider = new Mock<IServiceProvider>();
         var svc = new DatabaseMaintenanceService(
-            faultFactory, _mockConsolidation.Object, mockProvider.Object,
+            faultFactory, _mockConsolidation.Object,
             _configuration, _mockConfigStore.Object);
 
         await svc.Invoking(s => s.SweepPipelineRunRetentionAsync(CancellationToken.None))
@@ -365,7 +363,7 @@ public class RetentionSweepIntegrationTests : IDisposable
     {
         var mockProvider = new Mock<IServiceProvider>();
         return new TestableRetentionService(
-            _dbFactory, _mockConsolidation.Object, mockProvider.Object,
+            _dbFactory, _mockConsolidation.Object,
             _configuration, _mockConfigStore.Object);
     }
 
@@ -418,18 +416,17 @@ public class RetentionSweepIntegrationTests : IDisposable
         public TestableRetentionService(
             IDbContextFactory<PipelineDbContext> dbFactory,
             IConsolidationService consolidationService,
-            IServiceProvider serviceProvider,
             IConfiguration configuration,
             IPipelineConfigStore configStore)
-            : base(dbFactory, consolidationService, serviceProvider, configuration, configStore) { }
+            : base(dbFactory, consolidationService, configuration, configStore) { }
 
-        internal override async Task SweepPipelineRunRetentionAsync(CancellationToken ct)
+        internal override async Task<int> SweepPipelineRunRetentionAsync(CancellationToken ct)
         {
             try
             {
                 var config = await _configStore.LoadPipelineConfigAsync(ct);
                 var n = config.PipelineRunRetentionCount;
-                if (n == -1) return;
+                if (n == -1) return 0;
 
                 await using var db = await _dbFactory.CreateDbContextAsync(ct);
                 const string sql = """
@@ -448,23 +445,24 @@ public class RetentionSweepIntegrationTests : IDisposable
                       WHERE rn > @n
                     )
                     """;
-                await db.Database.ExecuteSqlRawAsync(sql,
+                return await db.Database.ExecuteSqlRawAsync(sql,
                     new[] { new SqliteParameter("@n", n) }, ct);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return 0; }
             catch (Exception ex)
             {
                 Serilog.Log.Warning(ex, "TestableRetentionService: PipelineRuns sweep failed (non-fatal)");
+                return 0;
             }
         }
 
-        internal override async Task SweepWorkItemRetentionAsync(CancellationToken ct)
+        internal override async Task<int> SweepWorkItemRetentionAsync(CancellationToken ct)
         {
             try
             {
                 var config = await _configStore.LoadPipelineConfigAsync(ct);
                 var n = config.WorkItemRetentionCount;
-                if (n == -1) return;
+                if (n == -1) return 0;
 
                 await using var db = await _dbFactory.CreateDbContextAsync(ct);
                 // Status IN (3,4,5): Succeeded=3, Failed=4, Cancelled=5 (WorkItemStatus enum)
@@ -485,13 +483,14 @@ public class RetentionSweepIntegrationTests : IDisposable
                       WHERE rn > @n
                     )
                     """;
-                await db.Database.ExecuteSqlRawAsync(sql,
+                return await db.Database.ExecuteSqlRawAsync(sql,
                     new[] { new SqliteParameter("@n", n) }, ct);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return 0; }
             catch (Exception ex)
             {
                 Serilog.Log.Warning(ex, "TestableRetentionService: WorkItems sweep failed (non-fatal)");
+                return 0;
             }
         }
     }

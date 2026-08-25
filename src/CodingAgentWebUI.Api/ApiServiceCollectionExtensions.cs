@@ -202,30 +202,31 @@ public static class ApiServiceCollectionExtensions
         // registration when Redis is absent, since these services are no-ops without Redis.
         {
             var hasMuxDescriptor = services.Any(d => d.ServiceType == typeof(StackExchange.Redis.IConnectionMultiplexer));
-            // Always register the singletons (factory returns null when Redis absent — GC'd).
+            // Always register the singletons — only constructed when Redis is available.
+            // Returns null when the mux is absent; the hosted-service fallback below handles
+            // that case with a NullRedisStore no-op implementation.
             services.AddSingleton<CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService>(sp =>
             {
                 var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
                 if (mux is null) return null!;
                 var store = new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase());
-                return new CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService(store, Log.Logger);
+                // Resolved lazily from the built provider — registered later in AddApiOrchestration,
+                // but factory lambdas execute after the full IServiceCollection is built.
+                var leaderElection = sp.GetService<ILeaderElectionService>();
+                return new CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService(store, Log.Logger, leaderElection);
             });
             services.AddSingleton<RunServiceCleanupService>(sp =>
             {
                 var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
                 if (mux is null) return null!;
                 var store = new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase());
-                return new RunServiceCleanupService(store, Log.Logger);
+                var leaderElection = sp.GetService<ILeaderElectionService>();
+                return new RunServiceCleanupService(store, Log.Logger, leaderElection);
             });
-            // Use concrete-type AddHostedService to avoid IHostedService ambiguity.
-            // The singletons above return null when Redis absent; GetService returns null; hosted service is a no-op at startup.
-            services.AddHostedService<CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService>(
-                sp => sp.GetService<CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService>()
-                      ?? new CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService(
-                             new CodingAgentWebUI.Orchestration.Redis.NullRedisStore(), Log.Logger));
-            services.AddHostedService<RunServiceCleanupService>(
-                sp => sp.GetService<RunServiceCleanupService>()
-                      ?? new RunServiceCleanupService(new CodingAgentWebUI.Orchestration.Redis.NullRedisStore(), Log.Logger));
+            // Spec 047: AddHostedService registrations removed — AgentRegistryCleanupService
+            // and RunServiceCleanupService have moved to CodingAgentWebUI.Scheduler.
+            // The singleton registrations above are kept because IRedisStore/IConnectionMultiplexer
+            // are still needed by DistributedAgentRegistryService and DistributedRunService.
         }
 
         // ── ITokenVendingService ─────────────────────────────────────────────
@@ -385,19 +386,19 @@ public static class ApiServiceCollectionExtensions
         // The only retention sweep in the system — orphaning it causes Postgres to grow
         // without bound while retention settings still render in the UI.
         // Gated by ILeaderElectionService so only one replica runs cleanup at a time.
-        services.AddHostedService(sp => new DatabaseMaintenanceService(
+        // Registered as a singleton (not hosted) so the maintenance endpoint in ApiSchedulerEndpoints
+        // can resolve and invoke RunRetentionSweepAsync directly. The Scheduler triggers sweeps
+        // via POST /api/scheduler/maintenance/retention-sweep rather than the internal timer.
+        services.AddSingleton<DatabaseMaintenanceService>(sp => new DatabaseMaintenanceService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<IConsolidationService>(),
-            sp,
             sp.GetRequiredService<IConfiguration>(),
             sp.GetRequiredService<IPipelineConfigStore>()));
 
         // ── WorkItemMetricsBackgroundService ──────────────────────────────────────────────────
-        // Feeds WorkDistributionTelemetry.workitems_by_status. Only one instance in the system.
-        // Leader-gating not needed: the static callback is overwritten on each registration,
-        // so two concurrent instances during a RollingUpdate overlap produce duplicate series
-        // at worst — acceptable given the brief overlap window.
-        services.AddHostedService<CodingAgentWebUI.Orchestration.Telemetry.WorkItemMetricsBackgroundService>();
+        // Spec 047: Removed from API hosted services — replaced by WorkItemCountsPoller in
+        // CodingAgentWebUI.Scheduler. WorkItemCountsPoller polls GET /api/work-items/counts-by-status
+        // and registers the same WorkDistributionTelemetry callback from the Scheduler process.
 
         // ── DispatchLifecycleService (API copy, EF-coupled) ─────────────────────────────
         // Used by ConsolidationWorkItemDispatchService and ModelFetchJobService.

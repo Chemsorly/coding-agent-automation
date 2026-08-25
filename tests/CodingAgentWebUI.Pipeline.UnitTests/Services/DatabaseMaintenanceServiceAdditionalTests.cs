@@ -27,7 +27,6 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly TestDbContextFactory _dbFactory;
     private readonly Mock<IConsolidationService> _mockConsolidationService = new();
-    private readonly Mock<ILeaderElectionService> _mockLeaderElection = new();
     private readonly Mock<IPipelineConfigStore> _mockConfigStore = new();
 
     private readonly IConfiguration _configuration = new ConfigurationBuilder()
@@ -51,7 +50,6 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
         ctx.Database.EnsureCreated();
 
         _dbFactory = new TestDbContextFactory(_dbOptions);
-        _mockLeaderElection.Setup(l => l.IsLeader).Returns(true);
         _mockConfigStore
             .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
@@ -65,14 +63,7 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
     }
 
     private DatabaseMaintenanceService CreateService() =>
-        new(_dbFactory, _mockConsolidationService.Object, BuildServiceProvider(), _configuration, _mockConfigStore.Object);
-
-    private IServiceProvider BuildServiceProvider()
-    {
-        var mock = new Mock<IServiceProvider>();
-        mock.Setup(p => p.GetService(typeof(ILeaderElectionService))).Returns(_mockLeaderElection.Object);
-        return mock.Object;
-    }
+        new(_dbFactory, _mockConsolidationService.Object, _configuration, _mockConfigStore.Object);
 
     // ── CleanupStaleConsolidationRuns — cancellation path ────────────────────
 
@@ -254,47 +245,16 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
     }
 
     // ── RunMaintenanceCycle — leader but consolidation throws ────────────────
+    // ── RunMaintenanceCycle test removed (Spec 047) ────────────────────────────
+    // RunMaintenanceCycleAsync was removed when DatabaseMaintenanceService was converted
+    // from a hosted BackgroundService to a plain singleton triggered by HTTP. The behaviour
+    // it tested (consolidation exception swallowed, cycle continues) is now covered by
+    // RunRetentionSweepAsync being called directly — each sweep method catches independently.
 
-    [Fact]
-    public async Task RunMaintenanceCycle_WhenLeader_ConsolidationThrows_CycleCompletes()
-    {
-        // Arrange: consolidation service throws — but cycle should continue (it's in its own try/catch)
-        _mockConsolidationService
-            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Consolidation failure"));
-
-        _mockConfigStore
-            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-
-        var service = new TestableMaintenanceService(
-            _dbFactory, _mockConsolidationService.Object, BuildServiceProvider(),
-            _configuration, _mockConfigStore.Object);
-
-        // Leader = true → cycle runs; consolidation throws → caught; sweep calls may throw too (InMemory)
-        await service.Invoking(s => s.TestRunMaintenanceCycleAsync(_mockLeaderElection.Object, CancellationToken.None))
-            .Should().NotThrowAsync();
-    }
-
-    // ── TestableMaintenanceService helper ────────────────────────────────────
-
-    private sealed class TestableMaintenanceService : DatabaseMaintenanceService
-    {
-        public TestableMaintenanceService(
-            IDbContextFactory<PipelineDbContext> dbFactory,
-            IConsolidationService consolidationService,
-            IServiceProvider serviceProvider,
-            IConfiguration configuration,
-            IPipelineConfigStore configStore)
-            : base(dbFactory, consolidationService, serviceProvider, configuration, configStore) { }
-
-        public Task TestRunMaintenanceCycleAsync(ILeaderElectionService? leaderElection, CancellationToken ct)
-            => RunMaintenanceCycleAsync(leaderElection, ct);
-
-        // Override sweep methods to no-ops so InMemory SQL exceptions don't mask coverage
-        internal override Task SweepPipelineRunRetentionAsync(CancellationToken ct) => Task.CompletedTask;
-        internal override Task SweepWorkItemRetentionAsync(CancellationToken ct) => Task.CompletedTask;
-    }
+    // ── TestableMaintenanceService helper removed (Spec 047) ─────────────────
+    // No longer needed — TestableMaintenanceService called RunMaintenanceCycleAsync which
+    // was deleted. Sweep method override pattern (SweepPipelineRunRetentionAsync etc.)
+    // is retained in RetentionSweepIntegrationTests where the SQLite-compatible SQL is used.
 
     private sealed class TestPipelineDbContext : PipelineDbContext
     {

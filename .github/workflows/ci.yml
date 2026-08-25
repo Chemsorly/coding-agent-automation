@@ -130,6 +130,8 @@ jobs:
             tag: coding-agent-api
           - dockerfile: dockerfiles/jobcontroller.Dockerfile
             tag: coding-agent-jobcontroller
+          - dockerfile: dockerfiles/scheduler.Dockerfile
+            tag: coding-agent-scheduler
         include:
           - arch: amd64
             runner: ubuntu-latest

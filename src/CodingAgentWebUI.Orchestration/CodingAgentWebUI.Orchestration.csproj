@@ -16,6 +16,7 @@
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Orchestration.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Scheduler" />
   </ItemGroup>
 
   <ItemGroup>

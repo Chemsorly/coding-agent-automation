@@ -3,7 +3,7 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Hub
 @using CodingAgentWebUI.Services
-@inject IPipelineLoopService LoopService
+@inject ILoopStatusService LoopService
 @inject ConsolidationBadgeService BadgeService
 @inject IJSRuntime JS
 
@@ -31,6 +31,10 @@
             @if (LoopService.IsLoopActive)
             {
                 <span class="sidebar-loop-indicator" title="Pipeline loop is active"><Icon Name="refresh-cw" Size="14" /></span>
+            }
+            @if (LoopService.IsSchedulerUnreachable)
+            {
+                <span class="sidebar-loop-indicator sidebar-loop-indicator--unavailable" title="Scheduler unavailable — loop controls disabled"><Icon Name="alert-triangle" Size="14" /></span>
             }
         </NavLink>
         <NavLink href="agent-monitoring" class="sidebar-link">

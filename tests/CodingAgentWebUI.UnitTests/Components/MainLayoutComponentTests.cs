@@ -1,4 +1,5 @@
 using Bunit;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Layout;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -44,20 +45,17 @@ public class MainLayoutComponentTests : BunitContext
             providerFactory: mockFactory.Object,
             historyService: mockHistory.Object);
 
-        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(new PipelineLoopServiceDependencies
-        {
-            Orchestration = runCreator,
-            ProviderFactory = mockFactory.Object,
-            PipelineConfigStore = mockStore.Object,
-            ProviderConfigStore = mockStore.Object,
-            ProjectStore = mockStore.Object,
-            Logger = mockLogger.Object,
-            WorkDistributor = null,
-            DispatchOrchestration = new CodingAgentWebUI.TestUtilities.NullDispatchOrchestrationService(),
-            DependencyChecker = null,
-            HousekeepingService = null,
-            LeaderElection = null
-        }));
+        // Spec 047: MainLayout injects ILoopStatusService (not IPipelineLoopService)
+        var mockLoopStatus = new Mock<ILoopStatusService>();
+        mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
+        mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("");
+        mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
+        mockLoopStatus.SetupGet(l => l.TemplateStatuses)
+            .Returns(new Dictionary<string, CodingAgentWebUI.Pipeline.Models.ConfigStatusSnapshot>());
+        mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
+        Services.AddSingleton<ILoopStatusService>(mockLoopStatus.Object);
+        var mockSchedulerClient = new Mock<ISchedulerApiClient>();
+        Services.AddSingleton<ISchedulerApiClient>(mockSchedulerClient.Object);
         Services.AddSingleton(new ConsolidationBadgeService());
         Services.AddSingleton(_jsMock.Object);
 

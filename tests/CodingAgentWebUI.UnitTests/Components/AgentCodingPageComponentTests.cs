@@ -1,5 +1,6 @@
 using Bunit;
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -58,20 +59,28 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(_pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(new PipelineLoopServiceDependencies
-        {
-            Orchestration = runCreator,
-            ProviderFactory = _mockFactory.Object,
-            PipelineConfigStore = _mockStore.Object,
-            ProviderConfigStore = _mockStore.Object,
-            ProjectStore = _mockStore.Object,
-            Logger = mockLogger.Object,
-            WorkDistributor = null,
-            DispatchOrchestration = new CodingAgentWebUI.TestUtilities.NullDispatchOrchestrationService(),
-            DependencyChecker = null,
-            HousekeepingService = null,
-            LeaderElection = null
-        }));
+
+        // Spec 047: AgentCoding.razor.cs now injects ILoopStatusService (not IPipelineLoopService).
+        // AgentCodingPageService now takes ISchedulerApiClient (not IPipelineLoopService).
+        var mockLoopStatus = new Mock<ILoopStatusService>();
+        mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
+        mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("");
+        mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
+        mockLoopStatus.SetupGet(l => l.TemplateStatuses)
+            .Returns(new Dictionary<string, CodingAgentWebUI.Pipeline.Models.ConfigStatusSnapshot>());
+        mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
+        Services.AddSingleton(mockLoopStatus.Object);
+        Services.AddSingleton<ILoopStatusService>(mockLoopStatus.Object);
+
+        var mockSchedulerClient = new Mock<ISchedulerApiClient>();
+        mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopStartResultDto(true, null));
+        mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockSchedulerClient.Setup(c => c.ResumeLoopAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        Services.AddSingleton(mockSchedulerClient.Object);
+        Services.AddSingleton<ISchedulerApiClient>(mockSchedulerClient.Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 
         _mockProjectStore = new Mock<IProjectStore>();

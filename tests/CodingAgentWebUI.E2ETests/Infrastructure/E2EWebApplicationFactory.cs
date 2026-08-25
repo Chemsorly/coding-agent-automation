@@ -10,6 +10,7 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
+using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
@@ -211,7 +212,12 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // Replace singleton services with resettable subclasses
             ReplaceWithResettableServices(services);
 
-            // PipelineLoopService stays hosted, unlike every other background service here.
+            // PipelineLoopService stays hosted in the E2E WebUI factory so FakeSchedulerApiClient
+            // can delegate StartLoop/StopLoop/ResumeLoop to it in-process.
+            //
+            // Spec 047: PipelineLoopService was removed from production WebUI DI (it now lives in
+            // CodingAgentWebUI.Scheduler). It is re-added here — E2E-factory-only — to preserve
+            // the "loop must stay hosted" invariant that was documented in the original comment:
             //
             // Unhosting it looks safe — it is the polling loop, and no test wants polling it did
             // not ask for — but it polls nothing until StartLoopAsync signals it: ExecuteAsync
@@ -222,6 +228,39 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // and nothing ever finished it. Every later test then found the Agent Coding page
             // offering Stop Loop where it expected Start Loop, and which tests failed depended on
             // whether some earlier test had happened to call StartAsync on the singleton itself.
+
+            // Register PipelineLoopServiceDependencies + PipelineLoopService (E2E-factory-only)
+            services.AddSingleton<PipelineLoopServiceDependencies>(sp => new PipelineLoopServiceDependencies
+            {
+                Orchestration = sp.GetRequiredService<IDispatchRunCreator>(),
+                ProviderFactory = sp.GetRequiredService<IProviderFactory>(),
+                PipelineConfigStore = sp.GetRequiredService<IPipelineConfigStore>(),
+                ProviderConfigStore = sp.GetRequiredService<IProviderConfigStore>(),
+                ProjectStore = sp.GetRequiredService<IProjectStore>(),
+                Logger = Serilog.Log.Logger,
+                WorkDistributor = sp.GetService<IWorkDistributor>(),
+                DispatchOrchestration = sp.GetService<IDispatchOrchestrationService>(),
+                DependencyChecker = sp.GetService<IDependencyChecker>(),
+                HousekeepingService = sp.GetService<IHousekeepingService>(),
+                LeaderElection = null // runs unconditionally in E2E
+            });
+            services.AddSingleton<PipelineLoopService>();
+            services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());
+            services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
+
+            // FakeSchedulerApiClient delegates loop controls to the local PipelineLoopService.
+            // Components now inject ILoopStatusService and ISchedulerApiClient instead of
+            // IPipelineLoopService. The fake bridges both to the in-process singleton.
+            services.RemoveAll<ISchedulerApiClient>();
+            services.AddSingleton<ISchedulerApiClient>(sp =>
+                new FakeSchedulerApiClient(
+                    sp.GetRequiredService<PipelineLoopService>(),
+                    ApiConfigClient)); // pass config client so StartLoopAsync persists ClosedLoopAutoStart
+
+            // FakeLoopStatusService: exposes the local PipelineLoopService via ILoopStatusService.
+            services.RemoveAll<ILoopStatusService>();
+            services.AddSingleton<ILoopStatusService>(sp =>
+                new FakeLoopStatusService(sp.GetRequiredService<PipelineLoopService>()));
 
             // Reduce shutdown timeout for faster test teardown
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));

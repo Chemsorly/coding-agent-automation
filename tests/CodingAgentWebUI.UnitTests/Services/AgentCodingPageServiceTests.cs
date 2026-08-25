@@ -5,7 +5,6 @@ using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 
@@ -26,7 +25,7 @@ public class AgentCodingPageServiceTests
     private readonly Mock<IIssueDrawerService> _mockIssueDrawerService;
     private readonly Mock<IPrReviewDrawerService> _mockPrReviewDrawerService;
     private readonly Mock<IEpicDrawerService> _mockEpicDrawerService;
-    private readonly PipelineLoopService _loopService;
+    private readonly Mock<ISchedulerApiClient> _mockSchedulerClient;
     private readonly AgentCodingPageService _service;
 
     // Real drawer state services so property forwarding works in tests that check DrawerState
@@ -34,11 +33,8 @@ public class AgentCodingPageServiceTests
     private readonly DrawerStateService<PullRequestSummary> _prDrawerState;
     private readonly DrawerStateService<IssueSummary> _epicDrawerState;
 
-    // Exposed so individual tests can add setups for PipelineLoopService's store dependencies.
-    // PipelineLoopService still uses these old store interfaces (Spec 045 Task 6 used adapters via DI,
-    // but tests construct PipelineLoopService directly with these mocks).
-    private readonly Mock<IConfigurationStore> _mockLoopConfigStore;
-    private readonly Mock<IProjectStore> _mockLoopProjectStore;
+    // Spec 047: _mockLoopConfigStore and _mockLoopProjectStore removed — AgentCodingPageService
+    // no longer holds a PipelineLoopService; loop controls go through ISchedulerApiClient.
 
     public AgentCodingPageServiceTests()
     {
@@ -67,40 +63,13 @@ public class AgentCodingPageServiceTests
         _mockPrReviewDrawerService.Setup(s => s.DrawerState).Returns(_prDrawerState);
         _mockEpicDrawerService.Setup(s => s.DrawerState).Returns(_epicDrawerState);
 
-        var mockLogger = new Mock<Serilog.ILogger>();
-        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
-
-        // PipelineLoopService still uses the old store interfaces (Task 6 not done yet).
-        // Use minimal mocks to satisfy constructor.
-        _mockLoopConfigStore = new Mock<IConfigurationStore>();
-        _mockLoopProjectStore = new Mock<IProjectStore>();
-        var mockConfigStore = _mockLoopConfigStore;
-        var mockProjectStore = _mockLoopProjectStore;
-
-        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: mockConfigStore.Object,
-            providerFactory: new Mock<IProviderFactory>().Object,
-            historyService: mockHistoryService.Object);
-
-        _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
-        {
-            Orchestration = runCreator,
-            ProviderFactory = new Mock<IProviderFactory>().Object,
-            PipelineConfigStore = mockConfigStore.Object,
-            ProviderConfigStore = mockConfigStore.Object,
-            ProjectStore = mockProjectStore.Object,
-            Logger = mockLogger.Object,
-            WorkDistributor = null,
-            DispatchOrchestration = new CodingAgentWebUI.TestUtilities.NullDispatchOrchestrationService(),
-            DependencyChecker = null,
-            HousekeepingService = null,
-            LeaderElection = null
-        });
+        // Spec 047: AgentCodingPageService now takes ISchedulerApiClient instead of PipelineLoopService.
+        _mockSchedulerClient = new Mock<ISchedulerApiClient>();
+        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopStartResultDto(true, null));
 
         _service = new AgentCodingPageService(
-            _loopService,
+            _mockSchedulerClient.Object,
             _mockConfigClient.Object,
             _mockIssueDrawerService.Object,
             _mockPrReviewDrawerService.Object,
@@ -301,51 +270,52 @@ public class AgentCodingPageServiceTests
     // ── Loop Controls ──
 
     [Fact]
-    public async Task StopLoopAsync_StopsAndPersistsConfig()
+    public async Task StopLoopAsync_CallsSchedulerClient()
     {
-        _mockConfigClient.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         await _service.StopLoopAsync();
 
-        _mockConfigClient.Verify(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockSchedulerClient.Verify(c => c.StopLoopAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "StopLoopAsync must delegate to ISchedulerApiClient.StopLoopAsync");
     }
 
     [Fact]
-    public async Task StartLoopAsync_WhenLoopServiceThrows_ReturnsErrorTuple()
+    public async Task StartLoopAsync_WhenSchedulerClientThrows_ReturnsErrorTuple()
     {
-        // PipelineLoopService internally tries to load config from its store deps (still old interfaces
-        // for Task 6). Since no mock setup is provided, the mock throws by default.
-        // This covers the "underlying loop service fails" path.
+        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("connection refused"));
+
         var (success, error) = await _service.StartLoopAsync();
 
         Assert.False(success);
         Assert.NotNull(error);
+        Assert.Contains("connection refused", error);
     }
 
     [Fact]
-    public async Task StartLoopAsync_WhenUpdateConfigThrows_ReturnsErrorTuple()
+    public async Task StartLoopAsync_WhenSchedulerReturnsStarted_ReturnsSuccess()
     {
-        _mockConfigClient.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("Disk full"));
+        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopStartResultDto(true, null));
 
-        // Set up old store interfaces so PipelineLoopService can start the loop successfully.
-        _mockLoopConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-        _mockLoopConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { MakeProvider("ip-1") });
-        _mockLoopConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { MakeProvider("rp-1", ProviderKind.Repository) });
-        _mockLoopProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineJobTemplate>
-            {
-                new() { Id = "t-1", Name = "Test", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true }
-            });
+        var (success, error) = await _service.StartLoopAsync();
+
+        Assert.True(success);
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public async Task StartLoopAsync_WhenSchedulerReturnsNotStarted_ReturnsFailure()
+    {
+        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopStartResultDto(false, "Loop is already active."));
 
         var (success, error) = await _service.StartLoopAsync();
 
         Assert.False(success);
-        Assert.Contains("Disk full", error!);
+        Assert.Equal("Loop is already active.", error);
     }
 
     // ── Cross-drawer coordination via coordinator ──

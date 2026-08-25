@@ -137,17 +137,12 @@ var app = builder.Build();
 // ── Post-Build startup sequence ─────────────────────────────────────────────
 // Each concern is extracted into its own WebApplication extension method.
 // Ordering: ValidateShutdownBudget, ValidateDiWiring, RegisterObservableGauges, then MapApplicationEndpoints.
-// TODO: Add unit/integration tests for each extracted startup extension method
-// (ValidateShutdownBudget, ValidateDiWiring, RegisterObservableGauges, RunConsolidationStartupAsync,
-// AutoStartPipelineLoopAsync). Extraction was done to enable independent testability but no tests
-// were added yet. (review-findings)
 
 app.ValidateShutdownBudget();
 app.ValidateDiWiring();
 app.RegisterObservableGauges();
 app.MapApplicationEndpoints();
 await app.RunConsolidationStartupAsync(pipelineConfig);
-await app.AutoStartPipelineLoopAsync();
 
 app.Run();
 

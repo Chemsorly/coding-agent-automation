@@ -1,11 +1,12 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Scheduler.Services;
 
 /// <summary>
 /// Background service that periodically detects orphaned issues still labelled
@@ -15,6 +16,8 @@ namespace CodingAgentWebUI.Services;
 /// interval (default 30 minutes).
 /// Updated in Spec 045 to use <see cref="IPipelineApiConfigClient"/> instead of direct
 /// store interfaces (Req 1.2 F5).
+/// Leader-gated (Spec 047 gap fix): only the leader Scheduler replica runs sweeps so that
+/// multiple replicas do not redundantly hammer the issue provider API.
 /// </summary>
 public sealed class OrphanedLabelRecoveryService : BackgroundService
 {
@@ -25,6 +28,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     private readonly IPipelineApiConfigClient _configClient;
     private readonly IProviderFactory _providerFactory;
     private readonly ILabelService _labelService;
+    private readonly ILeaderGate? _leaderGate;
     private readonly ILogger _logger;
     private readonly TimeSpan _gracePeriod;
 
@@ -33,8 +37,9 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         IPipelineApiConfigClient configClient,
         IProviderFactory providerFactory,
         ILabelService labelService,
+        ILeaderGate? leaderGate,
         ILogger logger)
-        : this(runService, configClient, providerFactory, labelService, logger, DefaultGracePeriod)
+        : this(runService, configClient, providerFactory, labelService, leaderGate, logger, DefaultGracePeriod)
     {
     }
 
@@ -46,6 +51,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         IPipelineApiConfigClient configClient,
         IProviderFactory providerFactory,
         ILabelService labelService,
+        ILeaderGate? leaderGate,
         ILogger logger,
         TimeSpan gracePeriod)
     {
@@ -53,6 +59,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         _configClient = configClient;
         _providerFactory = providerFactory;
         _labelService = labelService;
+        _leaderGate = leaderGate;
         _logger = logger.ForContext<OrphanedLabelRecoveryService>();
         _gracePeriod = gracePeriod == default ? DefaultGracePeriod : gracePeriod;
     }
@@ -72,6 +79,14 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
             using var timer = new PeriodicTimer(TimeSpan.FromMinutes(intervalMinutes));
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
+                // Skip when not the leader so multiple replicas don't redundantly
+                // hammer the issue provider API. Null gate = unconditional (dev/single-replica).
+                if (_leaderGate is { IsLeader: false })
+                {
+                    _logger.Debug("OrphanedLabelRecovery: skipping tick — not the leader");
+                    continue;
+                }
+
                 try
                 {
                     await RecoverOrphanedLabelsAsync(stoppingToken);

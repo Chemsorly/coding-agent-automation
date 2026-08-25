@@ -2,7 +2,6 @@ using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Services;
 
@@ -15,20 +14,20 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 public class AgentCodingPageService
 {
-    private readonly IPipelineLoopService _loopService;
+    private readonly ISchedulerApiClient _schedulerClient;
     private readonly IPipelineApiConfigClient _configClient;
     private readonly IIssueDrawerService _issueDrawerService;
     private readonly IPrReviewDrawerService _prReviewDrawerService;
     private readonly IEpicDrawerService _epicDrawerService;
 
     public AgentCodingPageService(
-        IPipelineLoopService loopService,
+        ISchedulerApiClient schedulerClient,
         IPipelineApiConfigClient configClient,
         IIssueDrawerService issueDrawerService,
         IPrReviewDrawerService prReviewDrawerService,
         IEpicDrawerService epicDrawerService)
     {
-        _loopService = loopService;
+        _schedulerClient = schedulerClient;
         _configClient = configClient;
         _issueDrawerService = issueDrawerService;
         _prReviewDrawerService = prReviewDrawerService;
@@ -265,15 +264,9 @@ public class AgentCodingPageService
     {
         try
         {
-            var started = await _loopService.StartLoopAsync();
-            if (!started)
-            {
-                if (_loopService.ValidationErrors.Count > 0) return (false, "Loop failed to start due to validation errors (see below).");
-                if (_loopService.IsLoopActive) return (false, "Loop is already active.");
-                return (false, "A manual run is in progress. Wait for it to complete.");
-            }
-            await _configClient.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, CancellationToken.None);
-            return (true, null);
+            var result = await _schedulerClient.StartLoopAsync(CancellationToken.None);
+            // Persistence (ClosedLoopAutoStart=true) is handled by the Scheduler endpoint.
+            return (result.Started, result.Error);
         }
         catch (Exception ex)
         {
@@ -281,13 +274,31 @@ public class AgentCodingPageService
         }
     }
 
-    public async Task StopLoopAsync()
+    public async Task<(bool Success, string? Error)> StopLoopAsync()
     {
-        _loopService.StopLoop();
-        await _configClient.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, CancellationToken.None);
+        try
+        {
+            await _schedulerClient.StopLoopAsync(CancellationToken.None);
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Failed to stop loop: {ex.Message}");
+        }
     }
 
-    public void ResumeLoop() => _loopService.ResumeLoop();
+    public async Task<(bool Success, string? Error)> ResumeLoopAsync()
+    {
+        try
+        {
+            await _schedulerClient.ResumeLoopAsync(CancellationToken.None);
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Failed to resume loop: {ex.Message}");
+        }
+    }
 
     // ── Issue drawer forwarding wrappers ──
 
