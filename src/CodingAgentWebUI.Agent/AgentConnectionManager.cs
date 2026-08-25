@@ -246,13 +246,13 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         }
     }
 
-    internal async Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10)
+    internal async Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10, Func<int, TimeSpan>? delayOverride = null)
     {
         _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var delay = ReconnectionHelper.CalculateReconnectionDelay(attempt);
+            var delay = delayOverride?.Invoke(attempt) ?? ReconnectionHelper.CalculateReconnectionDelay(attempt);
             _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
                 attempt, maxAttempts, delay.TotalSeconds);
 

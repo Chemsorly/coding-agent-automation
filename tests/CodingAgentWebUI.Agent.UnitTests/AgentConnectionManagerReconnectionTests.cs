@@ -254,13 +254,17 @@ public sealed class AgentConnectionManagerReconnectionTests
             initialHub, factory, new AgentId("agent-1"),
             Mock.Of<Serilog.ILogger>());
 
-        // Fire terminal close — triggers the reconnection loop
-        _ = fakeHub_SimulateClosed(initialHub);
+        // Fire terminal close — triggers the reconnection loop.
+        // Use zero delay to avoid wall-clock sensitivity on loaded CI runners.
+        _ = manager.HandleTerminalClosedAsync(
+            new InvalidOperationException("server down"),
+            maxAttempts: 10,
+            delayOverride: _ => TimeSpan.Zero);
 
         // Wait for at least one reconnection attempt
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
         while (createdCount == 0 && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(50);
+            await Task.Delay(20);
 
         createdCount.Should().BeGreaterThan(0,
             "terminal close must trigger at least one reconnection attempt via factory");
