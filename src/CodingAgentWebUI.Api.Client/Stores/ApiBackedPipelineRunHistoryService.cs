@@ -12,6 +12,7 @@ namespace CodingAgentWebUI.Api.Client.Stores;
 /// all persistence and reads through the Pipeline API instead of accessing Postgres directly.
 /// This removes the last Postgres dependency from the orchestrator host (T8 item 2).
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "HTTP client wrapper — requires integration tests, not unit tests.")]
 public sealed class ApiBackedPipelineRunHistoryService : IPipelineRunHistoryService
 {
     private readonly IPipelineApiRunHistoryClient _client;

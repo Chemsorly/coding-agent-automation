@@ -5,6 +5,7 @@ namespace CodingAgentWebUI.Orchestration.Redis;
 /// <summary>
 /// Production implementation of <see cref="IRedisStore"/> backed by StackExchange.Redis <see cref="IDatabase"/>.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Thin StackExchange.Redis wrapper — runtime-only, no unit-testable logic.")]
 public sealed class RedisStore : IRedisStore
 {
     private readonly IDatabase _db;

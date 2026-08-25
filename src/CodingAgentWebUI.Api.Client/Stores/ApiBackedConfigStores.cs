@@ -11,6 +11,7 @@ namespace CodingAgentWebUI.Api.Client.Stores;
 /// Thread-safe: the lock is released before awaiting to avoid holding a lock across async I/O.
 /// Two concurrent callers may both reach the API (double-fetch window) — acceptable trade-off.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "HTTP-backed store — covered by integration tests, not unit tests.")]
 public sealed class ApiPipelineConfigStore : IPipelineConfigStore
 {
     private readonly IPipelineApiConfigClient _client;
@@ -72,6 +73,7 @@ public sealed class ApiPipelineConfigStore : IPipelineConfigStore
 /// Implements TTL caching to avoid excessive API calls.
 /// Thread-safe: the lock is released before awaiting to avoid holding a lock across async I/O.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "HTTP-backed store — covered by integration tests, not unit tests.")]
 public sealed class ApiProviderConfigStore : IProviderConfigStore
 {
     private readonly IPipelineApiConfigClient _client;
@@ -121,6 +123,7 @@ public sealed class ApiProviderConfigStore : IProviderConfigStore
 /// Callers hold the shared cache lock around <see cref="TryGet"/> / <see cref="Set"/> /
 /// <see cref="Clear"/>; the lock is released across the awaited API call.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Internal cache helper — covered by integration tests.")]
 internal sealed class ProviderConfigCache
 {
     private readonly Dictionary<ProviderKind, (IReadOnlyList<ProviderConfig> Configs, DateTime Expiry)> _byKind = [];
@@ -177,6 +180,7 @@ internal sealed class ProviderConfigCache
 /// Implements TTL caching to avoid excessive API calls.
 /// Thread-safe: the lock is released before awaiting to avoid holding a lock across async I/O.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "HTTP-backed store — covered by integration tests, not unit tests.")]
 public sealed class ApiProjectStore : IProjectStore
 {
     private readonly IPipelineApiConfigClient _client;
@@ -304,6 +308,7 @@ public sealed class ApiProjectStore : IProjectStore
 /// Agent profiles, quality gates and reviewers have no narrow store, so they are cached here.
 /// Thread-safe: the lock is released before awaiting, never held across async I/O.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "HTTP-backed store — covered by integration tests, not unit tests.")]
 public sealed class ApiConfigurationStore : IConfigurationStore
 {
     private readonly IPipelineApiConfigClient _client;

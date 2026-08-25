@@ -9,6 +9,7 @@ namespace CodingAgentWebUI.Services;
 /// This registration satisfies any remaining <see cref="IChangeNotifier"/> constructor
 /// dependencies in shared libraries without wiring up a real notification sink.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Null-object pattern stub.")]
 internal sealed class NullChangeNotifier : IChangeNotifier
 {
 #pragma warning disable CS0067 // Event is never used — intentional for null-object pattern

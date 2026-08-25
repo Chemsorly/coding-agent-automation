@@ -8,6 +8,7 @@ namespace CodingAgentWebUI.Orchestration.Redis;
 /// Used as a fallback so cleanup background services can still be registered
 /// without Redis, while doing nothing useful at runtime.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Null-object pattern stub — no-ops only.")]
 internal sealed class NullRedisStore : IRedisStore
 {
     public Task<bool> SetAsync(string key, string value, TimeSpan? expiry = null, When when = When.Always) => Task.FromResult(false);

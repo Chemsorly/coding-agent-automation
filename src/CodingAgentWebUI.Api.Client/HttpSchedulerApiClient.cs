@@ -14,6 +14,7 @@ namespace CodingAgentWebUI.Api.Client;
 /// registration — the Scheduler uses the API's base URL for maintenance/metrics, and the WebUI
 /// uses the Scheduler's base URL for loop controls.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "HTTP client wrapper — requires integration tests, not unit tests.")]
 public sealed class HttpSchedulerApiClient : ISchedulerApiClient
 {
     private readonly HttpClient _http;
