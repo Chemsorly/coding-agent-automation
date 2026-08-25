@@ -24,7 +24,8 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData(typeof(IProviderFactory))]
     [InlineData(typeof(IQualityGateValidator))]
     [InlineData(typeof(PipelineOrchestrationService))]
-    [InlineData(typeof(PipelineLoopService))]
+    // PipelineLoopService was moved to CodingAgentWebUI.Scheduler in Spec 047 — no longer
+    // registered in the WebUI DI container. Removed from this smoke test.
     [InlineData(typeof(IBrainUpdateService))]
     [InlineData(typeof(IPipelineRunHistoryService))]
     [InlineData(typeof(IAgentPhaseExecutor))]
@@ -42,7 +43,8 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
 
     [Theory]
     [InlineData(typeof(PipelineOrchestrationService))]
-    [InlineData(typeof(PipelineLoopService))]
+    // PipelineLoopService was moved to CodingAgentWebUI.Scheduler in Spec 047 — no longer
+    // registered in the WebUI DI container. Removed from this smoke test.
     [InlineData(typeof(IConfigurationStore))]
     [InlineData(typeof(IProviderFactory))]
     public void Singleton_Services_Return_Same_Instance(Type serviceType)
