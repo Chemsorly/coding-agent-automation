@@ -34,7 +34,11 @@ public static partial class ServiceCollectionExtensions
         // Polls GET /loop/status on the Scheduler every 3 seconds (configurable via
         // SchedulerApi:StatusPollIntervalSeconds). MainLayout and AgentCoding inject
         // ILoopStatusService instead of IPipelineLoopService — same read-only surface.
-        services.AddSingleton<ILoopStatusService>(sp =>
+        // Register the concrete type as a singleton first so the hosted service and the
+        // ILoopStatusService alias both share the same instance. E2E tests replace only
+        // ILoopStatusService (with FakeLoopStatusService) — the hosted service registration
+        // below targets the concrete type directly and is not affected by that replacement.
+        services.AddSingleton<LoopStatusPollingService>(sp =>
         {
             var client = sp.GetRequiredService<ISchedulerApiClient>();
             var cfg = sp.GetService<IConfiguration>();
@@ -42,8 +46,8 @@ public static partial class ServiceCollectionExtensions
             var interval = intervalSec is > 0 ? TimeSpan.FromSeconds(intervalSec.Value) : (TimeSpan?)null;
             return new LoopStatusPollingService(client, Log.Logger, interval);
         });
-        services.AddHostedService(sp =>
-            (LoopStatusPollingService)sp.GetRequiredService<ILoopStatusService>());
+        services.AddSingleton<ILoopStatusService>(sp => sp.GetRequiredService<LoopStatusPollingService>());
+        services.AddHostedService(sp => sp.GetRequiredService<LoopStatusPollingService>());
 
         // ── Spec 047: ISchedulerApiClient calls the Scheduler's loop control endpoints ────────
         services.AddHttpClient<ISchedulerApiClient, HttpSchedulerApiClient>(c =>
