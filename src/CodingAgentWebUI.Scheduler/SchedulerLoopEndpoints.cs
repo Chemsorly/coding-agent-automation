@@ -45,7 +45,7 @@ public static class SchedulerLoopEndpoints
 
     // ── Handlers ─────────────────────────────────────────────────────────────
 
-    private static IResult GetLoopStatus(IPipelineLoopService loopService, LoopStatusCache cache)
+    internal static IResult GetLoopStatus(IPipelineLoopService loopService, LoopStatusCache cache)
     {
         // Serve from the DI-singleton cache — avoids lock contention on the loop service.
         // Falls back to building on demand when the cache has not been populated yet.
@@ -53,7 +53,7 @@ public static class SchedulerLoopEndpoints
         return Results.Ok(dto);
     }
 
-    private static async Task<IResult> StartLoop(
+    internal static async Task<IResult> StartLoop(
         IPipelineLoopService loopService,
         IPipelineApiConfigClient configClient,
         CancellationToken ct)
@@ -71,7 +71,7 @@ public static class SchedulerLoopEndpoints
         return Results.Ok(new LoopStartResultDto(started, error));
     }
 
-    private static async Task<IResult> StopLoop(
+    internal static async Task<IResult> StopLoop(
         IPipelineLoopService loopService,
         IPipelineApiConfigClient configClient,
         CancellationToken ct)
@@ -81,15 +81,13 @@ public static class SchedulerLoopEndpoints
         return Results.NoContent();
     }
 
-    private static IResult ResumeLoop(IPipelineLoopService loopService)
+    internal static IResult ResumeLoop(IPipelineLoopService loopService)
     {
         loopService.ResumeLoop();
         return Results.NoContent();
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private static LoopStatusDto BuildDto(IPipelineLoopService svc) => new(
+    internal static LoopStatusDto BuildDto(IPipelineLoopService svc) => new(
         svc.IsLoopActive,
         svc.StatusMessage,
         svc.CurrentIssueIdentifier,
