@@ -98,7 +98,8 @@ public sealed class ReconciliationLoop
             // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
             if (item.Status != WorkItemStatus.Running) continue;
 
-            Log.Warning("WorkItem {Id} timed out after {Seconds}s, marking Failed", item.Id, _options.ChatSessionMaxDurationSeconds);
+            Log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}) after {Seconds}s — marking Failed",
+                item.Id, item.Status, item.K8sJobName ?? "none", _options.ChatSessionMaxDurationSeconds);
 
             try
             {
@@ -248,6 +249,11 @@ public sealed class ReconciliationLoop
             var jobName = job.Metadata?.Name;
             if (string.IsNullOrEmpty(jobName)) continue;
 
+            // Determine orphan reason for the log so debugging doesn't require re-running
+            var orphanReason = !workItemId.HasValue
+                ? "no caa/work-item-id label"
+                : $"workItem {workItemId.Value} not in active set (terminal or missing)";
+
             // Respect a minimum retention window before deleting terminal jobs.
             // This lets kubectl logs remain readable after a job completes/fails
             // and prevents the orphan sweep from racing with the K8s TTL controller.
@@ -266,7 +272,7 @@ public sealed class ReconciliationLoop
                 continue;
             }
 
-            Log.Information("Deleting orphan/stale K8s Job {JobName}", jobName);
+            Log.Information("Deleting orphan/stale K8s Job {JobName} (reason={OrphanReason})", jobName, orphanReason);
             await SafeDeleteJobAsync(jobName, ct);
         }
     }

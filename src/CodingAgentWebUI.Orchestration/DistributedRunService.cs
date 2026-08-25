@@ -209,7 +209,12 @@ return hash
     {
         ArgumentException.ThrowIfNullOrEmpty(runId.Value);
         var hash = _store.HashGetAllAsync(RunKey(runId.Value)).GetAwaiter().GetResult(); // Safe: ThreadPool
-        return hash.Length == 0 ? null : PipelineRunHashExtensions.FromHash(hash);
+        if (hash.Length == 0)
+        {
+            _logger.Debug("GetRun: run {RunId} not found in Redis (key expired or never added)", runId.Value);
+            return null;
+        }
+        return PipelineRunHashExtensions.FromHash(hash);
     }
 
     // ── GetActiveRuns ─────────────────────────────────────────────────
@@ -226,7 +231,11 @@ return hash
         foreach (var runId in members)
         {
             var hash = await _store.HashGetAllAsync(RunKey(runId));
-            if (hash.Length == 0) continue; // expired
+            if (hash.Length == 0)
+            {
+                _logger.Warning("GetActiveRuns: run {RunId} in active set but hash is empty (TTL expired) — active set may be stale", (string)runId);
+                continue;
+            }
             var run = PipelineRunHashExtensions.FromHash(hash);
             if (run is not null) result.Add(run);
         }
@@ -255,7 +264,10 @@ return hash
         if (lines.Count == 0) return;
 
         // Fire-and-forget Redis write — output streaming is best-effort
-        _ = AppendOutputToRedisAsync(runId.Value, lines);
+        _ = AppendOutputToRedisAsync(runId.Value, lines)
+            .ContinueWith(t => _logger.Warning(t.Exception,
+                "AppendOutputLines: Redis write failed for run {RunId} — output lines lost",
+                runId.Value), TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private async Task AppendOutputToRedisAsync(string runId, IReadOnlyList<string> lines)
@@ -320,7 +332,10 @@ return hash
             RecentlyCompletedKey(issueProviderConfigId.Value, issueIdentifier.Value),
             DateTimeOffset.UtcNow.ToString("O"),
             expiry: RecentlyCompletedTtl,
-            when: When.Always);
+            when: When.Always)
+            .ContinueWith(t => _logger.Warning(t.Exception,
+                "MarkRecentlyCompleted: Redis write failed for issue {IssueIdentifier} — anti-race key not set, duplicate dispatch possible",
+                issueIdentifier.Value), TaskContinuationOptions.OnlyOnFaulted);
     }
 
     /// <inheritdoc />

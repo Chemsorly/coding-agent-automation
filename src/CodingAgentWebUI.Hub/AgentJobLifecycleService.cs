@@ -314,6 +314,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         var run = _facade.GetRun(jobId);
         if (run is not null)
         {
+            var previousStep = run.CurrentStep;
             run.CurrentStep = step;
             var clampedTimestamp = timestamp <= DateTimeOffset.UtcNow
                 ? timestamp
@@ -337,7 +338,8 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // Persist mutated run back to the store (no-op for in-memory; required for Redis).
             _facade.ReplaceRun(run);
 
-            _logger.Debug("Job {JobId} step transition → {Step}", jobId.Value, step);
+            _logger.Information("Job {JobId} step transition {Previous} → {Step}",
+                jobId.Value, previousStep, step);
             _changeNotifier.NotifyChange();
         }
     }

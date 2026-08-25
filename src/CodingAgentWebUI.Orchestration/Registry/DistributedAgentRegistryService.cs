@@ -185,7 +185,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
         // Fire-and-forget: heartbeat is on the hot path
-        _ = UpdateHeartbeatAsync(agentId.Value, timestamp);
+        _ = UpdateHeartbeatAsync(agentId.Value, timestamp)
+            .ContinueWith(t => _logger.Warning(t.Exception,
+                "UpdateHeartbeat: Redis write failed for agent {AgentId} — TTL not refreshed, agent may be evicted prematurely",
+                agentId.Value), TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private async Task UpdateHeartbeatAsync(string agentId, DateTimeOffset timestamp)
@@ -214,7 +217,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     public void TransitionStatus(AgentId agentId, AgentStatus newStatus)
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
-        _ = TransitionStatusAsync(agentId.Value, newStatus);
+        _ = TransitionStatusAsync(agentId.Value, newStatus)
+            .ContinueWith(t => _logger.Warning(t.Exception,
+                "TransitionStatus: Redis write failed for agent {AgentId} → {Status} — status may be stale in registry",
+                agentId.Value, newStatus), TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private async Task TransitionStatusAsync(string agentId, AgentStatus newStatus)

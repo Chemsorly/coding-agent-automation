@@ -91,8 +91,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         await _labelService.TrySwapLabelAsync(run, AgentLabels.Error, _logger, "RunLifecycleManager", ct);
 
         _logger.Information(
-            "RunLifecycleManager.FailRunAsync: run {RunId} failed (reason={Reason}, agent={AgentId})",
-            runId, failureReason, run.AgentId);
+            "RunLifecycleManager.FailRunAsync: run {RunId} terminal (status=Failed, step={Step}, highWater={HighWater}, reason={Reason}, agent={AgentId})",
+            runId, run.CurrentStep, run.HighWaterMark, failureReason, run.AgentId ?? "none");
 
         return run;
     }
@@ -142,8 +142,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
 
         _logger.Information(
-            "RunLifecycleManager.CompleteRunAsync: run {RunId} completed (status={Status})",
-            runId, terminalStatus);
+            "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, step={Step}, highWater={HighWater}, agent={AgentId})",
+            runId, terminalStatus, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none");
 
         return run;
     }
@@ -196,8 +196,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 
         _logger.Information(
-            "RunLifecycleManager.CancelRunAsync: run {RunId} cancelled (agent={AgentId})",
-            runId, run.AgentId);
+            "RunLifecycleManager.CancelRunAsync: run {RunId} terminal (status=Cancelled, step={Step}, highWater={HighWater}, agent={AgentId}, reason={Reason})",
+            runId, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none", failureReason ?? "none");
 
         return run;
     }
@@ -220,6 +220,12 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             run.AgentId = agentId.Value;
             _runService.ReplaceRun(run);
         }
+        else
+        {
+            _logger.Warning(
+                "AgentAcceptedRunAsync: run {RunId} not found in store — AgentId {AgentId} not persisted (run may have expired or been removed by another replica)",
+                runId, agentId);
+        }
 
         // 2. Set ActiveJobId on agent + transition to Busy
         var agent = _registry.GetByAgentId(agentId);
@@ -227,6 +233,12 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         {
             await _registry.UpdateAgentFieldAsync(agentId, "activeJobId", runId.Value);
             _registry.TransitionStatus(agentId, AgentStatus.Busy);
+        }
+        else
+        {
+            _logger.Warning(
+                "AgentAcceptedRunAsync: agent {AgentId} not found in registry — activeJobId not set, status not transitioned to Busy",
+                agentId);
         }
 
         // 3. Swap label to agent:in-progress (best-effort)

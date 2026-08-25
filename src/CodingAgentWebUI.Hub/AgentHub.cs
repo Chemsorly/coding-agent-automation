@@ -87,9 +87,23 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         if (agent is not null)
         {
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Disconnected);
-            _logger.Information(
-                "Agent {AgentId} disconnected (connectionId={ConnectionId}, activeJobId={ActiveJobId}, exception={Exception})",
-                agent.AgentId, Context.ConnectionId, agent.ActiveJobId ?? "none", exception?.Message ?? "none");
+            // Elevate to Warning when an active job is interrupted — helps trace abrupt disconnects
+            // mid-run. Include BusySince so the log shows how long the agent had been working.
+            if (agent.ActiveJobId is not null)
+            {
+                _logger.Warning(
+                    "Agent {AgentId} disconnected with active job (connectionId={ConnectionId}, activeJobId={ActiveJobId}, busySince={BusySince}, orphanRestoredAt={OrphanRestoredAt}, exception={Exception})",
+                    agent.AgentId, Context.ConnectionId, agent.ActiveJobId,
+                    agent.BusySince?.ToString("O") ?? "none",
+                    agent.OrphanRestoredAt?.ToString("O") ?? "none",
+                    exception?.Message ?? "none");
+            }
+            else
+            {
+                _logger.Information(
+                    "Agent {AgentId} disconnected (connectionId={ConnectionId}, activeJobId=none, exception={Exception})",
+                    agent.AgentId, Context.ConnectionId, exception?.Message ?? "none");
+            }
         }
 
         return base.OnDisconnectedAsync(exception);

@@ -116,6 +116,37 @@ public sealed class RunLifecycleManagerTests
         agent.Status.Should().Be(AgentStatus.Busy);
     }
 
+    [Fact]
+    public async Task AgentAcceptedRunAsync_RunNotFound_LogsWarning_StillSwapsLabel()
+    {
+        // Run does not exist in the store
+        RegisterAgent("agent-1");
+
+        // Should not throw — warning is logged but label swap still proceeds
+        await _sut.AgentAcceptedRunAsync("run-missing", "agent-1", "org/repo#1",
+            "ip-1", "rp-1", PipelineRunType.Implementation, CancellationToken.None);
+
+        // Label swap still fires even when run is absent
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.InProgress, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AgentAcceptedRunAsync_AgentNotFound_LogsWarning_StillSetsAgentIdOnRun()
+    {
+        // Agent is not registered — run exists but agent is absent
+        var run = CreateRun("run-5", PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        // Should not throw
+        await _sut.AgentAcceptedRunAsync("run-5", "agent-missing", "org/repo#1",
+            "ip-1", "rp-1", PipelineRunType.Implementation, CancellationToken.None);
+
+        // AgentId is still set on the run even though the agent wasn't in registry
+        run.AgentId.Should().Be("agent-missing");
+    }
+
     // ── FailRunAsync ────────────────────────────────────────────────────
 
     [Fact]

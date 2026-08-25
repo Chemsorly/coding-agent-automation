@@ -35,6 +35,10 @@ internal static class SchedulerAutoStartExtensions
             else
                 Log.Warning("Scheduler: loop auto-start requested but StartLoopAsync returned false (no valid templates?)");
         }
+        else
+        {
+            Log.Information("Scheduler: pipeline loop auto-start skipped (ClosedLoopAutoStart=false)");
+        }
     }
 
     /// <summary>

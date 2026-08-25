@@ -682,7 +682,10 @@ public sealed class AgentJobLifecycleServiceTests
     public void ApplyStepMetadata_UnknownKey_IsIgnored()
     {
         var run = MakeRun();
-        // Should not throw
+        var branchBefore = run.BranchName;
         AgentJobLifecycleService.ApplyStepMetadata(run, new() { ["UnknownKey"] = "whatever" });
+        // State must be unchanged — unknown keys are silently ignored
+        run.BranchName.Should().Be(branchBefore);
+        run.RetryCount.Should().Be(0);
     }
 }

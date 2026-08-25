@@ -93,6 +93,11 @@ public sealed partial class AgentHub
                 jobId.Value, contextLoaded, knowledgeFileCount);
             _changeNotifier.NotifyChange();
         }
+        else
+        {
+            _logger.Warning("ReportBrainSyncResult: job {JobId} run not found — brain sync result discarded (run may have completed or expired)",
+                jobId.Value);
+        }
 
         // Push brain sync result to subscribed UI circuits (Req 5.2)
         await _uiContext.Clients.Group($"run-{jobId.Value}")

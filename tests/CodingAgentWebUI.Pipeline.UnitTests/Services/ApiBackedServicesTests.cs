@@ -786,8 +786,10 @@ public sealed class ApiBackedServicesTests
         var client = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiRunHistoryClient>();
         var svc = CreateHistoryService(client.Object);
 
-        // Should not throw
         svc.TryDeleteWorkspace("/some/path", "run-1", "/base");
+
+        // No-op: API-backed history service never touches the local filesystem
+        client.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -796,8 +798,10 @@ public sealed class ApiBackedServicesTests
         var client = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiRunHistoryClient>();
         var svc = CreateHistoryService(client.Object);
 
-        // Should not throw
         svc.CleanupExpiredWorkspaces(new PipelineConfiguration(), "run-1");
+
+        // No-op: API-backed history service never touches the local filesystem
+        client.VerifyNoOtherCalls();
     }
 
     // ─────────────────────────────────────────────────────────────────────
