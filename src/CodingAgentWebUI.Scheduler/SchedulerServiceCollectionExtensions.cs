@@ -3,6 +3,7 @@ using CodingAgentWebUI.Api.Client.Stores;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using System.Diagnostics.CodeAnalysis;
 using CodingAgentWebUI.Orchestration.Redis;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -22,6 +23,7 @@ namespace CodingAgentWebUI.Scheduler;
 /// DI registration for all Scheduler services.
 /// Called from Program.cs with the Pipeline API base URL, agent API key, and configuration.
 /// </summary>
+[ExcludeFromCodeCoverage(Justification = "Pure DI wiring — no unit-testable logic.")]
 public static class SchedulerServiceCollectionExtensions
 {
     public static IServiceCollection AddSchedulerServices(
