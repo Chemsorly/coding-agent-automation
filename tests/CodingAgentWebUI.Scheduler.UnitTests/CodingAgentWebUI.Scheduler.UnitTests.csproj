@@ -6,6 +6,10 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Required to use ASP.NET Core types (IEndpointFilter, DefaultHttpContext, IResult) in tests -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Scheduler\CodingAgentWebUI.Scheduler.csproj" />
   </ItemGroup>
   <ItemGroup>

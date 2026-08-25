@@ -10,7 +10,7 @@
             (the Blazor host). It does NOT cover CodingAgentWebUI.Hub, CodingAgentWebUI.Api.Client,
             etc. — those require their own explicit tokens, as shown below.
           -->
-          <Include>[CodingAgentWebUI]*,[CodingAgentWebUI.Orchestration]*,[CodingAgentWebUI.TestUtilities]*,[CodingAgentWebUI.Hub]*,[CodingAgentWebUI.Api.Client]*</Include>
+          <Include>[CodingAgentWebUI]*,[CodingAgentWebUI.Orchestration]*,[CodingAgentWebUI.TestUtilities]*,[CodingAgentWebUI.Hub]*,[CodingAgentWebUI.Api.Client]*,[CodingAgentWebUI.Scheduler]*</Include>
           <Exclude>[CodingAgentWebUI.Pipeline]*,[CodingAgentWebUI.Infrastructure.Providers]*,[CodingAgentWebUI.Infrastructure.Persistence]*,[CodingAgentWebUI.Agent]*,[CodingAgentWebUI.Agent.*]*</Exclude>
           <IncludeTestAssembly>false</IncludeTestAssembly>
           <SkipAutoProps>true</SkipAutoProps>

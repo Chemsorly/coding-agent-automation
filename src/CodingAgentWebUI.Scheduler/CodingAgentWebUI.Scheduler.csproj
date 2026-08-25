@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Scheduler.UnitTests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />

@@ -109,4 +109,10 @@ jobs:
             --collect:"XPlat Code Coverage" \
             --settings tests/CodingAgentWebUI.JobController.UnitTests/coverlet.runsettings \
             --results-directory TestResults
+          # Added by Spec 047. Scheduler microservice coverage.
+          dotnet test tests/CodingAgentWebUI.Scheduler.UnitTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/CodingAgentWebUI.Scheduler.UnitTests/coverlet.runsettings \
+            --results-directory TestResults
           ${{ runner.temp }}/scanner/dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"
