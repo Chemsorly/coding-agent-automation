@@ -127,6 +127,11 @@ public static partial class ServiceCollectionExtensions
             Log.Logger));
 
         services.AddTransient<IssueDescriptionParser>();
+
+        // IDependencyChecker — needed by IssueDrawerService for pre-dispatch dependency checking.
+        // Was incorrectly removed in Spec 047 (listed as "exclusively used by the loop" but the
+        // drawer also uses it). Stateless implementation — safe as a singleton.
+        services.AddSingleton<IDependencyChecker>(_ => new DependencyChecker(Log.Logger));
     }
 
     private static int? ResolveConfigCacheTtl(IServiceProvider sp)
