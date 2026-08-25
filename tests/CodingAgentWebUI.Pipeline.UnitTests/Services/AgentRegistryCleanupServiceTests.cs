@@ -116,7 +116,8 @@ public sealed class AgentRegistryCleanupServiceTests
     public async Task SweepAsync_EmptySets_NoOp()
     {
         // No agents registered — should complete without exception
-        await MakeService().SweepAsync(CancellationToken.None);
+        var ex = await Record.ExceptionAsync(() => MakeService().SweepAsync(CancellationToken.None));
+        Assert.Null(ex);
     }
 
     [Fact]

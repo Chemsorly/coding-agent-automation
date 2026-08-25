@@ -71,7 +71,8 @@ public sealed class RunServiceCleanupServiceTests
     public async Task SweepAsync_EmptyActiveSet_NoOp()
     {
         // No runs — should complete without exception
-        await MakeService().SweepAsync(CancellationToken.None);
+        var ex = await Record.ExceptionAsync(() => MakeService().SweepAsync(CancellationToken.None));
+        Assert.Null(ex);
     }
 
     [Fact]
