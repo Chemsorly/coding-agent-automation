@@ -159,6 +159,19 @@ All settings below are nullable on the project. When `null`, the global default 
 | `Secrets` | Dictionary? | Project-level secrets injected as environment variables for every run. Merged with repo-level secrets at dispatch time (repo wins on key collision). Keys must match POSIX env var pattern. |
 | `SteeringContent` | string? | Markdown steering content written to agent workspace before each run. Provides persistent behavioral instructions (code style, tool preferences, constraints). |
 
+### MCP Servers
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `McpServers` | List? | Project-level MCP server configurations. Merged with the resolved agent profile's MCP servers at dispatch time. `null` = inherit profile list unchanged. |
+
+**Merge semantics**: At dispatch time, project-level MCP servers are merged with the resolved agent profile's servers:
+- A project server with the same `Name` (case-insensitive) as a profile server **replaces** it
+- Project servers with new names are **appended** to the profile list
+- `null` (or empty list) = inherit profile list unchanged
+
+This allows projects to selectively override or augment the profile's MCP configuration without redefining the entire list. See [Configuration — Project-Level MCP Servers](configuration.md#project-level-mcp-servers) for merge semantics and examples.
+
 ## The Default Project
 
 On first startup (or upgrade from a pre-projects version), the system automatically creates a **Default** project:

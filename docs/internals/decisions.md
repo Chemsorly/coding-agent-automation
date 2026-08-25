@@ -35,7 +35,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Date:** 2026-08-22
 **Category:** architecture
 
-**Decision:** `AgentHubDependencies` reduced from 13 to 10 members by extracting the consolidation cluster (`ModelFetchService`, `IConsolidationService`, `ConsolidationBadgeService`) into `IHubConsolidationOperations`. `AgentHub.Consolidation.cs` now delegates to one method on `_consolidationOps` instead of calling three services directly. Registered as singleton; scoped `AgentHubDependencies` still contains `IChangeNotifier` (shared with consolidation).
+**Decision:** `AgentHubDependencies` reduced from 13 to 11 members by extracting the consolidation cluster (`ModelFetchService`, `IConsolidationService`, `ConsolidationBadgeService`) into `IHubConsolidationOperations`. `AgentHub.Consolidation.cs` now delegates to one method on `_consolidationOps` instead of calling three services directly. Registered as singleton; scoped `AgentHubDependencies` still contains `IChangeNotifier` (shared with consolidation).
 
 **Payoff:** `AgentHubConsolidationTests` can now test `HubConsolidationOperations` directly without requiring `null!` for `ModelFetchService` (which was sealed/unmockable).
 

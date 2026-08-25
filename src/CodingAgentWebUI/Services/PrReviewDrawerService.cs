@@ -52,7 +52,17 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
         try
         {
             var repoConfig = _cachedRepoProviders?.FirstOrDefault(p => p.Id == template.RepoProviderId);
-            if (repoConfig == null) { _prDrawer.Items = new(); _prDrawer.Loading = false; return null; }
+            if (repoConfig == null)
+            {
+                _prDrawer.Items = new();
+                _prDrawer.Loading = false;
+                Logger.Warning(
+                    "LoadPrDrawerPageAsync: repo provider {ProviderId} not found in cached providers (count={Count}). " +
+                    "This usually means SetProviderContext was not called before opening the drawer.",
+                    template.RepoProviderId,
+                    _cachedRepoProviders?.Count ?? -1);
+                return "Repository provider configuration not loaded. Try closing and reopening the PR browser.";
+            }
             await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
             var labels = _prDrawer.SelectedLabels.Count > 0 ? _prDrawer.SelectedLabels : null;
             var result = await repoProvider.ListOpenPullRequestsAsync(page, 15, labels, ct);
@@ -162,7 +172,7 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
         Func<Task>? notifyStateChanged = null)
     {
         return _prDrawer.SwitchAsync(templateId, notifyStateChanged,
-            () => _prDrawer.Items.Count > 0,
+            () => _prDrawer.Items.Count > 0 && _prDrawer.Template?.Id == templateId.Value,
             async (id, ns) =>
             {
                 var template = templates.FirstOrDefault(t => t.Id == id);

@@ -110,10 +110,11 @@ else
 
 ## The `--resume` Pattern
 
-KiroCliLib uses the `--resume` flag to maintain conversation history across multiple prompts without keeping a persistent process:
+KiroCliLib uses the `--resume` / `--resume-id` flags to maintain conversation history across multiple prompts without keeping a persistent process:
 
 1. **First prompt**: Invokes `kiro-cli chat --no-interactive --trust-all-tools "prompt"` — starts a new session.
-2. **Subsequent prompts**: Invokes `kiro-cli chat --no-interactive --resume --trust-all-tools "prompt"` — continues the existing session.
+2. **Subsequent prompts (session-targeted)**: Invokes `kiro-cli chat --no-interactive --resume-id <sessionId> --trust-all-tools "prompt"` — continues a specific named session (primary path when `resumeSessionId` is provided to `ExecutePromptAsync`).
+3. **Subsequent prompts (stateless resume)**: Invokes `kiro-cli chat --no-interactive --resume --trust-all-tools "prompt"` — resumes the most recent session in the workspace (used when `useResume: true` but no `resumeSessionId` is provided).
 
 Kiro CLI stores session data internally, scoped by workspace directory. Each workspace gets its own isolated conversation history. This approach provides:
 

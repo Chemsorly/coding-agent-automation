@@ -1,0 +1,3 @@
+{{- if .Values.scheduler.enabled }}
+{{- include "coding-agent-automation.componentService" (dict "root" . "component" "scheduler" "port" .Values.scheduler.service.port "serviceType" .Values.scheduler.service.type) }}
+{{- end }}

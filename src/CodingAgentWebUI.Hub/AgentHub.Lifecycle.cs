@@ -88,6 +88,7 @@ public sealed partial class AgentHub
         {
             run.BrainContextLoaded = contextLoaded;
             run.BrainKnowledgeFileCount = knowledgeFileCount;
+            _facade.ReplaceRun(run);
             _logger.Debug("Job {JobId} brain sync result: loaded={Loaded}, files={FileCount}",
                 jobId.Value, contextLoaded, knowledgeFileCount);
             _changeNotifier.NotifyChange();
@@ -162,6 +163,7 @@ public sealed partial class AgentHub
         {
             run.LatestQualityReport = report;
             run.QualityGateHistory.Enqueue(report);
+            _facade.ReplaceRun(run);
             _logger.Information("Job {JobId} quality gate result received", jobId.Value);
         }
 

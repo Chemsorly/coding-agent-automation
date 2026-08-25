@@ -13,6 +13,7 @@ Agents do NOT receive `IIssueProvider` credentials directly. All issue operation
 | Create issue | `CreateIssueAsync` | `RequestCreateIssue` |
 | Create issue (cross-provider) | `CreateIssueForProviderAsync` | `RequestCreateIssueForProvider` |
 | List open issues | `ListOpenIssuesAsync` | `RequestListOpenIssues` |
+| List closed issues | `ListClosedIssuesAsync` | `RequestListClosedIssues` |
 | Get issue details | `GetIssueAsync` | `RequestGetIssue` |
 | List comments | `ListCommentsAsync` | `RequestListComments` |
 | Update comment | `UpdateCommentAsync` | `RequestUpdateComment` |

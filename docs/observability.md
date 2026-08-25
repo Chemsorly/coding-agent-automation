@@ -131,7 +131,7 @@ The Job Controller metrics are emitted from a long-lived process and are not sub
 
 ### Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (in the `CodingAgentWebUI.Pipeline` assembly, namespace `CodingAgentWebUI.Pipeline.Telemetry`). Instruments are fed by `DispatchService` and `ReconciliationService` in the Job Controller, and by `WorkItemMetricsBackgroundService` in the Pipeline API.
+The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (in the `CodingAgentWebUI.Pipeline` assembly, namespace `CodingAgentWebUI.Pipeline.Telemetry`). Instruments are fed by `DispatchService` and `ReconciliationService` in the Job Controller, and by `WorkItemCountsPoller` in the Scheduler.
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
@@ -256,6 +256,7 @@ Agent pods emit telemetry with `service.name` derived from the agent image and l
 | `coding-agent-orchestrator` | Orchestrator | — |
 | `coding-agent-api` | REST/WebSocket API | Port 8090 |
 | `coding-agent-jobcontroller` | Job Controller | Port 8091 |
+| `coding-agent-scheduler` | Scheduler | Port 8091 |
 
 ### Example: Grafana Cloud
 

@@ -249,6 +249,9 @@ ordering rules.
 ### ❌ Don't scale the API beyond one replica without Redis
 
 `AgentRegistryService`, `OrchestratorRunService`, and `AgentReservationService` are
-process-local singletons without Redis. With Redis, the first two switch to distributed
-implementations automatically. `AgentReservationService` remains in-process even with
-Redis — its locking guarantees depend on single-process execution.
+process-local singletons without Redis. With Redis configured, all three switch to
+distributed implementations automatically: `AgentRegistryService` -> `DistributedAgentRegistryService`;
+`OrchestratorRunService` uses Redis-backed state; `AgentReservationService` uses per-agent
+Redis locks (`lock:agent:{id}`, 5-second TTL) instead of the in-process `_selectionLock`,
+enabling safe agent selection across API replicas.
+

@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
-using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Redis;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -41,7 +40,7 @@ public sealed class DistributedRunService : IOrchestratorRunService
     private static readonly TimeSpan RecentlyCompletedTtl = TimeSpan.FromSeconds(120);
 
     private readonly IRedisStore _store;
-    private readonly IPipelineApiWorkItemClient _workItemClient;
+    private readonly Func<string, string, CancellationToken, Task<bool>> _isIssueDistributedAsync;
     private readonly ILogger _logger;
 
     // Lua script: atomically SREM + EXPIREAT all run keys in one round-trip.
@@ -61,13 +60,13 @@ redis.call('EXPIREAT', KEYS[6], ARGV[2])
 return hash
 ";
 
-    public DistributedRunService(IRedisStore store, IPipelineApiWorkItemClient workItemClient, ILogger logger)
+    public DistributedRunService(IRedisStore store, Func<string, string, CancellationToken, Task<bool>> isIssueDistributedAsync, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(store);
-        ArgumentNullException.ThrowIfNull(workItemClient);
+        ArgumentNullException.ThrowIfNull(isIssueDistributedAsync);
         ArgumentNullException.ThrowIfNull(logger);
         _store = store;
-        _workItemClient = workItemClient;
+        _isIssueDistributedAsync = isIssueDistributedAsync;
         _logger = logger;
     }
 
@@ -299,14 +298,14 @@ return hash
     {
         try
         {
-            return _workItemClient.IsIssueDistributedAsync(
+            return _isIssueDistributedAsync(
                 issueIdentifier.Value,
                 issueProviderConfigId.Value,
                 CancellationToken.None).GetAwaiter().GetResult(); // Safe: ThreadPool
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "DistributedRunService.IsIssueBeingProcessed: API call failed — returning false (conservative)");
+            _logger.Warning(ex, "DistributedRunService.IsIssueBeingProcessed: check failed — returning false (conservative)");
             return false;
         }
     }

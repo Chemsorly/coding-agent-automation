@@ -248,6 +248,24 @@ public sealed class ReconciliationLoop
             var jobName = job.Metadata?.Name;
             if (string.IsNullOrEmpty(jobName)) continue;
 
+            // Respect a minimum retention window before deleting terminal jobs.
+            // This lets kubectl logs remain readable after a job completes/fails
+            // and prevents the orphan sweep from racing with the K8s TTL controller.
+            // Only delete if the job finished more than LogRetentionSeconds ago (default 10 min),
+            // or if it has no completion time (truly orphaned / never started properly).
+            var completionTime = job.Status?.CompletionTime
+                ?? job.Status?.StartTime; // fallback: use start time if no completion recorded
+            const int LogRetentionSeconds = 600; // 10 minutes
+            if (completionTime.HasValue &&
+                (DateTimeOffset.UtcNow - new DateTimeOffset(completionTime.Value, TimeSpan.Zero)).TotalSeconds < LogRetentionSeconds)
+            {
+                Log.Debug("Skipping orphan/stale K8s Job {JobName} — completed {Age}s ago, within {Retention}s retention window",
+                    jobName,
+                    (int)(DateTimeOffset.UtcNow - new DateTimeOffset(completionTime.Value, TimeSpan.Zero)).TotalSeconds,
+                    LogRetentionSeconds);
+                continue;
+            }
+
             Log.Information("Deleting orphan/stale K8s Job {JobName}", jobName);
             await SafeDeleteJobAsync(jobName, ct);
         }

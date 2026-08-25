@@ -157,6 +157,22 @@ public sealed class LeaderElectionServiceTests : IDisposable
         ex.Should().BeNull();
     }
 
+    [Fact]
+    public void Options_DefaultValues_AreCorrect()
+    {
+        // Migrated from Services/LeaderElectionServiceTests.cs — that file was a
+        // near-duplicate; this test had no counterpart in LeaderElection/.
+        var opts = new LeaderElectionOptions();
+
+        opts.LeaseName.Should().Be("caa-leader");
+        opts.Namespace.Should().BeNull();
+        opts.LeaseDuration.Should().Be(TimeSpan.FromSeconds(15));
+        opts.RenewDeadline.Should().Be(TimeSpan.FromSeconds(10));
+        opts.RetryPeriod.Should().Be(TimeSpan.FromSeconds(2));
+        opts.Identity.Should().BeNull();
+        opts.FailOnNonKubernetesEnvironment.Should().BeFalse();
+    }
+
     public void Dispose()
     {
         // Intentionally empty — each test creates its own sut via using/await using

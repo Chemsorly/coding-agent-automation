@@ -374,3 +374,120 @@ public sealed class ApiConfigurationStoreContractTests : ConfigurationStoreContr
             { CacheTtlSeconds = 0 };
     }
 }
+
+// ── InMemoryConfigurationStore (TestUtilities) ───────────────────────────────
+
+/// <summary>
+/// Targeted behavioral tests for <see cref="InMemoryConfigurationStore"/>.
+///
+/// Unlike <c>ConfigurationStoreContractTests</c> (which checks production defaults),
+/// this class tests behaviors relevant to how the in-memory store is used in unit tests:
+/// save/load round-trips, kind filtering, and delete. The "empty defaults" contract
+/// asserts a 2-minute test timeout rather than the 30-minute production default because
+/// InMemoryConfigurationStore is a pre-seeded test double, not a clean-slate store.
+/// </summary>
+public sealed class InMemoryConfigurationStoreBehaviorTests
+{
+    private static CodingAgentWebUI.TestUtilities.InMemoryConfigurationStore CreateStore()
+        => new();
+
+    [Fact]
+    public async Task PipelineConfig_EmptyStore_ReturnsSeedDefaults()
+    {
+        var store = CreateStore();
+        var config = await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        config.Should().NotBeNull();
+        config.MaxRetries.Should().Be(3);
+        config.AgentTimeout.Should().Be(TimeSpan.FromMinutes(2),
+            "InMemoryConfigurationStore is pre-seeded with a 2-minute test timeout (not the 30-min production default)");
+    }
+
+    [Fact]
+    public async Task PipelineConfig_SaveThenLoad_RoundTrips()
+    {
+        var store = CreateStore();
+        var original = new PipelineConfiguration
+        {
+            MaxRetries = 7,
+            AgentTimeout = TimeSpan.FromMinutes(60),
+            WorkspaceBaseDirectory = "/test/workspaces"
+        };
+
+        await store.SavePipelineConfigAsync(original, CancellationToken.None);
+        var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        loaded.MaxRetries.Should().Be(7);
+        loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(60));
+        loaded.WorkspaceBaseDirectory.Should().Be("/test/workspaces");
+    }
+
+    [Fact]
+    public async Task ProviderConfig_SaveThenLoadByKind_Returns()
+    {
+        var store = CreateStore();
+        var id = Guid.NewGuid().ToString();
+        var config = new ProviderConfig
+        {
+            Id = id, Kind = ProviderKind.Repository,
+            ProviderType = "GitHub", DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string> { ["owner"] = "test-org" }
+        };
+
+        await store.SaveProviderConfigAsync(config, CancellationToken.None);
+        var loaded = await store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
+
+        loaded.Should().Contain(c => c.Id == id);
+        var match = loaded.First(c => c.Id == id);
+        match.Settings["owner"].Should().Be("test-org");
+    }
+
+    [Fact]
+    public async Task ProviderConfig_Delete_RemovesFromStore()
+    {
+        var store = CreateStore();
+        var id = Guid.NewGuid().ToString();
+
+        await store.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = id, Kind = ProviderKind.Repository,
+            ProviderType = "GitHub", DisplayName = "ToDelete",
+            Settings = new Dictionary<string, string>()
+        }, CancellationToken.None);
+
+        await store.DeleteProviderConfigAsync(id, ProviderKind.Repository, CancellationToken.None);
+        var loaded = await store.GetProviderConfigByIdAsync(id, ProviderKind.Repository, CancellationToken.None);
+
+        loaded.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ProviderConfig_LoadByKind_OnlyReturnsThatKind()
+    {
+        var store = CreateStore();
+        var repoId = Guid.NewGuid().ToString();
+        var agentId = Guid.NewGuid().ToString();
+
+        await store.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = repoId, Kind = ProviderKind.Repository,
+            ProviderType = "GitHub", DisplayName = "Repo",
+            Settings = new Dictionary<string, string>()
+        }, CancellationToken.None);
+
+        await store.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = agentId, Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli", DisplayName = "Agent",
+            Settings = new Dictionary<string, string>()
+        }, CancellationToken.None);
+
+        var repos = await store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
+        var agents = await store.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
+
+        repos.Should().Contain(c => c.Id == repoId);
+        repos.Should().NotContain(c => c.Id == agentId);
+        agents.Should().Contain(c => c.Id == agentId);
+        agents.Should().NotContain(c => c.Id == repoId);
+    }
+}

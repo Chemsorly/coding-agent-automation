@@ -213,10 +213,13 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // field reports "Value" as the parameter name in exceptions rather than "agentId".
         ArgumentNullException.ThrowIfNull(agentId.Value);
 
-        // 1. Set AgentId on the in-memory PipelineRun
+        // 1. Set AgentId on the in-memory PipelineRun and persist
         var run = _runService.GetRun(runId);
         if (run is not null)
+        {
             run.AgentId = agentId.Value;
+            _runService.ReplaceRun(run);
+        }
 
         // 2. Set ActiveJobId on agent + transition to Busy
         var agent = _registry.GetByAgentId(agentId);

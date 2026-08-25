@@ -86,6 +86,9 @@ public sealed class AgentHubFacade : IAgentHubFacade
     public PipelineRun? GetRun(JobId jobId)
         => _runService.GetRun(jobId.Value);
 
+    public void ReplaceRun(PipelineRun run)
+        => _runService.ReplaceRun(run);
+
     /// <inheritdoc />
     public async Task TransitionWorkItemAsync(JobId jobId, WorkItemStatus status, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null)

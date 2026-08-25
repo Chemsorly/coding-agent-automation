@@ -1,10 +1,8 @@
 using System.Text.Json;
 using AwesomeAssertions;
-using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.TestUtilities;
-using Moq;
 using Serilog;
 
 namespace CodingAgentWebUI.Orchestration.UnitTests.Redis;
@@ -12,12 +10,12 @@ namespace CodingAgentWebUI.Orchestration.UnitTests.Redis;
 public sealed class DistributedRunServiceTests
 {
     private readonly FakeRedisStore _store = new();
-    private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
+    private bool _isIssueDistributedResult;
     private readonly DistributedRunService _sut;
 
     public DistributedRunServiceTests()
     {
-        _sut = new DistributedRunService(_store, _workItemClient.Object, Log.Logger);
+        _sut = new DistributedRunService(_store, (_, _, _) => Task.FromResult(_isIssueDistributedResult), Log.Logger);
     }
 
     private static PipelineRun MakeRun(string runId = "run-abc", string issue = "org/repo#1") =>
@@ -173,11 +171,9 @@ public sealed class DistributedRunServiceTests
     // ── IsIssueBeingProcessed ─────────────────────────────────────────────────
 
     [Fact]
-    public void IsIssueBeingProcessed_DelegatesToWorkItemClient()
+    public void IsIssueBeingProcessed_DelegatesToDelegate()
     {
-        _workItemClient
-            .Setup(c => c.IsIssueDistributedAsync("org/repo#1", "prov-1", default))
-            .ReturnsAsync(true);
+        _isIssueDistributedResult = true;
 
         _sut.IsIssueBeingProcessed(new IssueIdentifier("org/repo#1"), new ProviderConfigId("prov-1"))
             .Should().BeTrue();

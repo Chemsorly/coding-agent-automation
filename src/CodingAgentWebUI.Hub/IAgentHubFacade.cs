@@ -64,6 +64,7 @@ public interface IAgentHubFacade
     /// Gets a specific run by its RunId.
     /// </summary>
     PipelineRun? GetRun(JobId jobId);
+    void ReplaceRun(PipelineRun run);
 
     /// <summary>
     /// Transitions the WorkItem row in Postgres to the given terminal status.

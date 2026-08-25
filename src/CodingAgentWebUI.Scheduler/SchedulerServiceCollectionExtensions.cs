@@ -38,19 +38,22 @@ public static class SchedulerServiceCollectionExtensions
         services.AddHttpClient<IPipelineApiConfigClient, PipelineApiConfigClient>(c =>
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
-            c.DefaultRequestHeaders.Add("X-Api-Key", agentApiKey);
+            c.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
         }).AddStandardResilienceHandler();
 
         services.AddHttpClient<IPipelineApiWorkItemClient, PipelineApiWorkItemClient>(c =>
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
-            c.DefaultRequestHeaders.Add("X-Api-Key", agentApiKey);
+            c.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
         }).AddStandardResilienceHandler();
 
         services.AddHttpClient<IPipelineApiRunHistoryClient, PipelineApiRunHistoryClient>(c =>
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
-            c.DefaultRequestHeaders.Add("X-Api-Key", agentApiKey);
+            c.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
         }).AddStandardResilienceHandler();
 
         services.AddHttpClient("TokenVending")
@@ -118,7 +121,10 @@ public static class SchedulerServiceCollectionExtensions
                     ? KubernetesClientConfiguration.InClusterConfig()
                     : KubernetesClientConfiguration.BuildDefaultConfig();
                 if (string.IsNullOrEmpty(k8sConfig.Host) || k8sConfig.Host == "http://localhost:8080")
+                {
+                    Log.Warning("Scheduler: Kubernetes client host is empty or localhost — K8s unavailable.");
                     return null!;
+                }
                 Log.Information("Scheduler: Kubernetes client configured ({Source})",
                     inCluster ? "in-cluster" : "kubeconfig");
                 return new k8s.Kubernetes(k8sConfig);
@@ -286,7 +292,8 @@ public static class SchedulerServiceCollectionExtensions
             var factory = sp.GetRequiredService<IHttpClientFactory>();
             var httpClient = factory.CreateClient("SchedulerToApi");
             httpClient.BaseAddress = new Uri(pipelineApiBaseUrl);
-            httpClient.DefaultRequestHeaders.Add("X-Api-Key", agentApiKey);
+            httpClient.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
             return new HttpSchedulerApiClient(httpClient);
         });
 

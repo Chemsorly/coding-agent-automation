@@ -178,7 +178,29 @@ public static class ApiServiceCollectionExtensions
             if (mux is not null)
             {
                 var store = new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase());
-                return new DistributedRunService(store, sp.GetRequiredService<IPipelineApiWorkItemClient>(), Log.Logger);
+                // IsIssueBeingProcessed: direct Postgres query — no HTTP self-call needed.
+                var dbFactory = sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>();
+                var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
+                var cooldown = PipelineConstants.DefaultRestartDedupCooldown;
+                Func<string, string, CancellationToken, Task<bool>> isIssueDistributed =
+                    async (issueId, providerConfigId, ct) =>
+                    {
+                        await using var db = await dbFactory.CreateDbContextAsync(ct);
+                        // Mirror WorkItemEndpoints.GetIsDistributed: active status OR recently completed.
+                        var hasActive = await db.WorkItems.AsNoTracking().AnyAsync(w =>
+                            w.IssueIdentifier == issueId &&
+                            w.IssueProviderConfigId == providerConfigId &&
+                            activeStatuses.Contains(w.Status), ct);
+                        if (hasActive) return true;
+                        var since = DateTimeOffset.UtcNow - cooldown;
+                        return await db.WorkItems.AsNoTracking().AnyAsync(w =>
+                            w.IssueIdentifier == issueId &&
+                            w.IssueProviderConfigId == providerConfigId &&
+                            !activeStatuses.Contains(w.Status) &&
+                            w.CompletedAt != null &&
+                            w.CompletedAt >= since, ct);
+                    };
+                return new DistributedRunService(store, isIssueDistributed, Log.Logger);
             }
             return sp.GetRequiredService<OrchestratorRunService>();
         });
@@ -304,7 +326,7 @@ public static class ApiServiceCollectionExtensions
         // LeaderElectionService uses K8s Lease-based election when running in-cluster.
         // The Lease name is injected via LeaderElection:PipelineLoopLeaseName (Helm env var) or
         // defaults to "caa-{release}-pipeline-loop-lock" set by orchestrator-deployment.yaml.
-        services.AddSingleton<IKubernetes>(_ =>
+        services.AddSingleton<IKubernetes>(sp =>
         {
             try
             {
@@ -317,7 +339,10 @@ public static class ApiServiceCollectionExtensions
                     inCluster ? "in-cluster" : "kubeconfig", config.Host);
 
                 if (string.IsNullOrEmpty(config.Host) || config.Host == "http://localhost:8080")
+                {
+                    Log.Warning("API: Kubernetes client host is empty or localhost — K8s unavailable.");
                     return null!;
+                }
 
                 return new k8s.Kubernetes(config);
             }
@@ -328,6 +353,9 @@ public static class ApiServiceCollectionExtensions
                 return null!;
             }
         });
+        // IKubernetesJobClient wraps IKubernetes. Use GetService (nullable) so the factory
+        // returns a no-op stub when K8s is unavailable, instead of passing null to
+        // KubernetesJobClient which would NRE on the first dispatch attempt.
         services.AddOptions<LeaderElectionOptions>()
             .Configure<IConfiguration>((opts, config) =>
             {
@@ -364,7 +392,16 @@ public static class ApiServiceCollectionExtensions
         // ── IKubernetesJobClient ─────────────────────────────────────────────
         // Required by DispatchLifecycleService and ModelFetchJobService.
         // IKubernetes is already registered above; only the job client wrapper is missing.
-        services.AddSingleton<IKubernetesJobClient, KubernetesJobClient>();
+        services.AddSingleton<IKubernetesJobClient>(sp =>
+        {
+            var k8s = sp.GetService<IKubernetes>();
+            if (k8s is null)
+            {
+                Log.Warning("API: IKubernetesJobClient unavailable — K8s not configured. Dispatch and consolidation will fail if triggered.");
+                return null!;
+            }
+            return new KubernetesJobClient(k8s);
+        });
 
         // ── JobTemplateStore ─────────────────────────────────────────────────
         // Required by DispatchLifecycleService, DispatchStateBuilder, and ModelFetchJobService.

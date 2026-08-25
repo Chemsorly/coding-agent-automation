@@ -2,11 +2,12 @@
 
 ## Architecture
 
-The application runs on Kubernetes as four distinct processes:
+The application runs on Kubernetes as five distinct processes:
 
-- **Orchestrator** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI and `PipelineLoopService`. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (scoped per circuit) subscribes to the API hub for live run streaming.
-- **Pipeline API** (`CodingAgentWebUI.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `JobDeduplicationGuardService`, `ConsolidationWorkItemDispatchService`, `DatabaseMaintenanceService`, `WorkItemMetricsBackgroundService`, and `ChatJobDispatcher`.
+- **Orchestrator** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (scoped per circuit) subscribes to the API hub for live run streaming.
+- **Pipeline API** (`CodingAgentWebUI.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `JobDeduplicationGuardService`, `ConsolidationWorkItemDispatchService`, `DatabaseMaintenanceService`, and `ChatJobDispatcher`.
 - **Job Controller** (`CodingAgentWebUI.JobController`) — Kubernetes Job dispatch. Claims `WorkItem` rows from the API and creates K8s Jobs. Leader-elected via `caa-{release}-dispatch-lock` Lease. Stateless between dispatches; all state lives in Postgres via the API.
+- **Scheduler** (`CodingAgentWebUI.Scheduler`) — Owns all scheduled/periodic background work: orphaned label recovery, housekeeping, work-item metrics polling, and periodic maintenance sweeps. No direct Postgres connection — all persistence goes through the Pipeline API. Leader-elected via `caa-{release}-scheduler-lock` Lease.
 - **Agent Host** (`CodingAgentWebUI.Agent`) — Ephemeral K8s Job pod. Connects to the Pipeline API hub using `AGENT_API_KEY` as a Bearer token. Picks up assignments via `GET /api/work-items/{id}/assignment`, reports progress and terminal status via hub methods and `POST /api/work-items/{id}/status`. Two execution modes: _work-item pods_ (spawned with `--work-item-id`) and _chat pods_.
 
 Supporting libraries (shared, not deployed independently):
@@ -16,8 +17,6 @@ Supporting libraries (shared, not deployed independently):
 - **Infrastructure.Providers** (`CodingAgentWebUI.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API and Agent. The Blazor Orchestrator (`CodingAgentWebUI`) and Job Controller have no direct reference.
 - **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, interfaces, constants. Linked into the Orchestrator and Pipeline API.
 - **Hub** (`CodingAgentWebUI.Hub`) — Full hub implementation: `AgentHub` (split across partial classes), authentication handlers (`AgentApiKeyAuthHandler`), `ChatJobDispatcher` (ephemeral chat pod dispatch), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), completion strategies, `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
-
-## Authentication
 
 ### Agent API Keys
 
@@ -68,6 +67,7 @@ The chart deploys:
 - **1 Orchestrator Deployment** — Blazor Server app (`CodingAgentWebUI`). Connects to the API for all data access; no direct database connection.
 - **1 Pipeline API Deployment** — `CodingAgentWebUI.Api`. Authoritative database owner, agent hub, and config/run-history server.
 - **1 Job Controller Deployment** — `CodingAgentWebUI.JobController`. Claims WorkItems and dispatches K8s Jobs. Leader-elected.
+- **1 Scheduler Deployment** — `CodingAgentWebUI.Scheduler`. Owns all periodic background work (orphaned label recovery, housekeeping, metrics polling). No direct Postgres connection. Leader-elected.
 - **No persistent agent Deployments** — All agents are ephemeral K8s Jobs dispatched on demand by the Job Controller.
 
 ### Key values.yaml Settings
@@ -89,6 +89,9 @@ The chart deploys:
 | `database.sslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. Defaults to `Require` in production if not set. Use `Disable` for in-cluster Postgres without TLS. |
 | `workDistribution.dispatch.intervalSeconds` | Seconds between dispatch cycles (default: `10`) |
 | `workDistribution.dispatch.rateLimitPerSecond` | Max dispatches per second (default: `10`) |
+| `workDistribution.dispatch.chatSessionMaxDurationSeconds` | Max lifetime (seconds) of a chat pod K8s Job (default: `7200`). Sets `activeDeadlineSeconds`. |
+| `workDistribution.dispatch.chatPodConnectTimeoutSeconds` | Max seconds to wait for a chat pod to connect to the hub after Job creation (default: `120`). |
+| `workDistribution.dispatch.chatTerminationGracePeriodSeconds` | `terminationGracePeriodSeconds` on chat pod spec (default: `120`). |
 | `workDistribution.reconciliation.intervalSeconds` | Seconds between reconciliation cycles (default: `30`) |
 | `workDistribution.reconciliation.staleRetentionDays` | Days to retain stale work items before cleanup (default: `7`) |
 | `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. `DispatchService` claims one PVC per Job at dispatch time. |
@@ -135,6 +138,8 @@ When deployed without Kubernetes (e.g., local dev or SignalR-only mode), `ILeade
 
 The previous `AlwaysLeaderElectionService` stub (an explicit always-leader no-op) was removed in the arch-audit; the null-check achieves the same behavior without polluting the DI container.
 
+> **Note on `AgentReservationService` and Redis:** When Redis is configured (`signalr.redis.connectionString` is set), `AgentReservationService` switches to distributed per-agent Redis locks (`lock:agent:{id}`, 5-second TTL) instead of the in-process `_selectionLock`. This enables safe agent selection across multiple API replicas. The in-process lock is used only when Redis is absent (local dev or single-replica deployments).
+
 ### Graceful Shutdown
 
 The chart supports zero-downtime rolling updates:
@@ -177,6 +182,14 @@ Two independent leases are used — one per process:
 |---------|---------------------|--------------------------|
 | `PipelineLoopService` | Dispatches pipeline runs | Pauses (leader gate blocks loop entry) |
 
+**Scheduler** (`caa-{release}-scheduler-lock` lease):
+
+| Service | Behavior When Leader | Behavior When Non-Leader |
+|---------|---------------------|--------------------------|
+| `OrphanedLabelRecoveryService` | Sweeps for issues with stale `agent:in-progress` labels | Waits |
+| `HousekeepingService` | Manages `agent:done` PRs, branch updates, and stale branch cleanup | Waits |
+| `WorkItemCountsPoller` | Emits work-item count metrics to `CodingAgent.WorkDistribution` | Waits |
+
 #### Configuration
 
 Bound from the `LeaderElection` configuration section:
@@ -191,7 +204,7 @@ Bound from the `LeaderElection` configuration section:
 | `Identity` | *(auto-detected)* | Pod identity. Auto-reads from `POD_NAME` → `HOSTNAME` → `MachineName` |
 | `FailOnNonKubernetesEnvironment` | false | If true, startup fails outside K8s. If false, logs a warning and remains non-leader (graceful degradation for local dev) |
 
-Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller, defaults to `caa-{release}-dispatch-lock`), `orchestrator.leaderElection.pipelineLoopLeaseName` (Orchestrator, defaults to `caa-{release}-pipeline-loop-lock`), and the API lease (`caa-{release}-api-lock`) which is hardcoded in the API Helm template with no `values.yaml` override. The Orchestrator and API leases use different names to prevent competition.
+Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller, defaults to `caa-{release}-dispatch-lock`), `orchestrator.leaderElection.pipelineLoopLeaseName` (Orchestrator, defaults to `caa-{release}-pipeline-loop-lock`), `scheduler.leaderElection.leaseName` (Scheduler, defaults to `caa-{release}-scheduler-lock`), and the API lease (`caa-{release}-api-lock`) which is hardcoded in the API Helm template with no `values.yaml` override. The Orchestrator and API leases use different names to prevent competition.
 
 #### RBAC Requirements
 

@@ -251,7 +251,7 @@ Any step can transition to `Failed` on error. The pipeline catches exceptions at
 
 ## Orphaned Label Recovery
 
-The `OrphanedLabelRecoveryService` is a background service that detects issues stuck with the `agent:in-progress` label when no corresponding active run exists in the orchestrator. This can happen when:
+The `OrphanedLabelRecoveryService` (in `CodingAgentWebUI.Scheduler`) is a background service that detects issues stuck with the `agent:in-progress` label when no corresponding active run exists in the orchestrator. This can happen when:
 
 - The orchestrator crashes mid-run and restarts
 - A run is cleaned up from memory but the label swap to a terminal state fails

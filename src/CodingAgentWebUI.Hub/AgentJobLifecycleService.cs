@@ -334,6 +334,9 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             if (metadata is { Count: > 0 })
                 ApplyStepMetadata(run, metadata);
 
+            // Persist mutated run back to the store (no-op for in-memory; required for Redis).
+            _facade.ReplaceRun(run);
+
             _logger.Debug("Job {JobId} step transition → {Step}", jobId.Value, step);
             _changeNotifier.NotifyChange();
         }

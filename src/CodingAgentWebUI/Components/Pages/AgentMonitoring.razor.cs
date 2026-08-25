@@ -428,8 +428,12 @@ public partial class AgentMonitoring : IAsyncDisposable
     // ── Dispose ──
 
     /// <summary>
-    /// Disposes hub event subscriptions, the refresh timer, event handler registrations,
-    /// and the hub connection itself to release the SignalR connection promptly on page navigation.
+    /// Disposes hub event subscriptions and the refresh timer.
+    /// Does NOT dispose <see cref="HubConnection"/> — it is scoped to the circuit (DI scope)
+    /// and shared across navigations within the same tab. Disposing it here would leave a
+    /// dead connection the next time this page is opened in the same circuit.
+    /// The DI container disposes the scoped <see cref="IAgentHubConnection"/> when the
+    /// circuit tears down (tab close / timeout).
     /// </summary>
     public async ValueTask DisposeAsync()
     {
@@ -456,10 +460,7 @@ public partial class AgentMonitoring : IAsyncDisposable
             }
         }
 
-        // Dispose the hub connection to release the SignalR connection on page navigation
-        // rather than waiting for the entire circuit to tear down.
-        // IAgentHubConnection extends IAsyncDisposable — call directly.
-        await HubConnection.DisposeAsync();
+        // Do NOT dispose HubConnection here — scoped to the circuit, not the component.
 
         GC.SuppressFinalize(this);
     }

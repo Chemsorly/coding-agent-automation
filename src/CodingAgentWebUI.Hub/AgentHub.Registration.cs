@@ -74,6 +74,20 @@ public sealed partial class AgentHub
             "Agent registered: AgentId={AgentId} ServiceName={ServiceName} ConnectionId={ConnectionId}",
             message.AgentId, serviceName, Context.ConnectionId);
 
+        // Persist AgentId on the active run so the UI shows which agent is handling it.
+        // In K8s dispatch mode, AgentAcceptedRunAsync is not called, so this is the only
+        // place that sets run.AgentId when an agent picks up a dispatched work item.
+        if (message.ActiveJob?.RunId is { } jobId && Guid.TryParse(jobId, out _))
+        {
+            var run = _facade.GetRun(new JobId(jobId));
+            if (run is not null && string.IsNullOrEmpty(run.AgentId))
+            {
+                run.AgentId = message.AgentId.Value;
+                _facade.ReplaceRun(run);
+                _logger.Debug("RegisterAgent: set AgentId={AgentId} on run {RunId}", message.AgentId, jobId);
+            }
+        }
+
         await _orphanRecoveryService.RecoverOrphanedStateAsync(message, message.AgentId);
     }
 

@@ -68,14 +68,15 @@ public class PrReviewDrawerServiceTests
     }
 
     [Fact]
-    public async Task LoadPrDrawerPageAsync_ReturnsNullAndEmptyList_WhenRepoProviderNotFound()
+    public async Task LoadPrDrawerPageAsync_ReturnsErrorAndEmptyList_WhenRepoProviderNotFound()
     {
         _service.SetProviderContext(IssueProviders, new List<ProviderConfig>());
         var template = MakeTemplate();
 
         var error = await _service.LoadPrDrawerPageAsync(template, 1);
 
-        Assert.Null(error);
+        Assert.NotNull(error);
+        Assert.Contains("Repository provider configuration not loaded", error);
         Assert.Empty(_service.DrawerState.Items);
     }
 

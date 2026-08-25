@@ -477,39 +477,10 @@ public sealed class ConsolidationJobPreparationServiceTests
 
     #region Cross-mode parity
 
-    [Fact]
-    public async Task PrepareAsync_SameInputs_ProducesSameResult_RegardlessOfCallerContext()
-    {
-        // TODO: This test is tautological — it calls the same method on the same instance twice with
-        // identical inputs and deterministic mocks. It serves only as a regression guard if the shared
-        // service is ever split back into separate paths. Consider using two separate instances or
-        // simulating different caller contexts to add real verification value.
-
-        // Setup: full template with all providers
-        SetupAgentConfig("agent-cfg");
-        SetupTemplateWithAllProviders();
-        SetupRepoConfigs();
-        SetupIssueConfig();
-
-        var svc = CreateService();
-        var labels = E2ELabels;
-
-        // Call twice with identical inputs
-        var result1 = await svc.PrepareAsync(
-            ConsolidationRunType.RefactoringDetection, "t1", labels, CancellationToken.None);
-        var result2 = await svc.PrepareAsync(
-            ConsolidationRunType.RefactoringDetection, "t1", labels, CancellationToken.None);
-
-        // Assert: same result
-        result1.RepoProviderConfigId.Should().Be(result2.RepoProviderConfigId);
-        result1.ProviderConfigs.Should().HaveCount(result2.ProviderConfigs.Count);
-
-        for (var i = 0; i < result1.ProviderConfigs.Count; i++)
-        {
-            result1.ProviderConfigs[i].Id.Should().Be(result2.ProviderConfigs[i].Id);
-            result1.ProviderConfigs[i].Kind.Should().Be(result2.ProviderConfigs[i].Kind);
-        }
-    }
+    // PrepareAsync_SameInputs_ProducesSameResult_RegardlessOfCallerContext was removed.
+    // It was self-documented as tautological: called the same method twice with identical
+    // inputs and deterministic mocks, verifying only internal consistency rather than
+    // correctness against an independent specification.
 
     #endregion
 

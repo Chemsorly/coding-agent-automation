@@ -114,8 +114,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             orphanRestoredAt: null,
             batchAsync: false);
 
-        // Fire-and-forget write to Redis; return a snapshot immediately
-        _ = WriteRegistrationAsync(agentId, connectionId, status, fields);
+        // Fire-and-forget write to Redis; return a snapshot immediately so the hub method
+        // completes without blocking on Redis I/O. The brief window between return and Redis
+        // write means the dispatcher on another replica may not see the agent for one cycle.
+        // Log any Redis write failures so they surface rather than being swallowed silently.
+        _ = WriteRegistrationAsync(agentId, connectionId, status, fields)
+            .ContinueWith(t => _logger.Warning(t.Exception,
+                "WriteRegistrationAsync failed for agent {AgentId}", agentId),
+                TaskContinuationOptions.OnlyOnFaulted);
 
         _connectionIndex[connectionId] = agentId;
 
@@ -151,7 +157,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     public bool Deregister(AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
-        _ = DeregisterAsync(agentId.Value);
+        _ = DeregisterAsync(agentId.Value)
+            .ContinueWith(t => _logger.Warning(t.Exception,
+                "DeregisterAsync failed for agent {AgentId}", agentId.Value),
+                TaskContinuationOptions.OnlyOnFaulted);
         return true; // Optimistic; actual removal is async
     }
 

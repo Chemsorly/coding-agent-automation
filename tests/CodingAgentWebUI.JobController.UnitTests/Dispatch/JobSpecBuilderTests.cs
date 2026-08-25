@@ -4,16 +4,13 @@ using Xunit;
 
 namespace CodingAgentWebUI.JobController.UnitTests.Dispatch;
 
-/// <summary>
-/// Unit tests for <see cref="JobSpecBuilder"/> — the new Kubernetes-assembly variant.
-/// Covers branches not exercised by the Orchestration-assembly tests:
-///   - DerivedKeySecretName path: AGENT_API_KEY from Secret, no master volume mount
-///   - Legacy path: no DerivedKeySecretName → master Secret file mount
-///   - OpenCode agent without OpencodeConfigSecretName → no OPENCODE_CONFIG_CONTENT env var
-///   - WorkItemId null → no caa/work-item-id label, no --work-item-id arg
-///   - PodSecurityContext from template JSON
-///   - DeserializeK8s null result throws
-/// </summary>
+/// <summary>Unit tests for JobSpecBuilder — the Kubernetes-assembly variant.</summary>
+/// <remarks>
+/// This class mutates LOG_LEVEL, OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL,
+/// and OTEL_RESOURCE_ATTRIBUTES environment variables. [Collection] prevents parallel
+/// execution with other test classes that depend on the same process-global env state.
+/// </remarks>
+[Collection("EnvironmentVariables")]
 public sealed class JobSpecBuilderTests
 {
     // ── Base context helpers ─────────────────────────────────────────────────

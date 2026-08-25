@@ -109,10 +109,13 @@ var app = builder.Build();
 
 // ── Health probes ─────────────────────────────────────────────────────────────
 app.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));
-app.MapGet("/readyz", (ILeaderElectionService leaderElection) =>
-    leaderElection.IsLeader
-        ? Results.Ok(new { status = "ready" })
-        : Results.StatusCode(503));
+// /readyz returns 200 for all replicas regardless of leader state.
+// Leader election gates the actual dispatch and reconciliation work inside
+// DispatchService and ReconciliationService — the non-leader idles and is still
+// healthy. Returning 503 for non-leaders would keep the pod stuck as 0/1 Ready
+// in multi-replica deployments (strategy: RollingUpdate) and is incorrect: the
+// non-leader is not degraded, just standing by.
+app.MapGet("/readyz", () => Results.Ok(new { status = "ready" }));
 
 await app.RunAsync();
 

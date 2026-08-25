@@ -1120,11 +1120,8 @@ public class DispatchOrchestrationServiceTests
         result.Should().NotBeNull();
         result!.McpServers.Should().NotBeNull();
         result.McpServers!.Should().HaveCount(2);
-        // TODO [WARNING]: These assertions only verify server names are present. A merge implementation
-        // that dropped the profile entry entirely and returned project servers twice would still satisfy
-        // Contain(s => s.Name == "sonarqube-mcp"). Add an assertion that the context7 entry retains
-        // its profile-sourced Command value, e.g.: result.McpServers.Should().Contain(s => s.Name == "context7" && s.Command == "uvx");
-        result.McpServers.Should().Contain(s => s.Name == "context7");
+        result.McpServers.Should().Contain(s => s.Name == "context7" && s.Command == "uvx",
+            "merge must preserve the profile-sourced Command value, not just the server name");
         result.McpServers.Should().Contain(s => s.Name == "sonarqube-mcp");
     }
 
@@ -1213,10 +1210,9 @@ public class DispatchOrchestrationServiceTests
 
         result.Should().NotBeNull();
         result!.McpServers.Should().HaveCount(1);
-        // TODO [WARNING]: This test only checks the server name, not that the returned entry retains
-        // its unmodified profile field values. Adding result.McpServers![0].Command.Should().Be("uvx")
-        // would make the passthrough assertion unambiguous.
+        // TODO [WARNING] resolved: assert both Name and Command to verify passthrough is unmodified.
         result.McpServers![0].Name.Should().Be("context7");
+        result.McpServers![0].Command.Should().Be("uvx", "passthrough must preserve all profile-sourced field values, not just the name");
     }
 }
 

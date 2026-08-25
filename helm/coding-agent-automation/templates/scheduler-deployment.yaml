@@ -25,7 +25,7 @@ spec:
     spec:
       serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-scheduler
       automountServiceAccountToken: true
-      terminationGracePeriodSeconds: {{ .Values.scheduler.terminationGracePeriodSeconds | default 90 }}
+      terminationGracePeriodSeconds: {{ .Values.scheduler.terminationGracePeriodSeconds }}
       containers:
         - name: scheduler
           image: "{{ .Values.scheduler.image.repository }}:{{ required "scheduler.image.tag is required" .Values.scheduler.image.tag }}"
@@ -36,52 +36,50 @@ spec:
               protocol: TCP
           startupProbe:
             httpGet:
-              path: /health
+              path: {{ .Values.scheduler.probes.path }}
               port: {{ .Values.scheduler.service.port }}
-            initialDelaySeconds: 10
-            periodSeconds: 5
-            failureThreshold: 12
+            initialDelaySeconds: {{ .Values.scheduler.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.scheduler.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.scheduler.probes.startup.failureThreshold }}
           livenessProbe:
             httpGet:
-              path: /health
+              path: {{ .Values.scheduler.probes.path }}
               port: {{ .Values.scheduler.service.port }}
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: {{ .Values.scheduler.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.scheduler.probes.liveness.periodSeconds }}
           readinessProbe:
             httpGet:
-              path: /health
+              path: {{ .Values.scheduler.probes.path }}
               port: {{ .Values.scheduler.service.port }}
-            initialDelaySeconds: 10
-            periodSeconds: 5
+            initialDelaySeconds: {{ .Values.scheduler.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.scheduler.probes.readiness.periodSeconds }}
           resources:
             {{- toYaml .Values.scheduler.resources | nindent 12 }}
           env:
+            {{- include "coding-agent-automation.commonSecretEnv" . | nindent 12 }}
+            {{- include "coding-agent-automation.otelEnv" (dict "root" . "serviceName" "coding-agent-scheduler") | nindent 12 }}
             - name: ASPNETCORE_URLS
               value: "http://+:{{ .Values.scheduler.service.port }}"
-            - name: AGENT_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "coding-agent-automation.secretName" . }}
-                  key: agent-api-key
-            # URL of the Pipeline API — the Scheduler calls this for config reads and
-            # maintenance endpoint triggers.
             - name: PipelineApi__BaseUrl
               value: {{ include "coding-agent-automation.agentOrchestratorUrl" . | quote }}
-            # Scheduler-specific leader election lease — distinct from the API's lease.
             - name: LeaderElection__LeaseName
               value: {{ .Values.scheduler.leaderElection.leaseName | default (printf "caa-%s-scheduler-lock" .Release.Name) | quote }}
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}
             {{- end }}
-            - name: OTEL_EXPORTER_OTLP_HEADERS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "coding-agent-automation.secretName" . }}
-                  key: otel-headers
-                  optional: true
-      {{- with .Values.nodeSelector }}
+            - name: LOG_LEVEL
+              value: {{ .Values.scheduler.env.logLevel | quote }}
+      {{- with .Values.scheduler.nodeSelector }}
       nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.tolerations }}
+      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}
