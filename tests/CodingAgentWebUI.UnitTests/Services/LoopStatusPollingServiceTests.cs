@@ -76,24 +76,36 @@ public sealed class LoopStatusPollingServiceTests
     {
         // Arrange: first call succeeds, second fails
         var callCount = 0;
+        var secondCallCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockClient.Setup(c => c.GetLoopStatusAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 callCount++;
                 if (callCount == 1) return DefaultStatus;
-                throw new HttpRequestException("connection refused");
+                var ex = new HttpRequestException("connection refused");
+                secondCallCompleted.TrySetResult();
+                throw ex;
             });
 
         var svc = CreateService(interval: TimeSpan.FromMilliseconds(1));
+        await svc.StartAsync(CancellationToken.None);
 
-        // Act: run long enough for at least 2 ticks
-        await RunServiceForDurationAsync(svc, TimeSpan.FromMilliseconds(100));
+        // Act: wait until the second call has completed (deterministic, not wall-clock)
+        var completed = await Task.WhenAny(secondCallCompleted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().BeSameAs(secondCallCompleted.Task, "second poll call should complete within 5s");
+
+        // Small yield so the catch block in ExecuteAsync can finish setting _isSchedulerUnreachable
+        await Task.Delay(20);
 
         // Assert: unreachable set after failure; prior state preserved (not reset to defaults)
         svc.IsSchedulerUnreachable.Should().BeTrue("poll failure must set IsSchedulerUnreachable");
         // Status from the first successful call should be preserved, not reset to empty
         svc.StatusMessage.Should().Be(DefaultStatus.StatusMessage,
             "prior state must be preserved when poll fails");
+
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try { await svc.StopAsync(stopCts.Token); } catch { }
+        svc.Dispose();
     }
 
     [Fact]
