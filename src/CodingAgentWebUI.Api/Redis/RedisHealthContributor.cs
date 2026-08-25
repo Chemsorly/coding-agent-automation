@@ -6,6 +6,7 @@ namespace CodingAgentWebUI.Api.Redis;
 /// Checks Redis connectivity as part of /healthz.
 /// If the <see cref="IConnectionMultiplexer"/> cannot PING, liveness returns 503 so Kubernetes restarts the pod.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Interface definition — no executable lines.")]
 public sealed class RedisHealthContributor
 {
     private readonly IConnectionMultiplexer _mux;

@@ -3,6 +3,7 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
 
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Thin delegation to RepositoryGitOperations — covered by integration tests.")]
 public partial class GitHubRepositoryProvider
 {
     public Task<MergeResult> MergeFromBaseAsync(WorkspacePath workspacePath, CancellationToken ct)

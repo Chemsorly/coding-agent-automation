@@ -10,6 +10,7 @@ namespace CodingAgentWebUI.Pipeline.Telemetry;
 /// Reuses <see cref="WorkDistributionTelemetry.Meter"/> so all chat metrics appear under
 /// <c>CodingAgent.WorkDistribution</c> — no OTel config changes required.
 /// </remarks>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "OTel metric registration — no unit-testable logic.")]
 public static class ChatTelemetry
 {
     private static readonly Meter Meter = WorkDistributionTelemetry.Meter;
