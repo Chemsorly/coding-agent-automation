@@ -130,4 +130,21 @@ public sealed class LoopStatusPollingServiceTests
         svc.IsSchedulerUnreachable.Should().BeFalse("unreachable flag must be cleared on recovery");
         svc.IsLoopActive.Should().Be(DefaultStatus.IsLoopActive);
     }
+
+    [Fact]
+    public async Task WhenOnChangeSubscriberThrows_OtherSubscribersStillFire()
+    {
+        _mockClient.Setup(c => c.GetLoopStatusAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DefaultStatus);
+
+        var svc = CreateService();
+        var secondFired = false;
+        svc.OnChange += () => throw new InvalidOperationException("bad subscriber");
+        svc.OnChange += () => { secondFired = true; };
+
+        await RunServiceForDurationAsync(svc, TimeSpan.FromMilliseconds(50));
+
+        // The throwing subscriber must not prevent the second subscriber from firing
+        secondFired.Should().BeTrue("subscriber exception must be caught per-subscriber, not abort the loop");
+    }
 }

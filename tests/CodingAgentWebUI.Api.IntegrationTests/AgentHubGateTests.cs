@@ -604,6 +604,88 @@ public sealed class AgentHubGateTests
     // ── Helpers ─────────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// SubscribeToRun rejects an invalid (non-GUID) jobId — line 29 coverage.
+    /// </summary>
+    [Fact]
+    public async Task SubscribeToRun_InvalidGuid_ThrowsHubException()
+    {
+        using var client = _factory.CreateClient();
+        var serverAddress = _factory.ServerAddress;
+
+        var connection = BuildUiConnection(serverAddress);
+        try
+        {
+            await connection.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
+
+            Func<Task> act = () => connection.InvokeAsync("SubscribeToRun", "not-a-guid");
+
+            await act.Should().ThrowAsync<Exception>(
+                "SubscribeToRun must reject non-GUID jobId values (line 29 coverage)");
+        }
+        finally
+        {
+            await connection.StopAsync();
+            await connection.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// UnsubscribeFromRun with a valid GUID removes the connection from the group — lines 72-77 coverage.
+    /// </summary>
+    [Fact]
+    public async Task UnsubscribeFromRun_ValidGuid_Succeeds()
+    {
+        using var client = _factory.CreateClient();
+        var serverAddress = _factory.ServerAddress;
+
+        var jobId = Guid.NewGuid().ToString();
+        var connection = BuildUiConnection(serverAddress);
+        try
+        {
+            await connection.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
+
+            // Subscribe first so there is something to unsubscribe from
+            await connection.InvokeAsync("SubscribeToRun", jobId);
+
+            // Then unsubscribe — must not throw
+            await connection.InvokeAsync("UnsubscribeFromRun", jobId);
+        }
+        finally
+        {
+            await connection.StopAsync();
+            await connection.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// UnsubscribeFromRun rejects an invalid GUID — line 74 coverage.
+    /// </summary>
+    [Fact]
+    public async Task UnsubscribeFromRun_InvalidGuid_ThrowsHubException()
+    {
+        using var client = _factory.CreateClient();
+        var serverAddress = _factory.ServerAddress;
+
+        var connection = BuildUiConnection(serverAddress);
+        try
+        {
+            await connection.StartAsync(new CancellationTokenSource(TimeSpan.FromSeconds(15)).Token);
+
+            Func<Task> act = () => connection.InvokeAsync("UnsubscribeFromRun", "not-a-valid-guid");
+
+            await act.Should().ThrowAsync<Exception>(
+                "UnsubscribeFromRun must reject non-GUID jobId values");
+        }
+        finally
+        {
+            await connection.StopAsync();
+            await connection.DisposeAsync();
+        }
+    }
+
+
+
+    /// <summary>
     /// Builds an agent-authenticated SignalR connection.
     /// Uses HMAC-SHA256(masterKey, agentId) derivation matching <see cref="AgentApiKeyAuthHandler"/>.
     /// </summary>

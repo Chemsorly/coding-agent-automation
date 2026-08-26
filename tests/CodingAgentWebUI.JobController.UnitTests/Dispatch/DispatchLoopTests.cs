@@ -291,4 +291,119 @@ public sealed class DispatchLoopTests
         // Job is running, so nothing goes back on the queue.
         _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // ─── No Job Template for selector ────────────────────────────────────────
+
+    [Fact]
+    public async Task WhenNoTemplateForSelector_ShouldNotClaimOrCreate()
+    {
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("unknown,selector")]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── GetPendingAsync failure ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task WhenGetPendingThrows_ShouldReturnWithoutClaiming()
+    {
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("API unreachable"));
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── WorkItemNotFoundException (404 race) ─────────────────────────────────
+
+    [Fact]
+    public async Task WhenClaimThrowsNotFound_ShouldSkipWithoutRequeue()
+    {
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WorkItemNotFoundException(ItemId));
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── Startup validation: profile with no matching template ───────────────
+
+    [Fact]
+    public async Task OnStartup_ProfileWithNoMatchingTemplate_ShouldLogWarningAndContinue()
+    {
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _configClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new AgentProfile { Id = "p-1", DisplayName = "Orphan", AgentProviderConfigId = "ap-1", MatchLabels = ["kiro", "orphan"] }
+            ]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _configClient.Verify(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ─── Startup validation throws ────────────────────────────────────────────
+
+    [Fact]
+    public async Task OnStartup_WhenGetAgentProfilesThrows_ShouldContinue()
+    {
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _configClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("API unreachable"));
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+    }
+
+    // ─── Label swap failure (non-fatal) ──────────────────────────────────────
+
+    [Fact]
+    public async Task WhenLabelSwapFails_ShouldNotRequeue_JobAlreadyRunning()
+    {
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+        _workItemClient.Setup(c => c.PostLabelSwapAsync(ItemId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("label swap failed"));
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+        _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── SafeRequeueAsync failure ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task WhenK8sCreateFailsAndRequeueFails_ShouldNotThrow()
+    {
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+        _k8sClient.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), _options.Namespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("K8s unavailable"));
+        _workItemClient.Setup(c => c.RequeueAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("requeue also failed"));
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+    }
 }
