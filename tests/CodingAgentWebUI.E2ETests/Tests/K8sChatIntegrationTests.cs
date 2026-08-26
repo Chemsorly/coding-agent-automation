@@ -3,7 +3,6 @@ using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
-using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -263,7 +262,6 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
             templateStore,
             registry,
             shortOptions,
-            Fixture.Factory.Services.GetRequiredService<CodingAgentWebUI.Pipeline.LeaderElection.ILeaderElectionService>(),
             Serilog.Log.Logger);
 
         await dispatcher.StartAsync(CancellationToken.None);

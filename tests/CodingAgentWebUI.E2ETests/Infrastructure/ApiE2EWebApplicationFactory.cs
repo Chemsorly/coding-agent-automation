@@ -10,7 +10,6 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Redis;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
-using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.TestUtilities;
 using InMemoryConfigurationStore = CodingAgentWebUI.E2ETests.Fakes.InMemoryConfigurationStore;
@@ -169,18 +168,6 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
 
             // Spec 043 moved JobTemplateStore into the API too.
             E2ETestDefaults.InstallJobTemplates(services);
-
-            // ChatJobDispatcher refuses to dispatch unless this replica holds the leader lease, and
-            // the real LeaderElectionService is a hosted service that RemoveAll<IHostedService>()
-            // above has just deleted — so without this every chat dispatch throws "this
-            // orchestrator replica is not the leader".
-            // T21 (arch-audit 2026-08-22): replaced AlwaysLeaderElectionService (now deleted) with
-            // an inline Moq double — same semantics, no production dependency on a test helper.
-            services.RemoveAll<ILeaderElectionService>();
-            var leaderMock = new Mock<ILeaderElectionService>();
-            leaderMock.SetupGet(l => l.IsLeader).Returns(true);
-            leaderMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
-            services.AddSingleton(leaderMock.Object);
 
             // ── Multi-replica: inject distributed services backed by FakeRedisStore ──
             // When a shared FakeRedisStore is provided (by MultiReplicaE2EFixture), replace the
