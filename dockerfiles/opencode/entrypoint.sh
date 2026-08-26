@@ -52,7 +52,9 @@ fi
 # Bind exclusively to 127.0.0.1 so the API is not accessible from outside the
 # container (Requirement 2.4). Port 4096 is container-internal only.
 echo "Starting OpenCode server on 127.0.0.1:4096..."
-opencode serve --port 4096 --hostname 127.0.0.1 &
+# Pass OPENCODE_SERVER_PASSWORD explicitly on the command line so OpenCode's auth
+# middleware receives it regardless of shell export inheritance edge cases.
+OPENCODE_SERVER_PASSWORD="$OPENCODE_SERVER_PASSWORD" opencode serve --port 4096 --hostname 127.0.0.1 &
 OPENCODE_PID=$!
 
 echo "OpenCode server started (PID: $OPENCODE_PID)"

@@ -29,6 +29,12 @@ internal sealed class ApiChatJobDispatcher(IPipelineApiChatClient chatClient) : 
         {
             return await chatClient.DispatchChatPodAsync(agentSelector, model, effort, cancellationToken);
         }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            // 409 — a chat session is already active for this agent
+            _ = ex;
+            throw new ChatAlreadyActiveException("unknown");
+        }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
         {
             // 503 — no credential PVC available

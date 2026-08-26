@@ -160,14 +160,41 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
         WireEventHandlers(manager);
 
-        // Connect to orchestrator
-        try
+        // Connect to orchestrator — retry on transient failures (e.g. 404 during API startup,
+        // DNS not yet ready, TCP refused). InfiniteRetryPolicy only covers reconnections after
+        // a successful initial connect; initial connect failures need their own retry loop.
+        var connectAttempt = 0;
+        while (true)
         {
-            await manager.StartAsync(stoppingToken);
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            return;
+            try
+            {
+                await manager.StartAsync(stoppingToken);
+                break; // connected successfully
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                connectAttempt++;
+                // Cap at 10 attempts (~5 minutes total with backoff), then give up
+                if (connectAttempt >= 10)
+                {
+                    _logger.Error(ex,
+                        "Agent {AgentId}: hub connect failed after {Attempts} attempts — giving up",
+                        _agentId, connectAttempt);
+                    throw;
+                }
+
+                var delaySecs = Math.Min((int)Math.Pow(2, connectAttempt), 30);
+                _logger.Warning(ex,
+                    "Agent {AgentId}: hub connect attempt {Attempt} failed ({Error}), retrying in {Delay}s",
+                    _agentId, connectAttempt, ex.Message, delaySecs);
+
+                try { await Task.Delay(TimeSpan.FromSeconds(delaySecs), stoppingToken); }
+                catch (OperationCanceledException) { return; }
+            }
         }
 
         // Register with orchestrator
