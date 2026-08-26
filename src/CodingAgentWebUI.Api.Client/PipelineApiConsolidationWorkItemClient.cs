@@ -8,6 +8,7 @@ namespace CodingAgentWebUI.Api.Client;
 /// <see cref="IPipelineApiConsolidationWorkItemClient"/> backed by <see cref="HttpClient"/>
 /// registered via <see cref="IHttpClientFactory"/>.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "HTTP client wrapper — requires integration tests, not unit tests.")]
 internal sealed class PipelineApiConsolidationWorkItemClient : IPipelineApiConsolidationWorkItemClient
 {
     private readonly HttpClient _http;

@@ -17,6 +17,7 @@ namespace CodingAgentWebUI.Api;
 /// (provider config resolution + token vending) so the JC stays stateless and EF-free.
 /// All endpoints require Operator-tier authentication (master key).
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "API endpoint handlers with EF + token vending — covered by integration tests, not unit tests.")]
 public static class ConsolidationWorkItemEndpoints
 {
     public static void MapConsolidationWorkItemEndpoints(this IEndpointRouteBuilder app)

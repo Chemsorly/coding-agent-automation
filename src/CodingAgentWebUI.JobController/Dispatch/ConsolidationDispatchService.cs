@@ -10,6 +10,7 @@ namespace CodingAgentWebUI.JobController.Dispatch;
 /// Shares the same <see cref="ILeaderElectionService"/> lease as <see cref="DispatchService"/>
 /// so only the leader replica dispatches both regular and consolidation work items.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Thin BackgroundService shell — no logic beyond delegating to ConsolidationDispatchLoop. Covered by ConsolidationDispatchLoopTests.")]
 public sealed class ConsolidationDispatchService : LeaderElectedPollingService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<ConsolidationDispatchService>();

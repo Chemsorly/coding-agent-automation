@@ -681,7 +681,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         try
         {
-            await entry.WatcherTask.WaitAsync(timeout);
+            await entry.WatcherTask.WaitAsync(timeout, CancellationToken.None);
             return true;
         }
         catch (TimeoutException)
