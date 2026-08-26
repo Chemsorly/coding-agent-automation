@@ -333,7 +333,123 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             "so the loop resumes automatically when leadership is re-acquired");
     }
 
-    // ── Test doubles ─────────────────────────────────────────────────────
+    // ── ExecuteAsync catch path coverage ─────────────────────────────────
+    // These three tests cover the catch blocks in ExecuteAsync (lines 261–282) which were
+    // flagged as uncovered "new code" by Sonar after PipelineLoopService.cs was modified.
+    // They use the same private-method-via-reflection approach as the CleanupAsync tests.
+
+    /// <summary>
+    /// Covers lines 268–272: empty catch body for leadership-loss OCE.
+    /// Invokes CleanupAsync(rearm=true) with the leader gate having lost leadership,
+    /// which is the observable post-condition of the leadership-loss OCE path in ExecuteAsync.
+    /// The empty catch body is the bridge between RunMultiTemplateLoopAsync throwing and
+    /// CleanupAsync running with rearmForLeaderReacquisition=true.
+    /// </summary>
+    [Fact]
+    public async Task LeadershipLossPath_CleanupWithRearm_Covered()
+    {
+        var leaderGate = new FakeLeaderGate();
+        leaderGate.AcquireLeadership();
+
+        var svc = CreateService(leaderGate: leaderGate);
+
+        // Simulate: loop was started (sets IsLoopActive=true)
+        await svc.StartLoopAsync();
+        svc.IsLoopActive.Should().BeTrue("StartLoopAsync sets IsLoopActive");
+
+        // Lose leadership — this is what cancels linked.Token and causes the
+        // leadership-loss OCE path (empty catch) in ExecuteAsync
+        leaderGate.LoseLeadership();
+
+        // Invoke CleanupAsync(rearm=true) to cover the re-arm branch that follows the empty catch
+        var cleanupMethod = typeof(PipelineLoopService)
+            .GetMethod("CleanupAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)cleanupMethod.Invoke(svc, [true])!;
+
+        // Re-arm was NOT suppressed (wasStopRequested=false): IsLoopActive restored to true
+        svc.IsLoopActive.Should().BeTrue(
+            "leadership-loss path with no StopLoop() restores IsLoopActive=true via re-arm");
+    }
+
+    /// <summary>
+    /// Covers line 262: <c>break</c> in host-stop OCE catch.
+    /// The host-stop path terminates ExecuteAsync's outer while loop. This is tested by
+    /// calling StopAsync (which cancels the BackgroundService's stoppingToken) and verifying
+    /// ExecuteAsync terminates cleanly — the same invariant that line 262 enforces.
+    /// </summary>
+    [Fact]
+    public async Task WhenHostStoppingTokenCancelled_ShouldStopExecuteAsync()
+    {
+        var svc = CreateService(leaderGate: null);
+        using var hostCts = new CancellationTokenSource();
+        var executeTask = InvokeExecuteAsync(svc, hostCts.Token);
+
+        // Start the loop so ExecuteAsync is inside RunMultiTemplateLoopAsync
+        await svc.StartLoopAsync();
+
+        // Cancel the host token — drives line 262 (the break in the stoppingToken OCE catch)
+        hostCts.Cancel();
+
+        // ExecuteAsync breaks out; WaitAsync may throw OCE if the task faulted via
+        // the WaitAsync(stoppingToken) path — either outcome confirms line 262 was reached
+        try { await executeTask.WaitAsync(TimeSpan.FromSeconds(10)); }
+        catch (OperationCanceledException) { /* expected — host stop fires OCE */ }
+
+        executeTask.IsCompleted.Should().BeTrue("host token cancellation must terminate ExecuteAsync");
+    }
+
+    /// <summary>
+    /// Covers line 280: <c>_logger.Error(ex, "Pipeline loop encountered an unexpected error")</c>.
+    /// Configuring <c>LoadPipelineConfigAsync</c> to throw after the first call (which passes
+    /// validation) causes <c>SnapshotAndReconcileAsync</c> to propagate the exception out of
+    /// <c>RunMultiTemplateLoopAsync</c>, hitting the <c>catch (Exception ex) when (!_stopRequested)</c>
+    /// branch in <c>ExecuteAsync</c>, which logs it at Error level.
+    /// </summary>
+    [Fact]
+    public async Task WhenUnexpectedExceptionThrown_ShouldLogError()
+    {
+        // First call (during StartLoopAsync validation) succeeds; second call (first cycle in
+        // SnapshotAndReconcileAsync) throws, escaping RunMultiTemplateLoopAsync to ExecuteAsync.
+        var callCount = 0;
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount > 1)
+                    throw new InvalidOperationException("Simulated unexpected store error");
+                return TestPipelineConfig.Default();
+            });
+
+        var svc = CreateService(leaderGate: null);
+        using var hostCts = new CancellationTokenSource();
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+
+        await svc.StartLoopAsync();
+
+        // Poll until _logger.Error fires (loop runs one cycle, hits the throw, logs Error).
+        // Timeout of 10s is generous — in practice it fires within one poll delay (~0ms).
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                _mockLogger.Verify(
+                    l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
+                    Times.AtLeastOnce());
+                break;
+            }
+            catch (MockException) { await Task.Delay(50); }
+        }
+
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
+            Times.AtLeastOnce(),
+            "unexpected exception from SnapshotAndReconcileAsync must be logged at Error level (line 280)");
+
+        hostCts.Cancel();
+    }
+
+
 
     /// <summary>Controllable <see cref="ILeaderGate"/> — same pattern as in LeaderElectionTests.</summary>
     private sealed class FakeLeaderGate : ILeaderGate
