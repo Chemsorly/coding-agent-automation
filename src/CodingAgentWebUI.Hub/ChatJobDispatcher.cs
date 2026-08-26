@@ -63,15 +63,19 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private sealed class WatcherEntry
     {
         public Task WatcherTask = Task.CompletedTask; // assigned after construction; see RegisterWatcher
+        public readonly string AgentId;  // dict key; == jobName in production, may differ in tests
+        public readonly string JobName;
         public readonly string NormalizedSelector;
         public readonly string? ClaimedPvc;
         public readonly DateTimeOffset StartedAt;
         public readonly CancellationTokenSource WatcherCts; // disposed in CleanupSession
         public int Cleaned; // 0 = not yet cleaned; 1 = cleanup done. Used with Interlocked.
 
-        public WatcherEntry(string normalizedSelector, string? claimedPvc, DateTimeOffset startedAt,
-            CancellationTokenSource watcherCts)
+        public WatcherEntry(string agentId, string jobName, string normalizedSelector, string? claimedPvc,
+            DateTimeOffset startedAt, CancellationTokenSource watcherCts)
         {
+            AgentId = agentId;
+            JobName = jobName;
             NormalizedSelector = normalizedSelector;
             ClaimedPvc = claimedPvc;
             StartedAt = startedAt;
@@ -289,7 +293,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                             connected.AgentId, jobName);
                     }
 
-                    RegisterWatcher(jobName, claimedPvc, normalized);
+                    RegisterWatcher(connected.AgentId.Value, jobName, claimedPvc, normalized);
 
                     var tag = new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue);
                     ChatTelemetry.DispatchLatency.Record(elapsed, tag);
@@ -338,19 +342,22 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     // ─── Watcher registration ─────────────────────────────────────────────────
 
-    private void RegisterWatcher(string jobName, string? claimedPvc, string selector)
+    private void RegisterWatcher(string agentId, string jobName, string? claimedPvc, string selector)
     {
         // Create a linked CTS so this watcher stops when _shutdownCts is cancelled.
         // Stored in the entry so CleanupSession can dispose it — preventing the resource leak
         // that would occur if only the token (not the CTS) were captured.
         var watcherCts = CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token);
 
-        var entry = new WatcherEntry(selector, claimedPvc, DateTimeOffset.UtcNow, watcherCts);
+        var entry = new WatcherEntry(agentId, jobName, selector, claimedPvc, DateTimeOffset.UtcNow, watcherCts);
         entry.WatcherTask = Task.Run(
             () => WatchJobUntilTerminalAsync(jobName, entry, watcherCts.Token),
             CancellationToken.None);
 
-        _activeWatchers[jobName] = entry;
+        // Key by agentId (not jobName) so TerminateChatSessionAsync can look up by the value
+        // returned from DispatchChatPodAsync. In production agentId == jobName (AGENT_ID is set
+        // to metadata.name via field ref), but tests may use a custom agentId.
+        _activeWatchers[agentId] = entry;
 
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selector.Replace(',', '_'));
         ChatTelemetry.SessionsActive.Add(1, selectorTag);
@@ -373,8 +380,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
             if (!readError && (job is null || IsTerminal(job)))
             {
-                LogJobTermination(job, jobName, entry.ClaimedPvc);
-                CleanupSession(jobName, entry, selectorEncoded, "completed");
+                LogJobTermination(job, entry.JobName, entry.ClaimedPvc);
+                CleanupSession(entry.AgentId, entry, selectorEncoded, "completed");
                 return;
             }
 
@@ -384,14 +391,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             }
             catch (OperationCanceledException)
             {
-                // Shutdown cancellation — clean up metrics here so StopAsync's post-snapshot
-                // cleanup loop is not the only path (handles entries registered after ToArray()).
-                CleanupSession(jobName, entry, selectorEncoded, "shutdown");
+                CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
                 return;
             }
         }
         // ct was already cancelled when the while-condition was evaluated
-        CleanupSession(jobName, entry, selectorEncoded, "shutdown");
+        CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
     }
 
     private async Task<(V1Job? job, bool readError)> TryReadJobAsync(string jobName)
@@ -454,13 +459,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     /// that only one path (watcher or TerminateChatSessionAsync) runs the cleanup, preventing
     /// double-decrement of metrics when both paths race to see a terminal job.
     /// </summary>
-    private void CleanupSession(string jobName, WatcherEntry entry, string selectorEncoded, string outcome)
+    private void CleanupSession(string agentId, WatcherEntry entry, string selectorEncoded, string outcome)
     {
         // Atomic gate: only the first caller proceeds; the second returns immediately
         if (Interlocked.CompareExchange(ref entry.Cleaned, 1, 0) != 0)
             return;
 
-        _activeWatchers.TryRemove(jobName, out _);
+        _activeWatchers.TryRemove(agentId, out _);
 
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
         ChatTelemetry.SessionsActive.Add(-1, selectorTag);
@@ -508,10 +513,10 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
 
         // Clean up any sessions whose watchers didn't finish in time
-        foreach (var (jobName, entry) in entries)
+        foreach (var (_, entry) in entries)
         {
             var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
-            CleanupSession(jobName, entry, selectorEncoded, "shutdown");
+            CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
         }
     }
 
@@ -535,12 +540,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Chat.Terminate");
         activity?.SetTag("agent_id", agentId.Value);
 
-        // agentId == jobName invariant: look up watcher directly by agentId as jobName
+        // agentId is the key into _activeWatchers (set at dispatch time from connected.AgentId.Value).
+        // In production agentId == jobName; in tests they may differ — always use entry.JobName for K8s ops.
         if (!_activeWatchers.TryGetValue(agentId.Value, out var entry))
         {
             // No registered watcher — pod may be in the connect-timeout window (dispatched but
             // not yet connected), or was dispatched on another replica. Attempt a best-effort
-            // direct delete treating agentId as jobName (correct per invariant).
+            // direct delete treating agentId as jobName (correct per production invariant).
             _logger.Information(
                 "ChatJobDispatcher: TerminateChatSessionAsync — no watcher for {AgentId}, attempting direct job delete",
                 agentId);
@@ -549,7 +555,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             return;
         }
 
-        activity?.SetTag("job_name", agentId.Value);
+        activity?.SetTag("job_name", entry.JobName);
 
         // 1. Send CancelChat — best-effort
         await TrySendCancelChatAsync(agentId.Value, entry);
@@ -571,10 +577,11 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
     }
 
-    private async Task TrySendCancelChatAsync(string jobName, WatcherEntry entry)
+    private async Task TrySendCancelChatAsync(string agentId, WatcherEntry entry)
     {
-        // For chat pods, jobName == agentId — look up the registry entry by the job name
-        var agentEntry = _registry.GetByAgentId(jobName);
+        // For chat pods, jobName == agentId in production (AGENT_ID field ref to metadata.name).
+        // In tests agentId may differ — always look up by agentId from the registry.
+        var agentEntry = _registry.GetByAgentId(agentId);
         if (agentEntry is null)
             return;
 
@@ -594,34 +601,34 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
             _logger.Information(
                 "ChatJobDispatcher: CancelChat sent to agent {AgentId} for job {JobName}",
-                jobName, jobName);
+                agentId, entry.JobName);
         }
         catch (Exception ex)
         {
             _logger.Warning(
                 "ChatJobDispatcher: CancelChat to agent {AgentId} failed (will await watcher): {ErrorMessage}",
-                jobName, ex.Message);
+                agentId, ex.Message);
         }
     }
 
-    private async Task ForceDeleteAndCleanupAsync(string jobName, WatcherEntry entry)
+    private async Task ForceDeleteAndCleanupAsync(string agentId, WatcherEntry entry)
     {
         _logger.Warning(
-            "ChatJobDispatcher: grace period expired for {JobName} — force deleting job", jobName);
+            "ChatJobDispatcher: grace period expired for {JobName} — force deleting job", entry.JobName);
 
         try
         {
-            await _jobClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
+            await _jobClient.DeleteJobAsync(entry.JobName, _options.Namespace, CancellationToken.None);
         }
         catch (Exception ex)
         {
             _logger.Warning(ex,
                 "ChatJobDispatcher: force delete failed for {JobName}: {ErrorMessage}",
-                jobName, ex.Message);
+                entry.JobName, ex.Message);
         }
 
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
-        CleanupSession(jobName, entry, selectorEncoded, "force_deleted");
+        CleanupSession(agentId, entry, selectorEncoded, "force_deleted");
         ChatTelemetry.PodForceTerminations.Add(1,
             new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded));
     }
