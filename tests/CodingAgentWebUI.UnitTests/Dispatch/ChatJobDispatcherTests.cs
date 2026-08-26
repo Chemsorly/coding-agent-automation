@@ -642,6 +642,7 @@ public class ChatJobDispatcherTests
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
                 var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                Assert.NotNull(dispatchId); // label must be present on dispatched job
                 RegisterChatAgent(registry, "agent-nonleader", dispatchId);
             })
             .Returns(Task.CompletedTask);
@@ -653,6 +654,11 @@ public class ChatJobDispatcherTests
         var act = async () => await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
         await act.Should().NotThrowAsync<InvalidOperationException>(
             "dispatch must not require leadership — all replicas can dispatch");
+
+        jobClientMock.Verify(
+            c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "job must be dispatched regardless of replica leadership");
     }
 
     // ─── 19. StopAsync — completes cleanly ────────────────────────────────────
