@@ -6,12 +6,7 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline.Interfaces;
-using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Moq;
 
 namespace CodingAgentWebUI.Api.IntegrationTests;
 
@@ -63,34 +58,16 @@ public sealed class SchedulerEndpointTests
     }
 
     [Fact]
-    public async Task RetentionSweep_WhenNotLeader_Returns503WithReason()
+    public async Task RetentionSweep_IsStateless_AlwaysReturns200()
     {
-        // Arrange: swap the leader service to return IsLeader=false
-        using var nonLeaderFactory = _factory.WithWebHostBuilder(builder =>
-        {
-            builder.ConfigureServices(services =>
-            {
-                services.RemoveAll<ILeaderElectionService>();
-                var mock = new Mock<ILeaderElectionService>();
-                mock.SetupGet(l => l.IsLeader).Returns(false);
-                mock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
-                services.AddSingleton(mock.Object);
-            });
-        });
-        using var nonLeaderClient = nonLeaderFactory.CreateClient();
-        nonLeaderClient.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", ApiWebApplicationFactory.ApiKey);
-
-        // Act
-        var response = await nonLeaderClient.PostAsync(
+        // Spec 049: The API no longer has leader election. The endpoint always executes
+        // when called — the Scheduler's RetentionSweepSchedulerService gates calls on its
+        // own leader election so only one Scheduler replica triggers the sweep per interval.
+        var response = await _client.PostAsync(
             "/api/scheduler/maintenance/retention-sweep", content: null);
 
-        // Assert: non-leader → 503 with reason
-        response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable,
-            "non-leader replica must return 503");
-
-        var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("not_leader", "response body must include reason=not_leader");
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            "API is stateless — retention sweep always executes when called, no 503 leader gate");
     }
 
     [Fact]
