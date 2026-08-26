@@ -228,6 +228,7 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
         // not detect a bug where ReserveRunIdAsync reads the wrong property or provider config.
         // Consider an integration test with real provider config resolution.
         DispatchRunCreationService creator = _service;
+        var before = DateTimeOffset.UtcNow;
 
         var reservation = await creator.ReserveRunIdAsync(
             new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "101", AgentProviderId = "agent-1", AgentId = "agent-x", InitiatedBy = "test" },
@@ -237,10 +238,9 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
         reservation!.RunId.Should().NotBeNullOrEmpty();
         reservation.RepositoryName.Should().Be("owner/repo");
         reservation.ModelName.Should().Be("claude-sonnet");
-        // TODO: BeCloseTo with 5-second tolerance doesn't verify the timestamp came from reservation
-        // logic specifically. Consider capturing time before/after the call and asserting StartedAt
-        // falls within that window, or use a clock abstraction.
-        reservation.StartedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        reservation.StartedAt.Should().BeOnOrAfter(before,
+            because: "StartedAt must be set to a time at or after ReserveRunIdAsync was called");
+        reservation.StartedAt.Should().BeOnOrBefore(before.AddSeconds(10));
     }
 
     [Fact]

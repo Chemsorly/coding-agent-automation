@@ -33,7 +33,7 @@ public sealed partial class PipelineRun
 
     /// <summary>
     /// Current pipeline step. Uses a volatile backing field to ensure cross-thread visibility
-    /// since this is read by HeartbeatMonitorService and written by SignalR hub methods.
+    /// since this is read and written by SignalR hub methods.
     /// </summary>
     public PipelineStep CurrentStep
     {
@@ -77,7 +77,7 @@ public sealed partial class PipelineRun
 
     /// <summary>
     /// Last time the pipeline step changed (set via ReportStepTransition).
-    /// Used by HeartbeatMonitorService to detect stuck-in-Busy agents.
+    /// Used to detect stuck-in-Busy agents.
     /// Uses Interlocked on ticks for thread-safe reads/writes (DateTimeOffset is not atomic).
     /// </summary>
     public DateTimeOffset LastStepChangeAt
@@ -291,8 +291,8 @@ public sealed partial class PipelineRun
     /// <summary>
     /// Which agent is executing this run, or null for test runs.
     /// Uses <see cref="Volatile"/> read/write to ensure cross-thread visibility since this is
-    /// written by dispatch paths (SignalRWorkDistributor, PendingWorkItemDrainService,
-    /// RunLifecycleManager.AgentAcceptedRunAsync) and read by HeartbeatMonitorService.
+    /// written by the dispatch path (<c>RunLifecycleManager.AgentAcceptedRunAsync</c>) and read
+    /// by the hub's run-status queries on other threads.
     /// </summary>
     public string? AgentId
     {

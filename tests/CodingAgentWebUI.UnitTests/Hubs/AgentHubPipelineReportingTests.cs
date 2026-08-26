@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -30,15 +30,13 @@ public sealed class AgentHubPipelineReportingTests
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
-            null!,  // ModelFetchService
-            Mock.Of<IConsolidationService>(),
-            new ConsolidationBadgeService(),
+            Mock.Of<IHubConsolidationOperations>(),
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -357,15 +355,13 @@ public sealed class AgentHubPipelineReportingTests
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
-            null!,
-            Mock.Of<IConsolidationService>(),
-            new ConsolidationBadgeService(),
+            Mock.Of<IHubConsolidationOperations>(),
             Mock.Of<IHubIssueOperations>(),
             mockLifecycle.Object,
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
@@ -391,15 +387,13 @@ public sealed class AgentHubPipelineReportingTests
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
-            null!,
-            Mock.Of<IConsolidationService>(),
-            new ConsolidationBadgeService(),
+            Mock.Of<IHubConsolidationOperations>(),
             Mock.Of<IHubIssueOperations>(),
             mockLifecycle.Object,
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
@@ -422,15 +416,13 @@ public sealed class AgentHubPipelineReportingTests
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
-            null!,
-            Mock.Of<IConsolidationService>(),
-            new ConsolidationBadgeService(),
+            Mock.Of<IHubConsolidationOperations>(),
             Mock.Of<IHubIssueOperations>(),
             mockLifecycle.Object,
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
@@ -453,15 +445,13 @@ public sealed class AgentHubPipelineReportingTests
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
-            null!,
-            Mock.Of<IConsolidationService>(),
-            new ConsolidationBadgeService(),
+            Mock.Of<IHubConsolidationOperations>(),
             mockIssueOps.Object,
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
@@ -485,15 +475,13 @@ public sealed class AgentHubPipelineReportingTests
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
-            null!,
-            Mock.Of<IConsolidationService>(),
-            new ConsolidationBadgeService(),
+            Mock.Of<IHubConsolidationOperations>(),
             mockIssueOps.Object,
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
@@ -523,15 +511,13 @@ public sealed class AgentHubPipelineReportingTests
             _mockFacade.Object,
             Mock.Of<IChatNotifier>(),
             _mockChangeNotifier.Object,
-            null!,
-            Mock.Of<IConsolidationService>(),
-            new ConsolidationBadgeService(),
+            Mock.Of<IHubConsolidationOperations>(),
             mockIssueOps.Object,
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
-            Mock.Of<IAgentOrphanRecoveryService>()));
+            Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns("conn-1");

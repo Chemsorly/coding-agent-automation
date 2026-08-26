@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -21,12 +22,32 @@ internal static class ConsolidationRehydrationExtensions
     public static async Task RunConsolidationStartupAsync(this WebApplication app, PipelineConfiguration pipelineConfig)
     {
         ArgumentNullException.ThrowIfNull(app);
-        // TODO: Add ArgumentNullException.ThrowIfNull(pipelineConfig) — pipelineConfig is dereferenced
-        // on AgentTimeout and WorkspaceBaseDirectory but has no null guard (review-findings)
+        ArgumentNullException.ThrowIfNull(pipelineConfig);
 
-        // Clean up orphaned consolidation runs from previous sessions
+        // Clean up orphaned consolidation runs from previous sessions.
+        // A run is only truly orphaned if no agent is currently working on it.
+        // Since agents connect to the API hub (not the orchestrator), a consolidation
+        // run with Status=Running may still have an active agent after an orchestrator
+        // restart. Query the API directly — IAgentRegistryService is backed by a polling
+        // snapshot that has NOT yet fired at startup time (AgentRegistrySyncService is a
+        // BackgroundService that starts after app.Run), so using GetAllAgents() would always
+        // return empty and the skip guard would never fire.
         var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
-        await consolidationService.CleanupOrphanedRunsAsync(CancellationToken.None);
+        var apiAgentClient = app.Services.GetRequiredService<IPipelineApiAgentClient>();
+        IReadOnlyList<AgentEntry> liveAgents;
+        try
+        {
+            liveAgents = await apiAgentClient.GetAgentsAsync(CancellationToken.None);
+        }
+        catch
+        {
+            // If the API is unreachable (e.g. cold start), treat all running runs as orphaned.
+            liveAgents = [];
+        }
+        var activeAgentJobIds = new HashSet<string>(
+            liveAgents.Where(a => a.ActiveJobId != null).Select(a => a.ActiveJobId!),
+            StringComparer.OrdinalIgnoreCase);
+        await consolidationService.CleanupOrphanedRunsAsync(activeAgentJobIds, CancellationToken.None);
 
         // Load live config from the store (the startup singleton may be stale in DB mode)
         var configStore = app.Services.GetRequiredService<IPipelineConfigStore>();
@@ -54,7 +75,7 @@ internal static class ConsolidationRehydrationExtensions
                     RepoProviderConfigId = "",
                     InitiatedBy = ConsolidationConstants.InitiatedBy,
                     TaskType = WorkItemTaskType.Consolidation,
-                    AgentSelector = string.Join(",", selectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
+                    AgentSelector = AgentSelectorKey.From(selectorLabels),
                     TimeoutSeconds = (int)liveConfig.AgentTimeout.TotalSeconds,
                     ConsolidationRunType = run.Type,
                     ConsolidationTemplateId = run.TemplateId,

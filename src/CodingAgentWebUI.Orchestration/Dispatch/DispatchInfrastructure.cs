@@ -7,16 +7,15 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Aggregate that bundles shared dispatch-path dependencies used by both
-/// <see cref="AgentJobDispatcher"/> and <see cref="DispatchOrchestrationService"/>.
+/// Aggregate that bundles shared dispatch-path dependencies used by
+/// <see cref="DispatchOrchestrationService"/>.
 /// Reduces constructor parameter count by grouping services that always travel together:
 /// provider config building, profile resolution, token vending, and label operations.
 /// <para>
 /// Also hosts <see cref="PrepareDispatchCoreAsync"/> — the single consolidated method
 /// for the shared dispatch preparation sequence (QG/reviewer resolution, issue context,
-/// provider config preparation, pipeline config resolution, and staleness detection).
-/// Both <see cref="AgentJobDispatcher"/> and <see cref="DispatchOrchestrationService"/>
-/// delegate to this method, eliminating drift between the Legacy and DB paths.
+/// provider config preparation, and pipeline config resolution).
+/// <see cref="DispatchOrchestrationService"/> delegates to this method.
 /// </para>
 /// <para>
 /// Registered as a singleton in DI. Consumers access individual services via properties.
@@ -29,19 +28,11 @@ public sealed class DispatchInfrastructure
     public ILabelService LabelService { get; }
     public DispatchResolutionService Resolution { get; }
 
-    /// <summary>
-    /// Optional staleness detector for evaluating analysis freshness.
-    /// Injected via constructor in DB mode; null in legacy (no-DB) mode where
-    /// <see cref="Pipeline.Interfaces.IWorkItemQueryService"/> is unavailable.
-    /// </summary>
-    public AnalysisStalenessDetector? StalenessDetector { get; }
-
     public DispatchInfrastructure(
         ITokenVendingService tokenVending,
         IProviderFactory providerFactory,
         ILabelService labelService,
-        DispatchResolutionService resolution,
-        AnalysisStalenessDetector? stalenessDetector = null)
+        DispatchResolutionService resolution)
     {
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -52,10 +43,9 @@ public sealed class DispatchInfrastructure
         ProviderFactory = providerFactory;
         LabelService = labelService;
         Resolution = resolution;
-        StalenessDetector = stalenessDetector;
     }
 
-    // ── Config Resolution (extracted from AgentJobDispatcher) ─────────────────────
+    // ── Config Resolution ──────────────────────────────────────────────────────────
 
     /// <summary>
     /// Prepares provider configs and resolves the pipeline configuration for a dispatch.
@@ -110,7 +100,7 @@ public sealed class DispatchInfrastructure
     /// </summary>
     /// <remarks>
     /// The superset signature supports optional <paramref name="additionalRepoProviderIds"/> for
-    /// cross-repo decomposition (used by <see cref="AgentJobDispatcher"/>). Callers that don't
+    /// cross-repo decomposition. Callers that don't
     /// need cross-repo support simply omit the parameter.
     /// </remarks>
     internal async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
@@ -215,14 +205,9 @@ public sealed class DispatchInfrastructure
     // ── Issue Context Building (inlined from IssueContextBuilder) ─────────────────
 
     /// <summary>
-    /// Pre-fetches issue details, comments, and detects existing analysis with basic staleness signals.
-    /// Returns <c>null</c> if the issue provider config is not found.
+    /// Pre-fetches issue details, comments, and detects existing analysis with basic staleness signals
+    /// (gate_rejection, gate_wont_do). Returns <c>null</c> if the issue provider config is not found.
     /// </summary>
-    /// <remarks>
-    /// This method does NOT invoke <see cref="AnalysisStalenessDetector"/> — that remains
-    /// in <see cref="PrepareDispatchCoreAsync"/> because it depends on the pipeline
-    /// configuration threshold which is resolved after issue context is built.
-    /// </remarks>
     internal async Task<IssueContextResult?> BuildIssueContextAsync(
         IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderId,
@@ -260,10 +245,7 @@ public sealed class DispatchInfrastructure
         };
 
         // Detect existing analysis and rework state from comments.
-        // NOTE: Only gate_rejection and gate_wont_do are detected here.
-        // The three AnalysisStalenessDetector signals (body_changed, agent_error,
-        // commit_threshold) are evaluated separately in PrepareDispatchCoreAsync because
-        // they depend on pipeline configuration resolved after this step.
+        // Detects gate_rejection and gate_wont_do signals.
         string? existingAnalysis = null;
         bool forceRefreshAnalysis = false;
         string? stalenessSignal = null;
@@ -311,8 +293,7 @@ public sealed class DispatchInfrastructure
     // ── Consolidated Dispatch Preparation ─────────────────────────────────────────
 
     /// <summary>
-    /// Consolidated dispatch preparation logic shared by both <see cref="AgentJobDispatcher"/>
-    /// (Legacy/SignalR path) and <see cref="DispatchOrchestrationService"/> (DB path).
+    /// Consolidated dispatch preparation logic used by <see cref="DispatchOrchestrationService"/>.
     /// <para>
     /// Performs the full shared sequence: resolve quality gates → resolve reviewers →
     /// build issue context → prepare provider configs → resolve pipeline configuration →
@@ -365,50 +346,10 @@ public sealed class DispatchInfrastructure
             Resolution.ConfigStore.LoadAllTemplatesAsync,
             project, repoProviderId, brainProviderId, providerConfigs, ct);
 
-        // ── Step 4: Evaluate staleness signals (body_changed, agent_error, commit_threshold) ──
+        // ── Step 4: Carry forward staleness signals from issue context ──
         var forceRefresh = issueContext.ForceRefreshAnalysis;
         var stalenessSignal = issueContext.StalenessSignal;
         var refreshCount = issueContext.RefreshCount;
-
-        if (!forceRefresh && issueContext.ExistingAnalysis is not null && StalenessDetector is not null)
-        {
-            var analysisComment = issueContext.IssueComments
-                .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
-                .OrderByDescending(c => c.CreatedAt)
-                .FirstOrDefault();
-
-            if (analysisComment is not null)
-            {
-                // For signal 3 (commit_threshold): create a short-lived repo provider for commit counting
-                Func<DateTimeOffset, CancellationToken, Task<int>>? getCommitCount = null;
-                var repoConfig = await Resolution.ConfigStore
-                    .GetProviderConfigByIdAsync(repoProviderId.Value, ProviderKind.Repository, ct);
-                if (repoConfig is not null)
-                {
-                    getCommitCount = async (since, token) =>
-                    {
-                        await using var repoProvider = ProviderFactory.CreateRepositoryProvider(repoConfig);
-                        return await repoProvider.GetCommitCountSinceAsync(since, token);
-                    };
-                }
-
-                var result = await StalenessDetector.EvaluateAsync(
-                    new StalenessEvaluationRequest(
-                        analysisComment, issueContext.IssueComments,
-                        issueContext.IssueDetail.Description,
-                        issueIdentifier, issueProviderId,
-                        config.AnalysisCommitThreshold,
-                        getCommitCount),
-                    ct);
-
-                if (result.ForceRefresh)
-                {
-                    forceRefresh = true;
-                    stalenessSignal = result.Signal;
-                }
-                refreshCount = result.RefreshCount;
-            }
-        }
 
         return (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
             forceRefresh, stalenessSignal, refreshCount);

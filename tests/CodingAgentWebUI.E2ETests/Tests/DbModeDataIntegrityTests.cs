@@ -21,12 +21,13 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 // These are the exact conditions that produced bugs #1154 and #1270.
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
-public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<DbModeE2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class DbModeDataIntegrityTests : HeadlessE2ETestBase
 {
     private static readonly string[] s_EnhancementAgentNextLabels = new[] { "enhancement", "agent:next" };
     private static readonly string[] s_IntegrityE2eMatchLabels = new[] { "integrity-e2e" };
 
-    public DbModeDataIntegrityTests(DbModeE2EFixture fixture) : base(fixture) { }
+    public DbModeDataIntegrityTests(E2EFixture fixture) : base(fixture) { }
 
     [Fact]
     public async Task FullRoundtrip_AllFieldsPopulatedCorrectly()
@@ -60,7 +61,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
 
         const string agentId = "integrity-agent-1";
         await using var agent = new FakeAgentClient(agentId, "integrity-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch and complete
         // TODO: [WARNING] CancellationToken not propagated to DispatchIssueAsync. If the server
@@ -194,7 +195,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
 
         const string agentId = "integrity-failed-agent-1";
         await using var agent = new FakeAgentClient(agentId, "integrity-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch and complete with Failed step
         var result = await DispatchIssueAsync("43");

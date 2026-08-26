@@ -1,17 +1,15 @@
 # HTTP API Reference
 
-The orchestrator exposes HTTP API endpoints for programmatic access to work item management, configuration, run history, and health probes.
+The Pipeline API (`CodingAgentWebUI.Api`, port **8090**) exposes HTTP API endpoints for programmatic access to work item management, configuration, run history, and health probes.
 
-## Availability by Deployment Mode
+## Availability
 
-| Endpoint Group | DB Mode | File-Based Mode |
-|---------------|---------|-----------------|
-| Work Items (`/api/work-items/`) | ✅ Available | ❌ Not registered |
-| Config Import/Export (`/api/config/`) | ✅ Available | ❌ Not registered |
-| Run Export (`/api/export/`) | ✅ Available | ✅ Available |
-| Health Probes (`/healthz`, `/readyz`) | ✅ Available | ✅ Available |
-
-Work item and config endpoints are **only registered when a database connection string is configured** (DB+SignalR or DB+Kubernetes modes). The run export and health probe endpoints are always available regardless of deployment mode.
+| Endpoint Group | Available |
+|---------------|-----------|
+| Work Items (`/api/work-items/`) | ✅ |
+| Config Import/Export (`/api/config/`) | ✅ |
+| Run Export (`/api/export/`) | ✅ |
+| Health Probes (`/healthz`, `/readyz`) | ✅ |
 
 > **Note:** The SignalR hub (`/hubs/agent`) is a WebSocket transport endpoint used for real-time agent communication. It is not a REST API and is not covered in this reference.
 
@@ -49,8 +47,6 @@ The `AGENT_API_KEY` environment variable on the orchestrator sets the master key
 
 ## Work Item Endpoints
 
-> **DB-mode only** — These endpoints are not available in file-based mode.
-
 ### GET /api/work-items/{id}/assignment
 
 Retrieve the job assignment details for a work item. Agents call this after being dispatched to fetch the full job payload.
@@ -72,7 +68,7 @@ Retrieve the job assignment details for a work item. Agents call this after bein
 
 ```bash
 curl -H "Authorization: Bearer $AGENT_API_KEY" \
-  http://localhost:8080/api/work-items/550e8400-e29b-41d4-a716-446655440000/assignment
+  http://localhost:8090/api/work-items/550e8400-e29b-41d4-a716-446655440000/assignment
 ```
 
 **Example response (200):**
@@ -148,6 +144,7 @@ Report a status transition for a work item. Agents call this to indicate progres
 | `AgentError` | Agent reported an error during execution |
 | `TokenRefreshFailure` | Token refresh failed, lost API access |
 | `ExitCodeFailure` | Agent process exited with non-zero code |
+| `QualityGateExhausted` | All quality gate retries exhausted — run finalized as a draft PR |
 
 If `status` is `Failed` and no `failureReason` is provided, defaults to `AgentError`.
 
@@ -166,15 +163,13 @@ curl -X POST \
   -H "Authorization: Bearer $AGENT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"status": "Succeeded", "agentId": "agent-dotnet-1", "result": "{\"prUrl\": \"https://github.com/org/repo/pull/123\"}"}' \
-  http://localhost:8080/api/work-items/550e8400-e29b-41d4-a716-446655440000/status
+  http://localhost:8090/api/work-items/550e8400-e29b-41d4-a716-446655440000/status
 ```
 
 ---
 
 ## Config Import/Export Endpoints
 
-> **DB-mode only** — These endpoints are not available in file-based mode.
->
 > ⚠️ **Warning:** The import endpoint is destructive — it clears ALL existing configuration before inserting the uploaded bundle. This operation is transactional (atomic commit or full rollback).
 
 ### GET /api/config/export
@@ -183,7 +178,7 @@ Download the full pipeline configuration as a JSON file.
 
 | Property | Value |
 |----------|-------|
-| **Auth** | `AgentApiKey` (required) |
+| **Auth** | `OperatorApiKey` (required — agent-derived keys are rejected with 403) |
 | **Response Content-Type** | `application/json` |
 | **Response filename** | `pipeline-config-export.json` |
 
@@ -192,7 +187,7 @@ Download the full pipeline configuration as a JSON file.
 ```bash
 curl -H "Authorization: Bearer $AGENT_API_KEY" \
   -o pipeline-config-export.json \
-  http://localhost:8080/api/config/export
+  http://localhost:8090/api/config/export
 ```
 
 **Example response (200):**
@@ -262,7 +257,7 @@ Upload a configuration bundle to replace all existing pipeline configuration.
 
 | Property | Value |
 |----------|-------|
-| **Auth** | `AgentApiKey` (required) |
+| **Auth** | `OperatorApiKey` (required — agent-derived keys are rejected with 403) |
 | **Content-Type** | `multipart/form-data` |
 | **Form field** | `file` — The JSON bundle file |
 
@@ -274,7 +269,7 @@ Upload a configuration bundle to replace all existing pipeline configuration.
 curl -X POST \
   -H "Authorization: Bearer $AGENT_API_KEY" \
   -F "file=@pipeline-config-export.json" \
-  http://localhost:8080/api/config/import
+  http://localhost:8090/api/config/import
 ```
 
 **Example response (200 — success):**
@@ -307,15 +302,13 @@ curl -X POST \
 
 ## Run Export Endpoint
 
-> **Always available** — This endpoint is registered in all deployment modes (DB and file-based). No authentication required.
-
 ### GET /api/export/runs.json
 
 Download pipeline run history as a JSON file.
 
 | Property | Value |
 |----------|-------|
-| **Auth** | None (anonymous) |
+| **Auth** | `OperatorApiKey` (required — agent-derived keys are rejected with 403) |
 | **Response Content-Type** | `application/json` |
 | **Response filename** | `pipeline-runs-{date}.json` (e.g., `pipeline-runs-2026-07-15.json`) |
 
@@ -333,10 +326,10 @@ Download pipeline run history as a JSON file.
 
 ```bash
 # Download all runs
-curl -o runs.json http://localhost:8080/api/export/runs.json
+curl -o runs.json http://localhost:8090/api/export/runs.json
 
 # Download only runs with feedback
-curl -o feedback-runs.json "http://localhost:8080/api/export/runs.json?feedbackOnly=true"
+curl -o feedback-runs.json "http://localhost:8090/api/export/runs.json?feedbackOnly=true"
 ```
 
 **Example response (200):**
@@ -369,7 +362,7 @@ The response is a JSON array of run summary objects. Each object includes run me
 
 ## Health Probe Endpoints
 
-> **Always available** — Registered in all deployment modes. No authentication required.
+> No authentication required.
 
 ### GET /healthz
 
@@ -379,30 +372,19 @@ Kubernetes liveness probe. Returns 200 if the process is running. Never checks e
 
 ```json
 {
-  "status": "healthy",
-  "timestamp": "2026-07-15T10:30:00Z"
+  "status": "ok"
 }
 ```
 
 ### GET /readyz
 
-Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during graceful shutdown drain or database connectivity loss.
+Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during graceful shutdown drain, database connectivity loss, or Redis backplane disconnection.
 
 **Example response (200):**
 
 ```json
 {
-  "status": "ready",
-  "timestamp": "2026-07-15T10:30:00Z"
-}
-```
-
-**Example response (503 — draining):**
-
-```json
-{
-  "status": "draining",
-  "timestamp": "2026-07-15T10:30:00Z"
+  "status": "ready"
 }
 ```
 
@@ -411,8 +393,16 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 ```json
 {
   "status": "unhealthy",
-  "reason": "database_unreachable",
-  "timestamp": "2026-07-15T10:30:00Z"
+  "reason": "database_unreachable"
+}
+```
+
+**Example response (503 — Redis backplane disconnected):**
+
+```json
+{
+  "status": "unhealthy",
+  "reason": "redis_backplane_disconnected"
 }
 ```
 
@@ -420,12 +410,12 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 
 ## Endpoint Summary Table
 
-| Method | Path | Auth | DB-Mode Only | Description |
-|--------|------|------|:------------:|-------------|
-| GET | `/api/work-items/{id}/assignment` | AgentApiKey | ✅ | Fetch job assignment |
-| POST | `/api/work-items/{id}/status` | AgentApiKey | ✅ | Report status transition |
-| GET | `/api/config/export` | AgentApiKey | ✅ | Download config bundle |
-| POST | `/api/config/import` | AgentApiKey | ✅ | Upload config bundle (destructive) |
-| GET | `/api/export/runs.json` | Anonymous | ❌ | Download run history |
-| GET | `/healthz` | Anonymous | ❌ | Liveness probe |
-| GET | `/readyz` | Anonymous | ❌ | Readiness probe |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/work-items/{id}/assignment` | AgentApiKey | Fetch job assignment |
+| POST | `/api/work-items/{id}/status` | AgentApiKey | Report status transition |
+| GET | `/api/config/export` | OperatorApiKey | Download config bundle |
+| POST | `/api/config/import` | OperatorApiKey | Upload config bundle (destructive) |
+| GET | `/api/export/runs.json` | OperatorApiKey | Download run history |
+| GET | `/healthz` | Anonymous | Liveness probe |
+| GET | `/readyz` | Anonymous | Readiness probe |

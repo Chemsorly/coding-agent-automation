@@ -2,7 +2,7 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
@@ -24,7 +24,6 @@ public class DatabaseMaintenanceServiceTests : IDisposable
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly TestDbContextFactory _dbFactory;
     private readonly Mock<IConsolidationService> _mockConsolidationService;
-    private readonly Mock<ILeaderElectionService> _mockLeaderElection;
     private readonly Mock<IPipelineConfigStore> _mockConfigStore;
     private readonly IConfiguration _configuration;
 
@@ -41,8 +40,6 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 
         _dbFactory = new TestDbContextFactory(_dbOptions);
         _mockConsolidationService = new Mock<IConsolidationService>();
-        _mockLeaderElection = new Mock<ILeaderElectionService>();
-        _mockLeaderElection.Setup(l => l.IsLeader).Returns(true);
 
         // Default: both retention counts = -1 (disabled), so sweep methods are no-ops
         _mockConfigStore = new Mock<IPipelineConfigStore>();
@@ -300,40 +297,9 @@ public class DatabaseMaintenanceServiceTests : IDisposable
     }
 
     // ── Leader Election Gating ──────────────────────────────────────────
-
-    [Fact]
-    public async Task Service_WaitsForLeaderElection()
-    {
-        // Arrange: not the leader
-        _mockLeaderElection.Setup(l => l.IsLeader).Returns(false);
-
-        var oldRun = new ConsolidationRun
-        {
-            RunId = "old-run-1",
-            Type = ConsolidationRunType.BrainConsolidation,
-            StartedAtUtc = DateTimeOffset.UtcNow.AddDays(-100),
-            CompletedAtUtc = DateTimeOffset.UtcNow.AddDays(-95),
-            Status = ConsolidationRunStatus.Succeeded
-        };
-        _mockConsolidationService
-            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun> { oldRun });
-
-        var service = CreateService();
-
-        // Act: run one cycle manually via ExecuteAsync (will skip because not leader)
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-        try { await service.StartAsync(cts.Token); await Task.Delay(50); await service.StopAsync(CancellationToken.None); }
-        catch (OperationCanceledException) { /* expected */ }
-
-        // Assert: no cleanup was attempted
-        _mockConsolidationService.Verify(
-            s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()),
-            Times.Never);
-        _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
+    // Service_WaitsForLeaderElection removed (Spec 047): DatabaseMaintenanceService is no longer
+    // a BackgroundService. The leader-gate is now in ApiSchedulerEndpoints.RunRetentionSweep,
+    // tested by SchedulerEndpointTests.RetentionSweep_WhenNotLeader_Returns503WithReason.
 
     // ── Configuration Tests ─────────────────────────────────────────────
 
@@ -363,12 +329,8 @@ public class DatabaseMaintenanceServiceTests : IDisposable
             .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ConsolidationRun> { run });
 
-        var mockProvider = new Mock<IServiceProvider>();
-        mockProvider.Setup(p => p.GetService(typeof(ILeaderElectionService)))
-            .Returns(_mockLeaderElection.Object);
-
         var service = new DatabaseMaintenanceService(
-            _dbFactory, _mockConsolidationService.Object, mockProvider.Object, config,
+            _dbFactory, _mockConsolidationService.Object, config,
             _mockConfigStore.Object);
 
         // Act
@@ -514,102 +476,10 @@ public class DatabaseMaintenanceServiceTests : IDisposable
             .Should().NotThrowAsync();
     }
 
-    // ── RunMaintenanceCycle — Non-leader skips cycle ────────────────────
-
-    [Fact]
-    public async Task RunMaintenanceCycle_WhenNotLeader_SkipsCycle()
-    {
-        // Arrange: leader election reports not the leader.
-        // Use TestableMaintenanceService which exposes RunMaintenanceCycleAsync directly,
-        // ensuring coverage tools can instrument the non-leader early-exit path.
-        _mockLeaderElection.Setup(l => l.IsLeader).Returns(false);
-        _mockConsolidationService
-            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun>());
-
-        var service = new TestableMaintenanceService(
-            _dbFactory, _mockConsolidationService.Object,
-            BuildServiceProvider(), _configuration, _mockConfigStore.Object);
-
-        // Act: call exposed wrapper (not reflection) — coverage-tool-friendly
-        await service.TestRunMaintenanceCycleAsync(_mockLeaderElection.Object, CancellationToken.None);
-
-        // Not-the-leader → consolidation service must NOT have been called
-        _mockConsolidationService.Verify(
-            s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
-    public async Task RunMaintenanceCycle_NoLeaderElection_ExecutesCycle()
-    {
-        // Arrange: no leader election (null) → always runs
-        _mockConsolidationService
-            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun>());
-
-        var service = new TestableMaintenanceService(
-            _dbFactory, _mockConsolidationService.Object,
-            BuildServiceProvider(), _configuration, _mockConfigStore.Object);
-
-        // Act: pass null leader election — full cycle should execute
-        await service.TestRunMaintenanceCycleAsync(null, CancellationToken.None);
-
-        // No leader gate → consolidation service WAS called
-        _mockConsolidationService.Verify(
-            s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    // ── ExecuteAsync startup — config store failure path ───────────────
-
-    [Fact]
-    public async Task ExecuteAsync_ConfigStoreThrows_UsesDefaultInterval()
-    {
-        // Arrange: config store throws on the first call (the startup interval read).
-        // Subsequent calls return defaults so the maintenance cycle can complete.
-        var callCount = 0;
-        _mockConfigStore
-            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() =>
-            {
-                callCount++;
-                if (callCount == 1) throw new InvalidOperationException("Config read failure");
-                return new PipelineConfiguration();
-            });
-
-        _mockConsolidationService
-            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun>());
-
-        var service = CreateService();
-
-        // Call ExecuteAsync directly via reflection so the coverage tool instruments it.
-        // Use a short-timeout CTS so the timer loop exits quickly.
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-
-        var executeMethod = typeof(DatabaseMaintenanceService)
-            .GetMethod("ExecuteAsync",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        executeMethod.Should().NotBeNull();
-
-        try
-        {
-            await (Task)executeMethod!.Invoke(service, [cts.Token])!;
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected — timer cancelled after timeout
-        }
-        catch (System.Reflection.TargetInvocationException tie)
-            when (tie.InnerException is OperationCanceledException)
-        {
-            // Expected — reflection wraps OCE
-        }
-
-        // The config store was called (first call threw, subsequent calls returned defaults)
-        _mockConfigStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.AtLeastOnce);
-    }
+    // ── RunMaintenanceCycle tests removed (Spec 047) ────────────────────
+    // RunMaintenanceCycleAsync and ExecuteAsync were removed in Spec 047: DatabaseMaintenanceService
+    // is now a plain singleton and sweeps are triggered by the Scheduler via HTTP.
+    // Leader-gate behavior is tested in SchedulerEndpointTests (Api.IntegrationTests).
 
     // ── Sweep — OperationCanceled path ────────────────────────────────
 
@@ -655,34 +525,8 @@ public class DatabaseMaintenanceServiceTests : IDisposable
     private DatabaseMaintenanceService CreateService()
     {
         return new DatabaseMaintenanceService(
-            _dbFactory, _mockConsolidationService.Object, BuildServiceProvider(), _configuration,
+            _dbFactory, _mockConsolidationService.Object, _configuration,
             _mockConfigStore.Object);
-    }
-
-    private IServiceProvider BuildServiceProvider()
-    {
-        var mockProvider = new Mock<IServiceProvider>();
-        mockProvider.Setup(p => p.GetService(typeof(ILeaderElectionService)))
-            .Returns(_mockLeaderElection.Object);
-        return mockProvider.Object;
-    }
-
-    /// <summary>
-    /// Exposes <c>RunMaintenanceCycleAsync</c> as a public method so coverage tools
-    /// can instrument the call without reflection (which bypasses IL instrumentation).
-    /// </summary>
-    private sealed class TestableMaintenanceService : DatabaseMaintenanceService
-    {
-        public TestableMaintenanceService(
-            IDbContextFactory<PipelineDbContext> dbFactory,
-            IConsolidationService consolidationService,
-            IServiceProvider serviceProvider,
-            IConfiguration configuration,
-            IPipelineConfigStore configStore)
-            : base(dbFactory, consolidationService, serviceProvider, configuration, configStore) { }
-
-        public Task TestRunMaintenanceCycleAsync(ILeaderElectionService? leaderElection, CancellationToken ct)
-            => RunMaintenanceCycleAsync(leaderElection, ct);
     }
 
     private sealed class TestPipelineDbContext : PipelineDbContext

@@ -34,10 +34,8 @@ public class McpMergeTests
 
         var result = DispatchOrchestrationService.MergeMcpServers(profile, null);
 
-        // TODO [WARNING]: BeSameAs asserts reference equality (implementation detail). If the
-        // implementation is changed to return a copy (semantically equivalent), this test will fail.
-        // Replace with result.Should().BeEquivalentTo(profile) to test observable behavior.
-        result.Should().BeSameAs(profile);
+        result.Should().BeEquivalentTo(profile, opts => opts.WithStrictOrdering(),
+            "null project must pass profile through unchanged");
     }
 
     [Fact]
@@ -47,10 +45,8 @@ public class McpMergeTests
 
         var result = DispatchOrchestrationService.MergeMcpServers(profile, []);
 
-        // TODO [WARNING]: BeSameAs asserts reference equality (implementation detail). If the
-        // implementation is changed to return a copy (semantically equivalent), this test will fail.
-        // Replace with result.Should().BeEquivalentTo(profile) to test observable behavior.
-        result.Should().BeSameAs(profile);
+        result.Should().BeEquivalentTo(profile, opts => opts.WithStrictOrdering(),
+            "empty project list must pass profile through unchanged");
     }
 
     [Fact]
@@ -108,21 +104,6 @@ public class McpMergeTests
 
         result.Should().HaveCount(1);
         result[0].Name.Should().Be("custom");
-    }
-
-    [Fact]
-    public void MergeMcpServers_Passthrough_NullProject_BothEmpty_ProfileMaintained()
-    {
-        var profile = new[] { Stdio("context7"), Stdio("web-search") };
-
-        // null project => passthrough
-        var result = DispatchOrchestrationService.MergeMcpServers(profile, null);
-
-        // TODO [WARNING]: This test is a duplicate of MergeMcpServers_WhenProjectIsNull_ReturnProfileListUnchanged —
-        // both test null project with a two-element profile. The name is also misleading ("BothEmpty" but profile is
-        // not empty). Replace with a genuinely distinct case or remove.
-        result.Should().BeSameAs(profile);
-        result.Should().HaveCount(2);
     }
 
     [Fact]

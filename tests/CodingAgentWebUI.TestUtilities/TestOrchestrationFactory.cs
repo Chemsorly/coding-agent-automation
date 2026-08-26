@@ -37,7 +37,7 @@ public static class TestOrchestrationFactory
         return new PipelineOrchestrationService(
             store,
             o.ProviderFactory ?? throw new ArgumentNullException(nameof(options), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
-            o.CancellationFacade ?? new PipelineCancellationFacade(null, null),
+            o.CancellationFacade ?? new PipelineCancellationFacade(null),
             o.Lifecycle ?? new PipelineRunLifecycleService(historyService, o.RunService, logger),
             o.LabelService ?? NoOpLabelService.Instance,
             logger);
@@ -63,7 +63,7 @@ public static class TestOrchestrationFactory
         return new PipelineOrchestrationService(
             store,
             providerFactory ?? throw new ArgumentNullException(nameof(providerFactory), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
-            cancellationFacade ?? new PipelineCancellationFacade(null, null),
+            cancellationFacade ?? new PipelineCancellationFacade(null),
             lifecycle ?? new PipelineRunLifecycleService(historyService, runService, logger),
             labelService ?? NoOpLabelService.Instance,
             logger);
@@ -144,9 +144,34 @@ public static class TestOrchestrationFactory
                 HasMore = hasMore
             });
         }
+        public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+        {
+            var runIdStr = runId.ToString();
+            return Task.FromResult(_runs.FirstOrDefault(s => s.RunId == runIdStr));
+        }
+        public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
+        {
+            var source = feedbackOnly ? _runs.Where(s => s.Feedback is not null).ToList() : _runs;
+            var items = source.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+            var hasMore = items.Count > pageSize;
+            if (hasMore)
+                items = items.Take(pageSize).ToList();
+            return Task.FromResult(new PagedResult<PipelineRunSummary>
+            {
+                Items = items.AsReadOnly(),
+                Page = page,
+                PageSize = pageSize,
+                HasMore = hasMore
+            });
+        }
         public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
         {
             _runs.Add(run.ToSummary());
+            return Task.CompletedTask;
+        }
+        public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
+        {
+            _runs.Add(summary);
             return Task.CompletedTask;
         }
         public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }

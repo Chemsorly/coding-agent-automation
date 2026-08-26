@@ -3,6 +3,7 @@ using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
@@ -757,57 +758,6 @@ public class AgentWorkerServiceTests : IDisposable
     }
 
     // ── Re-registration extended retry ──────────────────────────────────
-
-    /// <summary>
-    /// Validates that AgentWorkerService already implements the same connection lifecycle
-    /// patterns that AgentConnectionManager provides. This test documents the parity
-    /// requirement without forcing an immediate refactoring of the more complex
-    /// event-driven service.
-    ///
-    /// Future: AgentWorkerService should compose AgentConnectionManager for heartbeat,
-    /// registration, and resilience. For now, we validate the patterns are present.
-    /// </summary>
-    // TODO: These assertions use string.Contains on raw source code, which would pass even if
-    // the referenced code is dead, commented out, or in a string literal. Consider replacing
-    // with behavioral integration tests that verify heartbeat/reconnection/deregistration
-    // actually fires correctly.
-    [Fact]
-    public void AgentWorkerService_HasConnectionLifecycleParity()
-    {
-        var sourceDir = GetSourceDirectory();
-        var serviceCode = File.ReadAllText(
-            Path.Combine(sourceDir, "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
-        var lifecycleCode = File.ReadAllText(
-            Path.Combine(sourceDir, "src", "CodingAgentWebUI.Agent", "AgentConnectionLifecycle.cs"));
-
-        // Must have resilience pipeline (coordinator uses it for hub invocations)
-        serviceCode.Should().Contain("ResiliencePipeline",
-            "AgentWorkerService must use Polly resilience for hub invocations");
-
-        // Heartbeat must be managed (now in AgentConnectionLifecycle)
-        lifecycleCode.Should().Contain("HeartbeatMessage",
-            "AgentConnectionLifecycle must send periodic heartbeats");
-
-        // Must handle reconnection (now in AgentConnectionLifecycle)
-        lifecycleCode.Should().Contain("HandleReconnectedAsync",
-            "AgentConnectionLifecycle must re-register on reconnection");
-
-        // Must handle CancelJob
-        serviceCode.Should().Contain("HandleCancelJobAsync",
-            "AgentWorkerService must handle CancelJob events");
-
-        // Must deregister on shutdown (now in AgentConnectionLifecycle)
-        lifecycleCode.Should().Contain("DeregisterAgent",
-            "AgentConnectionLifecycle must deregister on shutdown");
-    }
-
-    private static string GetSourceDirectory()
-    {
-        var dir = AppContext.BaseDirectory;
-        while (dir is not null && !File.Exists(Path.Combine(dir, "CodingAgentAutomation.sln")))
-            dir = Path.GetDirectoryName(dir);
-        return dir ?? throw new InvalidOperationException("Could not find solution root");
-    }
 
     [Fact]
     public async Task HandleReconnectedAsync_AllRetriesFail_CallsStopApplication()

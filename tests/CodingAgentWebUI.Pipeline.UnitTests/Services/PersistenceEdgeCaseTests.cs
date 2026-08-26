@@ -31,41 +31,6 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
         }
     }
 
-    // ── LoopState null field handling ───────────────────────────────────
-
-    /// <summary>
-    /// LoopState with null StartedAt/StoppedAt must round-trip correctly.
-    /// </summary>
-    [Fact]
-    public async Task LoopStateStore_HandlesNullDateTimeOffsetFields()
-    {
-        var store = new FileSystemLoopStateStore(Path.Combine(_tempDir, "loop.json"));
-
-        await store.WriteAsync(new LoopState { IsActive = false, StartedAt = null, StoppedAt = null }, CancellationToken.None);
-        var loaded = await store.ReadAsync(CancellationToken.None);
-
-        loaded.Should().NotBeNull();
-        loaded!.IsActive.Should().BeFalse();
-        loaded.StartedAt.Should().BeNull();
-        loaded.StoppedAt.Should().BeNull();
-    }
-
-    /// <summary>
-    /// LoopState with populated dates must round-trip.
-    /// </summary>
-    [Fact]
-    public async Task LoopStateStore_PreservesDateTimeOffsetPrecision()
-    {
-        var store = new FileSystemLoopStateStore(Path.Combine(_tempDir, "loop.json"));
-        var now = DateTimeOffset.UtcNow;
-
-        await store.WriteAsync(new LoopState { IsActive = true, StartedAt = now }, CancellationToken.None);
-        var loaded = await store.ReadAsync(CancellationToken.None);
-
-        loaded.Should().NotBeNull();
-        loaded!.StartedAt.Should().BeCloseTo(now, TimeSpan.FromMilliseconds(1));
-    }
-
     // ── Corrupt file resilience ─────────────────────────────────────────
 
     /// <summary>

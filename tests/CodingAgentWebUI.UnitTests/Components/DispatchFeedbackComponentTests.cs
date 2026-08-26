@@ -1,5 +1,6 @@
 using Bunit;
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -58,23 +59,48 @@ public class DispatchFeedbackComponentTests : BunitContext
         Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(new PipelineLoopServiceDependencies
-        {
-            Orchestration = runCreator,
-            ProviderFactory = _mockFactory.Object,
-            PipelineConfigStore = _mockStore.Object,
-            ProviderConfigStore = _mockStore.Object,
-            ProjectStore = _mockStore.Object,
-            Logger = mockLogger.Object,
-            WorkDistributor = null,
-            DispatchOrchestration = null,
-            DependencyChecker = null,
-            HousekeepingService = null,
-            LeaderElection = null
-        }));
+        // Spec 047: component injects ILoopStatusService (not IPipelineLoopService)
+        var mockLoopStatus = new Mock<ILoopStatusService>();
+        mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
+        mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("");
+        mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
+        mockLoopStatus.SetupGet(l => l.TemplateStatuses)
+            .Returns(new Dictionary<string, CodingAgentWebUI.Pipeline.Models.ConfigStatusSnapshot>());
+        mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
+        Services.AddSingleton<ILoopStatusService>(mockLoopStatus.Object);
+        var mockSchedulerClient = new Mock<ISchedulerApiClient>();
+        mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new LoopStartResultDto(true, null));
+        mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        Services.AddSingleton<ISchedulerApiClient>(mockSchedulerClient.Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 
         Services.AddSingleton<IProjectStore>(_mockStore.Object);
+
+        // Spec 045: AgentCodingPageService now uses IPipelineApiConfigClient.
+        var mockConfigClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient>();
+        mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
+        // AgentCodingPageService feeds the dispatch path, so it reads the with-secrets form
+        // (live tokens/base URLs) rather than the "****" masked one. Same backing store.
+        mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
+        mockConfigClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadPipelineConfigAsync(ct));
+        mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadAllTemplatesAsync(ct));
+        mockConfigClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadProjectsAsync(ct));
+        mockConfigClient.Setup(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadQualityGateConfigsAsync(ct));
+        mockConfigClient.Setup(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadReviewerConfigsAsync(ct));
+        mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadAgentProfilesAsync(ct));
+        mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockConfigClient.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        Services.AddSingleton<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient>(mockConfigClient.Object);
 
         var registry = new AgentRegistryService(mockLogger.Object);
         Services.AddSingleton(registry);
@@ -83,6 +109,7 @@ public class DispatchFeedbackComponentTests : BunitContext
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
+        Services.AddSingleton<IDispatchOrchestrationService>(new Mock<IDispatchOrchestrationService>().Object);
 
         Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
         Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();

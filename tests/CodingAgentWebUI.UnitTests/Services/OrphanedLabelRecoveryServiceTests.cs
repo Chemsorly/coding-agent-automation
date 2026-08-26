@@ -1,7 +1,8 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Scheduler.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -18,34 +19,30 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 {
     private static readonly string[] InProgressLabels = ["agent:in-progress"];
     private readonly Mock<IOrchestratorRunService> _mockRunService;
-    private readonly Mock<IProjectStore> _mockProjectStore;
-    private readonly Mock<IProviderConfigStore> _mockProviderConfigStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
     private readonly Mock<ILabelService> _mockLabelService;
-    private readonly Mock<IPipelineConfigStore> _mockConfigStore;
     private readonly Mock<ILogger> _mockLogger;
     private readonly CancellationTokenSource _cts;
 
     public OrphanedLabelRecoveryServiceTests()
     {
         _mockRunService = new Mock<IOrchestratorRunService>();
-        _mockProjectStore = new Mock<IProjectStore>();
-        _mockProviderConfigStore = new Mock<IProviderConfigStore>();
+        _mockConfigClient = new Mock<IPipelineApiConfigClient>();
         _mockProviderFactory = new Mock<IProviderFactory>(MockBehavior.Strict);
         _mockLabelService = new Mock<ILabelService>();
-        _mockConfigStore = new Mock<IPipelineConfigStore>();
         _mockLogger = new Mock<ILogger>();
 
         _mockLogger
             .Setup(l => l.ForContext<OrphanedLabelRecoveryService>())
             .Returns(_mockLogger.Object);
 
-        _mockConfigStore
-            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { OrphanedLabelSweepIntervalMinutes = 30 });
 
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
 
         _cts = new CancellationTokenSource();
@@ -166,23 +163,31 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     [Fact]
     public async Task Sweep_ContinuesOnProviderScanFailure()
     {
-        // Arrange: two providers, first throws, second should still be scanned
+        // Arrange: two providers, first throws at provider factory, second should still be scanned
         var templates = new List<PipelineJobTemplate>
         {
             new() { Id = "t1", Name = "Template 1", IssueProviderId = "provider-1", RepoProviderId = "r1" },
             new() { Id = "t2", Name = "Template 2", IssueProviderId = "provider-2", RepoProviderId = "r2" }
         };
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
-        // Provider-1 config lookup fails
-        _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync("provider-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Provider unavailable"));
+        // Both providers configured
+        _mockConfigClient
+            .Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "provider-1", Kind = ProviderKind.Issue, DisplayName = "Provider 1", ProviderType = "GitHub", Settings = new Dictionary<string, string>() },
+                new() { Id = "provider-2", Kind = ProviderKind.Issue, DisplayName = "Provider 2", ProviderType = "GitHub", Settings = new Dictionary<string, string>() }
+            });
+
+        // Provider-1 factory throws (simulates scan failure)
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.Is<ProviderConfig>(c => c.Id == "provider-1")))
+            .Throws(new InvalidOperationException("Provider unavailable"));
 
         // Provider-2 succeeds
-        SetupProviderConfig("provider-2");
         SetupIssueProvider("provider-2", new IssueSummary
         {
             Identifier = "99",
@@ -227,8 +232,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         await Task.Delay(TimeSpan.FromSeconds(2));
 
         // Assert: no provider scans attempted
-        _mockProviderConfigStore.Verify(
-            s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()),
+        _mockConfigClient.Verify(
+            s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         _cts.Cancel();
@@ -244,12 +249,20 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             new() { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "r1" },
             new() { Id = "t2", Name = "T2", IssueProviderId = "provider-2", RepoProviderId = "r2" }
         };
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
-        SetupProviderConfig("provider-1");
-        SetupProviderConfig("provider-2");
+        // Both providers in one GetProviderConfigsWithSecretsAsync call (method returns full list).
+        // The recovery service calls the provider APIs directly, so it needs live tokens — the
+        // masked GetProviderConfigsAsync form would hand it "****" instead of a usable credential.
+        _mockConfigClient
+            .Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
+            {
+                new() { Id = "provider-1", Kind = ProviderKind.Issue, DisplayName = "Provider 1", ProviderType = "GitHub", Settings = new Dictionary<string, string>() },
+                new() { Id = "provider-2", Kind = ProviderKind.Issue, DisplayName = "Provider 2", ProviderType = "GitHub", Settings = new Dictionary<string, string>() }
+            });
         SetupIssueProvider("provider-1", new IssueSummary
         {
             Identifier = "10",
@@ -301,8 +314,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     public async Task ConfigIntervalBelowMinimum_ClampedWithWarning()
     {
         // Arrange: config with interval below minimum (1 minute < 5 minute minimum)
-        _mockConfigStore
-            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { OrphanedLabelSweepIntervalMinutes = 1 });
 
         SetupTemplateWithProvider("provider-1");
@@ -312,8 +325,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         // Track sweep calls to verify the service starts with a valid interval
         var sweepCount = 0;
         var firstSweepDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {
                 new() { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "r1" }
@@ -364,8 +377,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             new() { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "r1" },
             new() { Id = "t2", Name = "T2", IssueProviderId = "provider-1", RepoProviderId = "r2" }
         };
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
         SetupProviderConfig("provider-1");
@@ -393,9 +406,9 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
         completed.Should().BeSameAs(swapCalled.Task);
 
-        // Assert: provider was only scanned once (deduplicated)
-        _mockProviderConfigStore.Verify(
-            s => s.GetProviderConfigByIdAsync("provider-1", ProviderKind.Issue, It.IsAny<CancellationToken>()),
+        // Assert: provider config was only loaded once (deduplicated)
+        _mockConfigClient.Verify(
+            s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
 
         _cts.Cancel();
@@ -412,8 +425,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         var firstSweepDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sweepCount = 0;
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {
                 new() { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "r1" }
@@ -424,8 +437,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
                     firstSweepDone.TrySetResult();
             });
 
-        _mockConfigStore
-            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { OrphanedLabelSweepIntervalMinutes = 30 });
 
         // Act: start the service and wait for the first sweep to complete
@@ -450,8 +463,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             "PeriodicTimer.WaitForNextTickAsync, not completing or spinning");
 
         // Verify config was loaded exactly once to establish the timer interval
-        _mockConfigStore.Verify(
-            c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()),
+        _mockConfigClient.Verify(
+            c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()),
             Times.Once,
             "Config should be loaded exactly once after first sweep to determine periodic interval");
 
@@ -632,22 +645,192 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         await service.StopAsync(CancellationToken.None);
     }
 
+    // ── Leader gate tests ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task LeaderGate_WhenNotLeader_InitialSweepSkipped()
+    {
+        // Arrange: gate says not-leader — even the initial sweep (after grace period) must be skipped.
+        // This verifies the gate lives inside RecoverOrphanedLabelsAsync, not only in the timer loop.
+        var mockGate = new Mock<ILeaderGate>();
+        mockGate.SetupGet(g => g.IsLeader).Returns(false);
+        mockGate.SetupGet(g => g.LeaderToken).Returns(CancellationToken.None);
+
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+        SetupIssueProvider("provider-1", new IssueSummary
+        {
+            Identifier = "42",
+            Title = "Orphaned issue",
+            Labels = InProgressLabels
+        });
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>())).Returns(false);
+
+        using var service = CreateServiceWithGate(mockGate.Object);
+        await service.StartAsync(_cts.Token);
+
+        // Wait well past grace period + time for sweep to have run
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
+
+        // Assert: no swap — non-leader skips entirely
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(),
+                It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "non-leader must not call SwapLabelAsync on the initial sweep");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task LeaderGate_WhenLeader_SweepRuns()
+    {
+        // Arrange: gate says is-leader — sweeps must execute normally.
+        // Regression guard: verifies the gate check doesn't accidentally block leaders.
+        var mockGate = new Mock<ILeaderGate>();
+        mockGate.SetupGet(g => g.IsLeader).Returns(true);
+        mockGate.SetupGet(g => g.LeaderToken).Returns(CancellationToken.None);
+
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+        SetupIssueProvider("provider-1", new IssueSummary
+        {
+            Identifier = "42",
+            Title = "Orphaned issue",
+            Labels = InProgressLabels
+        });
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>())).Returns(false);
+
+        var swapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync("provider-1", "42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => swapCalled.TrySetResult());
+
+        using var service = CreateServiceWithGate(mockGate.Object);
+        await service.StartAsync(_cts.Token);
+
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+
+        completed.Should().BeSameAs(swapCalled.Task, "leader must run the sweep and call SwapLabelAsync");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task LeaderGate_WhenNull_SweepRunsUnconditionally()
+    {
+        // Arrange: null gate (dev / single-replica) — sweep must run without any gate check.
+        // The existing CreateService() already passes null, but this test makes the intent explicit.
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+        SetupIssueProvider("provider-1", new IssueSummary
+        {
+            Identifier = "42",
+            Title = "Orphaned issue",
+            Labels = InProgressLabels
+        });
+        _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>())).Returns(false);
+
+        var swapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync("provider-1", "42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => swapCalled.TrySetResult());
+
+        // Explicitly create with null gate
+        using var service = CreateServiceWithGate(null);
+        await service.StartAsync(_cts.Token);
+
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+
+        completed.Should().BeSameAs(swapCalled.Task, "null gate must not suppress the sweep");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task LeaderGate_WhenLeadershipLostMidSweep_SweepCancelled()
+    {
+        // Arrange: leader starts a sweep; LeaderToken is cancelled mid-sweep (simulates leadership loss).
+        // The in-flight sweep should be cancelled rather than completing on the former leader.
+        using var leaderCts = new CancellationTokenSource();
+
+        var mockGate = new Mock<ILeaderGate>();
+        mockGate.SetupGet(g => g.IsLeader).Returns(true);
+        mockGate.SetupGet(g => g.LeaderToken).Returns(() => leaderCts.Token);
+
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+
+        // Issue provider blocks until leaderCts is cancelled — simulates slow API call mid-sweep
+        var sweepStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (int _, int _, IReadOnlyList<string>? _, CancellationToken ct) =>
+            {
+                sweepStarted.TrySetResult();
+                await Task.Delay(Timeout.Infinite, ct); // blocks until leadership lost
+                return new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 100, HasMore = false };
+            });
+        mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        using var service = CreateServiceWithGate(mockGate.Object);
+        await service.StartAsync(_cts.Token);
+
+        // Wait for sweep to reach the blocking API call
+        var started = await Task.WhenAny(sweepStarted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        started.Should().BeSameAs(sweepStarted.Task, "sweep should have started and reached the API call");
+
+        // Cancel leadership — simulates losing the K8s lease
+        await leaderCts.CancelAsync();
+
+        // Give the service time to handle the cancellation
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+
+        // Assert: no swap was ever called — the sweep was cancelled before completion
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(),
+                It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "sweep cancelled by LeaderToken loss must not produce any label writes");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private OrphanedLabelRecoveryService CreateService() => new(
         _mockRunService.Object,
-        _mockProjectStore.Object,
-        _mockProviderConfigStore.Object,
+        _mockConfigClient.Object,
         _mockProviderFactory.Object,
         _mockLabelService.Object,
-        _mockConfigStore.Object,
+        null,
+        _mockLogger.Object,
+        TimeSpan.FromMilliseconds(50)); // Short grace period for fast tests
+
+    private OrphanedLabelRecoveryService CreateServiceWithGate(ILeaderGate? leaderGate) => new(
+        _mockRunService.Object,
+        _mockConfigClient.Object,
+        _mockProviderFactory.Object,
+        _mockLabelService.Object,
+        leaderGate,
         _mockLogger.Object,
         TimeSpan.FromMilliseconds(50)); // Short grace period for fast tests
 
     private void SetupTemplateWithProvider(string providerId)
     {
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {
                 new() { Id = "t1", Name = "Test Template", IssueProviderId = providerId, RepoProviderId = "repo-1" }
@@ -656,15 +839,18 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
     private void SetupProviderConfig(string providerId)
     {
-        _mockProviderConfigStore
-            .Setup(s => s.GetProviderConfigByIdAsync(providerId, ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProviderConfig
+        _mockConfigClient
+            .Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>
             {
-                Id = providerId,
-                Kind = ProviderKind.Issue,
-                DisplayName = $"Provider {providerId}",
-                ProviderType = "GitHub",
-                Settings = new Dictionary<string, string>()
+                new()
+                {
+                    Id = providerId,
+                    Kind = ProviderKind.Issue,
+                    DisplayName = $"Provider {providerId}",
+                    ProviderType = "GitHub",
+                    Settings = new Dictionary<string, string>()
+                }
             });
     }
 

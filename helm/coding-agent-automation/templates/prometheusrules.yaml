@@ -10,10 +10,14 @@ spec:
   groups:
     - name: coding-agent-automation.rules
       rules:
-        # Alert when work items are stuck pending for too long
+        # Alert when work items are stuck pending for too long.
+        # Metric: workdistribution_workitems_pending_duration_seconds_bucket (histogram).
+        # Source: Job Controller (Spec 043 — moved from orchestrator).
         - alert: WorkItemsPendingTooLong
           expr: |
-            workitems_pending_duration_seconds{quantile="0.99"} > 300
+            histogram_quantile(0.99,
+              rate(workdistribution_workitems_pending_duration_seconds_bucket[5m])
+            ) > 300
           for: 5m
           labels:
             severity: warning
@@ -21,10 +25,14 @@ spec:
             summary: "Work items stuck in Pending state"
             description: "P99 pending duration exceeds 5 minutes for {{ "{{ $labels.instance }}" }}."
 
-        # Alert when dispatch latency is high
+        # Alert when dispatch latency is high.
+        # Metric: workdistribution_dispatch_latency_seconds_bucket (histogram).
+        # Source: Job Controller (Spec 043 — moved from orchestrator).
         - alert: DispatchLatencyHigh
           expr: |
-            dispatch_latency_seconds{quantile="0.99"} > 60
+            histogram_quantile(0.99,
+              rate(workdistribution_dispatch_latency_seconds_bucket[5m])
+            ) > 60
           for: 5m
           labels:
             severity: warning
@@ -47,8 +55,9 @@ spec:
             summary: "Orchestrator not ready (likely database unreachable)"
             description: "Orchestrator pod is Running but not Ready for over 2 minutes. Check database connectivity."
 
-        # Alert when too many work items are failing
-        # Uses the workitems_terminated counter (tagged by status) instead of the gauge.
+        # Alert when too many work items are failing.
+        # Metric: workdistribution_workitems_terminated (correct — unchanged).
+        # Source pod changes from orchestrator to Job Controller in Spec 043.
         - alert: WorkItemFailureRateHigh
           expr: |
             rate(workdistribution_workitems_terminated{status="Failed"}[5m]) > 0.1
@@ -59,10 +68,14 @@ spec:
             summary: "High work item failure rate"
             description: "More than 0.1 failures/sec sustained for 10 minutes."
 
-        # Alert when credential pool is exhausted
+        # Alert when credential pool is exhausted.
+        # Metrics: workdistribution_credential_pool_available / workdistribution_credential_pool_claimed.
+        # Source: Job Controller (Spec 043 — moved from orchestrator).
         - alert: CredentialPoolExhausted
           expr: |
-            credential_pool_available == 0 and credential_pool_claimed > 0
+            workdistribution_credential_pool_available == 0
+            and
+            workdistribution_credential_pool_claimed > 0
           for: 5m
           labels:
             severity: warning
@@ -70,14 +83,65 @@ spec:
             summary: "Credential pool exhausted"
             description: "No available credentials in pool. New kiro jobs will be delayed."
 
-        # Alert when dispatcher hasn't polled recently
+        # Alert when dispatcher hasn't polled recently.
+        # Metric: workdistribution_dispatcher_last_poll_epoch_seconds (gauge).
+        # Source: Job Controller (Spec 043 — moved from orchestrator).
         - alert: DispatcherStalled
           expr: |
-            time() - dispatcher_last_poll_epoch_seconds > 120
+            time() - workdistribution_dispatcher_last_poll_epoch_seconds > 120
           for: 2m
           labels:
             severity: critical
           annotations:
             summary: "Dispatch service stalled"
             description: "Dispatcher has not polled for pending work items in over 2 minutes."
+
+        # Alert when the dispatcher metric is entirely absent (Job Controller dead or not scraping).
+        # Complements DispatcherStalled: a dead process stops exporting the series entirely,
+        # so time()-based staleness detection resolves after ~5 min. This rule fires instead.
+        # Scoped to .Release.Namespace to prevent a live Job Controller in another namespace
+        # suppressing this alert when multiple releases share a Prometheus instance.
+        - alert: DispatcherMetricAbsent
+          expr: |
+            absent(workdistribution_dispatcher_last_poll_epoch_seconds{namespace="{{ .Release.Namespace }}"})
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Dispatcher metric absent — Job Controller may be down"
+            description: "workdistribution_dispatcher_last_poll_epoch_seconds has not been scraped for 2 minutes in namespace {{ "{{ $labels.namespace }}" }}. The Job Controller may be crashed or not running."
+
+{{- if .Values.jobController.enabled }}
+        # Alert when the Job Controller pod is Running but not Ready.
+        # Most likely cause: leader election lease not yet acquired (e.g. slow K8s API,
+        # or a previous leader holding the lease). No dispatch occurs while not Ready.
+        - alert: JobControllerLeaderNotAcquired
+          expr: |
+            kube_pod_status_ready{pod=~".*jobcontroller.*", condition="true"} == 0
+            and
+            kube_pod_status_phase{pod=~".*jobcontroller.*", phase="Running"} == 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Job Controller not ready (leader election may have stalled)"
+            description: "Job controller pod is Running but not Ready for over 2 minutes. No dispatch is occurring."
+{{- end }}
+
+{{- if .Values.api.enabled }}
+        # Alert when the API pod is Running but not Ready.
+        # Separate from OrchestratorDatabaseUnreachable — the API's most likely cause during
+        # upgrades is pending migrations (Req 9.5b), which is expected and self-resolving.
+        - alert: PipelineApiNotReady
+          expr: |
+            kube_pod_status_ready{pod=~".*-api-.*", condition="true"} == 0
+            and
+            kube_pod_status_phase{pod=~".*-api-.*", phase="Running"} == 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pipeline API not ready"
+            description: "API pod is Running but not Ready for over 2 minutes. Check database connectivity and pending migrations (Req 9.5b — expected during upgrades, self-resolving)."
+{{- end }}
 {{- end }}

@@ -1,4 +1,4 @@
-@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
 
 <section class="settings-section">
@@ -87,7 +87,7 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback<string> OnNavigateToProject { get; set; }
     [Parameter] public EventCallback OnProjectsChanged { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
@@ -102,7 +102,7 @@
 
     public async Task LoadProjectsAsync()
     {
-        _projects = (await ConfigStore.LoadProjectsAsync(CancellationToken.None)).ToList();
+        _projects = (await ConfigClient.GetProjectsAsync(CancellationToken.None)).ToList();
         StateHasChanged();
     }
 
@@ -117,7 +117,7 @@
         try
         {
             var updated = project with { Enabled = enabled };
-            await ConfigStore.SaveProjectAsync(updated, CancellationToken.None);
+            await ConfigClient.SaveProjectAsync(updated, CancellationToken.None);
             await LoadProjectsAsync();
             await OnShowStatus.InvokeAsync(($"Project {(enabled ? "enabled" : "disabled")}.", false));
         }
@@ -144,7 +144,7 @@
 
         try
         {
-            await ConfigStore.DeleteProjectAsync(_confirmingDelete.Id, CancellationToken.None);
+            await ConfigClient.DeleteProjectAsync(_confirmingDelete.Id, CancellationToken.None);
             _confirmingDelete = null;
             await LoadProjectsAsync();
             await OnProjectsChanged.InvokeAsync();

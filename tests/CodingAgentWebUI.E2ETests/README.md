@@ -1,93 +1,60 @@
-# E2E Tests — Playwright + WebApplicationFactory
+# CodingAgentWebUI.E2ETests — Parked for Spec 045
 
-End-to-end browser tests for the orchestrator pipeline using Playwright, WebApplicationFactory, and a fake SignalR agent client.
+## Status
 
-## Running Tests (Docker — recommended)
+The E2E CI workflow is **disabled** as of Spec 041 (branch `feature/041-045-kubernetes-refactoring`,
+commit `2e0ea03c`). The workflow triggers were reduced to `workflow_dispatch` only in
+`.github/workflows/e2e-tests.yml` (Task 2.1).
 
-No local Playwright installation needed. Everything runs inside a container:
+The project itself **still compiles** and **remains in `CodingAgentAutomation.sln`**. It was not
+removed because it builds cleanly against the current tree (Task 2.2 verification).
 
-```bash
-# Build the E2E test image
-docker build -f dockerfiles/e2e-tests.Dockerfile -t e2e-tests .
+**Spec 045 owns the rebuild and must re-enable the CI job before the branch merges.**
 
-# Run E2E tests
-docker run --rm --ipc=host e2e-tests
-```
+## Why it is parked
 
-The `--ipc=host` flag is required for Chromium stability (prevents shared memory issues).
+Specs 041–045 ship as a single PR. This spec (041) removes docker-compose and the Legacy /
+SignalR work distribution modes. Specs 042–044 then move Postgres behind an API service, extract a
+job controller, and re-point agent pods. The process topology changes four times across the arc.
 
-To extract test results:
-```bash
-docker run --rm --ipc=host -v ./TestResults:/src/TestResults e2e-tests
-```
+Rebuilding the E2E harness against the 041-only shape would be discarded by 042–044. It is
+therefore rebuilt **once**, in Spec 045, against the final four-service architecture.
 
-## Running Tests (Local — requires Playwright install)
+## What Spec 045 must do (Req 10.4)
 
-If you prefer running without Docker:
+The harness currently has four factory base classes:
 
-```bash
-# One-time: install Playwright Chromium
-dotnet build tests/CodingAgentWebUI.E2ETests/
-pwsh tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium
+| Factory | Derives | Test files |
+|---|---|---|
+| `E2EWebApplicationFactory` | `E2ETestBase` | 24 files — Legacy mode |
+| `DbModeE2EWebApplicationFactory` | `DbModeE2ETestBase` | 7 files — DB+SignalR mode |
+| `K8sModeE2EWebApplicationFactory` | `K8sModeE2ETestBase` | 1 file |
+| `K8sChatE2EWebApplicationFactory` | `K8sChatE2ETestBase` | 1 file |
 
-# Run tests
-dotnet vstest tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/CodingAgentWebUI.E2ETests.dll --TestCaseFilter:Category=E2E
-```
+Spec 045 must:
 
-> **Note:** The project uses `IsTestProject=false` to avoid inclusion in solution-wide `dotnet test` runs. Use `dotnet vstest` targeting the DLL directly, or run via Docker.
+1. **Collapse all four factories into a single factory** targeting the final architecture. The
+   `K8sModeE2EWebApplicationFactory` currently sets `WorkDistribution__Mode=SignalR` to avoid
+   `InClusterConfig()`. Spec 041 Req 5.9 removes that need — the new factory can register the
+   real K8s stack and stub `IKubernetes`.
 
-## How It Works
+2. **Delete `tests/CodingAgentWebUI.E2ETests/Tests/CrossModeParityTests.cs`** rather than
+   porting it. With a single deployment mode the parity assertion is meaningless.
 
-- `E2EWebApplicationFactory` starts the real Blazor Server app on a random localhost port using .NET 10's `UseKestrel()` API
-- Playwright launches a headless Chromium browser and navigates to the app
-- All external providers (GitHub, Kiro CLI, Git) are replaced with in-memory fakes
-- `FakeAgentClient` connects to the real SignalR hub for multi-agent dispatch tests
-- Tests use Page Object Model with `data-testid` selectors for stability
+3. **Remove `RemoveHostedService<PendingWorkItemDrainService>(services)`** from any factory
+   that contains it. `PendingWorkItemDrainService` is deleted by Spec 041 Req 4.1 — the call
+   will not compile once the E2E project is brought back into the solution build against the
+   post-041 tree.
 
-## Test Infrastructure Modes
+4. **Restore the project to `CodingAgentAutomation.sln`** (it remains there now, but confirm
+   nothing changed).
 
-The test suite supports three infrastructure configurations, each with its own `WebApplicationFactory` and fixture:
+5. **Re-enable the CI workflow** (`.github/workflows/e2e-tests.yml`) — the branch must not
+   merge with the job disabled.
 
-| Mode | Factory Class | Fixture | Purpose |
-|------|--------------|---------|---------|
-| **Standard** | `E2EWebApplicationFactory` | `E2EFixture` | JSON file store, SignalR dispatch, in-memory state |
-| **DB Mode** | `DbModeE2EWebApplicationFactory` | `DbModeE2EFixture` | PostgreSQL persistence (in-memory SQLite), DB-backed config/work items |
-| **K8s Mode** | `K8sModeE2EWebApplicationFactory` | `K8sModeE2EFixture` | Kubernetes work distribution, ReconciliationService (no HeartbeatMonitor) |
+## Do not edit test files in 041–044
 
-### Standard Mode
-Default test mode. Uses in-memory fakes for all providers. Configuration stored in JSON files. Dispatch via SignalR.
-
-### DB Mode
-Tests database-backed persistence: config import/export, work item lifecycle, DB-based template/project storage. Uses an in-memory SQLite database via `IDbContextFactory<PipelineDbContext>`.
-
-### K8s Mode
-Tests Kubernetes work distribution: `KubernetesWorkDistributor`, dispatch service cycles, reconciliation service. No `HeartbeatMonitorService` (K8s mode uses `ReconciliationService` instead).
-
-## Adding a New Test
-
-1. Create a test class in `Tests/` with `[Trait("Category", "E2E")]`
-2. Inherit from `E2ETestBase` (provides `Page`, screenshot-on-failure)
-3. Choose the appropriate fixture for the infrastructure mode you need
-4. Use page objects from `PageObjects/` for interactions
-5. Add `data-testid` attributes to Blazor components as needed
-6. Assert on final states (use `TaskCompletionSource` gates for intermediate states)
-
-## CI
-
-- **Main CI** (`ci.yml`): Compiles E2E project but skips execution (project has `IsTestProject=false`)
-- **E2E workflow** (`e2e-tests.yml`): Uses the Docker image to run tests on PR branches
-- Screenshots are uploaded as artifacts on test failure
-
-## Architecture
-
-```
-Single container (e2e-tests):
-├── dotnet vstest (test runner process)
-│   ├── WebApplicationFactory<Program> → Kestrel on localhost:{random}
-│   │   ├── Blazor Server (real rendering)
-│   │   ├── SignalR Hub /hubs/agent (real)
-│   │   └── DI: fake providers injected
-│   ├── Playwright → local Chromium (headless, pre-installed in image)
-│   └── FakeAgentClient → SignalR client (for dispatch tests)
-└── /ms-playwright/chromium-xxx/ (browser binary)
-```
+Per Spec 041 Req 10.3, no E2E test file is to be edited or deleted in specs 041–044. The files
+are preserved intact for Spec 045 to port. The only permitted exception is minimum edits to
+restore compilation if the project were removed from and re-added to the solution — which it
+was not.

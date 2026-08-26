@@ -39,6 +39,35 @@ public sealed class InMemoryPipelineRunHistoryService : IPipelineRunHistoryServi
         return Task.CompletedTask;
     }
 
+    public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        var match = _history.FirstOrDefault(r => r.RunId == runId.ToString());
+        return Task.FromResult<PipelineRunSummary?>(match);
+    }
+
+    public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
+    {
+        var filtered = feedbackOnly
+            ? _history.Where(r => r.Feedback != null).ToList()
+            : _history.ToList();
+        var items = filtered.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+        var hasMore = items.Count > pageSize;
+        if (hasMore)
+            items = items.Take(pageSize).ToList();
+        return Task.FromResult(new PagedResult<PipelineRunSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        });
+    }
+
     public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }
+    public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
+    {
+        _history.Insert(0, summary);
+        return Task.CompletedTask;
+    }
 }

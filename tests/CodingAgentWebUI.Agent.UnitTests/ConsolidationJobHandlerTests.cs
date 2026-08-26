@@ -175,25 +175,6 @@ public class ConsolidationJobHandlerTests
 
     // ── Source-scan: CancellationToken.None with intentional comment ──────
 
-    [Fact]
-    public void SourceCode_ReportConsolidationFailureAsync_PassesCancellationTokenNoneWithComment()
-    {
-        var source = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "ConsolidationJobHandler.cs"));
-
-        var methodStart = source.IndexOf("public async Task ReportConsolidationFailureAsync(", StringComparison.Ordinal);
-        var methodEnd = source.IndexOf("\n    public ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.IndexOf("\n    private ", methodStart + 1, StringComparison.Ordinal);
-        if (methodEnd < 0)
-            methodEnd = source.Length;
-        var methodBody = source.Substring(methodStart, methodEnd - methodStart);
-
-        methodBody.Should().Contain("CancellationToken.None",
-            "ReportConsolidationFailureAsync must pass CancellationToken.None — called from catch block where jobToken may be cancelled");
-        methodBody.Should().Contain("// intentional:",
-            "ReportConsolidationFailureAsync must have an // intentional: comment explaining why CancellationToken.None is used");
-    }
 
     private static string GetSourceDirectory()
     {

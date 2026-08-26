@@ -11,8 +11,9 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.UnitTests.Services;
 
 /// <summary>
-/// Extended unit tests for JobDeduplicationGuardService — covers queue operations,
-/// agent selection, label matching, and edge cases.
+/// Unit tests for JobDeduplicationGuardService — covers agent selection and label matching.
+/// Queue methods (EnqueueJob, DequeueForAgent, etc.) were deleted in T18 (arch-audit 2026-08-22)
+/// as they were provably no-ops; those test cases have been removed here as well.
 /// </summary>
 public class JobDeduplicationGuardServiceExtendedTests
 {
@@ -118,183 +119,6 @@ public class JobDeduplicationGuardServiceExtendedTests
         result.BusySince!.Value.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
     }
 
-    // ── EnqueueJob ──────────────────────────────────────────────────────
-
-    [Fact]
-    public void EnqueueJob_NewIssue_ReturnsTrue()
-    {
-        var job = CreatePendingJob("org/repo#1");
-
-        var result = _dispatcher.EnqueueJob(job);
-
-        result.Should().BeTrue();
-        _dispatcher.QueueLength.Should().Be(1);
-    }
-
-    [Fact]
-    public void EnqueueJob_DuplicateIssue_ReturnsFalse()
-    {
-        var job1 = CreatePendingJob("org/repo#1");
-        var job2 = CreatePendingJob("org/repo#1");
-
-        _dispatcher.EnqueueJob(job1);
-        var result = _dispatcher.EnqueueJob(job2);
-
-        result.Should().BeFalse();
-        _dispatcher.QueueLength.Should().Be(1);
-    }
-
-    [Fact]
-    public void EnqueueJob_NullJob_ThrowsArgumentNull()
-    {
-        Assert.Throws<ArgumentNullException>(() => _dispatcher.EnqueueJob(null!));
-    }
-
-    // ── DequeueForAgent ─────────────────────────────────────────────────
-
-    [Fact]
-    public void DequeueForAgent_CompatibleJob_ReturnsJob()
-    {
-        var entry = RegisterAgent("agent-1", "conn-1", new[] { "dotnet" });
-        _dispatcher.EnqueueJob(CreatePendingJob("org/repo#1", requiredLabels: new[] { "dotnet" }));
-
-        var result = _dispatcher.DequeueForAgent(entry);
-
-        result.Should().NotBeNull();
-        result!.IssueIdentifier.Value.Should().Be("org/repo#1");
-    }
-
-    [Fact]
-    public void DequeueForAgent_IncompatibleJob_ReturnsNull()
-    {
-        var entry = RegisterAgent("agent-1", "conn-1", new[] { "java" });
-        _dispatcher.EnqueueJob(CreatePendingJob("org/repo#1", requiredLabels: new[] { "dotnet" }));
-
-        var result = _dispatcher.DequeueForAgent(entry);
-
-        result.Should().BeNull();
-        _dispatcher.QueueLength.Should().Be(1); // Job re-enqueued
-    }
-
-    [Fact]
-    public void DequeueForAgent_EmptyQueue_ReturnsNull()
-    {
-        var entry = RegisterAgent("agent-1", "conn-1", new[] { "dotnet" });
-
-        var result = _dispatcher.DequeueForAgent(entry);
-
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public void DequeueForAgent_NullAgent_ThrowsArgumentNull()
-    {
-        Assert.Throws<ArgumentNullException>(() => _dispatcher.DequeueForAgent(null!));
-    }
-
-    // ── IsIssueQueued ───────────────────────────────────────────────────
-
-    [Fact]
-    public void IsIssueQueued_QueuedIssue_ReturnsTrue()
-    {
-        _dispatcher.EnqueueJob(CreatePendingJob("org/repo#1"));
-
-        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeTrue();
-    }
-
-    [Fact]
-    public void IsIssueQueued_NotQueued_ReturnsFalse()
-    {
-        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
-    }
-
-    [Fact]
-    public void IsIssueQueued_NullIdentifier_ThrowsArgumentNull()
-    {
-        Assert.Throws<ArgumentNullException>(() => _dispatcher.IsIssueQueued(null!, "ip-1"));
-    }
-
-    // ── RemoveFromQueue ─────────────────────────────────────────────────
-
-    [Fact]
-    public void RemoveFromQueue_QueuedIssue_ReturnsTrue()
-    {
-        _dispatcher.EnqueueJob(CreatePendingJob("org/repo#1"));
-
-        var result = _dispatcher.RemoveFromQueue("org/repo#1", "ip-1");
-
-        result.Should().BeTrue();
-        _dispatcher.QueueLength.Should().Be(0);
-        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
-    }
-
-    [Fact]
-    public void RemoveFromQueue_NotQueued_ReturnsFalse()
-    {
-        var result = _dispatcher.RemoveFromQueue("org/repo#1", "ip-1");
-
-        result.Should().BeFalse();
-    }
-
-    [Fact]
-    public void RemoveFromQueue_NullIdentifier_ThrowsArgumentNull()
-    {
-        Assert.Throws<ArgumentNullException>(() => _dispatcher.RemoveFromQueue(null!, "ip-1"));
-    }
-
-    [Fact]
-    public void RemoveFromQueue_PreservesOtherJobs()
-    {
-        _dispatcher.EnqueueJob(CreatePendingJob("org/repo#1"));
-        _dispatcher.EnqueueJob(CreatePendingJob("org/repo#2"));
-        _dispatcher.EnqueueJob(CreatePendingJob("org/repo#3"));
-
-        _dispatcher.RemoveFromQueue("org/repo#2", "ip-1");
-
-        _dispatcher.QueueLength.Should().Be(2);
-        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeTrue();
-        _dispatcher.IsIssueQueued("org/repo#3", "ip-1").Should().BeTrue();
-    }
-
-    // ── MarkIssueComplete ───────────────────────────────────────────────
-
-    [Fact]
-    public void MarkIssueComplete_RemovesFromProcessing()
-    {
-        _dispatcher.EnqueueJob(CreatePendingJob("org/repo#1"));
-
-        _dispatcher.MarkIssueComplete("org/repo#1", "ip-1");
-
-        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
-    }
-
-    [Fact]
-    public void MarkIssueComplete_NullIdentifier_ThrowsArgumentNull()
-    {
-        Assert.Throws<ArgumentNullException>(() => _dispatcher.MarkIssueComplete(null!, "ip-1"));
-    }
-
-    // ── GetQueuedJobs ───────────────────────────────────────────────────
-
-    [Fact]
-    public void GetQueuedJobs_ReturnsSnapshot()
-    {
-        _dispatcher.EnqueueJob(CreatePendingJob("org/repo#1"));
-        _dispatcher.EnqueueJob(CreatePendingJob("org/repo#2"));
-
-        var jobs = _dispatcher.GetQueuedJobs();
-
-        jobs.Should().HaveCount(2);
-    }
-
-    [Fact]
-    public void GetQueuedJobs_WhenEmpty_ReturnsEmptyList()
-    {
-        var jobs = _dispatcher.GetQueuedJobs();
-
-        jobs.Should().BeEmpty();
-    }
-
     // ── ResolveRequiredLabels ────────────────────────────────────────────
 
     [Fact]
@@ -336,18 +160,5 @@ public class JobDeduplicationGuardServiceExtendedTests
             Hostname = $"host-{agentId}",
             Labels = labels
         }, connectionId);
-    }
-
-    private static PendingJob CreatePendingJob(string issueIdentifier, IReadOnlyList<string>? requiredLabels = null)
-    {
-        return new PendingJob
-        {
-            IssueIdentifier = issueIdentifier,
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1",
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            InitiatedBy = "manual",
-            RequiredLabels = requiredLabels ?? Array.Empty<string>()
-        };
     }
 }

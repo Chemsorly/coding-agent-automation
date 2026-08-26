@@ -1,6 +1,7 @@
 // Feature: Persistence Integration Tests
 // Property 2: Active WorkItem Uniqueness — Application-level dedup prevents duplicate active work items
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
@@ -12,6 +13,7 @@ using FsCheck.Xunit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 
 namespace CodingAgentWebUI.IntegrationTests.Persistence;
 
@@ -42,17 +44,35 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
             .UseInMemoryDatabase(dbName)
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
-
         using (var ctx = new InMemoryPipelineDbContext(_dbOptions))
-        {
             ctx.Database.EnsureCreated();
-        }
-
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
-        var transitionService = new WorkItemTransitionService(
-            _dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+
+        // API client: CreateAsync inserts into InMemory DB so dedup queries can find it.
+        // IsIssueDistributedAsync and GetActiveIdentifiersAsync delegate to the DB.
+        var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        mockApiClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async (JobDistributionRequest req, CancellationToken ct) =>
+            {
+                var newId = Guid.NewGuid();
+                await using var db = await _dbFactory.CreateDbContextAsync(ct);
+                db.WorkItems.Add(new WorkItemEntity { Id = newId, IssueIdentifier = req.IssueIdentifier, IssueProviderConfigId = req.IssueProviderConfigId, Status = WorkItemStatus.Pending, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = req.AgentSelector, TimeoutSeconds = req.TimeoutSeconds });
+                await db.SaveChangesAsync(ct);
+                return newId;
+            });
+        // IsIssueDistributedAsync: query InMemory DB directly
+        mockApiClient
+            .Setup(c => c.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string issueId, string providerId, CancellationToken ct) =>
+            {
+                await using var db = await _dbFactory.CreateDbContextAsync(ct);
+                var active = new[] { WorkItemStatus.Pending, WorkItemStatus.Dispatched, WorkItemStatus.Running };
+                return await db.WorkItems.AsNoTracking().AnyAsync(w => w.IssueIdentifier == issueId && w.IssueProviderConfigId == providerId && active.Contains(w.Status), ct);
+            });
         _distributor = new KubernetesWorkDistributor(
-            _dbFactory, transitionService, NullLogger<KubernetesWorkDistributor>.Instance);
+            mockApiClient.Object,
+            NullLogger<KubernetesWorkDistributor>.Instance);
     }
 
     public void Dispose()

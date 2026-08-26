@@ -1,35 +1,28 @@
-using CodingAgentWebUI.Orchestration.Registry;
-using CodingAgentWebUI.Pipeline.Interfaces;
-using CodingAgentWebUI.Pipeline.Telemetry;
-
 namespace CodingAgentWebUI;
 
 /// <summary>
-/// Extension methods for registering observable gauges for dispatch and agent metrics.
+/// Extension methods for registering observable gauges for agent metrics.
 /// </summary>
+/// <remarks>
+/// Gauge migration audit:
+/// - dispatch.queue.depth: removed — was backed by IPendingWorkQuery / DbPendingWorkQuery (IDbContextFactory).
+///   No PrometheusRule alert references this metric. Restore via GET /api/work-items/pending-count
+///   on IPipelineApiWorkItemClient when queue depth monitoring is needed.
+///
+/// - agent.jobs.active and agent.connections.total: moved to CodingAgentWebUI.Api
+///   (<see cref="ApiStartupExtensions.RegisterApiObservableGauges"/>).
+///   Agents register on the API hub, so the API is the only process holding first-hand agent state.
+///   The monolith now sees agents through <c>ApiAgentRegistryService</c>, a polled snapshot of
+///   GET /api/agents — fine for rendering presence, but a second-hand and slightly delayed source.
+///   The gauges stay on the API side so the metrics are emitted by the owner of the data.
 internal static class ObservableGaugeRegistrationExtensions
 {
     /// <summary>
-    /// Registers observable gauges for dispatch queue depth, active agent jobs,
-    /// and total agent connections. These gauges are scraped by the OpenTelemetry metrics pipeline.
+    /// No-op: all gauges have moved to the API process.
+    /// Call retained so existing <c>app.RegisterObservableGauges()</c> in Program.cs compiles.
     /// </summary>
-    /// <remarks>
-    /// No ordering dependencies on other startup methods — services are resolved from DI.
-    /// </remarks>
     public static WebApplication RegisterObservableGauges(this WebApplication app)
     {
-        ArgumentNullException.ThrowIfNull(app);
-
-        var agentRegistry = app.Services.GetRequiredService<IAgentRegistryService>();
-        var pendingWorkQuery = app.Services.GetRequiredService<IPendingWorkQuery>();
-
-        _ = PipelineTelemetry.Meter.CreateObservableGauge("dispatch.queue.depth",
-            () => pendingWorkQuery.PendingCount, "{item}", "Jobs waiting for available agent");
-        _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",
-            () => agentRegistry.GetBusyAgentCount(), "{job}", "Currently executing agent jobs");
-        _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
-            () => agentRegistry.GetAllAgents().Count, "{connection}", "Total registered agents");
-
         return app;
     }
 }

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Resilience;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -29,8 +30,8 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class AgentConnectionLifecycle : IAsyncDisposable
 {
-    private volatile HubConnectionManager? _hubManager;
-    private readonly HubConnectionManagerFactory _hubManagerFactory;
+    private volatile IHubConnectionManager? _hubManager;
+    private readonly IHubConnectionManagerFactory _hubManagerFactory;
     private readonly SignalRCompletionReporter _completionReporter;
     private readonly AgentJobSlotManager _slotManager;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
@@ -42,11 +43,16 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
     // ── Chat mode fields ──────────────────────────────────────────────────────
     /// <summary>True when the agent pod runs in chat-only mode (AGENT_CHAT_MODE=true).</summary>
-    internal bool _isChatMode = string.Equals(
-        Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
+    internal bool _isChatMode;
 
     /// <summary>Chat session identifier injected via AGENT_CHAT_SESSION_ID env var.</summary>
-    internal string _chatSessionId = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId) ?? "";
+    internal string _chatSessionId = "";
+
+    /// <summary>Chat model override injected via AGENT_CHAT_MODEL env var.</summary>
+    internal string? _chatModel;
+
+    /// <summary>Chat effort override injected via AGENT_CHAT_EFFORT env var.</summary>
+    internal string? _chatEffort;
 
     /// <summary>Resolved when SignalChatEnd() is called; unblocks the ConnectAndRunAsync wait.</summary>
     internal readonly TaskCompletionSource _chatEndSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -78,14 +84,15 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// <summary>Fired when the orchestrator assigns a consolidation job.</summary>
     public event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
 
-    public AgentConnectionLifecycle(
-        HubConnectionManager hubManager,
-        HubConnectionManagerFactory hubManagerFactory,
+    public AgentConnectionLifecycle( // NOSONAR S107 — constructor consolidates all DI-resolved deps for this lifecycle manager
+        IHubConnectionManager hubManager,
+        IHubConnectionManagerFactory hubManagerFactory,
         SignalRCompletionReporter completionReporter,
         AgentJobSlotManager slotManager,
         AgentId agentId,
         IHostApplicationLifetime hostApplicationLifetime,
-        Serilog.ILogger logger)
+        Serilog.ILogger logger,
+        AgentRuntimeOptions? runtimeOptions = null)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(hubManagerFactory);
@@ -106,11 +113,22 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         // to SignalR hub invocations (RegisterAgent, Heartbeat). See AgentConnectionManager for same pattern.
         _agentId = agentId.Value;
 
-        var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
+        var labelsEnv = runtimeOptions?.AgentLabels
+            ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels)
+            ?? string.Empty;
         _baseLabels = labelsEnv
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList()
             .AsReadOnly();
+
+        // Store chat mode flags for use in ConnectAndRunAsync
+        _isChatMode = runtimeOptions?.IsChatMode
+            ?? string.Equals(Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
+        _chatSessionId = runtimeOptions?.ChatSessionId
+            ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId)
+            ?? "";
+        _chatModel = runtimeOptions?.ChatModel ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatModel);
+        _chatEffort = runtimeOptions?.ChatEffort ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatEffort);
     }
 
     /// <summary>The underlying hub connection for business handlers to invoke server methods.</summary>
@@ -134,22 +152,49 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         // Chat mode: apply model/effort settings to ~/.kiro/settings/cli.json before connecting
         if (_isChatMode)
         {
-            var model = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatModel);
-            var effort = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatEffort);
+            var model = _chatModel;
+            var effort = _chatEffort;
             if (!string.IsNullOrEmpty(model) && !model.Equals("auto", StringComparison.OrdinalIgnoreCase))
                 await KiroCliSettingsApplyFunc(model, effort, stoppingToken);
         }
 
         WireEventHandlers(manager);
 
-        // Connect to orchestrator
-        try
+        // Connect to orchestrator — retry on transient failures (e.g. 404 during API startup,
+        // DNS not yet ready, TCP refused). InfiniteRetryPolicy only covers reconnections after
+        // a successful initial connect; initial connect failures need their own retry loop.
+        var connectAttempt = 0;
+        while (true)
         {
-            await manager.StartAsync(stoppingToken);
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            return;
+            try
+            {
+                await manager.StartAsync(stoppingToken);
+                break; // connected successfully
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                connectAttempt++;
+                // Cap at 10 attempts (~5 minutes total with backoff), then give up
+                if (connectAttempt >= 10)
+                {
+                    _logger.Error(ex,
+                        "Agent {AgentId}: hub connect failed after {Attempts} attempts — giving up",
+                        _agentId, connectAttempt);
+                    throw;
+                }
+
+                var delaySecs = Math.Min((int)Math.Pow(2, connectAttempt), 30);
+                _logger.Warning(ex,
+                    "Agent {AgentId}: hub connect attempt {Attempt} failed ({Error}), retrying in {Delay}s",
+                    _agentId, connectAttempt, ex.Message, delaySecs);
+
+                try { await Task.Delay(TimeSpan.FromSeconds(delaySecs), stoppingToken); }
+                catch (OperationCanceledException) { return; }
+            }
         }
 
         // Register with orchestrator
@@ -238,7 +283,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     // TODO: Event handlers on old HubConnectionManager instances are never unwired before disposal.
     // While disposal should prevent further event firings, explicitly unsubscribing before
     // SafeDisposeAsync would be more defensive and prevent potential GC reference leaks.
-    private void WireEventHandlers(HubConnectionManager hubManager)
+    private void WireEventHandlers(IHubConnectionManager hubManager)
     {
         hubManager.OnAssignJob += msg => OnAssignJob?.Invoke(msg) ?? Task.CompletedTask;
         hubManager.OnCancelJob += jobId => OnCancelJob?.Invoke(jobId) ?? Task.CompletedTask;
@@ -247,22 +292,21 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         hubManager.OnFetchModels += request => OnFetchModels?.Invoke(request) ?? Task.CompletedTask;
         hubManager.OnAssignConsolidationJob += msg => OnAssignConsolidationJob?.Invoke(msg) ?? Task.CompletedTask;
         hubManager.OnReconnected += HandleReconnectedAsync;
-        hubManager.OnClosed += HandleTerminalClosedAsync;
+        hubManager.OnClosed += error => HandleTerminalClosedAsync(error);
     }
 
-    private async Task HandleTerminalClosedAsync(Exception? error)
+    internal async Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10)
     {
         _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
 
         var ct = _hostApplicationLifetime.ApplicationStopping;
-        const int maxAttempts = 10;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             var delay = ReconnectionHelper.CalculateReconnectionDelay(attempt);
             _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
                 attempt, maxAttempts, delay.TotalSeconds);
 
-            HubConnectionManager? newManager = null;
+            IHubConnectionManager? newManager = null;
             try
             {
                 await Task.Delay(delay, ct);
@@ -318,7 +362,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// This is critical when the orchestrator pod rolls over — the new pod has no
     /// prior state and won't recognize heartbeats from unregistered agents.
     /// </summary>
-    private async Task HandleReconnectedAsync(string? connectionId)
+    internal async Task HandleReconnectedAsync(string? connectionId)
     {
         PipelineTelemetry.AgentReconnections.Add(1);
         _logger.Information("Re-registering agent {AgentId} after reconnection (connectionId={ConnectionId})",
@@ -382,6 +426,13 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// counter. Messages exceeding max drain attempts are dropped. After drain,
     /// the job slot is released if the buffer is empty.
     /// </remarks>
+    /// <summary>
+    /// Returns <c>true</c> when a buffered message has exhausted its retry budget
+    /// and should be dropped rather than re-buffered.
+    /// </summary>
+    internal static bool ShouldDropBufferedMessage(BufferedCriticalMessage msg, int maxDrainAttempts)
+        => msg.DrainAttempts >= maxDrainAttempts;
+
     internal async Task DrainBufferAsync()
     {
         if (!_completionReporter.HasPendingMessages)
@@ -395,7 +446,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         for (var i = 0; i < messages.Count; i++)
         {
             var msg = messages[i];
-            if (msg.DrainAttempts >= maxDrainAttempts)
+            if (ShouldDropBufferedMessage(msg, maxDrainAttempts))
             {
                 _logger.Warning(
                     "Dropping buffered message after {MaxAttempts} drain attempts: {MessageType} for job {JobId}",
@@ -449,7 +500,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             _logger.Warning("Buffer still has pending messages after drain — job slot remains held");
     }
 
-    private async ValueTask SafeDisposeAsync(HubConnectionManager? manager)
+    private async ValueTask SafeDisposeAsync(IHubConnectionManager? manager)
     {
         if (manager is null) return;
         try

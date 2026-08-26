@@ -1,54 +1,19 @@
-using CodingAgentWebUI.Infrastructure;
-using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Registry;
-using CodingAgentWebUI.Pipeline.Interfaces;
-using Serilog;
-
 namespace CodingAgentWebUI;
 
 public static partial class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers conditional orchestration background services:
-    /// HeartbeatMonitorService (skipped in Kubernetes mode) and
-    /// JobQueueDrainService (hosted only in Legacy mode without a database).
+    /// Registers orchestration background services.
+    /// All orchestration background services have moved or been deleted:
+    ///   JobQueueDrainService    → deleted
+    ///   AgentJobDispatcher      → deleted
+    ///   HeartbeatMonitorService → deleted (Spec 041–045 arc close: ReconciliationService in JobController handles timeouts)
     /// </summary>
-    private static void RegisterOrchestrationBackgroundServices(IServiceCollection services, string? workDistributionMode)
+    private static void RegisterOrchestrationBackgroundServices(IServiceCollection services)
     {
-        // HeartbeatMonitorService: registered in Legacy and SignalR modes only.
-        // In K8s mode, agent liveness is handled by ReconciliationService.
-        var isKubernetesMode = string.Equals(workDistributionMode, "Kubernetes", StringComparison.OrdinalIgnoreCase);
-        if (!isKubernetesMode)
-        {
-            services.AddHostedService(sp => new HeartbeatMonitorService(
-                new HeartbeatMonitorDependencies(
-                    sp.GetRequiredService<IAgentRegistryService>(),
-                    sp.GetRequiredService<IOrchestratorRunService>(),
-                    sp.GetRequiredService<IPipelineRunHistoryService>(),
-                    sp.GetRequiredService<IConfigurationStore>(),
-                    Log.Logger,
-                    sp.GetRequiredService<IRunLifecycleManager>(),
-                    sp.GetService<IConsolidationService>())));
-        }
-
-        // JobQueueDrainService: registered as singleton always (AgentHubFacade depends on it),
-        // but only registered as hosted service (active background loop) in Legacy mode.
-        // In DB modes (SignalR/K8s), work distribution via IWorkDistributor — in-memory queue unused.
-        services.AddSingleton(sp => new JobQueueDrainService(
-            new JobQueueDrainDependencies(
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
-                sp.GetRequiredService<IAgentRegistryService>(),
-                sp.GetRequiredService<IJobDispatcher>(),
-                sp.GetRequiredService<IConfigurationStore>(),
-                sp.GetRequiredService<IConsolidationDispatchService>(),
-                sp.GetRequiredService<IShutdownSignal>(),
-                Log.Logger,
-                sp.GetService<IConsolidationRunStore>())));
-        var hasDatabase = !string.IsNullOrEmpty(workDistributionMode);
-        if (!hasDatabase)
-        {
-            services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainService>());
-        }
+        // Intentionally empty: all background services have been removed as part of the
+        // Kubernetes-focused refactoring (Spec 041–045). The method is retained for
+        // call-site clarity — future background services should be registered here.
+        _ = services;
     }
 }

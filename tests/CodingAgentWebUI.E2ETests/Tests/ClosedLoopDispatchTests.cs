@@ -10,7 +10,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// agent:next labeled issues and dispatches them to a connected agent without manual intervention.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class ClosedLoopDispatchTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class ClosedLoopDispatchTests : E2ETestBase
 {
     public ClosedLoopDispatchTests(E2EFixture fixture) : base(fixture) { }
 
@@ -53,11 +54,14 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase, IClassFixture<E2EFixt
 
         // Connect fake agent
         await using var fakeAgent = new FakeAgentClient("loop-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        // Act: resolve PipelineLoopService and start it manually
+        // Act: start the loop the way the Start Loop button does — StartLoopAsync only. The
+        // service is hosted in the harness, so its ExecuteAsync is already parked on the
+        // activation signal; calling StartAsync here as well would run a second copy of it, and
+        // the matching StopAsync in the finally would leave the singleton unable to run for any
+        // later test in the process.
         var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
-        await loopService.StartAsync(CancellationToken.None);
         try
         {
             var started = await loopService.StartLoopAsync();
@@ -78,8 +82,6 @@ public sealed class ClosedLoopDispatchTests : E2ETestBase, IClassFixture<E2EFixt
         finally
         {
             loopService.StopLoop();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await loopService.StopAsync(cts.Token);
         }
     }
 }

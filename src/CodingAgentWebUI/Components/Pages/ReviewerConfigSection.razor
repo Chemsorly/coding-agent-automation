@@ -1,4 +1,4 @@
-@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
 
 <section class="settings-section">
@@ -152,7 +152,7 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private List<ReviewerConfiguration> _configs = new();
@@ -173,7 +173,7 @@
     {
         try
         {
-            _configs = (await ConfigStore.LoadReviewerConfigsAsync(CancellationToken.None)).ToList();
+            _configs = (await ConfigClient.GetReviewerConfigsAsync(CancellationToken.None)).ToList();
         }
         catch (Exception ex)
         {
@@ -271,7 +271,7 @@
 
         try
         {
-            await ConfigStore.SaveReviewerConfigAsync(config, CancellationToken.None);
+            await ConfigClient.SaveReviewerConfigAsync(config, CancellationToken.None);
             _showForm = false;
             await LoadConfigs();
             await OnShowStatus.InvokeAsync(("Reviewer configuration saved.", false));
@@ -294,7 +294,7 @@
 
         try
         {
-            await ConfigStore.DeleteReviewerConfigAsync(_deletingConfig.Id, CancellationToken.None);
+            await ConfigClient.DeleteReviewerConfigAsync(_deletingConfig.Id, CancellationToken.None);
             _showDeleteConfirm = false;
             _deletingConfig = null;
             await LoadConfigs();
@@ -310,7 +310,7 @@
     {
         try
         {
-            await ConfigStore.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
+            await ConfigClient.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
             _showResetConfirm = false;
             await LoadConfigs();
             await OnShowStatus.InvokeAsync(("Reviewer configurations reset to defaults.", false));

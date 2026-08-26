@@ -29,6 +29,7 @@
   <ItemGroup>
     <PackageReference Include="MessagePack" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Resilience" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
     <PackageReference Include="NetVips" />
     <PackageReference Include="OpenTelemetry.Api" />

@@ -17,71 +17,13 @@ public class IJobCompletionReporterTests
 {
     // ── Interface definition ─────────────────────────────────────────────
 
-    [Fact]
-    public void IJobCompletionReporter_HasReportCompletionAsyncMethod()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IJobCompletionReporter.cs"));
 
-        sourceCode.Should().Contain("Task ReportCompletionAsync",
-            "IJobCompletionReporter must define ReportCompletionAsync");
-    }
 
-    [Fact]
-    public void IJobCompletionReporter_AcceptsJobId()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IJobCompletionReporter.cs"));
 
-        sourceCode.Should().Contain("JobId jobId",
-            "ReportCompletionAsync must accept a JobId jobId parameter");
-    }
-
-    [Fact]
-    public void IJobCompletionReporter_AcceptsJobCompletionPayload()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IJobCompletionReporter.cs"));
-
-        sourceCode.Should().Contain("JobCompletionPayload",
-            "ReportCompletionAsync must accept a JobCompletionPayload parameter");
-    }
-
-    [Fact]
-    public void IJobCompletionReporter_AcceptsCancellationToken()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IJobCompletionReporter.cs"));
-
-        sourceCode.Should().Contain("CancellationToken",
-            "ReportCompletionAsync must accept a CancellationToken");
-    }
 
     // ── Implementation existence ─────────────────────────────────────────
 
-    [Fact]
-    public void SignalRCompletionReporter_Exists()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "SignalRCompletionReporter.cs"));
 
-        sourceCode.Should().Contain("class SignalRCompletionReporter",
-            "SignalRCompletionReporter must exist for SignalR-mode completion reporting");
-        sourceCode.Should().Contain("IJobCompletionReporter",
-            "SignalRCompletionReporter must implement IJobCompletionReporter");
-    }
-
-    [Fact]
-    public void HttpPrimaryCompletionReporter_Exists()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "HttpPrimaryCompletionReporter.cs"));
-
-        sourceCode.Should().Contain("class HttpPrimaryCompletionReporter",
-            "HttpPrimaryCompletionReporter must exist for K8s-mode completion reporting");
-        sourceCode.Should().Contain("IJobCompletionReporter",
-            "HttpPrimaryCompletionReporter must implement IJobCompletionReporter");
-    }
 
     // ── Behavioral tests: mock completion reporter ───────────────────────
 
@@ -133,71 +75,15 @@ public class IJobCompletionReporterTests
 
     // ── SignalRCompletionReporter behavior ────────────────────────────────
 
-    [Fact]
-    public void SignalRCompletionReporter_UsesResiliencePipeline()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "SignalRCompletionReporter.cs"));
 
-        sourceCode.Should().Contain("ResiliencePipeline",
-            "SignalRCompletionReporter must use Polly resilience for hub invocations");
-    }
-
-    [Fact]
-    public void SignalRCompletionReporter_UsesCriticalMessageBuffer()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "SignalRCompletionReporter.cs"));
-
-        sourceCode.Should().Contain("CriticalMessageBuffer",
-            "SignalRCompletionReporter must buffer messages on failure for replay on reconnection");
-    }
 
     // ── HttpPrimaryCompletionReporter behavior ───────────────────────────
 
-    [Fact]
-    public void HttpPrimaryCompletionReporter_PostsViaHttp()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "HttpPrimaryCompletionReporter.cs"));
 
-        // Must use the lifecycle client for HTTP POST (primary/durable channel)
-        sourceCode.Should().Contain("IWorkItemLifecycleClient",
-            "HttpPrimaryCompletionReporter must use IWorkItemLifecycleClient for HTTP POST (primary channel)");
-    }
-
-    [Fact]
-    public void HttpPrimaryCompletionReporter_AlsoReportsViaSignalR()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "HttpPrimaryCompletionReporter.cs"));
-
-        // Must also report via SignalR (secondary/real-time channel)
-        sourceCode.Should().Contain("ReportJobCompleted",
-            "HttpPrimaryCompletionReporter must also report via SignalR as secondary channel");
-    }
 
     // ── Consumer assertions ──────────────────────────────────────────────
 
-    [Fact]
-    public void SourceCode_AgentWorkerService_UsesIJobCompletionReporter()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
 
-        sourceCode.Should().Contain("IJobCompletionReporter",
-            "AgentWorkerService must use IJobCompletionReporter for unified completion reporting");
-    }
-
-    [Fact]
-    public void SourceCode_WorkItemAgentService_UsesIJobCompletionReporter()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
-
-        sourceCode.Should().Contain("IJobCompletionReporter",
-            "WorkItemAgentService must use IJobCompletionReporter for unified completion reporting");
-    }
 
     // ── Helpers ──────────────────────────────────────────────────────────
 

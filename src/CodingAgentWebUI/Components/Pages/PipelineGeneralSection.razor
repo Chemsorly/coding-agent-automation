@@ -1,4 +1,4 @@
-@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
 
 <section class="settings-section">
@@ -113,7 +113,7 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private int _maxRetries = 3;
@@ -133,7 +133,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
         _maxRetries = config.MaxRetries;
         _maxAnalysisRetries = config.MaxAnalysisRetries;
         _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
@@ -157,7 +157,7 @@
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList();
 
-            await ConfigStore.UpdatePipelineConfigAsync(
+            await ConfigClient.UpdatePipelineConfigAsync(
                 current => current with
                 {
                     MaxRetries = _maxRetries,

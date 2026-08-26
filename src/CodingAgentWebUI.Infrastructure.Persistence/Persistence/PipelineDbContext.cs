@@ -1,0 +1,139 @@
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace CodingAgentWebUI.Infrastructure.Persistence;
+
+/// <summary>
+/// EF Core DbContext for all pipeline persistence.
+/// Registered via <c>AddPooledDbContextFactory&lt;PipelineDbContext&gt;</c> — singleton services
+/// create short-lived contexts via the factory.
+/// </summary>
+public class PipelineDbContext : DbContext
+{
+    private const string JsonbColumnType = "jsonb";
+
+    public PipelineDbContext(DbContextOptions<PipelineDbContext> options)
+        : base(options)
+    {
+    }
+
+    public DbSet<WorkItemEntity> WorkItems => Set<WorkItemEntity>();
+    public DbSet<PipelineRunEntity> PipelineRuns => Set<PipelineRunEntity>();
+    public DbSet<ProjectEntity> Projects => Set<ProjectEntity>();
+    public DbSet<PipelineJobTemplateEntity> PipelineJobTemplates => Set<PipelineJobTemplateEntity>();
+    public DbSet<ProviderConfigEntity> ProviderConfigs => Set<ProviderConfigEntity>();
+    public DbSet<AgentProfileEntity> AgentProfiles => Set<AgentProfileEntity>();
+    public DbSet<QualityGateConfigEntity> QualityGateConfigs => Set<QualityGateConfigEntity>();
+    public DbSet<ReviewerConfigEntity> ReviewerConfigs => Set<ReviewerConfigEntity>();
+    public DbSet<ConsolidationRunEntity> ConsolidationRuns => Set<ConsolidationRunEntity>();
+    public DbSet<PipelineConfigEntity> PipelineConfig => Set<PipelineConfigEntity>();
+    public DbSet<KeyValueEntity> KeyValueStore => Set<KeyValueEntity>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<WorkItemEntity>(e =>
+        {
+            e.HasKey(w => w.Id);
+            e.Property(w => w.RowVersion).IsRowVersion();
+            e.HasIndex(w => w.Status);
+            e.HasIndex(w => new { w.IssueIdentifier, w.IssueProviderConfigId, w.Status });
+            // Partial unique index: excludes terminal statuses from uniqueness check.
+            // Enum ordinals: Succeeded=3, Failed=4, Cancelled=5 (from WorkItemStatus enum definition order)
+            // If WorkItemStatus enum is reordered, this filter MUST be updated.
+            e.HasIndex(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
+                .HasFilter("\"Status\" NOT IN (3, 4, 5)")
+                .IsUnique();
+            e.Property(w => w.Payload).HasColumnType(JsonbColumnType);
+            e.Property(w => w.Result).HasColumnType(JsonbColumnType);
+            // Partial index for the per-project retention sweep (DatabaseMaintenanceService).
+            // The sweep partitions by ProjectId and orders by CompletedAt DESC — without this index
+            // the ROW_NUMBER() window function performs a full sequential scan on every sweep cycle.
+            // Scoped to ProjectId IS NOT NULL AND Status IN (3,4,5) AND CompletedAt IS NOT NULL.
+            e.HasIndex(w => new { w.ProjectId, w.CompletedAt })
+                .IsDescending(false, true)
+                .HasFilter("\"ProjectId\" IS NOT NULL AND \"Status\" IN (3, 4, 5) AND \"CompletedAt\" IS NOT NULL")
+                .HasDatabaseName("IX_WorkItems_ProjectId_CompletedAt_Terminal");
+        });
+
+        modelBuilder.Entity<PipelineRunEntity>(e =>
+        {
+            e.HasKey(r => r.RunId);
+            e.Property(r => r.RowVersion).IsRowVersion();
+            e.Property(r => r.SummaryJson).HasColumnType(JsonbColumnType);
+            e.HasIndex(r => r.StartedAt).IsDescending();
+            e.HasIndex(r => r.AgentId);
+            e.HasIndex(r => new { r.FinalStep, r.CompletedAt });
+            // Partial index for the per-project retention sweep (DatabaseMaintenanceService).
+            // The sweep partitions by ProjectId and orders by StartedAt DESC — without this index
+            // the ROW_NUMBER() window function performs a full sequential scan on every sweep cycle.
+            // Scoped to ProjectId IS NOT NULL AND CompletedAt IS NOT NULL (eligible rows only).
+            e.HasIndex(r => new { r.ProjectId, r.StartedAt })
+                .IsDescending(false, true)
+                .HasFilter("\"ProjectId\" IS NOT NULL AND \"CompletedAt\" IS NOT NULL")
+                .HasDatabaseName("IX_PipelineRuns_ProjectId_StartedAt");
+        });
+
+        modelBuilder.Entity<ProjectEntity>(e =>
+        {
+            e.HasKey(p => p.Id);
+            e.Property(p => p.RowVersion).IsRowVersion();
+            e.Property(p => p.Settings).HasColumnType(JsonbColumnType);
+        });
+
+        modelBuilder.Entity<PipelineJobTemplateEntity>(e =>
+        {
+            e.HasKey(t => t.Id);
+            e.Property(t => t.RowVersion).IsRowVersion();
+            e.Property(t => t.Configuration).HasColumnType(JsonbColumnType);
+        });
+
+        modelBuilder.Entity<ProviderConfigEntity>(e =>
+        {
+            e.HasKey(p => p.Id);
+            e.Property(p => p.RowVersion).IsRowVersion();
+            e.Property(p => p.Configuration).HasColumnType(JsonbColumnType);
+        });
+
+        modelBuilder.Entity<AgentProfileEntity>(e =>
+        {
+            e.HasKey(a => a.Id);
+            e.Property(a => a.RowVersion).IsRowVersion();
+            e.Property(a => a.Configuration).HasColumnType(JsonbColumnType);
+        });
+
+        modelBuilder.Entity<QualityGateConfigEntity>(e =>
+        {
+            e.HasKey(q => q.Id);
+            e.Property(q => q.RowVersion).IsRowVersion();
+            e.Property(q => q.Configuration).HasColumnType(JsonbColumnType);
+        });
+
+        modelBuilder.Entity<ReviewerConfigEntity>(e =>
+        {
+            e.HasKey(r => r.Id);
+            e.Property(r => r.RowVersion).IsRowVersion();
+            e.Property(r => r.Configuration).HasColumnType(JsonbColumnType);
+        });
+
+        modelBuilder.Entity<ConsolidationRunEntity>(e =>
+        {
+            e.HasKey(c => c.Id);
+            e.Property(c => c.RowVersion).IsRowVersion();
+            e.Property(c => c.Data).HasColumnType(JsonbColumnType);
+        });
+
+        modelBuilder.Entity<PipelineConfigEntity>(e =>
+        {
+            e.HasKey(p => p.Id);
+            e.Property(p => p.RowVersion).IsRowVersion();
+            e.Property(p => p.Configuration).HasColumnType(JsonbColumnType);
+        });
+
+        modelBuilder.Entity<KeyValueEntity>(e =>
+        {
+            e.HasKey(kv => kv.Key);
+            e.Property(kv => kv.RowVersion).IsRowVersion();
+            e.Property(kv => kv.Value).HasColumnType(JsonbColumnType);
+        });
+    }
+}

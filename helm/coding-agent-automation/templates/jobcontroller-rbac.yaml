@@ -1,0 +1,59 @@
+{{- if .Values.jobController.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jobcontroller
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jobcontroller
+rules:
+  # K8s Job management — create/watch/delete agent Jobs (DispatchService + ReconciliationService)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # Leader election for dispatch and reconciliation Lease (Req 2.3)
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "update"]
+  # Pod status checks — startup failure detection for agent pods
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Per-Job Secrets for agent derived API key (Req 8a.3 / H4 correction in Req 9.3).
+  # The Job Controller vends HMAC-SHA256(master, agentId) via a per-Job Secret with
+  # ownerReference so it is GC'd with the Job. Without these verbs,
+  # CreateNamespacedSecretAsync returns 403 and every agent pod launches with no
+  # AGENT_API_KEY — every HTTP call and hub connect then 401s.
+  # Note: K8s Role resourceNames does not support wildcards; this grants create/delete
+  # on all Secrets in the namespace. Operational mitigation: the Job Controller runs with
+  # a dedicated ServiceAccount that has no other elevated permissions, and per-Job Secrets
+  # are named with the caa-agent-key- prefix (easy to audit). Spec 045 evaluates
+  # narrowing this via a namespace-scoped admission webhook if blast radius is a concern.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: jobcontroller
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
+{{- end }}

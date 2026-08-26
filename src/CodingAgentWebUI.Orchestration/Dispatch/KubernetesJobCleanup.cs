@@ -1,36 +1,35 @@
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Entities;
+using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Autorest;
-using Microsoft.EntityFrameworkCore;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// K8s-mode implementation of <see cref="IJobCleanupStrategy"/>.
-/// Queries the database for the K8s Job name associated with a work item,
-/// then deletes the Job to prevent the Job controller from retrying (backoffLimit).
+/// Looks up the K8s Job name via the Pipeline API and deletes the Job to prevent
+/// the Job controller from retrying (backoffLimit).
 /// </summary>
 public sealed class KubernetesJobCleanup : IJobCleanupStrategy
 {
-    private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
+    private readonly IPipelineApiWorkItemClient _apiClient;
     private readonly IKubernetesJobClient _jobClient;
     private readonly string _k8sNamespace;
     private readonly ILogger _logger;
 
     public KubernetesJobCleanup(
-        IDbContextFactory<PipelineDbContext> dbFactory,
+        IPipelineApiWorkItemClient apiClient,
         IKubernetesJobClient jobClient,
         string k8sNamespace,
         ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(dbFactory);
+        ArgumentNullException.ThrowIfNull(apiClient);
         ArgumentNullException.ThrowIfNull(jobClient);
         ArgumentNullException.ThrowIfNull(k8sNamespace);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _dbFactory = dbFactory;
+        _apiClient = apiClient;
         _jobClient = jobClient;
         _k8sNamespace = k8sNamespace;
         _logger = logger;
@@ -44,11 +43,7 @@ public sealed class KubernetesJobCleanup : IJobCleanupStrategy
 
         try
         {
-            await using var db = await _dbFactory.CreateDbContextAsync(ct);
-            var jobName = await db.WorkItems
-                .Where(w => w.Id == workItemId)
-                .Select(w => w.K8sJobName)
-                .FirstOrDefaultAsync(ct);
+            var jobName = await _apiClient.GetK8sJobNameAsync(workItemId, ct);
 
             if (string.IsNullOrEmpty(jobName))
                 return;
@@ -58,8 +53,6 @@ public sealed class KubernetesJobCleanup : IJobCleanupStrategy
                 "KubernetesJobCleanup: deleted K8s Job {JobName} for cancelled run {RunId}",
                 jobName, runId);
         }
-        // TODO: httpEx.Response could theoretically be null — filter would evaluate to false (not a crash),
-        // but the exception would fall through to the generic catch instead of being handled as a 404 gracefully.
         catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             // Job already deleted (e.g., by ReconciliationService race) — expected, not a warning

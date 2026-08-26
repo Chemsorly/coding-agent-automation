@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Moq;
@@ -112,9 +112,7 @@ public sealed class ConsolidationJobCompletionStrategyTests
         await strategy.ExecuteAsync(new JobId("job-1"), run, payload, null, CancellationToken.None);
 
         _facade.Verify(f => f.RemoveRun("job-1"), Times.Once);
-        _facade.Verify(f => f.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId), Times.Once);
     }
-
     // ── Error handling ────────────────────────────────────────────────────────
 
     [Fact]

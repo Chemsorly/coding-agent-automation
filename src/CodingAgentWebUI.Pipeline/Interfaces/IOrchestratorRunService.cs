@@ -37,6 +37,13 @@ public interface IOrchestratorRunService
     /// <summary>Gets or creates the per-run <see cref="OutputRingBuffer"/> for the specified run.</summary>
     OutputRingBuffer GetOutputBuffer(RunId runId);
 
+    /// <summary>
+    /// Appends output lines to the run's persistent storage. For in-memory implementations this
+    /// is equivalent to <c>GetOutputBuffer(runId).AddRange(lines)</c>. For distributed
+    /// implementations (Redis), this writes to the Redis List for cross-replica backlog serving.
+    /// </summary>
+    void AppendOutputLines(RunId runId, IReadOnlyList<string> lines);
+
     /// <summary>Returns the number of currently active runs.</summary>
     int ActiveRunCount { get; }
 

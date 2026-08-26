@@ -6,6 +6,7 @@ using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Agent.OpenCode;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Agent;
 using KiroCliLib.Core;

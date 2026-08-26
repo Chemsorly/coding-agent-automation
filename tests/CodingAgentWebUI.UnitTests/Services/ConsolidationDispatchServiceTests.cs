@@ -23,7 +23,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
-    private readonly JobDeduplicationGuardService _dispatcher;
+    private readonly AgentReservationService _dispatcher;
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
@@ -40,7 +40,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     public ConsolidationDispatchServiceTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
+        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
         _tempDir = Path.Combine(Path.GetTempPath(), $"cds-test-{Guid.NewGuid():N}");
 
         _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
@@ -97,7 +97,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 
     private static ConsolidationDispatchDependencies MakeDeps(
         IAgentRegistryService? registry = null,
-        JobDeduplicationGuardService? dispatcher = null,
+        AgentReservationService? dispatcher = null,
         IAgentCommunication? agentComm = null,
         IConfigurationStore? configStore = null,
         IProjectStore? projectStore = null,
@@ -109,7 +109,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         IConsolidationRunStore? runStore = null)
     {
         var defaultRegistry = new AgentRegistryService(Mock.Of<ILogger>());
-        var defaultDispatcher = new JobDeduplicationGuardService(defaultRegistry, Mock.Of<ILogger>());
+        var defaultDispatcher = new AgentReservationService(defaultRegistry, Mock.Of<ILogger>());
         return new ConsolidationDispatchDependencies(
             registry ?? defaultRegistry,
             dispatcher ?? defaultDispatcher,
@@ -137,67 +137,23 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 
     #region Constructor null guards
 
-    [Fact]
-    public void Ctor_NullRegistry_Throws()
+    public static IEnumerable<object[]> NullConstructorArgCases()
     {
-        var act = () => new ConsolidationDispatchService(
-            MakeDeps() with { Registry = null! });
-        act.Should().Throw<ArgumentNullException>();
+        yield return ["Registry",      (Func<ConsolidationDispatchDependencies, ConsolidationDispatchDependencies>)(d => d with { Registry       = null! })];
+        yield return ["WorkDistributor",(Func<ConsolidationDispatchDependencies, ConsolidationDispatchDependencies>)(d => d with { WorkDistributor = null! })];
+        yield return ["AgentComm",     (Func<ConsolidationDispatchDependencies, ConsolidationDispatchDependencies>)(d => d with { AgentComm       = null! })];
+        yield return ["ConfigStore",   (Func<ConsolidationDispatchDependencies, ConsolidationDispatchDependencies>)(d => d with { ConfigStore      = null! })];
+        yield return ["ProjectStore",  (Func<ConsolidationDispatchDependencies, ConsolidationDispatchDependencies>)(d => d with { ProjectStore     = null! })];
+        yield return ["TokenVending",  (Func<ConsolidationDispatchDependencies, ConsolidationDispatchDependencies>)(d => d with { TokenVending     = null! })];
+        yield return ["Config",        (Func<ConsolidationDispatchDependencies, ConsolidationDispatchDependencies>)(d => d with { Config           = null! })];
+        yield return ["Logger",        (Func<ConsolidationDispatchDependencies, ConsolidationDispatchDependencies>)(d => d with { Logger           = null! })];
     }
 
-    [Fact]
-    public void Ctor_NullDispatcher_Throws()
+    [Theory]
+    [MemberData(nameof(NullConstructorArgCases))]
+    public void Ctor_NullArgument_Throws(string _, Func<ConsolidationDispatchDependencies, ConsolidationDispatchDependencies> applyNull)
     {
-        var act = () => new ConsolidationDispatchService(
-            MakeDeps() with { JobDispatcher = null! });
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void Ctor_NullAgentComm_Throws()
-    {
-        var act = () => new ConsolidationDispatchService(
-            MakeDeps() with { AgentComm = null! });
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void Ctor_NullConfigStore_Throws()
-    {
-        var act = () => new ConsolidationDispatchService(
-            MakeDeps() with { ConfigStore = null! });
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void Ctor_NullProjectStore_Throws()
-    {
-        var act = () => new ConsolidationDispatchService(
-            MakeDeps() with { ProjectStore = null! });
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void Ctor_NullTokenVending_Throws()
-    {
-        var act = () => new ConsolidationDispatchService(
-            MakeDeps() with { TokenVending = null! });
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void Ctor_NullConfig_Throws()
-    {
-        var act = () => new ConsolidationDispatchService(
-            MakeDeps() with { Config = null! });
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void Ctor_NullLogger_Throws()
-    {
-        var act = () => new ConsolidationDispatchService(
-            MakeDeps() with { Logger = null! });
+        var act = () => new ConsolidationDispatchService(applyNull(MakeDeps()));
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -410,6 +366,21 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { repoConfig, brainConfig });
 
+        // Add a matching profile so the agent config is resolved
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "default-profile",
+                    DisplayName = "Default",
+                    Enabled = true,
+                    MatchLabels = Array.Empty<string>(),
+                    AgentProviderConfigId = "agent-cfg",
+                    Priority = 1
+                }
+            });
+
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>((configs, _, _, _) => capturedConfigs = configs)
@@ -475,11 +446,26 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     {
         RegisterIdleAgent(labels: KiroDotnetDotnet10Labels);
 
-        // No profiles configured — empty list (default mock)
+        // New behavior (spec 041-045): a matching AgentProfile is required for agent config resolution.
+        // Add a profile that covers the agent's labels so the agent config is injected.
         var kiroConfig = new ProviderConfig { Id = "kiro-agent-cfg", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "KiroCli", RequiredLabels = new List<string> { "kiro" } };
 
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { kiroConfig });
+
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "profile-kiro",
+                    DisplayName = "Kiro",
+                    Enabled = true,
+                    MatchLabels = Array.Empty<string>(),
+                    AgentProviderConfigId = "kiro-agent-cfg",
+                    Priority = 1
+                }
+            });
 
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
@@ -624,10 +610,12 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         result.Should().Be(ConsolidationDispatchResult.Dispatched);
     }
 
-    // TODO: TryDispatchAsync_AutoDispatchTrue/False tests are nearly identical and should be
-    // parameterized with [Theory]/[InlineData(true)]/[InlineData(false)] to reduce duplication.
-    [Fact]
-    public async Task TryDispatchAsync_AutoDispatchTrue_PropagatedToMessage()
+    // Converted from two near-identical [Fact] methods to a parameterized [Theory].
+    // See in-code TODO at original location — original author flagged duplication.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TryDispatchAsync_AutoDispatch_PropagatedToMessage(bool autoDispatch)
     {
         RegisterIdleAgent();
 
@@ -644,46 +632,16 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         var svc = CreateService(runsDir: Path.Combine(_tempDir, "nonexistent"));
         var run = new ConsolidationRun
         {
-            RunId = "r-auto",
+            RunId = $"r-auto-{autoDispatch}",
             Type = ConsolidationRunType.BrainConsolidation,
             StartedAtUtc = DateTimeOffset.UtcNow,
-            AutoDispatch = true
+            AutoDispatch = autoDispatch
         };
 
         await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
         capturedMessage.Should().NotBeNull();
-        capturedMessage!.AutoDispatch.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task TryDispatchAsync_AutoDispatchFalse_PropagatedToMessage()
-    {
-        RegisterIdleAgent();
-
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
-
-        ConsolidationJobMessage? capturedMessage = null;
-        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<string, AgentId, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
-
-        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new List<ProviderConfig>());
-
-        var svc = CreateService(runsDir: Path.Combine(_tempDir, "nonexistent"));
-        var run = new ConsolidationRun
-        {
-            RunId = "r-no-auto",
-            Type = ConsolidationRunType.BrainConsolidation,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            AutoDispatch = false
-        };
-
-        await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
-
-        capturedMessage.Should().NotBeNull();
-        capturedMessage!.AutoDispatch.Should().BeFalse();
+        capturedMessage!.AutoDispatch.Should().Be(autoDispatch, $"AutoDispatch={autoDispatch} must be propagated to the message");
     }
 
     #endregion
@@ -773,9 +731,11 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TransitionRunToRunningAsync_RunNotQueued_NoOp()
+    public async Task TransitionRunToRunningAsync_RunNotQueued_TrackerCalledButInternallyGuards()
     {
-        // Arrange: run is already Running — should be a no-op
+        // Arrange: run is already Running.
+        // The service always delegates to the tracker when one is registered.
+        // The tracker itself guards on Queued status and is a no-op internally for Running runs.
         var runStore = new FileSystemConsolidationRunStore(_tempDir);
         var run = new ConsolidationRun
         {
@@ -792,9 +752,8 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         // Act
         await svc.TransitionRunToRunningAsync("already-running-1", CancellationToken.None);
 
-        // Assert: tracker NOT called (ConsolidationService.TransitionToRunningAsync guards on Queued status)
-        // Note: The tracker's TransitionToRunningAsync has its own guard, but calling it is still fine —
-        // it's the implementation that decides whether to proceed.
+        // Assert: tracker IS called (service always delegates when tracker is registered);
+        // the tracker's internal guard on Queued status means it will be a no-op inside the tracker.
         mockTracker.Verify(
             t => t.TransitionToRunningAsync("already-running-1", It.IsAny<CancellationToken>()),
             Times.Once, "tracker is always called when available; it internally guards on Queued status");

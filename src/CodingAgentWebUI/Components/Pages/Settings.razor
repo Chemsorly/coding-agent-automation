@@ -1,25 +1,21 @@
 @page "/settings"
 @implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Infrastructure.GitHub
 @using CodingAgentWebUI.Infrastructure.GitLab
 @using CodingAgentWebUI.Orchestration
-@using CodingAgentWebUI.Orchestration.Dispatch
-@using CodingAgentWebUI.Orchestration.Health
+@using CodingAgentWebUI.Kubernetes
 @using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
 @using CodingAgentWebUI.Components.Shared
 @using Serilog
-@inject IConfigurationStore ConfigStore
+@inject IPipelineApiConfigClient ConfigClient
 @inject GitHubValidationService GitHubValidator
 @inject GitLabValidationService GitLabValidator
 @inject IProviderFactory ProviderFactory
-@inject ModelFetchService ModelFetchService
 @inject NotificationService NotificationService
-@inject FeatureFlags Features
-@inject JobTemplateStore? JobTemplateStore
-@inject IServiceProvider ServiceProvider
 
 <PageTitle>Settings - Coding Agent</PageTitle>
 
@@ -39,7 +35,7 @@
                 var projectId = _selectedNode[$"{SettingsNodes.ProjectDetail}:".Length..];
                 <ProjectDetailSection
                     ProjectId="@projectId"
-                    ConfigStore="ConfigStore"
+                    ConfigClient="ConfigClient"
                     OnProjectSaved="RefreshTreeNavProjects"
                     OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
             }
@@ -47,7 +43,7 @@
             {
                 case SettingsNodes.Projects:
                     <ProjectsListSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnNavigateToProject="NavigateToProjectDetail"
                         OnProjectsChanged="RefreshTreeNavProjects"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
@@ -55,7 +51,7 @@
                 case SettingsNodes.ProvidersIssue:
                     <IssueProviderSection
                         Providers="_issueProviders"
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         GitHubValidator="GitHubValidator"
                         GitLabValidator="GitLabValidator"
                         ProviderFactory="ProviderFactory"
@@ -66,7 +62,7 @@
                 case SettingsNodes.ProvidersRepository:
                     <RepoProviderSection
                         Providers="_repoProviders"
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         GitHubValidator="GitHubValidator"
                         GitLabValidator="GitLabValidator"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Repository)"
@@ -76,18 +72,16 @@
                 case SettingsNodes.ProvidersAgent:
                     <AgentProviderSection
                         Providers="_agentProviders"
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Agent)"
                         OnSaved="OnAgentProviderSaved"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
-                        ModelFetchService="ModelFetchService"
-                        ModelFetchJobService="ModelFetchJobService"
-                        IsKubernetesMode="Features.IsKubernetesMode" />
+                        IsKubernetesMode="true" />
                     break;
                 case SettingsNodes.ProvidersPipeline:
                     <PipelineProviderSection
                         Providers="_pipelineProviders"
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         GitHubValidator="GitHubValidator"
                         GitLabValidator="GitLabValidator"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Pipeline)"
@@ -96,78 +90,65 @@
                     break;
                 case SettingsNodes.PipelineGeneral:
                     <PipelineGeneralSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineLoop:
                     <PipelineLoopSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelinePrompts:
                     <PipelinePromptsSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineImplementation:
                     <PipelineQualityGatesSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineReview:
                     <PipelineReviewSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineDecomposition:
                     <PipelineDecompositionSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineConsolidation:
                     <PipelineConsolidationSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineAdvanced:
                     <PipelineAdvancedSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.AgentProfiles:
                     <AgentProfileSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         AgentProviders="_agentProviders"
-                        JobTemplateStore="JobTemplateStore"
-                        IsKubernetesMode="Features.IsKubernetesMode"
+                        IsKubernetesMode="true"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.QualityGateConfigs:
                     <QualityGateConfigSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.ReviewerConfigs:
                     <ReviewerConfigSection
-                        ConfigStore="ConfigStore"
+                        ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.ConfigImportExport:
-                    @if (Features.IsDatabaseMode)
-                    {
-                        <ConfigImportExportSection
-                            OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
-                            OnImportCompleted="LoadAllData" />
-                    }
-                    else
-                    {
-                        <div class="section-content">
-                            <h2>Data Management</h2>
-                            <p class="section-description">
-                                Import/Export is only available in database mode. Configure <code>Database:Host</code> to enable PostgreSQL persistence.
-                            </p>
-                        </div>
-                    }
+                    <ConfigImportExportSection
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
+                        OnImportCompleted="LoadAllData" />
                     break;
             }
         </div>
@@ -176,7 +157,7 @@
 
 <SettingsModals @ref="_modals"
     ProviderFactory="ProviderFactory"
-    ConfigStore="ConfigStore"
+    ConfigClient="ConfigClient"
     IssueProviders="_issueProviders"
     RepoProviders="_repoProviders"
     PipelineProviders="_pipelineProviders"
@@ -190,8 +171,11 @@
     private SettingsTreeNav? _treeNav;
 
     // Resolved optionally — only available in k8s mode
-    private ModelFetchJobService? ModelFetchJobService =>
-        ServiceProvider.GetService<ModelFetchJobService>();
+    // TODO: Restore template label validation via GET /api/config/job-templates when API client is wired here.
+    // JobTemplateStore removed from Settings.razor (Spec 045 Req 1b.2 / Task 8) — the ConfigMap mount
+    // moved to the Job Controller pod in Spec 043; the orchestrator no longer has access to it.
+    // Template label validation was cosmetic only (warning when a label doesn't match a known template).
+    // ModelFetchJobService removed (Spec 045 Req 7a.3): resolved via ConfigClient.GetModelsAsync
     private string _selectedNode = SettingsNodes.ProvidersIssue;
 
     [Parameter]
@@ -218,10 +202,10 @@
     {
         try
         {
-            _issueProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, _cts.Token)).ToList();
-            _repoProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, _cts.Token)).ToList();
-            _agentProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, _cts.Token)).ToList();
-            _pipelineProviders = (await ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, _cts.Token)).ToList();
+            _issueProviders = (await ConfigClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, _cts.Token)).ToList();
+            _repoProviders = (await ConfigClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, _cts.Token)).ToList();
+            _agentProviders = (await ConfigClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Agent, _cts.Token)).ToList();
+            _pipelineProviders = (await ConfigClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, _cts.Token)).ToList();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -278,7 +262,7 @@
     {
         try
         {
-            await ConfigStore.DeleteProviderConfigAsync(id, kind, _cts.Token);
+            await ConfigClient.DeleteProviderConfigAsync(id, kind, _cts.Token);
             await LoadAllData();
             ShowStatus($"{kind} provider deleted.");
         }

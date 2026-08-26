@@ -1,7 +1,13 @@
+using k8s;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
-using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Api.Client.Stores;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -22,7 +28,6 @@ namespace CodingAgentWebUI.IntegrationTests.Smoke;
 /// This catches the class of bugs found during the Postgres introduction:
 /// - Services accidentally resolving to filesystem instead of DB-backed implementations
 /// - Missing interface registrations in DB mode
-/// - UI components crashing when FeatureFlags.IsDatabaseMode is true
 /// - ConfigurationStore wiring (PostgresConfigurationStore vs JsonConfigurationStore)
 /// </summary>
 public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
@@ -54,8 +59,8 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             Environment.SetEnvironmentVariable("Database__SslMode", null);
             Environment.SetEnvironmentVariable("Database__MigrateOnStartup", null);
             Environment.SetEnvironmentVariable("Database__SkipStartupInit", null);
-            Environment.SetEnvironmentVariable("WorkDistribution__Mode", null);
             Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+            Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", null);
         }
 
         base.Dispose(disposing);
@@ -73,8 +78,10 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Database__SslMode", "Disable");
         Environment.SetEnvironmentVariable("Database__MigrateOnStartup", "false");
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
-        Environment.SetEnvironmentVariable("WorkDistribution__Mode", "SignalR");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-api-key");
+        // Spec 045: PipelineApi:BaseUrl is required after Task 2 fast-fail was added.
+        // Integration tests do not start a real API; use a stub URL to satisfy the check.
+        Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", "http://localhost:9999");
 
         // Reset Serilog's global logger to a fresh bootstrap state.
         // This prevents "The logger is already frozen" when multiple WebApplicationFactory
@@ -101,6 +108,12 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             // Register InMemory EF Core factory
             services.AddSingleton<IDbContextFactory<PipelineDbContext>>(
                 new InMemoryDbContextFactory(_dbName));
+            // IKubernetes is built from in-cluster config or ~/.kube/config and throws "No usable
+            // Kubernetes configuration" when neither resolves. LeaderElectionService is a hosted service
+            // that takes it, so without this stub these tests only pass on a machine that happens to have
+            // a kubeconfig — they fail in every CI container.
+            services.RemoveAll<IKubernetes>();
+            services.AddSingleton(new Mock<IKubernetes>().Object);
 
             // Replace the distributed lock provider with InProcess (real one uses Postgres advisory locks)
             services.RemoveAll<IDistributedLockProvider>();
@@ -121,6 +134,90 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
 
             // Register a no-op IDatabaseProbe so DatabaseStartupService skips real SQL connectivity check
             services.AddSingleton<IDatabaseProbe>(new NoOpDatabaseProbe());
+
+            // Spec 045: IDispatchOrchestrationService was removed from monolith DI (Task 8), but
+            // IssueDrawerService, PrReviewDrawerService, and EpicDrawerService still depend on it.
+            // Register a mock to satisfy DI validation.
+            services.AddSingleton(new Mock<IDispatchOrchestrationService>().Object);
+
+            // Spec 045: IPipelineApiConfigClient is registered by AddPipelineApiClient() and points
+            // to localhost:9999 (stub URL set above). Replace it with a mock to prevent real HTTP
+            // calls during test startup (ConsolidationRehydrationExtensions calls LoadPipelineConfigAsync).
+            var configClientMock = new Mock<IPipelineApiConfigClient>();
+            configClientMock.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PipelineConfiguration());
+            configClientMock.Setup(s => s.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ProviderConfig>());
+            configClientMock.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PipelineProject>());
+            configClientMock.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+            // Spec 045: additional setup for ApiConfigurationStore which resolves
+            // IAgentProfileStore, IQualityGateConfigStore, IReviewerConfigStore
+            configClientMock.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<AgentProfile>());
+            configClientMock.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+            configClientMock.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+            configClientMock.Setup(s => s.GetTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+            // Replace any existing IPipelineApiConfigClient registration
+            services.RemoveAll<IPipelineApiConfigClient>();
+            services.AddSingleton(configClientMock.Object);
+
+            // KubernetesWorkDistributor is now a pure Pipeline API client — its dedup and status
+            // reads go through IPipelineApiWorkItemClient, which would otherwise dial the
+            // localhost:9999 stub URL. Mock it for the same reason as the config client above.
+            var workItemClientMock = new Mock<IPipelineApiWorkItemClient>();
+            workItemClientMock.Setup(s => s.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<(string IssueIdentifier, string IssueProviderConfigId)>());
+            workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+            services.RemoveAll<IPipelineApiWorkItemClient>();
+            services.AddSingleton(workItemClientMock.Object);
+
+            // ApiBackedHarnessSuggestionStore delegates to IPipelineApiHarnessSuggestionClient.
+            // Use an in-memory store backed mock so the save+get roundtrip test can pass.
+            HarnessSuggestions? capturedSuggestions = null;
+            var harnessMock = new Mock<IPipelineApiHarnessSuggestionClient>();
+            harnessMock.Setup(s => s.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
+                .Callback<HarnessSuggestions, CancellationToken>((s, _) => capturedSuggestions = s)
+                .Returns(Task.CompletedTask);
+            harnessMock.Setup(s => s.GetAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() => capturedSuggestions);
+            services.RemoveAll<IPipelineApiHarnessSuggestionClient>();
+            services.AddSingleton(harnessMock.Object);
+
+            // ApiBackedConsolidationRunStore delegates to IPipelineApiConsolidationRunClient.
+            var consolidationRunClientMock = new Mock<IPipelineApiConsolidationRunClient>();
+            consolidationRunClientMock.Setup(s => s.LoadAllRunsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ConsolidationRun>());
+            services.RemoveAll<IPipelineApiConsolidationRunClient>();
+            services.AddSingleton(consolidationRunClientMock.Object);
+
+            // Replace IConsolidationService — Program.cs calls CleanupOrphanedRunsAsync
+            // and RehydrateQueuedRunsAsync during startup, which hit the database directly
+            // (not via a hosted service), so RemoveAll<IHostedService> doesn't prevent it.
+            var consolidationMock = new Mock<IConsolidationService>();
+            consolidationMock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            consolidationMock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ConsolidationRun>());
+            services.RemoveAll<IConsolidationService>();
+            services.AddSingleton(consolidationMock.Object);
+
+            // JobTemplateStore loads /app/config/job-templates.yaml, which only exists in-cluster
+            // (mounted from the job-templates ConfigMap). ChatJobDispatcher takes it as a
+            // dependency, so without an in-memory substitute resolving IChatJobDispatcher throws
+            // FileNotFoundException here rather than exercising the registration.
+            services.RemoveAll<JobTemplateStore>();
+            services.AddSingleton(JobTemplateStore.LoadFromYaml("""
+                - labels: "kiro,dotnet"
+                  image: "chemsorly/coding-agent:kiro-dotnet10-latest"
+                  providerType: "kiro"
+                  maxConcurrent: 1
+                """));
         });
     }
 

@@ -218,6 +218,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         }
 
         // Step 3: Connect, register, and start heartbeat via AgentConnectionManager
+        // T11: AGENT_LABELS can also be read from AgentRuntimeOptions (registered in DI) — consolidation tracked as future work.
         var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
         var labels = labelsEnv
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

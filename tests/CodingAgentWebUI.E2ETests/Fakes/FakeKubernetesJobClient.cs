@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Kubernetes;
 using k8s.Models;
 
 namespace CodingAgentWebUI.E2ETests.Fakes;
@@ -97,6 +97,9 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         CreatedSecrets.Add(secret);
         return Task.CompletedTask;
     }
+
+    public Task DeleteSecretAsync(string name, string ns, CancellationToken ct = default)
+        => Task.CompletedTask;
 
     public Task<V1PodList> ListPodsAsync(string ns, string labelSelector, CancellationToken ct = default)
     {

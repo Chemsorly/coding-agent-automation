@@ -37,7 +37,7 @@ namespace CodingAgentWebUI.Agent;
 /// The orchestrator validates this via <c>AgentApiKeyAuthHandler</c>.
 /// </para>
 /// </remarks>
-public sealed class HubConnectionManager : IAsyncDisposable
+public sealed class HubConnectionManager : IHubConnectionManager
 {
     private readonly HubConnection _connection;
     private readonly Serilog.ILogger _logger;

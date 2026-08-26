@@ -4,6 +4,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.Hosting;
 using Polly;
 
 namespace CodingAgentWebUI.Agent;
@@ -19,11 +20,12 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class AgentConnectionManager : IAgentConnectionManager
 {
-    private volatile HubConnectionManager _hubManager;
-    private readonly HubConnectionManagerFactory _hubManagerFactory;
+    private volatile IHubConnectionManager _hubManager;
+    private readonly IHubConnectionManagerFactory _hubManagerFactory;
     private readonly AgentId _agentId;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
+    private readonly IHostApplicationLifetime? _lifetime;
 
     private volatile AgentRegistrationMessage? _currentRegistration;
     private int _currentStep = NullStep;
@@ -42,10 +44,11 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     public event Func<Task>? OnReconnected;
 
     public AgentConnectionManager(
-        HubConnectionManager hubManager,
-        HubConnectionManagerFactory hubManagerFactory,
+        IHubConnectionManager hubManager,
+        IHubConnectionManagerFactory hubManagerFactory,
         AgentId agentId,
-        Serilog.ILogger logger)
+        Serilog.ILogger logger,
+        IHostApplicationLifetime? lifetime = null)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(hubManagerFactory);
@@ -57,6 +60,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         // it cannot be null, but default(AgentId) silently propagates null strings to SignalR hub invocations.
         _agentId = agentId;
         _logger = logger;
+        _lifetime = lifetime;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
 
         WireEventHandlers(_hubManager);
@@ -158,12 +162,12 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 
     // ── Private: Event Handlers ──────────────────────────────────────────
 
-    private void WireEventHandlers(HubConnectionManager hubManager)
+    private void WireEventHandlers(IHubConnectionManager hubManager)
     {
         hubManager.OnCancelJob += HandleCancelJobAsync;
         hubManager.OnForceDisconnect += HandleForceDisconnectAsync;
         hubManager.OnReconnected += HandleReconnectedAsync;
-        hubManager.OnClosed += HandleTerminalClosedAsync;
+        hubManager.OnClosed += e => HandleTerminalClosedAsync(e);
     }
 
     private async Task HandleCancelJobAsync(string jobId)
@@ -242,18 +246,17 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         }
     }
 
-    private async Task HandleTerminalClosedAsync(Exception? error)
+    internal async Task HandleTerminalClosedAsync(Exception? error, int maxAttempts = 10, Func<int, TimeSpan>? delayOverride = null)
     {
         _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
 
-        const int maxAttempts = 10;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var delay = ReconnectionHelper.CalculateReconnectionDelay(attempt);
+            var delay = delayOverride?.Invoke(attempt) ?? ReconnectionHelper.CalculateReconnectionDelay(attempt);
             _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
                 attempt, maxAttempts, delay.TotalSeconds);
 
-            HubConnectionManager? newManager = null;
+            IHubConnectionManager? newManager = null;
             try
             {
                 // Fire-and-forget: reconnection delay has no ambient cancellation token in this event handler
@@ -274,7 +277,15 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
                         CancellationToken.None);
                 }
 
-                _hubManager = newManager;
+                // B4 fix: use CAS to transfer ownership atomically (matches AgentConnectionLifecycle pattern).
+                // If DisposeAsync ran concurrently and swapped _hubManager to a different instance,
+                // the CAS fails — dispose the orphaned newManager and abort.
+                if (Interlocked.CompareExchange(ref _hubManager, newManager, oldManager) != oldManager)
+                {
+                    await SafeDisposeAsync(newManager);
+                    newManager = null;
+                    return;
+                }
                 newManager = null; // Ownership transferred
 
                 await SafeDisposeAsync(oldManager);
@@ -289,7 +300,11 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
             }
         }
 
-        _logger.Error("All {MaxAttempts} reconnection attempts exhausted for agent {AgentId}", maxAttempts, _agentId.Value);
+        _logger.Error("All {MaxAttempts} reconnection attempts exhausted for agent {AgentId}, shutting down",
+            maxAttempts, _agentId.Value);
+        // B5 fix: stop the host so the pod is reaped and rescheduled — matches AgentConnectionLifecycle behaviour.
+        // If lifetime is null (test context), we log only.
+        _lifetime?.StopApplication();
     }
 
     // ── Private: Heartbeat ───────────────────────────────────────────────
@@ -358,7 +373,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         }
     }
 
-    private async ValueTask SafeDisposeAsync(HubConnectionManager? manager)
+    private async ValueTask SafeDisposeAsync(IHubConnectionManager? manager)
     {
         if (manager is null) return;
         try

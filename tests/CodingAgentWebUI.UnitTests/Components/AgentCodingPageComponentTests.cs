@@ -1,5 +1,6 @@
 using Bunit;
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
@@ -26,6 +27,7 @@ public class AgentCodingPageComponentTests : BunitContext
     private readonly Mock<IRepositoryProvider> _mockRepoProvider;
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
     private readonly Mock<IProjectStore> _mockProjectStore;
+    private readonly Mock<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient> _mockConfigClient;
     private readonly PipelineOrchestrationService _pipelineService;
 
     public AgentCodingPageComponentTests()
@@ -57,20 +59,28 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(_pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(new PipelineLoopServiceDependencies
-        {
-            Orchestration = runCreator,
-            ProviderFactory = _mockFactory.Object,
-            PipelineConfigStore = _mockStore.Object,
-            ProviderConfigStore = _mockStore.Object,
-            ProjectStore = _mockStore.Object,
-            Logger = mockLogger.Object,
-            WorkDistributor = null,
-            DispatchOrchestration = null,
-            DependencyChecker = null,
-            HousekeepingService = null,
-            LeaderElection = null
-        }));
+
+        // Spec 047: AgentCoding.razor.cs now injects ILoopStatusService (not IPipelineLoopService).
+        // AgentCodingPageService now takes ISchedulerApiClient (not IPipelineLoopService).
+        var mockLoopStatus = new Mock<ILoopStatusService>();
+        mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
+        mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("");
+        mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
+        mockLoopStatus.SetupGet(l => l.TemplateStatuses)
+            .Returns(new Dictionary<string, CodingAgentWebUI.Pipeline.Models.ConfigStatusSnapshot>());
+        mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
+        Services.AddSingleton(mockLoopStatus.Object);
+        Services.AddSingleton<ILoopStatusService>(mockLoopStatus.Object);
+
+        var mockSchedulerClient = new Mock<ISchedulerApiClient>();
+        mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopStartResultDto(true, null));
+        mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockSchedulerClient.Setup(c => c.ResumeLoopAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        Services.AddSingleton(mockSchedulerClient.Object);
+        Services.AddSingleton<ISchedulerApiClient>(mockSchedulerClient.Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 
         _mockProjectStore = new Mock<IProjectStore>();
@@ -92,6 +102,34 @@ public class AgentCodingPageComponentTests : BunitContext
             .Returns(Task.CompletedTask);
         Services.AddSingleton(_mockProjectStore.Object);
 
+        // Spec 045: AgentCodingPageService now uses IPipelineApiConfigClient instead of
+        // IConfigurationStore + IProjectStore. Register a mock that delegates to the existing mocks
+        // so existing test assertions remain valid.
+        _mockConfigClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient>();
+        _mockConfigClient.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
+        // AgentCodingPageService feeds the dispatch path, so it reads the with-secrets form
+        // (live tokens/base URLs) rather than the "****" masked one. Same backing store.
+        _mockConfigClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .Returns<ProviderKind, CancellationToken>((kind, ct) => _mockStore.Object.LoadProviderConfigsAsync(kind, ct));
+        _mockConfigClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadPipelineConfigAsync(ct));
+        _mockConfigClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockProjectStore.Object.LoadAllTemplatesAsync(ct));
+        _mockConfigClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockProjectStore.Object.LoadProjectsAsync(ct));
+        _mockConfigClient.Setup(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadQualityGateConfigsAsync(ct));
+        _mockConfigClient.Setup(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadReviewerConfigsAsync(ct));
+        _mockConfigClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(ct => _mockStore.Object.LoadAgentProfilesAsync(ct));
+        _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockConfigClient.Setup(c => c.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        Services.AddSingleton<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient>(_mockConfigClient.Object);
+
         var registry = new AgentRegistryService(mockLogger.Object);
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
@@ -99,6 +137,7 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
+        Services.AddSingleton<IDispatchOrchestrationService>(new Mock<IDispatchOrchestrationService>().Object);
 
         Services.AddScoped<IIssueDrawerService, IssueDrawerService>();
         Services.AddScoped<IPrReviewDrawerService, PrReviewDrawerService>();
@@ -540,7 +579,7 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public async Task AgentCoding_AddTemplate_WithValidData_AddsAndClosesForm()
     {
-        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var component = Render<AgentCoding>();
@@ -560,13 +599,13 @@ public class AgentCodingPageComponentTests : BunitContext
             Assert.NotNull(message);
         });
 
-        _mockProjectStore.Verify(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task AgentCoding_ToggleTemplateEnabled_CallsService()
     {
-        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var component = Render<AgentCoding>();
@@ -579,13 +618,13 @@ public class AgentCodingPageComponentTests : BunitContext
             Assert.True(success, error);
         });
 
-        _mockProjectStore.Verify(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task AgentCoding_ToggleImplementationEnabled_CallsService()
     {
-        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var component = Render<AgentCoding>();
@@ -598,13 +637,13 @@ public class AgentCodingPageComponentTests : BunitContext
             Assert.True(success, error);
         });
 
-        _mockProjectStore.Verify(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task AgentCoding_ToggleReviewEnabled_CallsService()
     {
-        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var component = Render<AgentCoding>();
@@ -617,13 +656,13 @@ public class AgentCodingPageComponentTests : BunitContext
             Assert.True(success, error);
         });
 
-        _mockProjectStore.Verify(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task AgentCoding_ToggleDecompositionEnabled_CallsService()
     {
-        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var component = Render<AgentCoding>();
@@ -636,15 +675,15 @@ public class AgentCodingPageComponentTests : BunitContext
             Assert.True(success, error);
         });
 
-        _mockProjectStore.Verify(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task AgentCoding_RemoveTemplate_Success_RemovesFromList()
     {
-        _mockProjectStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockProjectStore.Setup(s => s.DeleteTemplateAsync(It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.DeleteTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var component = Render<AgentCoding>();
@@ -987,7 +1026,7 @@ public class AgentCodingPageComponentTests : BunitContext
             await (Task)method!.Invoke(component.Instance, [(template, false)])!;
         });
 
-        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(
             It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
@@ -1005,7 +1044,7 @@ public class AgentCodingPageComponentTests : BunitContext
             await (Task)method!.Invoke(component.Instance, [(template, true)])!;
         });
 
-        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(
             It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
@@ -1023,7 +1062,7 @@ public class AgentCodingPageComponentTests : BunitContext
             await (Task)method!.Invoke(component.Instance, [(template, true)])!;
         });
 
-        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(
             It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
@@ -1041,7 +1080,7 @@ public class AgentCodingPageComponentTests : BunitContext
             await (Task)method!.Invoke(component.Instance, [(template, true)])!;
         });
 
-        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(
             It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
@@ -1069,7 +1108,7 @@ public class AgentCodingPageComponentTests : BunitContext
             await (Task)method!.Invoke(component.Instance, null)!;
         });
 
-        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(
             It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -1113,8 +1152,8 @@ public class AgentCodingPageComponentTests : BunitContext
             await (Task)method!.Invoke(component.Instance, null)!;
         });
 
-        _mockProjectStore.Verify(s => s.DeleteTemplateAsync(
-            It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockConfigClient.Verify(c => c.DeleteTemplateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -1262,9 +1301,9 @@ public class AgentCodingPageComponentTests : BunitContext
     [Fact]
     public async Task AgentCoding_MoveTemplateToProject_CallsPageService()
     {
-        _mockProjectStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var component = Render<AgentCoding>();

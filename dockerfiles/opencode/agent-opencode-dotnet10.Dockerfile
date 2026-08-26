@@ -19,7 +19,7 @@ COPY Directory.Packages.props ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
 COPY src/CodingAgentWebUI.Pipeline.CodeReview/CodingAgentWebUI.Pipeline.CodeReview.csproj src/CodingAgentWebUI.Pipeline.CodeReview/
-COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj src/CodingAgentWebUI.Infrastructure/
+COPY src/CodingAgentWebUI.Infrastructure.Providers/CodingAgentWebUI.Infrastructure.Providers.csproj src/CodingAgentWebUI.Infrastructure.Providers/
 COPY src/CodingAgentWebUI.Orchestration/CodingAgentWebUI.Orchestration.csproj src/CodingAgentWebUI.Orchestration/
 COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
 COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
@@ -37,7 +37,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0.400 AS runtime
 ARG TARGETARCH
 
 # Pin OpenCode version via build ARG for reproducible builds
-ARG OPENCODE_VERSION=1.17.15
+ARG OPENCODE_VERSION=1.18.21
 
 # Install runtime dependencies: tini (PID 1), curl (health checks), git (workspace ops)
 RUN apt-get update && \

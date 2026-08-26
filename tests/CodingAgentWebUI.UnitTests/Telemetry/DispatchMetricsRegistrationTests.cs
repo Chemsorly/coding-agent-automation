@@ -14,17 +14,14 @@ public class DispatchMetricsRegistrationTests : IDisposable
     private readonly MeterListener _listener = new();
     private readonly Dictionary<string, int> _gaugeValues = new();
     private readonly AgentRegistryService _registry;
-    private readonly JobDeduplicationGuardService _dispatcher;
 
     public DispatchMetricsRegistrationTests()
     {
         var logger = new Mock<ILogger>().Object;
         _registry = new AgentRegistryService(logger);
-        _dispatcher = new JobDeduplicationGuardService(_registry, logger);
 
         // Register gauges (same pattern as Program.cs)
-        _ = PipelineTelemetry.Meter.CreateObservableGauge("dispatch.queue.depth",
-            () => _dispatcher.QueueLength, "{item}", "Jobs waiting for available agent");
+        // dispatch.queue.depth was removed in T18 (arch-audit 2026-08-22) — QueueLength was a dead no-op
         _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",
             () => _registry.GetBusyAgentCount(), "{job}", "Currently executing agent jobs");
         _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
@@ -46,21 +43,7 @@ public class DispatchMetricsRegistrationTests : IDisposable
 
     public void Dispose() => _listener.Dispose();
 
-    [Fact]
-    public void QueueDepth_ReflectsQueueLength()
-    {
-        _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = "issue-1", IssueProviderId = "ip",
-            RepoProviderId = "rp", EnqueuedAt = DateTimeOffset.UtcNow,
-            InitiatedBy = "test", RequiredLabels = []
-        });
-
-        _listener.RecordObservableInstruments();
-
-        _gaugeValues.Should().ContainKey("dispatch.queue.depth");
-        _gaugeValues["dispatch.queue.depth"].Should().Be(1);
-    }
+    // QueueDepth test removed (T18, arch-audit 2026-08-22) — QueueLength and EnqueueJob were dead no-ops.
 
     [Fact]
     public void AgentJobsActive_ReflectsBusyAgentCount()

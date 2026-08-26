@@ -131,6 +131,7 @@ public sealed class ConsolidationJobPreparationServiceTests
     public async Task PrepareAsync_BrainConsolidation_ExcludesIssuePermission()
     {
         SetupAgentConfig("agent-cfg");
+        SetupMatchingProfile("agent-cfg");
 
         bool capturedIncludeIssue = true; // Start true, expect false
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
@@ -150,6 +151,7 @@ public sealed class ConsolidationJobPreparationServiceTests
     public async Task PrepareAsync_HarnessSuggestions_ExcludesIssuePermission()
     {
         SetupAgentConfig("agent-cfg");
+        SetupMatchingProfile("agent-cfg");
 
         bool capturedIncludeIssue = true;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
@@ -222,7 +224,9 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_NoProfileMatch_FallsBackToFirstCompatibleAgentConfig()
     {
-        // Agent config with RequiredLabels matching agent labels
+        // New behavior (spec 041-045): without a matching AgentProfile, no agent provider config
+        // is injected and token vending is skipped. The old RequiredLabels-based fallback has been
+        // removed; an explicit profile is required for agent config resolution.
         var kiroConfig = new ProviderConfig
         {
             Id = "kiro-agent-cfg", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
@@ -230,25 +234,19 @@ public sealed class ConsolidationJobPreparationServiceTests
         };
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { kiroConfig });
-        // No profiles → fallback
+        // No profiles → no match → no agent config injected
         _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>());
 
-        IReadOnlyList<ProviderConfig>? capturedConfigs = null;
-        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
-                It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (configs, _, _, _) => capturedConfigs = configs)
-            .ReturnsAsync(new List<ProviderConfig>());
-
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, KiroDotnetLabels, CancellationToken.None);
+        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, KiroDotnetLabels, CancellationToken.None);
 
-        capturedConfigs.Should().NotBeNull();
-        var agentCfg = capturedConfigs!.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
-        agentCfg.Should().NotBeNull();
-        agentCfg!.Id.Should().Be("kiro-agent-cfg");
+        // Token vending is skipped when rawConfigs is empty
+        _mockTokenVending.Verify(
+            t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Never);
+        result.ProviderConfigs.Should().BeEmpty();
     }
 
     [Fact]
@@ -277,7 +275,8 @@ public sealed class ConsolidationJobPreparationServiceTests
     [Fact]
     public async Task PrepareAsync_EmptyAgentLabels_NoProfileMatch_FallsBackSuccessfully()
     {
-        // Agent config with no RequiredLabels → compatible with any labels (including empty)
+        // New behavior (spec 041-045): without a matching AgentProfile, no agent provider config
+        // is injected. Empty labels produce no profile match; token vending is skipped.
         var agentConfig = new ProviderConfig
         {
             Id = "default-agent", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
@@ -286,21 +285,15 @@ public sealed class ConsolidationJobPreparationServiceTests
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { agentConfig });
 
-        IReadOnlyList<ProviderConfig>? capturedConfigs = null;
-        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
-                It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
-                (configs, _, _, _) => capturedConfigs = configs)
-            .ReturnsAsync(new List<ProviderConfig>());
-
         var svc = CreateService();
-        // Empty agentLabels
-        await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, Array.Empty<string>(), CancellationToken.None);
+        // Empty agentLabels — no profile matches → no agent config added
+        var result = await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, Array.Empty<string>(), CancellationToken.None);
 
-        capturedConfigs.Should().NotBeNull();
-        capturedConfigs!.Should().HaveCount(1);
-        capturedConfigs[0].Id.Should().Be("default-agent");
+        _mockTokenVending.Verify(
+            t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Never);
+        result.ProviderConfigs.Should().BeEmpty();
     }
 
     #endregion
@@ -311,6 +304,7 @@ public sealed class ConsolidationJobPreparationServiceTests
     public async Task PrepareAsync_TemplateWithRepoOnly_NoBrain_NoIssue()
     {
         SetupAgentConfig("agent-cfg");
+        SetupMatchingProfile("agent-cfg");
 
         var template = new PipelineJobTemplate
         {
@@ -345,6 +339,7 @@ public sealed class ConsolidationJobPreparationServiceTests
     public async Task PrepareAsync_TemplateWithRepoAndBrain_BothResolved()
     {
         SetupAgentConfig("agent-cfg");
+        SetupMatchingProfile("agent-cfg");
 
         var template = new PipelineJobTemplate
         {
@@ -379,6 +374,7 @@ public sealed class ConsolidationJobPreparationServiceTests
     public async Task PrepareAsync_NullTemplateId_OnlyAgentConfig()
     {
         SetupAgentConfig("agent-cfg");
+        SetupMatchingProfile("agent-cfg");
 
         IReadOnlyList<ProviderConfig>? capturedConfigs = null;
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(
@@ -401,6 +397,7 @@ public sealed class ConsolidationJobPreparationServiceTests
     public async Task PrepareAsync_TemplateNotFound_OnlyAgentConfig()
     {
         SetupAgentConfig("agent-cfg");
+        SetupMatchingProfile("agent-cfg");
 
         // Template "nonexistent" is not in the list
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
@@ -480,39 +477,10 @@ public sealed class ConsolidationJobPreparationServiceTests
 
     #region Cross-mode parity
 
-    [Fact]
-    public async Task PrepareAsync_SameInputs_ProducesSameResult_RegardlessOfCallerContext()
-    {
-        // TODO: This test is tautological — it calls the same method on the same instance twice with
-        // identical inputs and deterministic mocks. It serves only as a regression guard if the shared
-        // service is ever split back into separate paths. Consider using two separate instances or
-        // simulating different caller contexts to add real verification value.
-
-        // Setup: full template with all providers
-        SetupAgentConfig("agent-cfg");
-        SetupTemplateWithAllProviders();
-        SetupRepoConfigs();
-        SetupIssueConfig();
-
-        var svc = CreateService();
-        var labels = E2ELabels;
-
-        // Call twice with identical inputs
-        var result1 = await svc.PrepareAsync(
-            ConsolidationRunType.RefactoringDetection, "t1", labels, CancellationToken.None);
-        var result2 = await svc.PrepareAsync(
-            ConsolidationRunType.RefactoringDetection, "t1", labels, CancellationToken.None);
-
-        // Assert: same result
-        result1.RepoProviderConfigId.Should().Be(result2.RepoProviderConfigId);
-        result1.ProviderConfigs.Should().HaveCount(result2.ProviderConfigs.Count);
-
-        for (var i = 0; i < result1.ProviderConfigs.Count; i++)
-        {
-            result1.ProviderConfigs[i].Id.Should().Be(result2.ProviderConfigs[i].Id);
-            result1.ProviderConfigs[i].Kind.Should().Be(result2.ProviderConfigs[i].Kind);
-        }
-    }
+    // PrepareAsync_SameInputs_ProducesSameResult_RegardlessOfCallerContext was removed.
+    // It was self-documented as tautological: called the same method twice with identical
+    // inputs and deterministic mocks, verifying only internal consistency rather than
+    // correctness against an independent specification.
 
     #endregion
 
@@ -550,6 +518,28 @@ public sealed class ConsolidationJobPreparationServiceTests
         var issueConfig = new ProviderConfig { Id = "ip-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Issue" };
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { issueConfig });
+    }
+
+    /// <summary>
+    /// Sets up an AgentProfile with empty MatchLabels (catch-all), ensuring the ProfileResolver
+    /// always finds a match regardless of what agent labels are passed in the test.
+    /// An empty MatchLabels profile matches any agent (Subset strategy: [] ⊆ any set = true).
+    /// </summary>
+    private void SetupMatchingProfile(string agentConfigId)
+    {
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "default-profile",
+                    DisplayName = "Default",
+                    Enabled = true,
+                    MatchLabels = Array.Empty<string>(),
+                    AgentProviderConfigId = agentConfigId,
+                    Priority = 1
+                }
+            });
     }
 
     #endregion

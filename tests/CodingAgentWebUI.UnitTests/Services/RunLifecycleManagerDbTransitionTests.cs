@@ -32,7 +32,7 @@ public sealed class RunLifecycleManagerDbTransitionTests
     private readonly WorkItemTransitionService _transitionService;
     private readonly OrchestratorRunService _runService;
     private readonly AgentRegistryService _registry;
-    private readonly JobDeduplicationGuardService _dispatcher;
+    private readonly AgentReservationService _dispatcher;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
     private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<ILogger> _mockLogger;
@@ -58,7 +58,7 @@ public sealed class RunLifecycleManagerDbTransitionTests
 
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
+        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
 
         _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
@@ -67,7 +67,6 @@ public sealed class RunLifecycleManagerDbTransitionTests
             _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
-            WorkItemTransition: _transitionService,
             WorkItemFallbackTransition: fallbackService));
     }
 
@@ -133,11 +132,6 @@ public sealed class RunLifecycleManagerDbTransitionTests
 
         // Assert: CompletedAt was set by the mutate lambda and is recent
         item.CompletedAt.Should().NotBeNull();
-        // TODO: The 5-second tolerance here can be flaky on heavily loaded CI runners. The integration
-        // test RunLifecycleIntegrationTests uses TimeSpan.FromSeconds(10) for the same assertion — widen
-        // to match, or drop BeCloseTo entirely since NotBeNull() above already confirms the field was set.
-        // See review finding: Correctness [WARNING] line 110 / TestQualityReviewer [WARNING] line 94.
-        item.CompletedAt!.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
     }
 
     // ── Test infrastructure ───────────────────────────────────────────────

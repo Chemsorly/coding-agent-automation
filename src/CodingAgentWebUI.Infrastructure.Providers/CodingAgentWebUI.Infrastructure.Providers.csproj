@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!--
+    InternalsVisibleTo: copied from CodingAgentWebUI.Infrastructure as a starting point.
+    Audit which test projects actually access internal Providers types and trim accordingly.
+    InProcessDistributedLockProvider and PostgresDistributedLockProvider (both internal) have
+    moved to Infrastructure.Persistence — those test projects may not need access to Providers
+    internals at all, but the entries are harmless.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibGit2Sharp" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Resilience" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
+    <PackageReference Include="NGitLab" />
+    <PackageReference Include="Octokit" />
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
+  </ItemGroup>
+
+</Project>

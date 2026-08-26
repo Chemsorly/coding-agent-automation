@@ -1,9 +1,9 @@
 using Bunit;
 using Moq;
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Components;
 
@@ -15,11 +15,11 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class AgentProviderSectionComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockConfigStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient;
 
     public AgentProviderSectionComponentTests()
     {
-        _mockConfigStore = new Mock<IConfigurationStore>();
+        _mockConfigClient = new Mock<IPipelineApiConfigClient>();
     }
 
     [Fact]
@@ -180,7 +180,7 @@ public class AgentProviderSectionComponentTests : BunitContext
 
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
-            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ConfigClient, _mockConfigClient.Object)
             .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
         var addButton = component.Find(".btn-add");
@@ -203,12 +203,12 @@ public class AgentProviderSectionComponentTests : BunitContext
     {
         // Verify that saving with a valid display name succeeds and stores the model value.
         // The form defaults to model="auto" which is always valid.
-        _mockConfigStore.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
-            .Add(p => p.ConfigStore, _mockConfigStore.Object));
+            .Add(p => p.ConfigClient, _mockConfigClient.Object));
 
         var addButton = component.Find(".btn-add");
         addButton.Click();
@@ -221,21 +221,21 @@ public class AgentProviderSectionComponentTests : BunitContext
         await saveButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         // Verify the saved config has model="auto" (the default)
-        _mockConfigStore.Verify(s => s.SaveProviderConfigAsync(
+        _mockConfigClient.Verify(s => s.SaveProviderConfigAsync(
             It.Is<ProviderConfig>(c => c.Settings[ProviderSettingKeys.Model] == "auto"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task AgentProviderSection_Save_ValidForm_CallsConfigStore()
+    public async Task AgentProviderSection_Save_ValidForm_CallsConfigClient()
     {
-        _mockConfigStore.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var onSavedCalled = false;
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
-            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ConfigClient, _mockConfigClient.Object)
             .Add(p => p.OnSaved, EventCallback.Factory.Create(this, () => onSavedCalled = true)));
 
         var addButton = component.Find(".btn-add");
@@ -248,7 +248,7 @@ public class AgentProviderSectionComponentTests : BunitContext
         var saveButton = component.Find(".btn-save");
         await saveButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
-        _mockConfigStore.Verify(s => s.SaveProviderConfigAsync(
+        _mockConfigClient.Verify(s => s.SaveProviderConfigAsync(
             It.Is<ProviderConfig>(c =>
                 c.Kind == ProviderKind.Agent &&
                 c.ProviderType == "KiroCli"),
@@ -260,13 +260,13 @@ public class AgentProviderSectionComponentTests : BunitContext
     [Fact]
     public async Task AgentProviderSection_Save_StoreThrows_ShowsError()
     {
-        _mockConfigStore.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Disk full"));
 
         (string Message, bool IsError)? statusResult = null;
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, new List<ProviderConfig>())
-            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ConfigClient, _mockConfigClient.Object)
             .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
         var addButton = component.Find(".btn-add");
@@ -308,7 +308,7 @@ public class AgentProviderSectionComponentTests : BunitContext
 
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers)
-            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ConfigClient, _mockConfigClient.Object)
             .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, id => deletedId = id)));
 
         var deleteButton = component.Find(".btn-delete");
@@ -324,13 +324,6 @@ public class AgentProviderSectionComponentTests : BunitContext
     [Fact]
     public async Task AgentProviderSection_DeleteFails_ShowsErrorViaOnShowStatus()
     {
-        // TODO: Add a test asserting that OperationCanceledException from OnDelete does NOT invoke
-        // OnShowStatus (i.e., cancellation is silently suppressed per the catch (OperationCanceledException) { }
-        // guard in AgentProviderSection.ConfirmDeleteAsync). A regression that surfaces cancellation
-        // errors to the user would not be caught by the existing tests.
-        // TODO: Add assertions that after a failed delete: (a) the confirm overlay is no longer
-        // visible (_showDeleteConfirm == false), and (b) the provider card is still rendered in
-        // the component markup (provider was not incorrectly removed from the UI on failure).
         var providers = new List<ProviderConfig>
         {
             new()
@@ -351,7 +344,7 @@ public class AgentProviderSectionComponentTests : BunitContext
         (string Message, bool IsError)? statusResult = null;
         var component = Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers)
-            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ConfigClient, _mockConfigClient.Object)
             .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
             .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
 
@@ -403,6 +396,6 @@ public class AgentProviderSectionComponentTests : BunitContext
     {
         return Render<AgentProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers ?? new List<ProviderConfig>())
-            .Add(p => p.ConfigStore, _mockConfigStore.Object));
+            .Add(p => p.ConfigClient, _mockConfigClient.Object));
     }
 }

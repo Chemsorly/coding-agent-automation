@@ -1,38 +1,64 @@
+using CodingAgentWebUI.Api.Client;
 using StackExchange.Redis;
 
 namespace CodingAgentWebUI.Services;
 
 /// <summary>
-/// Aggregates infrastructure health signals (Database + Redis) into a single queryable service.
+/// Aggregates infrastructure health signals into a single queryable service.
 /// All property reads are lightweight (volatile bool / property) — no network calls.
-/// Returns null for services that are not configured (Legacy mode / no Redis).
+/// Returns null for services that are not configured.
 /// </summary>
+/// <remarks>
+/// DB health is proxied via the Pipeline API's /readyz endpoint (which checks Postgres).
+/// Redis health is tracked when SignalR:Redis:ConnectionString is configured.
+/// </remarks>
 public sealed class InfrastructureHealthService
 {
-    private readonly DatabaseHealthState? _dbHealth;
+    private readonly IPipelineApiHealthClient _apiHealth;
     private readonly IConnectionMultiplexer? _redis;
-    private readonly bool _dbModeActive;
     private readonly bool _redisConfigured;
 
-    public InfrastructureHealthService(IServiceProvider serviceProvider, IConfiguration configuration)
+    private volatile int _dbConnectedFlag = -1; // -1=unknown, 0=false, 1=true
+
+    public InfrastructureHealthService(
+        IServiceProvider serviceProvider,
+        IConfiguration configuration,
+        IPipelineApiHealthClient apiHealth)
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(apiHealth);
 
-        _dbHealth = serviceProvider.GetService<DatabaseHealthState>();
+        _apiHealth = apiHealth;
         _redis = serviceProvider.GetService<IConnectionMultiplexer>();
-
-        // DB mode is active when Database:Host is configured
-        _dbModeActive = !string.IsNullOrEmpty(DatabaseConnectionResolver.Resolve(configuration));
-
-        // Redis is configured when SignalR:Redis:ConnectionString is set
         _redisConfigured = !string.IsNullOrEmpty(configuration.GetValue<string>("SignalR:Redis:ConnectionString"));
     }
 
     /// <summary>
-    /// Database connection status. null = not configured (Legacy mode), true = healthy, false = unhealthy.
+    /// Triggers a non-blocking background refresh of the DB health status via the API.
+    /// Called by the sidebar timer — result is available on the next read via DatabaseConnected.
     /// </summary>
-    public bool? DatabaseConnected => _dbModeActive ? _dbHealth?.IsDatabaseHealthy : null;
+    public void RefreshDbHealthBackground()
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await _apiHealth.IsReadyAsync();
+                _dbConnectedFlag = result ? 1 : 0;
+            }
+            catch
+            {
+                _dbConnectedFlag = 0;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Database connection status proxied from the Pipeline API's /readyz endpoint.
+    /// null = not yet polled, true = healthy, false = unhealthy/unreachable.
+    /// </summary>
+    public bool? DatabaseConnected => _dbConnectedFlag < 0 ? null : _dbConnectedFlag == 1;
 
     /// <summary>
     /// Redis connection status. null = not configured, true = connected, false = disconnected.

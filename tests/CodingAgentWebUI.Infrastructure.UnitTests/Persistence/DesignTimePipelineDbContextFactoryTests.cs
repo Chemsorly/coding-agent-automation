@@ -8,6 +8,7 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 /// Verifies that the factory throws when DESIGN_TIME_CONNECTION_STRING is missing,
 /// and succeeds when a valid connection string is supplied.
 /// </summary>
+[Collection("EnvironmentVariables")]
 public class DesignTimePipelineDbContextFactoryTests : IDisposable
 {
     private const string EnvVar = "DESIGN_TIME_CONNECTION_STRING";

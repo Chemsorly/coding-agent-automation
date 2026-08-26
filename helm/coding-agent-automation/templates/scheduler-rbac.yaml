@@ -1,0 +1,39 @@
+{{- if .Values.scheduler.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-scheduler
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+---
+apiVersion: rbac.authorization.k8s.io/v1
+# Namespace-scoped Role (not ClusterRole) — leases are namespace-scoped resources.
+kind: Role
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-scheduler
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+rules:
+  # Leader election via K8s Lease (coordination.k8s.io API group)
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-scheduler
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "coding-agent-automation.fullname" . }}-scheduler
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "coding-agent-automation.fullname" . }}-scheduler
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

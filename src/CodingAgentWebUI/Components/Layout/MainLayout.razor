@@ -1,8 +1,9 @@
 @inherits LayoutComponentBase
 @implements IAsyncDisposable
 @using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Hub
 @using CodingAgentWebUI.Services
-@inject IPipelineLoopService LoopService
+@inject ILoopStatusService LoopService
 @inject ConsolidationBadgeService BadgeService
 @inject IJSRuntime JS
 
@@ -31,6 +32,10 @@
             {
                 <span class="sidebar-loop-indicator" title="Pipeline loop is active"><Icon Name="refresh-cw" Size="14" /></span>
             }
+            @if (LoopService.IsSchedulerUnreachable)
+            {
+                <span class="sidebar-loop-indicator sidebar-loop-indicator--unavailable" title="Scheduler unavailable — loop controls disabled"><Icon Name="alert-triangle" Size="14" /></span>
+            }
         </NavLink>
         <NavLink href="agent-monitoring" class="sidebar-link">
             <span class="sidebar-icon" aria-hidden="true"><Icon Name="bar-chart-2" Size="20" /></span>
@@ -39,7 +44,14 @@
         <NavLink href="consolidation" class="sidebar-link">
             <span class="sidebar-icon" aria-hidden="true"><Icon Name="refresh-cw" Size="20" /></span>
             <span class="sidebar-label">Consolidation</span>
-            @if (BadgeService.BadgeCount > 0)
+            @if (!BadgeService.HasEverBeenIncremented)
+            {
+                <span class="sidebar-badge sidebar-badge--stale"
+                      title="Badge not available — consolidation events are now reported by the Pipeline API"
+                      aria-label="Badge not available — consolidation events are now reported by the Pipeline API"
+                      role="status">?</span>
+            }
+            else if (BadgeService.BadgeCount > 0)
             {
                 <span class="sidebar-badge">@BadgeService.BadgeCount</span>
             }
@@ -66,6 +78,7 @@
         </div>
     </nav>
     <main class="main-content">
+        <FirstRunBanner />
         <CascadingValue Value="this" IsFixed="true">
             @Body
         </CascadingValue>

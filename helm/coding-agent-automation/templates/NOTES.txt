@@ -8,7 +8,9 @@ To add the Helm repository:
 
 To install (example):
   helm install my-release chemsorly/coding-agent-automation \
-    --set secrets.agentApiKey=YOUR_API_KEY
+    --set secrets.agentApiKey=YOUR_API_KEY \
+    --set database.host=YOUR_POSTGRES_HOST \
+    --set database.auth.existingSecret=YOUR_SECRET_NAME
 
 The orchestrator is available at:
   http://{{ include "coding-agent-automation.fullname" . }}-orchestrator:{{ .Values.orchestrator.service.port }}
@@ -20,50 +22,43 @@ Ingress is enabled. Access the UI at:
 {{- end }}
 {{- end }}
 
-{{- if .Values.database.enabled }}
-
 ═══════════════════════════════════════════════════════════════════════════════
- POSTGRES WORK QUEUE — OPERATIONAL RUNBOOK
+ KUBERNETES DEPLOYMENT — OPERATIONAL RUNBOOK
 ═══════════════════════════════════════════════════════════════════════════════
 
-Mode: {{ .Values.workDistribution.mode }}
+Database: {{ .Values.database.host }}:{{ .Values.database.port | default 5432 }}
 {{- if .Values.database.migrateOnStartup }}
-Migrations: Applied on startup (dev mode)
+Migrations: Applied automatically on startup.
+  WARNING: Keep orchestrator.replicas=1 during upgrades to avoid concurrent
+  migration races (EF Core #13569). Scale up after the new pod reaches Ready.
 {{- else }}
-Migrations: Applied via Helm hook Job (production mode)
+Migrations: NOT applied on startup (migrateOnStartup=false).
+  Startup aborts when pending migrations are detected. Run migrations manually:
+    kubectl exec deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator \
+      -n {{ .Release.Namespace }} -- dotnet CodingAgentWebUI.dll migrate
 {{- end }}
+
+── First-Run ─────────────────────────────────────────────────────────────────
+
+On fresh install with an empty database, the UI shows a banner directing you to
+Settings → Job Templates. Configure at least one template to enable dispatch.
+
+To migrate config from an existing instance:
+  1. Export:  curl -H "Authorization: Bearer $AGENT_API_KEY" https://OLD_HOST/api/config/export > config.json
+  2. Import:  curl -X POST -H "Authorization: Bearer $AGENT_API_KEY" \
+                   -F "file=@config.json" https://NEW_HOST/api/config/import
+  WARNING: import is destructive — it clears existing config before importing.
+
+agents[] → jobTemplates[] migration:
+  The agents[] values section is removed. Define agent pod specs in jobTemplates[].
+  See values.yaml for the jobTemplates schema.
 
 ── Database ──────────────────────────────────────────────────────────────────
 
-External PostgreSQL:
-  Secret: {{ .Values.database.auth.existingSecret }} (keys: {{ .Values.database.auth.keys.username }}, {{ .Values.database.auth.keys.password }}, {{ .Values.database.auth.keys.database }})
-  Host: {{ .Values.database.host }}:{{ .Values.database.port | default 5432 }}
+Secret: {{ .Values.database.auth.existingSecret }} (keys: {{ .Values.database.auth.keys.username }}, {{ .Values.database.auth.keys.password }}, {{ .Values.database.auth.keys.database }})
+Host: {{ .Values.database.host }}:{{ .Values.database.port | default 5432 }}
 
-── Migrations ────────────────────────────────────────────────────────────────
-
-{{- if .Values.database.migrationJob.enabled }}
-A pre-install/pre-upgrade hook Job runs EF Core migrations before new pods deploy.
-Check migration status:
-  kubectl get jobs -l app.kubernetes.io/component=migration -n {{ .Release.Namespace }}
-  kubectl logs job/{{ include "coding-agent-automation.fullname" . }}-db-migrate -n {{ .Release.Namespace }}
-{{- end }}
-
-── Monitoring ────────────────────────────────────────────────────────────────
-
-Health endpoints:
-  Liveness:  /healthz (DB SELECT 1 on dedicated connection)
-  Readiness: /readyz  (unhealthy on DB loss, recovers on reconnect)
-
-Key metrics (OpenTelemetry):
-  workitems_by_status          — gauge by status and agent_selector
-  workitems_pending_duration_seconds — histogram
-  dispatch_latency_seconds     — histogram
-  dispatcher_last_poll_epoch_seconds — gauge (staleness detection)
-  credential_pool_available    — gauge (PVC pool headroom)
-
-{{- if eq .Values.workDistribution.mode "Kubernetes" }}
-
-── Kubernetes Mode Operations ────────────────────────────────────────────────
+── Kubernetes Operations ─────────────────────────────────────────────────────
 
 Agent Jobs are spawned by the DispatchService. Job naming: caa-{workItemId[0:8]}
 
@@ -87,17 +82,187 @@ PVC Pool (kiro credentials):
   Configured PVCs: {{ join ", " .Values.credentialPools.kiro }}
   DispatchService claims an available PVC per kiro Job.
   If pool is exhausted, Jobs wait (stay Pending) until a PVC is released.
-{{- end }}
+  PVCs must use ReadWriteOnce or ReadWriteOncePod access mode.
 {{- end }}
 
 ── Rollback Procedure ────────────────────────────────────────────────────────
 
-To export current DB state back to JSON files (enables rollback to pre-DB version):
+export-config is a backup tool — it exports DB state to JSON files for safekeeping.
+To export the current DB state:
   kubectl exec deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator -n {{ .Release.Namespace }} -- \
     dotnet CodingAgentWebUI.dll export-config --output /tmp/pipeline-export
 
 Then copy out:
   kubectl cp {{ .Release.Namespace }}/$(kubectl get pod -l app.kubernetes.io/component=orchestrator -n {{ .Release.Namespace }} -o jsonpath='{.items[0].metadata.name}'):/tmp/pipeline-export ./pipeline-backup
+
+To roll back to a previous version: restore from backup using the import endpoint (see First-Run above).
+
+── Upgrading 044 → 045 ──────────────────────────────────────────────────────
+
+Spec 045 removes the orchestrator's direct Postgres access. After this upgrade,
+the orchestrator pod has no database connection — all data flows through the
+Pipeline API.
+
+  STEP 0 — BACKUP FIRST (required)
+
+  Run pg_dump against your Postgres instance BEFORE upgrading:
+
+    kubectl exec -n {{ .Release.Namespace }} \
+      $(kubectl get pod -n {{ .Release.Namespace }} -l app.kubernetes.io/component=database -o jsonpath='{.items[0].metadata.name}') \
+      -- pg_dump -U coding_agent coding_agent > coding_agent_pre_045_$(date +%Y%m%d).sql
+
+  Or, if Postgres is external:
+
+    pg_dump -h <postgres-host> -U coding_agent coding_agent > coding_agent_pre_045_$(date +%Y%m%d).sql
+
+  This is the only rollback path once schema migrations have applied.
+
+  STEP 1 — Hub cutover (if upgrading from a pre-044 deployment)
+
+  See the 044 cutover procedure below. If already on 044, skip to Step 2.
+
+  STEP 2 — Upgrade
+
+    helm upgrade {{ .Release.Name }} <chart> \
+      --set api.enabled=true \
+      --set jobController.enabled=true \
+      [--values ...]
+
+  STEP 3 — Verify orchestrator has no DB connection
+
+    kubectl logs -n {{ .Release.Namespace }} \
+      deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator | grep -i "database\|postgres\|EF\|migrate"
+
+  Expected: no DB-related log lines. The orchestrator now connects only to
+  the Pipeline API (PipelineApi:BaseUrl).
+
+  ROLLBACK BOUNDARY
+
+  Once helm upgrade is applied and orchestrator pods restart, the monolith no
+  longer has direct Postgres access. Rolling back requires:
+
+    1. helm rollback {{ .Release.Name }} <previous-revision>
+       (restores the old orchestrator image which had EF Core and a DB connection)
+
+    2. If schema migrations applied during the upgrade, restore the pg_dump snapshot:
+
+         psql -h <postgres-host> -U coding_agent coding_agent < coding_agent_pre_045_<date>.sql
+
+       WARNING: Restoring a pg_dump drops and recreates the database. Any data
+       written during the failed upgrade window (new WorkItems, PipelineRuns,
+       etc.) will be lost. This is unavoidable — helm rollback restores chart
+       values and images, but has no defined outcome against a migrated schema.
+       The pg_dump snapshot is the supported rollback path.
+
+    3. Verify the orchestrator pod is healthy after rollback:
+
+         kubectl get pods -n {{ .Release.Namespace }} \
+           -l app.kubernetes.io/component=orchestrator
+
+── Upgrade Notes ─────────────────────────────────────────────────────────────
+
+⚠️  HUB CUTOVER (Spec 044) — IN-FLIGHT WORK IS NOT PRESERVED.
+Agent runs in progress at upgrade time will be orphaned. See procedure below.
+
+To upgrade from a pre-044 deployment:
+
+  1. Record active agent Jobs before upgrading:
+       kubectl get jobs -l app.kubernetes.io/managed-by=caa-orchestrator \
+         -n {{ .Release.Namespace }}
+
+  2. Upgrade:
+       helm upgrade {{ .Release.Name }} <chart> [--values ...]
+
+  3. Explicitly delete orphaned Jobs if needed:
+       kubectl delete jobs -l app.kubernetes.io/managed-by=caa-orchestrator \
+         -n {{ .Release.Namespace }} --field-selector status.active=1
+     Note: HubConnectionManager uses InfiniteRetryPolicy — orphaned agents retry
+     forever rather than exiting. However, JobSpecBuilder sets ActiveDeadlineSeconds
+     (job timeout + 60s), so orphaned Jobs will expire automatically once their
+     deadline is reached. Step 3 is only required if you need immediate cleanup
+     before the deadline. Deleting a Job releases its credential PVC.
+
+  4. Re-queue failed WorkItems if needed:
+     WorkItems are reconciled to Failed by the reconciliation loop and can be
+     re-queued via POST /api/work-items/{id}/requeue.
+
+NOTE: This four-step cutover applies to ANY upgrade from a version where the API hub
+was not yet active (pre-044). When upgrading directly from pre-044 to 045, run both
+this 044 cutover AND the 045 upgrade procedure above (Steps 0–3). In-flight agent
+work at the time of the 044 hub cutover is NOT preserved — agents retry forever
+(InfiniteRetryPolicy) but their assigned Job's ActiveDeadlineSeconds will expire them.
+Delete orphaned Jobs explicitly (Step 3) if you need to free credential PVCs immediately.
+
+Spec 044 changes (current):
+  - Agent pods now connect to the Pipeline API (CodingAgentWebUI.Api) instead of
+    the orchestrator (CodingAgentWebUI). The ORCHESTRATOR_URL env var in agent Jobs
+    points at the API service URL.
+  - The orchestrator no longer hosts AgentHub or WorkItem HTTP endpoints.
+  - The Pipeline API is the authoritative hub for real-time agent communication.
+
+Spec 043 changes:
+  - Template validation in Settings is unavailable after 043 until a
+    GET /api/config/job-templates endpoint is added.
+  - The job-templates.yaml ConfigMap must be mounted to the Job Controller pod
+    (not the orchestrator). Changes to job-templates.yaml require a Job Controller
+    rollout: kubectl rollout restart deployment/<release>-jobcontroller -n <namespace>
+
+{{- if .Values.jobController.enabled }}
+
+── Job Controller ────────────────────────────────────────────────────────────
+
+Service: {{ include "coding-agent-automation.fullname" . }}-jobcontroller:{{ .Values.jobController.service.port }}
+Leader election Lease: caa-{{ .Release.Name }}-dispatch-lock (in namespace {{ .Release.Namespace }})
+
+Readiness check (run after deploy — must return 200 within 60 seconds):
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/component=jobcontroller
+  kubectl exec -n {{ .Release.Namespace }} <jobcontroller-pod> -- \
+    curl -s -o /dev/null -w "%{http_code}" http://localhost:{{ .Values.jobController.service.port }}/readyz
+  Expected: 200. If 503: leader election not yet complete, retry. If CrashLoopBackOff:
+  check logs for fast-fail messages (missing PipelineApi:BaseUrl, AGENT_API_KEY, or not-in-cluster).
+
+ATOMIC CUTOVER REQUIREMENT:
+  The monolith's DispatchService is removed starting from this image tag. The Job
+  Controller takes over dispatch. These TWO changes must ship in ONE helm upgrade:
+    1. Updated monolith image (without DispatchService)
+    2. jobController.enabled=true
+  DO NOT enable the Job Controller against an old monolith image — both services
+  would compete to claim WorkItems. The ClaimAsync 409 protects DB integrity, but
+  a race at the wrong moment can produce a duplicate K8s Job.
+
+IMMUTABLE IMAGE TAGS:
+  Use semver or SHA tags — NOT the mutable "coding-agent-webui" latest tag.
+  A mutable tag means helm rollback will NOT restore the old image, only values.
+
+ROLLBACK PROCEDURE (if upgrade fails):
+  1. helm rollback {{ .Release.Name }} <previous-revision>
+     (restores jobController.enabled=false and old monolith image tag)
+  2. Verify Job Controller Deployment deleted:
+       kubectl get deployment -n {{ .Release.Namespace }} | grep jobcontroller
+  3. Verify DispatchService logs in monolith:
+       kubectl logs -n {{ .Release.Namespace }} deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator | grep DispatchService
+  4. Check for orphaned WorkItems stuck in Dispatched state (claimed before crash):
+       GET /api/work-items/active?olderThanSeconds=0
+     Manually requeue via POST /api/work-items/{id}/requeue, or wait 120s for the
+     monolith's ReconciliationService short-circuit sweep to recover them.
+
+Job-templates ConfigMap changes require a Job Controller rollout to take effect
+(templates are loaded once at startup):
+  kubectl rollout restart deployment/{{ include "coding-agent-automation.fullname" . }}-jobcontroller -n {{ .Release.Namespace }}
+{{- end }}
+
+── Monitoring ────────────────────────────────────────────────────────────────
+
+Health endpoints:
+  Liveness:  /healthz (DB SELECT 1 on dedicated connection)
+  Readiness: /readyz  (unhealthy on DB loss, recovers on reconnect)
+
+Key metrics (OpenTelemetry):
+  workitems_by_status                    — gauge by status and agent_selector
+  workitems_pending_duration_seconds     — histogram
+  dispatch_latency_seconds               — histogram
+  dispatcher_last_poll_epoch_seconds     — gauge (staleness detection)
+  credential_pool_available              — gauge (PVC pool headroom)
 
 ── Scaling ───────────────────────────────────────────────────────────────────
 
@@ -117,4 +282,22 @@ Single-replica mode. Scale to multiple replicas with:
   orchestrator.replicas: N  (requires signalr.redis.enabled: true)
 {{- end }}
 
+{{- if .Values.api.enabled }}
+
+## Pipeline API (api.enabled=true)
+
+**Multi-replica API (api.replicas > 1):** Requires signalr.redis.connectionString to be set.
+With Redis, AgentRegistryService and OrchestratorRunService use distributed Redis-backed
+implementations (Spec 046). Without Redis, the API falls back to in-memory mode and
+api.replicas must be 1.
+
+For api.replicas > 1: set signalr.redis.connectionString and ensure all replicas can
+reach the same Redis instance.
+
+**Expected restarts during schema upgrades (Req 9.5b).**
+When the orchestrator is applying database migrations, the API pod will repeatedly log:
+  "Database has N pending migration(s)" (Error level)
+and restart with backoff until the migration completes. This is normal and self-resolving.
+Do NOT roll back on seeing these restarts — the API automatically recovers once the
+orchestrator finishes. Migration duration varies by schema change, typically 1–3 minutes.
 {{- end }}

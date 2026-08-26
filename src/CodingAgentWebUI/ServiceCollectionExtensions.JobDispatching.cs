@@ -1,4 +1,4 @@
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
@@ -34,8 +34,7 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<ITokenVendingService>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<DispatchResolutionService>(),
-            sp.GetService<AnalysisStalenessDetector>()));  // null in Legacy mode
+            sp.GetRequiredService<DispatchResolutionService>()));
 
         services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
             sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
@@ -46,22 +45,8 @@ public static partial class ServiceCollectionExtensions
             Log.Logger));
 
         services.AddSingleton<ModelFetchService>(sp => new ModelFetchService(
-            sp.GetRequiredService<AgentRegistryService>(),
+            sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IAgentCommunication>(),
             Log.Logger));
-
-        // AgentJobDispatcher: registered as singleton (internal class).
-        // Consumed by JobQueueDrainService and LegacyWorkDistributor within the same assembly scope.
-        services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
-            new AgentJobDispatcherDependencies(
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
-                sp.GetRequiredService<IAgentRegistryService>(),
-                sp.GetRequiredService<IOrchestratorRunService>(),
-                sp.GetRequiredService<IDispatchRunCreator>(),
-                sp.GetRequiredService<DispatchInfrastructure>(),
-                sp.GetRequiredService<IAgentCommunication>(),
-                sp.GetRequiredService<IShutdownSignal>(),
-                Log.Logger,
-                sp.GetService<IRunLifecycleManager>())));
     }
 }

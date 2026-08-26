@@ -1,6 +1,6 @@
 using System.Text.Encodings.Web;
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -345,7 +345,7 @@ public class AgentApiKeyAuthHandlerTests
     }
 
     [Fact]
-    public async Task HandleAuthenticate_NoAgentId_SetsNameIdentifierToAgent()
+    public async Task HandleAuthenticate_NoAgentId_SetsNameIdentifierToOperator()
     {
         var masterKey = "my-master-key";
 
@@ -355,7 +355,7 @@ public class AgentApiKeyAuthHandlerTests
 
         result.Succeeded.Should().BeTrue();
         var nameId = result.Principal!.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        nameId.Should().Be("agent");
+        nameId.Should().Be("operator");
     }
 
     [Fact]

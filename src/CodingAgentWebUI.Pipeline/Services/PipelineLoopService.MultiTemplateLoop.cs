@@ -62,6 +62,11 @@ public sealed partial class PipelineLoopService
         if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, snapshot.Config.ClosedLoopCircuitBreakerCooldown, ct))
             return true;
 
+        // _dispatcher is null when IDispatchOrchestrationService was not registered (e.g. test environments
+        // that exercise the loop lifecycle but not dispatch). Return false so the loop cycle completes cleanly.
+        if (_dispatcher is null)
+            return false;
+
         var dispatchResult = await _dispatcher.DispatchFairRoundRobinAsync(
             new DispatchScheduler.DispatchRoundRobinRequest
             {
@@ -308,7 +313,7 @@ public sealed partial class PipelineLoopService
         }
     }
 
-    /// <summary>Detects and remediates stuck work items (SignalR mode: Dispatched > 5min → Failed).</summary>
+    /// <summary>No-op: stuck item detection is owned by the Job Controller's ReconciliationService.</summary>
     private async Task ReconcileStuckWorkItemsAsync(CancellationToken ct)
     {
         if (_workDistributor is null) return;

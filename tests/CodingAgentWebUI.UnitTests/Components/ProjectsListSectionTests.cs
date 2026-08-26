@@ -1,8 +1,8 @@
 using Bunit;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Moq;
 
@@ -14,12 +14,12 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class ProjectsListSectionTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
     public ProjectsListSectionTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore = new Mock<IPipelineApiConfigClient>();
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
         _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -38,11 +38,11 @@ public class ProjectsListSectionTests : BunitContext
             new() { Id = "proj-1", Name = "My Project", Enabled = true },
             new() { Id = "proj-2", Name = "Another Project", Enabled = false }
         };
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(projects);
 
         var cut = Render<ProjectsListSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnNavigateToProject, EventCallback<string>.Empty)
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 
@@ -58,11 +58,11 @@ public class ProjectsListSectionTests : BunitContext
         {
             new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", Enabled = true }
         };
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(projects);
 
         var cut = Render<ProjectsListSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnNavigateToProject, EventCallback<string>.Empty)
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 
@@ -77,11 +77,11 @@ public class ProjectsListSectionTests : BunitContext
         {
             new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", Enabled = true }
         };
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(projects);
 
         var cut = Render<ProjectsListSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnNavigateToProject, EventCallback<string>.Empty)
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 
@@ -97,11 +97,11 @@ public class ProjectsListSectionTests : BunitContext
             new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", Enabled = true },
             new() { Id = "proj-1", Name = "Deletable", Enabled = true }
         };
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(projects);
 
         var cut = Render<ProjectsListSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnNavigateToProject, EventCallback<string>.Empty)
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 
@@ -128,7 +128,7 @@ public class ProjectsListSectionTests : BunitContext
     {
         string? navigatedId = null;
         var cut = Render<ProjectsListSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnNavigateToProject, EventCallback.Factory.Create<string>(this, v => navigatedId = v))
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 
@@ -152,11 +152,11 @@ public class ProjectsListSectionTests : BunitContext
         {
             new() { Id = "proj-1", Name = "Test Project", Enabled = true }
         };
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(projects);
 
         var cut = Render<ProjectsListSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnNavigateToProject, EventCallback<string>.Empty)
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 
@@ -177,11 +177,11 @@ public class ProjectsListSectionTests : BunitContext
         {
             new() { Id = "proj-1", Name = "Epic Project", Enabled = true, EpicIssueProviderId = "provider-1" }
         };
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(projects);
 
         var cut = Render<ProjectsListSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnNavigateToProject, EventCallback<string>.Empty)
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 
@@ -195,11 +195,11 @@ public class ProjectsListSectionTests : BunitContext
         {
             new() { Id = "proj-1", Name = "Regular Project", Enabled = true, EpicIssueProviderId = null }
         };
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(projects);
 
         var cut = Render<ProjectsListSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnNavigateToProject, EventCallback<string>.Empty)
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 

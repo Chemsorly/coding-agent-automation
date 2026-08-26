@@ -9,23 +9,37 @@ The pipeline is a state machine that progresses through a fixed sequence of step
 
 The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are dispatched by a separate `ConsolidationWorkItemDispatchService` and do not go through the label loop.
 
-## Dispatch Modes
+## Dispatch Mode
 
-The pipeline supports three dispatch modes, selected automatically based on configuration:
+The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService` prepares each request (resolves providers, vends tokens), then `KubernetesWorkDistributor` creates a `WorkItem` row. The Job Controller polls for pending WorkItems, claims each one, and creates a K8s Job — the resulting ephemeral agent pod picks up the full assignment via `GET /api/work-items/{id}/assignment` and reports terminal status via `POST /api/work-items/{id}/status`. The PipelineRun is created by the Pipeline API's `POST /api/work-items` handler.
 
-| Mode | Trigger | Description |
-|------|---------|-------------|
-| **Legacy** | No `Database__Host` set | In-memory state + direct SignalR push. `AgentJobDispatcher` creates the PipelineRun and sends `JobAssignmentMessage` in one atomic operation. |
-| **DB+SignalR** | `Database__Host` set, no K8s | `DispatchOrchestrationService` prepares the request (creates PipelineRun, resolves providers, vends tokens), then `SignalRWorkDistributor` persists a WorkItem row and pushes via SignalR. |
-| **DB+Kubernetes** | `workDistribution.mode=Kubernetes` | Same orchestration, but `KubernetesWorkDistributor` creates a WorkItem row and a K8s Job picks it up. |
+**K8s Job naming** uses two formats depending on the dispatch path:
 
-In DB+SignalR mode, the dispatch chain ensures a single ID flows end-to-end:
+- **Job Controller** (implementation, review, decomposition runs): `caa-agent-{11 hex chars}` — the first 21 characters of `"caa-agent-" + workItemId.ToString("N")` (e.g. `caa-agent-7f3a9b2e1c4`). The Job name also serves as the agent's `AGENT_ID`.
+- **Pipeline API** (consolidation and model-fetch runs dispatched by `DispatchLifecycleService`): `caa-{8 hex chars}` — the first 12 characters of `"caa-" + workItemId.ToString("N")` (e.g. `caa-7f3a9b2e`).
+
+### Dispatch Priority
+
+When multiple WorkItems are pending and an agent becomes available, the Job Controller selects the highest-priority item first. Priority order (lowest number = dispatched first):
+
+| Priority | Run Type | Notes |
+|----------|----------|-------|
+| 0 (highest) | Review | PR review runs |
+| 1 | Decomposition / DecompositionAnalysis | Both epic decomposition phases |
+| 2 | Implementation | Standard issue implementation |
+| 3 (lowest) | Consolidation | Brain / refactoring / harness runs |
+
+Within the same priority tier, FIFO order is preserved (oldest enqueue time dispatched first).
+
+> **Note:** Consolidation `WorkItem` rows carry `PipelineRunType.Implementation` at the model level and are distinguished by `TaskType == Consolidation`. This is an internal data model detail — it has no effect on dispatch priority or querying from the UI.
+
+A single ID flows end-to-end:
 
 ```
-PipelineRun.RunId (orchestration) = WorkItem.Id (DB) = JobAssignmentMessage.JobId (agent) = hub GetRun(jobId)
+PipelineRun.RunId = WorkItem.Id = hub GetRun(jobId)
 ```
 
-This ID alignment is critical — hub methods (`RequestTokenRefresh`, `ReportStepTransition`, `ReportJobCompleted`) look up the PipelineRun by the agent's `jobId`. If these don't match, the hub returns "No active run found".
+The K8s Job name is a **truncated derivative** of the WorkItem ID (not the full GUID) and also serves as the agent's `AGENT_ID`. Hub methods (`RequestTokenRefresh`, `ReportStepTransition`, `ReportJobCompleted`) look up the PipelineRun by the agent's `jobId` (= WorkItem ID). If these don't match, the hub returns "No active run found".
 
 See also: [Configuration](configuration.md) for all pipeline settings, and [Issue Workflows](github-issue-workflows.md) for how users interact with the pipeline via labels.
 
@@ -82,7 +96,8 @@ stateDiagram-v2
         Agent gets error feedback and fixes before re-check
     end note
     note left of CreatingPullRequest
-        Draft PR sets agent error label. Normal PR adds agent done label.
+        Draft PR leaves issue as agent:in-progress. Normal PR swaps to agent:done.
+        agent:error label is set only on unexpected exceptions, not retry exhaustion.
     end note
     note left of ReflectingOnRun
         Only if brain repo configured and not read-only.
@@ -110,7 +125,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **CloningRepository** | Repository cloned to a fresh workspace directory |
 | **RunningEnvironmentSetup** | Executes provider-defined setup steps (e.g., package restore, auth configuration) with injected secrets. Non-fatal steps abort the run on non-zero exit |
 | **SyncingBrainRepoPreRun** | Brain repository synced into workspace (if configured). Non-fatal on failure |
-| **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId}`) |
+| **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId[..8]}` — the run ID is truncated to its first 8 characters) |
 | **VerifyingBaseline** | Baseline health check — runs build/tests on the default branch before the agent writes code. Catches broken base branches early. Skipped when `BaselineHealthCheckEnabled` is false |
 | **AnalyzingCode** | Agent analyzes the issue and codebase, writes `analysis.md` and `analysis-assessment.json`. Before analysis begins, the pipeline downloads images from the issue/PR body (if `EnableIssueImageExtraction` is true and the agent model supports vision input) and checks for analysis staleness — if the issue body changed, the agent previously errored, or enough commits landed since the last analysis (`AnalysisCommitThreshold`), a fresh analysis is forced |
 | **ReviewingAnalysis** | Adversarial review of the analysis — validates completeness, flags gaps (when `AnalysisReviewEnabled` is true) |
@@ -175,7 +190,7 @@ External CI is only evaluated after local gates (compilation, tests, coverage) p
 
 The retry prompt includes the full gate failure details and points the agent to diagnostic output files. Each retry attempt is a `--resume` call, so the agent has full conversation history.
 
-If all retries are exhausted, a **draft PR** is created with the failing code, and the issue is labeled `agent:error`.
+If all retries are exhausted, a **draft PR** is created with the failing code. The issue label is **not** changed to `agent:error` on normal retry exhaustion — the pipeline completes with `FailureCategory = QualityGateExhausted` and the PR is left as a draft. `agent:error` is only applied when an unexpected exception escapes the pipeline's error boundary (e.g., unhandled infrastructure failure), not when retries run out cleanly.
 
 ## Label Transitions
 
@@ -236,7 +251,7 @@ Any step can transition to `Failed` on error. The pipeline catches exceptions at
 
 ## Orphaned Label Recovery
 
-The `OrphanedLabelRecoveryService` is a background service that detects issues stuck with the `agent:in-progress` label when no corresponding active run exists in the orchestrator. This can happen when:
+The `OrphanedLabelRecoveryService` (in `CodingAgentWebUI.Scheduler`) is a background service that detects issues stuck with the `agent:in-progress` label when no corresponding active run exists in the orchestrator. This can happen when:
 
 - The orchestrator crashes mid-run and restarts
 - A run is cleaned up from memory but the label swap to a terminal state fails
@@ -416,9 +431,9 @@ The existing `Enabled` property acts as a master switch — when `false`, all wo
 
 Settings are read at the start of each poll cycle, allowing runtime changes via the configuration UI without restarting the loop.
 
-### Dispatch Priority
+### Poll-Cycle Scheduler Priority
 
-When multiple work types are active in the same cycle, the scheduler uses a fixed priority order — not round-robin — to decide which queue to serve first:
+When multiple work types are queued in the same poll cycle, the loop uses a fixed priority order — not round-robin — to decide which queue to serve first. This is distinct from the [WorkItem queue priority](#dispatch-priority) used by the Job Controller:
 
 | Priority | Work Type | Notes |
 |----------|-----------|-------|
@@ -426,7 +441,7 @@ When multiple work types are active in the same cycle, the scheduler uses a fixe
 | 2 | Decomposition | Phase 1 and Phase 2 epics |
 | 3 | Issues (Implementation) | Dispatched last |
 
-The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs (brain consolidation, refactoring detection, harness suggestions) are handled by a separate `ConsolidationWorkItemDispatchService` and do not participate in this scheduler.
+The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are handled by a separate `ConsolidationWorkItemDispatchService` and do not participate in this scheduler.
 
 ### Dispatch Budget Sharing
 

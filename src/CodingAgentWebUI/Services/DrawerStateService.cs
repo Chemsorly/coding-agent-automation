@@ -14,7 +14,9 @@ public class DrawerStateService<TItem> : IDisposable
     private readonly Func<PipelineJobTemplate, Task<string?>> _loadLabelsAsync;
     private readonly Func<TItem, PipelineJobTemplate, Task<(bool Success, string? Error, string? SuccessMessage)>> _dispatchAsync;
     private readonly bool _closeOnDispatch;
-    private readonly Func<PipelineJobTemplate, Task>? _postLoadAsync;
+    // Token parameter added so postLoadAsync always gets the CTS token captured at fire time,
+    // not re-read from the drawer state (which may have been reset by a concurrent re-open).
+    private readonly Func<PipelineJobTemplate, CancellationToken, Task>? _postLoadAsync;
 
     // ── State ──
 
@@ -31,6 +33,8 @@ public class DrawerStateService<TItem> : IDisposable
     // ── Cancellation ──
 
     private CancellationTokenSource? _cts;
+    // Initialised at construction so CancellationToken is always valid before the first OpenAsync.
+    // CancelAndResetCts replaces it on each open; CancelCts cancels and nulls it on Close/Dispose.
     public CancellationToken CancellationToken => _cts?.Token ?? CancellationToken.None;
 
     public DrawerStateService(
@@ -38,13 +42,16 @@ public class DrawerStateService<TItem> : IDisposable
         Func<PipelineJobTemplate, Task<string?>> loadLabelsAsync,
         Func<TItem, PipelineJobTemplate, Task<(bool Success, string? Error, string? SuccessMessage)>> dispatchAsync,
         bool closeOnDispatch = false,
-        Func<PipelineJobTemplate, Task>? postLoadAsync = null)
+        Func<PipelineJobTemplate, CancellationToken, Task>? postLoadAsync = null)
     {
         _loadItemsAsync = loadItemsAsync;
         _loadLabelsAsync = loadLabelsAsync;
         _dispatchAsync = dispatchAsync;
         _closeOnDispatch = closeOnDispatch;
         _postLoadAsync = postLoadAsync;
+        // Pre-create the CTS so CancellationToken is valid before the first OpenAsync call.
+        // LoadDrawerIssuesAsync is public on IIssueDrawerService and can be called before Open.
+        _cts = new CancellationTokenSource();
     }
 
     // ── Lifecycle ──
@@ -63,7 +70,9 @@ public class DrawerStateService<TItem> : IDisposable
         var error = await _loadItemsAsync(template);
         await labelsTask;
         if (error != null) return error;
-        if (_postLoadAsync != null) _ = _postLoadAsync(template);
+        // Capture token here — after CancelAndResetCts — so postLoadAsync always gets the token
+        // for THIS open, not a future re-open that may replace _cts before the delegate executes.
+        if (_postLoadAsync != null) _ = _postLoadAsync(template, CancellationToken);
         return null;
     }
 

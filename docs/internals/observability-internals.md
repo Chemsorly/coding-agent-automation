@@ -19,11 +19,10 @@ These spans represent internal plumbing and are unlikely to be queried by operat
 
 | Span Name | Description |
 |-----------|-------------|
-| `DrainCycle` | Single drain cycle in JobQueueDrainService (root span, no parent) |
 | `Hub.ReportJobCompleted` | Hub business logic for job completion |
 | `TokenVending.GenerateToken` | Token generation HTTP call |
 | `Agent.ReceiveJob` | Agent job receipt and acceptance/rejection decision |
-| `Agent.ReportCompletion` | Reporting job completion to orchestrator |
+| `Agent.ReportCompletion` | Reporting job completion to Pipeline API |
 
 ## Resilience Retry Events
 
@@ -38,7 +37,7 @@ Event tags:
 
 ## Background Service Spans
 
-`DrainCycle` spans are root spans (no parent) because `JobQueueDrainService` runs as a `BackgroundService` with no ambient `Activity.Current`. They appear as independent traces in observability backends.
+`Hub.ReportJobCompleted` is emitted within the Pipeline API process whenever hub completion logic runs. There are no root-span background service spans remaining after `JobQueueDrainService` was removed in Spec 041.
 
 ## Tag Value Casing
 
@@ -46,23 +45,13 @@ Metric `run_type` values are lowercased (`implementation`), while span `pipeline
 
 ## Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs`) emits metrics specific to DB+SignalR and DB+Kubernetes dispatch modes. These metrics are only active when the orchestrator is running with `Database__Host` configured.
+The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs` in `CodingAgentWebUI.Pipeline`, namespace `CodingAgentWebUI.Pipeline.Telemetry`) emits metrics for Kubernetes dispatch. The instruments are fed by `DispatchService` and `ReconciliationService` in the **Job Controller** (`service.name=coding-agent-jobcontroller`), and `workitems_by_status` is fed by `WorkItemMetricsBackgroundService` in the **Pipeline API** (`service.name=coding-agent-api`).
 
-| Metric | Type | Unit | Description |
-|--------|------|------|-------------|
-| `workdistribution.dispatch_latency_seconds` | Histogram | s | Time from WorkItem creation (Pending) to Dispatched |
-| `workdistribution.workitems_pending_duration_seconds` | Histogram | s | Duration work items spend in Pending status |
-| `workdistribution.job_execution_duration_seconds` | Histogram | s | Total execution duration of dispatched jobs |
-| `workdistribution.workitems_terminated` | Counter | — | Work items reaching terminal status |
-| `workdistribution.dispatcher_polls` | Counter | — | Number of dispatch poll cycles executed |
-| `workdistribution.dispatcher_last_poll_epoch_seconds` | ObservableGauge | s | Epoch seconds of the last DispatchService poll cycle (for stale-poll alerting) |
-| `workdistribution.credential_pool_available` | ObservableGauge | — | Available credential PVCs in the kiro pool (K8s mode) |
-| `workdistribution.credential_pool_claimed` | ObservableGauge | — | Claimed credential PVCs in the kiro pool (K8s mode) |
-| `workdistribution.workitems_by_status` | ObservableGauge | — | Count of work items grouped by status and agent_selector |
+See [Observability — Work Distribution Metrics](../observability.md#work-distribution-metrics) for the full metric table including all 14 instruments.
 
-## CriticalMessageBuffer (Agent-Side)
+## CriticalMessageBuffer (Chat Pod Agent-Side)
 
-`CriticalMessageBuffer` buffers failed `ReportJobCompleted` messages on the agent side for replay after reconnection. Failed deliveries are buffered silently — there is no dedicated metric counter for individual send failures; instead monitor `agent.reconnections` for connection instability.
+`CriticalMessageBuffer` buffers failed `ReportJobCompleted` messages on the agent side for replay after reconnection. It is used by **chat pods** (ephemeral K8s Jobs spawned without `--work-item-id`) which run `AgentWorkerService` and communicate with the orchestrator hub over SignalR. Failed deliveries are buffered silently — there is no dedicated metric counter for individual send failures; instead monitor `agent.reconnections` for connection instability.
 
 Drain behavior:
 - On reconnection, buffered messages are replayed (max 3 drain attempts per message)

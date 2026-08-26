@@ -76,7 +76,10 @@
                                 }
                                 @if (isProcessing)
                                 {
-                                    <span class="badge-default" style="background: var(--accent); color: white;">DISPATCHED</span>
+                                    @* "Queued", not "DISPATCHED": the work item is written and a pod
+                                       is started for it afterwards, so at this point nothing is
+                                       running yet. Matches IssueDispatchDrawer. *@
+                                    <span class="badge-default" style="background: var(--accent); color: white;">Queued</span>
                                 }
                             </div>
                             <div class="drawer-issue-title">@pr.Title</div>

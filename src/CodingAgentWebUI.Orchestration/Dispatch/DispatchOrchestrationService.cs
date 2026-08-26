@@ -8,20 +8,18 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Extracts shared orchestration logic from <see cref="AgentJobDispatcher"/>
-/// for consumption by DB-backed <see cref="IWorkDistributor"/> implementations.
-/// Performs: issue fetching, label swapping, profile/QG resolution,
-/// PipelineRun creation, and provider config preparation.
+/// Standalone dispatch orchestration service.
+/// Performs: issue fetching, label swapping, profile/QG resolution, and provider config preparation.
 /// </summary>
 /// <remarks>
-/// NOT registered in Legacy mode (no-DB). <c>PipelineLoopService</c> checks
-/// for null before calling <see cref="PrepareAsync"/>.
+/// Run materialisation (creating the in-memory <see cref="PipelineRun"/> in
+/// <see cref="IOrchestratorRunService"/>) was moved to the Pipeline API's
+/// <c>POST /api/work-items</c> handler (Req 1a.1 Option A). This service no longer
+/// registers runs in a local run registry.
 /// </remarks>
 public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 {
     private readonly DispatchInfrastructure _infra;
-    private readonly IDispatchRunCreator _orchestration;
-    private readonly IOrchestratorRunService _runService;
     private readonly IWorkDistributor _workDistributor;
     private readonly IAgentProfileStore _agentProfileStore;
     private readonly IConfigurationStore _providerConfigStore;
@@ -36,8 +34,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         ArgumentNullException.ThrowIfNull(logger);
 
         _infra = deps.Infra;
-        _orchestration = deps.Orchestration;
-        _runService = deps.RunService;
         _workDistributor = deps.WorkDistributor;
         _agentProfileStore = deps.AgentProfileStore;
         _providerConfigStore = deps.ProviderConfigStore;
@@ -90,10 +86,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var repoProviderId = request.RepoProviderId;
         var brainProviderId = request.BrainProviderId;
         var pipelineProviderId = request.PipelineProviderId;
-        var initiatedBy = request.InitiatedBy;
         var requiredLabels = request.RequiredLabels;
         var project = request.Project;
-        var runType = request.RunType;
         // Resolve profile using required labels (no agent entry — DB mode has no connected agents)
         var profile = await ResolveProfileByLabelsAsync(requiredLabels, ct);
         if (profile is null)
@@ -114,20 +108,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
             forceRefresh, stalenessSignal, refreshCount) = preparation.Value;
 
-        // Create the dispatched run via PipelineOrchestrationService
-        var run = await _orchestration.CreateDispatchedRunAsync(
-            new DispatchRunRequest
-            {
-                IssueProviderId = issueProviderId,
-                RepoProviderId = repoProviderId,
-                IssueIdentifier = issueIdentifier,
-                AgentProviderId = agentProviderId,
-                AgentId = null,
-                BrainProviderId = brainProviderId,
-                PipelineProviderId = pipelineProviderId,
-                InitiatedBy = initiatedBy,
-                RunType = runType
-            }, ct);
+        // Build the run locally for metadata propagation — NOT registered in any in-memory
+        // registry. The API's POST /api/work-items handler calls PipelineRunFactory.CreateFromWorkItem
+        // and registers it in the API's IOrchestratorRunService (Req 1a.1 Option A).
+        var run = BuildLocalRun(request, agentProviderId);
 
         if (run is null)
         {
@@ -188,6 +172,76 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         }
 
         return profile;
+    }
+
+    /// <summary>
+    /// Constructs a <see cref="PipelineRun"/> for metadata propagation only — it is NOT registered
+    /// in any in-memory run registry. The API registers the run when the WorkItem is persisted.
+    /// </summary>
+    /// <summary>
+    /// Builds the run whose metadata is serialised into the WorkItem payload.
+    ///
+    /// <paramref name="agentProviderId"/> comes from the resolved profile rather than the request,
+    /// which is why it is a separate parameter.
+    ///
+    /// <c>BrainProviderConfigId</c> is load-bearing, not decorative: <c>AgentHubFacade</c> reads it
+    /// back out of the payload to answer <c>RequestTokenRefresh(ProviderKind.Brain)</c>, and throws
+    /// <c>HubException</c> when it is absent. Omitting it here — as this method did when it
+    /// replaced <c>DispatchRunCreationService.ResolveAndCreateRunAsync</c>, which did set it —
+    /// left brain sync unable to obtain a token on any dispatch, even though the brain provider's
+    /// config (token included) was resolved and embedded in the same payload.
+    /// </summary>
+    private static PipelineRun? BuildLocalRun(
+        OrchestratorPreparationRequest request,
+        string? agentProviderId)
+    {
+        var runId = Guid.NewGuid().ToString();
+        try
+        {
+            return request.RunType switch
+            {
+                PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
+                {
+                    RunId = runId,
+                    IssueIdentifier = request.IssueIdentifier,
+                    IssueTitle = string.Empty,
+                    IssueProviderConfigId = request.IssueProviderId.Value,
+                    RepoProviderConfigId = request.RepoProviderId.Value,
+                    RunType = PipelineRunType.Review,
+                    InitiatedBy = request.InitiatedBy,
+                    AgentProviderConfigId = agentProviderId,
+                    BrainProviderConfigId = request.BrainProviderId
+                }),
+                PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition =>
+                    PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+                    {
+                        RunId = runId,
+                        IssueIdentifier = request.IssueIdentifier,
+                        IssueTitle = string.Empty,
+                        IssueProviderConfigId = request.IssueProviderId.Value,
+                        RepoProviderConfigId = request.RepoProviderId.Value,
+                        RunType = request.RunType,
+                        InitiatedBy = request.InitiatedBy,
+                        AgentProviderConfigId = agentProviderId,
+                        BrainProviderConfigId = request.BrainProviderId
+                    }),
+                _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
+                {
+                    RunId = runId,
+                    IssueIdentifier = request.IssueIdentifier,
+                    IssueTitle = string.Empty,
+                    IssueProviderConfigId = request.IssueProviderId.Value,
+                    RepoProviderConfigId = request.RepoProviderId.Value,
+                    InitiatedBy = request.InitiatedBy,
+                    AgentProviderConfigId = agentProviderId,
+                    BrainProviderConfigId = request.BrainProviderId
+                })
+            };
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // ── IDispatchOrchestrationService implementation ─────────────────────
@@ -363,7 +417,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // (GitHub API error), we log a warning but do NOT propagate the exception — otherwise
         // PipelineLoopService treats it as a failed dispatch (FailedCount++) even though the
         // agent is actively working. Note: IRunLifecycleManager.AgentAcceptedRunAsync also
-        // performs this swap (best-effort) in the SignalR direct-dispatch path, so this call
+        // performs this swap (best-effort) in a concurrent dispatch path, so this call
         // is a safety net / idempotent confirmation.
         try
         {
@@ -396,26 +450,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             _logger.Error(ex, "Failed to revert label for issue {IssueIdentifier} after distribution failure",
                 request.IssueIdentifier);
         }
-
-        try
-        {
-            // Remove the dangling run that was created during PrepareAsync
-            var activeRuns = _runService.GetActiveRuns();
-            var danglingRun = activeRuns.FirstOrDefault(r =>
-                r.IssueIdentifier == request.IssueIdentifier &&
-                r.IssueProviderConfigId == request.IssueProviderConfigId);
-            if (danglingRun is not null)
-            {
-                _runService.RemoveRun(danglingRun.RunId);
-                _logger.Information("Removed dangling run {RunId} for issue {IssueIdentifier} after distribution failure",
-                    danglingRun.RunId, request.IssueIdentifier);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to remove dangling run for issue {IssueIdentifier} after distribution failure",
-                request.IssueIdentifier);
-        }
+        // Note: in-memory run cleanup is no longer done here. The run is owned by the API's
+        // IOrchestratorRunService; the API will remove it when the WorkItem transitions to a
+        // terminal state via POST /api/work-items/{id}/status (Req 1a.1 Option A).
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 @using CodingAgentWebUI.Pipeline
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 
@@ -66,8 +67,8 @@
 }
 
 @code {
-    [Parameter, EditorRequired] public IProviderFactory ProviderFactory { get; set; } = default!;
-    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public IProviderFactory ProviderFactory { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
     [Parameter] public List<ProviderConfig> IssueProviders { get; set; } = new();
     [Parameter] public List<ProviderConfig> RepoProviders { get; set; } = new();
     [Parameter] public List<ProviderConfig> PipelineProviders { get; set; } = new();
@@ -256,7 +257,7 @@
                     Settings = settings
                 };
 
-                await ConfigStore.SaveProviderConfigAsync(config, CancellationToken.None);
+                await ConfigClient.SaveProviderConfigAsync(config, CancellationToken.None);
                 item.Selected = false;
                 created++;
             }

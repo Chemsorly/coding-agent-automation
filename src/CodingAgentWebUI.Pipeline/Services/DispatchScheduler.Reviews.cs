@@ -30,7 +30,7 @@ internal sealed partial class DispatchScheduler
             ctx.NotifyChange();
 
             var reviewProject = ctx.TemplateProjectLookup.GetValueOrDefault(template.Id);
-            var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
+            var dispatched = await DispatchViaOrchestrationAsync(
                 async ct =>
                 {
                     var reviewDispatchReq = new ReviewDispatchRequest
@@ -49,14 +49,11 @@ internal sealed partial class DispatchScheduler
                     };
                     // TODO: Add a test where templateProjectLookup is missing an entry for a pollable template
                     // to guard against regression (KeyNotFoundException) and validate the fallback behavior.
-                    return await _dispatchOrchestration!.PrepareReviewDistributionRequestAsync(
+                    return await _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
                         reviewDispatchReq,
                         reviewProject ?? new PipelineProject { Id = "", Name = UnknownProjectName },
                         ct);
                 },
-                () => JobDistributionRequest.FromTemplate(
-                    template, pr, initiatedBy: "loop", useFullPrMetadata: false,
-                    projectId: reviewProject?.Id, projectName: reviewProject?.Name),
                 stopToken);
 
             if (dispatched)

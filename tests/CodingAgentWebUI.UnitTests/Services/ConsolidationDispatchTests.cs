@@ -1,7 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Hub;
 using Moq;
 
 namespace CodingAgentWebUI.UnitTests.Services;

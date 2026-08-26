@@ -1,9 +1,11 @@
 using Bunit;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Layout;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.Extensions.Configuration;
@@ -43,29 +45,33 @@ public class MainLayoutComponentTests : BunitContext
             providerFactory: mockFactory.Object,
             historyService: mockHistory.Object);
 
-        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(new PipelineLoopServiceDependencies
-        {
-            Orchestration = runCreator,
-            ProviderFactory = mockFactory.Object,
-            PipelineConfigStore = mockStore.Object,
-            ProviderConfigStore = mockStore.Object,
-            ProjectStore = mockStore.Object,
-            Logger = mockLogger.Object,
-            WorkDistributor = null,
-            DispatchOrchestration = null,
-            DependencyChecker = null,
-            HousekeepingService = null,
-            LeaderElection = null
-        }));
+        // Spec 047: MainLayout injects ILoopStatusService (not IPipelineLoopService)
+        var mockLoopStatus = new Mock<ILoopStatusService>();
+        mockLoopStatus.SetupGet(l => l.IsLoopActive).Returns(false);
+        mockLoopStatus.SetupGet(l => l.StatusMessage).Returns("");
+        mockLoopStatus.SetupGet(l => l.ValidationErrors).Returns(Array.Empty<string>());
+        mockLoopStatus.SetupGet(l => l.TemplateStatuses)
+            .Returns(new Dictionary<string, CodingAgentWebUI.Pipeline.Models.ConfigStatusSnapshot>());
+        mockLoopStatus.SetupGet(l => l.IsSchedulerUnreachable).Returns(false);
+        Services.AddSingleton<ILoopStatusService>(mockLoopStatus.Object);
+        var mockSchedulerClient = new Mock<ISchedulerApiClient>();
+        Services.AddSingleton<ISchedulerApiClient>(mockSchedulerClient.Object);
         Services.AddSingleton(new ConsolidationBadgeService());
         Services.AddSingleton(_jsMock.Object);
 
         // Health indicators component dependencies
         var emptyConfig = new ConfigurationBuilder().Build();
         var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
-        Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig));
+        Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig, Mock.Of<CodingAgentWebUI.Api.Client.IPipelineApiHealthClient>()));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
-        Services.AddSingleton(new FeatureFlags());  // defaults: IsKubernetesMode = false
+
+        // FirstRunBanner.razor requires IPipelineApiConfigClient (Spec 045 Task 3)
+        var mockConfigClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiConfigClient>();
+        mockConfigClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        mockConfigClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        Services.AddSingleton(mockConfigClient.Object);
     }
 
     [Fact]
@@ -196,7 +202,7 @@ public class MainLayoutComponentTests : BunitContext
     [Fact]
     public void Sidebar_AgentChatLink_PresentInSignalRMode()
     {
-        // FeatureFlags defaults to IsKubernetesMode = false — link should be visible
+        // Nav link is always visible — no mode gate.
         var cut = Render<MainLayout>();
 
         Assert.Contains("agent-chat", cut.Markup);
@@ -206,8 +212,6 @@ public class MainLayoutComponentTests : BunitContext
     public void Sidebar_AgentChatLink_PresentInKubernetesMode()
     {
         // Task 9.2 removed the IsKubernetesMode gate — nav link now always visible.
-        Services.AddSingleton(new FeatureFlags { IsKubernetesMode = true });
-
         var cut = Render<MainLayout>();
 
         Assert.Contains("agent-chat", cut.Markup);

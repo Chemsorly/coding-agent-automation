@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Models;
 using Moq;
 
 namespace CodingAgentWebUI.Agent.UnitTests;

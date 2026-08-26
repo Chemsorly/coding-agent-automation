@@ -9,6 +9,7 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 /// Tests for <see cref="JobSpecBuilder"/> — applies <see cref="JobTemplate"/> fields
 /// to a K8s Job pod spec (initContainers, podSecurityContext, nodeSelector, resources, tolerations).
 /// </summary>
+[Collection("EnvironmentVariables")]
 public class JobSpecBuilderTests
 {
     private static JobTemplate CreateTemplate(
@@ -411,10 +412,10 @@ public class JobSpecBuilderTests
 
     #endregion
 
-    #region AGENT_ID Env Var (Downward API)
+    #region AGENT_ID Env Var
 
     [Fact]
-    public void Build_SetsAgentIdFromDownwardApi_PodName()
+    public void Build_SetsAgentIdToJobName()
     {
         var template = CreateTemplate();
         var ctx = CreateContext();
@@ -424,10 +425,12 @@ public class JobSpecBuilderTests
         var container = job.Spec.Template.Spec.Containers[0];
         var agentIdEnv = container.Env.FirstOrDefault(e => e.Name == "AGENT_ID");
         agentIdEnv.Should().NotBeNull("AGENT_ID must be set for SignalR hub authentication");
-        agentIdEnv!.ValueFrom.Should().NotBeNull("AGENT_ID should use valueFrom (Downward API)");
-        agentIdEnv.ValueFrom.FieldRef.Should().NotBeNull();
-        agentIdEnv.ValueFrom.FieldRef.FieldPath.Should().Be("metadata.name",
-            "AGENT_ID must reference pod name via Downward API");
+        agentIdEnv!.Value.Should().Be(ctx.JobName,
+            "the agent derives its API key as HMAC(masterKey, AGENT_ID) and DispatchLoop claims the " +
+            "WorkItem with AssignedAgentId = job name, so the two must be the same string");
+        agentIdEnv.ValueFrom.Should().BeNull(
+            "the Downward API would supply metadata.name — the pod name, which carries a random " +
+            "suffix and would never match the claimed AssignedAgentId");
     }
 
     #endregion
@@ -784,24 +787,29 @@ public class JobSpecBuilderTests
     #region OpenCode Provider
 
     [Fact]
-    public void Build_OpencodeAgent_WithConfigSecret_MountsOpencodeConfigVolume()
+    public void Build_OpencodeAgent_WithConfigSecret_InjectsOpencodeConfigEnvVar()
     {
+        // Spec 043/045: opencode config is injected via OPENCODE_CONFIG_CONTENT env var
+        // sourced from the secret, not via a directory volume mount. entrypoint.sh writes
+        // the file at startup. See JobSpecBuilder.BuildEnvVars for rationale.
         var template = CreateTemplate(providerType: "opencode", image: "chemsorly/coding-agent:opencode");
         var ctx = CreateContext(opcConfigSecret: "opencode-config-secret");
 
         var job = JobSpecBuilder.Build(template, ctx);
 
-        var volumes = job.Spec.Template.Spec.Volumes;
-        volumes.Should().Contain(v => v.Name == "opencode-config");
-        var opcVol = volumes.First(v => v.Name == "opencode-config");
-        opcVol.Secret.Should().NotBeNull();
-        opcVol.Secret.SecretName.Should().Be("opencode-config-secret");
-
+        // Env var must be present with SecretKeyRef pointing to the config secret
         var container = job.Spec.Template.Spec.Containers[0];
-        container.VolumeMounts.Should().Contain(vm => vm.Name == "opencode-config");
-        var opcMount = container.VolumeMounts.First(vm => vm.Name == "opencode-config");
-        opcMount.MountPath.Should().Be("/home/ubuntu/.config/opencode");
-        opcMount.ReadOnlyProperty.Should().BeTrue();
+        var envVar = container.Env.FirstOrDefault(e => e.Name == "OPENCODE_CONFIG_CONTENT");
+        envVar.Should().NotBeNull("OPENCODE_CONFIG_CONTENT must be injected when OpencodeConfigSecretName is set");
+        envVar!.ValueFrom.Should().NotBeNull();
+        envVar.ValueFrom.SecretKeyRef.Should().NotBeNull();
+        envVar.ValueFrom.SecretKeyRef.Name.Should().Be("opencode-config-secret");
+        envVar.ValueFrom.SecretKeyRef.Key.Should().Be("opencode-config-content");
+
+        // No volume mount — directory volume mounts break entrypoint.sh's ability to write the file
+        var volumes = job.Spec.Template.Spec.Volumes;
+        volumes.Should().NotContain(v => v.Name == "opencode-config");
+        container.VolumeMounts.Should().NotContain(vm => vm.Name == "opencode-config");
     }
 
     [Fact]

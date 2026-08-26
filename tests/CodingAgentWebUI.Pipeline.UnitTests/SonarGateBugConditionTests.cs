@@ -106,7 +106,6 @@ public partial class SonarGateBugConditionTests
             ("tests/CodingAgentWebUI.Agent.UnitTests/PipelineCleanupTests.cs",                196,  "PipelineCleanupTests line 196"),
 
             // Additional 14
-            ("tests/CodingAgentWebUI.Pipeline.UnitTests/Services/PostgresLeaderElectionServiceTests.cs",         213, "PostgresLeaderElectionServiceTests line 213"),
             ("tests/CodingAgentWebUI.Pipeline.UnitTests/Services/AgentHubFacadeProgressTrackingTests.cs",        122, "AgentHubFacadeProgressTrackingTests line 122"),
             ("tests/CodingAgentWebUI.Pipeline.UnitTests/Services/AgentHubFacadeProgressTrackingTests.cs",        129, "AgentHubFacadeProgressTrackingTests line 129"),
             ("tests/CodingAgentWebUI.UnitTests/Hubs/AgentHubFacadeTransitionTests.cs",                           93,  "AgentHubFacadeTransitionTests line 93"),

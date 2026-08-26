@@ -1,7 +1,7 @@
 using Bunit;
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.UnitTests.Components;
@@ -13,22 +13,22 @@ public class AgentProfileSectionComponentTests : BunitContext
 {
     private static readonly string[] s_dotnetMatchLabels = ["dotnet"];
 
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockClient;
     private readonly List<ProviderConfig> _agentProviders;
 
     public AgentProfileSectionComponentTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
+        _mockClient = new Mock<IPipelineApiConfigClient>();
         _agentProviders = new List<ProviderConfig>
         {
             new() { Id = "ap-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent" }
         };
 
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>());
-        _mockStore.Setup(s => s.SaveAgentProfileAsync(It.IsAny<AgentProfile>(), It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.SaveAgentProfileAsync(It.IsAny<AgentProfile>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockStore.Setup(s => s.DeleteAgentProfileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.DeleteAgentProfileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 
@@ -36,7 +36,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     public void RendersHeader()
     {
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
         Assert.Contains("Agent Profiles", cut.Markup);
     }
@@ -45,7 +45,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     public void WhenNoProfiles_ShowsEmptyMessage()
     {
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
         Assert.Contains("No agent profiles configured", cut.Markup);
     }
@@ -53,14 +53,14 @@ public class AgentProfileSectionComponentTests : BunitContext
     [Fact]
     public void WhenProfilesExist_ShowsTable()
     {
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>
             {
                 new() { Id = "p-1", DisplayName = "DotNet Profile", AgentProviderConfigId = "ap-1", MatchLabels = s_dotnetMatchLabels }
             });
 
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
         Assert.Contains("DotNet Profile", cut.Markup);
@@ -71,14 +71,14 @@ public class AgentProfileSectionComponentTests : BunitContext
     [Fact]
     public void ProfileTable_ShowsColumns()
     {
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>
             {
                 new() { Id = "p-1", DisplayName = "Test", AgentProviderConfigId = "ap-1" }
             });
 
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
         Assert.Contains("Display Name", cut.Markup);
@@ -92,14 +92,14 @@ public class AgentProfileSectionComponentTests : BunitContext
     [Fact]
     public void ProfileWithEmptyLabels_ShowsDefaultBadge()
     {
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>
             {
                 new() { Id = "p-1", DisplayName = "Default", AgentProviderConfigId = "ap-1", MatchLabels = [] }
             });
 
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
         Assert.Contains("DEFAULT", cut.Markup);
@@ -110,7 +110,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     public void RendersAddButton()
     {
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
         Assert.Contains("+ Add Agent Profile", cut.Markup);
     }
@@ -119,7 +119,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     public void ClickAdd_ShowsForm()
     {
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile"));
@@ -135,7 +135,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     public void Form_ShowsAgentProviderDropdown()
     {
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile"));
@@ -148,7 +148,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     public void Form_ShowsMcpServerSection()
     {
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile"));
@@ -162,7 +162,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     public void ClickCancel_HidesForm()
     {
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile"));
@@ -178,14 +178,14 @@ public class AgentProfileSectionComponentTests : BunitContext
     [Fact]
     public void EditProfile_PopulatesForm()
     {
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>
             {
                 new() { Id = "p-1", DisplayName = "My Profile", AgentProviderConfigId = "ap-1", MatchLabels = new[] { "kiro", "dotnet" }, Priority = 5 }
             });
 
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
         var editBtn = cut.Find(".btn-edit");
@@ -197,14 +197,14 @@ public class AgentProfileSectionComponentTests : BunitContext
     [Fact]
     public void DeleteProfile_ShowsConfirmation()
     {
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>
             {
                 new() { Id = "p-1", DisplayName = "To Delete", AgentProviderConfigId = "ap-1" }
             });
 
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
         var deleteBtn = cut.Find(".btn-delete");
@@ -217,7 +217,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     [Fact]
     public void ProfileWithMcpServers_ShowsCount()
     {
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>
             {
                 new()
@@ -232,7 +232,7 @@ public class AgentProfileSectionComponentTests : BunitContext
             });
 
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
         // Should show count of enabled MCP servers (1 enabled out of 2)
@@ -250,7 +250,7 @@ public class AgentProfileSectionComponentTests : BunitContext
     [Fact]
     public void KubernetesMode_EnabledProfileWithLabels_RendersWithoutThrowingIconParameterError()
     {
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>
             {
                 new()
@@ -262,7 +262,7 @@ public class AgentProfileSectionComponentTests : BunitContext
 
         // Must not throw — the bug caused an unhandled exception in the Blazor circuit
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders)
              .Add(s => s.IsKubernetesMode, true));
 
@@ -276,15 +276,10 @@ public class AgentProfileSectionComponentTests : BunitContext
 
     /// <summary>
     /// Regression test: NullReferenceException when AgentProfile.McpServers is null.
-    /// profile.McpServers.Count(...) on line 68 of AgentProfileSection.razor throws when
-    /// McpServers is null — possible when an old AgentProfile MessagePack payload predating
-    /// the McpServers member is deserialized by ContractlessStandardResolverAllowPrivate.
     /// </summary>
     [Fact]
     public void ProfileList_WhenMcpServersIsNull_RendersWithoutException()
     {
-        // Arrange: AgentProfile with McpServers forced to null via nullable suppression,
-        // simulating a MessagePack payload from an older binary lacking the McpServers member.
         var profileWithNullMcpServers = new AgentProfile
         {
             Id = "p-1",
@@ -292,15 +287,13 @@ public class AgentProfileSectionComponentTests : BunitContext
             AgentProviderConfigId = "ap-1"
         } with { McpServers = null! };
 
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile> { profileWithNullMcpServers });
 
-        // Act + Assert: must not throw NullReferenceException during render
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
-        // Profile row is rendered; MCP count shows 0
         Assert.Contains("Legacy Profile", cut.Markup);
         var cells = cut.FindAll("td");
         Assert.Contains(cells, c => c.TextContent.Trim() == "0");
@@ -308,13 +301,10 @@ public class AgentProfileSectionComponentTests : BunitContext
 
     /// <summary>
     /// Regression test: NullReferenceException in EditProfile when McpServerConfig.Headers or Env is null.
-    /// The EditProfile method maps McpServers via s.Env.Select(...) and s.Headers.Select(...),
-    /// which throw when those dictionaries are null from an old MessagePack payload.
     /// </summary>
     [Fact]
     public void EditProfile_WhenServerHasNullHeadersAndEnv_OpensFormWithoutException()
     {
-        // Arrange: a profile whose single MCP server has both Headers and Env forced to null.
         var serverWithNullFields = new McpServerConfig
         {
             Name = "legacy-server",
@@ -322,7 +312,7 @@ public class AgentProfileSectionComponentTests : BunitContext
             Command = "uvx"
         } with { Headers = null!, Env = null! };
 
-        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>
             {
                 new()
@@ -335,16 +325,11 @@ public class AgentProfileSectionComponentTests : BunitContext
             });
 
         var cut = Render<AgentProfileSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockClient.Object)
              .Add(s => s.AgentProviders, _agentProviders));
 
-        // Act: click Edit — this triggered NullReferenceException before the fix
         cut.Find(".btn-edit").Click();
 
-        // Assert: form opens without throwing; edit heading is visible
-        // TODO [WARNING]: This assertion is weak — "Edit" may appear in button labels elsewhere
-        // in the page, so it would pass even if the form never opened. Consider asserting a
-        // specific form field (e.g. server name input or headers textarea) is present in the DOM.
         Assert.Contains("Edit", cut.Markup);
     }
 }

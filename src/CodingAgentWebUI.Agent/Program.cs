@@ -4,6 +4,7 @@ using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Telemetry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -24,7 +25,7 @@ Log.Logger = AgentSerilogConfiguration.CreateAgentLogger(startupConfig.AgentId);
 try
 {
     Log.Information("Agent Worker starting (AgentId={AgentId}, OrchestratorUrl={OrchestratorUrl}, Mode={Mode})",
-        startupConfig.AgentId, startupConfig.OrchestratorUrl, startupConfig.IsK8sMode ? "K8s" : "SignalR");
+        startupConfig.AgentId, startupConfig.OrchestratorUrl, startupConfig.IsWorkItemMode ? "WorkItem" : "Chat");
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -74,16 +75,23 @@ try
     // ── Shared pipeline services (IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor) ──
     builder.Services.AddPipelineServices(Log.Logger);
 
+    // ── Agent runtime options (replaces scattered Environment.GetEnvironmentVariable calls) ──
+    builder.Services.AddOptions<AgentRuntimeOptions>();
+    builder.Services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<AgentRuntimeOptions>, AgentRuntimeOptionsSetup>();
+    builder.Services.AddSingleton<AgentRuntimeOptions>(sp =>
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AgentRuntimeOptions>>().Value);
+
     // ── OpenCode named HttpClient (always registered — safe when OPENCODE_SERVER_PASSWORD is absent) ──
     var agentProviderType = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "";
     builder.Services.AddHttpClient(AgentDefaults.OpenCodeHttpClientName, (sp, client) =>
     {
-        var baseUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeBaseUrl) ?? AgentDefaults.OpenCodeBaseUrl;
+        var runtimeOpts = sp.GetRequiredService<AgentRuntimeOptions>();
+        var baseUrl = runtimeOpts.OpenCodeBaseUrl ?? AgentDefaults.OpenCodeBaseUrl;
         client.BaseAddress = new Uri(baseUrl);
         // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
         client.Timeout = TimeSpan.FromMinutes(60);
 
-        var password = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword);
+        var password = runtimeOpts.OpenCodeServerPassword;
         if (!string.IsNullOrEmpty(password))
         {
             client.DefaultRequestHeaders.Authorization =
@@ -103,10 +111,10 @@ try
     builder.Services.Add(ServiceDescriptor.Singleton(typeof(AgentId), startupConfig.AgentId));
 
     // ── Hub connection manager ──
-    builder.Services.AddSingleton(sp =>
+    builder.Services.AddSingleton<IHubConnectionManagerFactory>(sp =>
         new HubConnectionManagerFactory(startupConfig.OrchestratorUrl, startupConfig.AgentId, startupConfig.AgentApiKey, Log.Logger));
-    builder.Services.AddSingleton(sp =>
-        sp.GetRequiredService<HubConnectionManagerFactory>().Create());
+    builder.Services.AddSingleton<IHubConnectionManager>(sp =>
+        sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 
     // ── Pipeline executor ──
     builder.Services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
@@ -130,7 +138,7 @@ try
         Log.Logger));
 
     // ── Agent worker service (mode-conditional) ──
-    if (startupConfig.IsK8sMode)
+    if (startupConfig.IsWorkItemMode)
         builder.Services.AddK8sModeServices(startupConfig, Log.Logger);
     else
         builder.Services.AddSignalRModeServices(Log.Logger);
@@ -143,8 +151,8 @@ try
     // Mark startup complete once the host is listening
     app.Lifetime.ApplicationStarted.Register(HealthEndpoints.MarkStarted);
 
-    // ── SIGTERM handler for K8s mode ──
-    if (startupConfig.IsK8sMode)
+    // ── SIGTERM handler for work-item mode ──
+    if (startupConfig.IsWorkItemMode)
     {
         app.Lifetime.ApplicationStopping.Register(() =>
         {

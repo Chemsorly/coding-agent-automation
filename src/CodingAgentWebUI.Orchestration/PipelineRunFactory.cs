@@ -4,11 +4,33 @@ namespace CodingAgentWebUI.Orchestration;
 
 /// <summary>
 /// Shared factory for creating <see cref="PipelineRun"/> instances from a deserialized
-/// <see cref="JobDistributionRequest"/>. Used by startup rehydration and
-/// <c>PendingWorkItemDrainService</c> recovery path to avoid duplication.
+/// <see cref="JobDistributionRequest"/>. Used by startup rehydration.
 /// </summary>
 public static class PipelineRunFactory
 {
+    /// <summary>
+    /// Creates a <see cref="PipelineRun"/> immediately after a WorkItem is persisted by the API.
+    /// Uses <paramref name="workItemId"/> as the RunId so the WorkItem and run share the same ID.
+    /// Called from <c>POST /api/work-items</c> to materialise the in-memory run in the API process
+    /// (Option A of Req 1a.1 — the API is the single place where both records are created).
+    /// </summary>
+    /// <param name="workItemId">The newly-persisted WorkItem GUID, used as the RunId.</param>
+    /// <param name="request">The <see cref="JobDistributionRequest"/> payload from the WorkItem.</param>
+    public static PipelineRun? CreateFromWorkItem(Guid workItemId, JobDistributionRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Consolidation runs are tracked via ConsolidationRun, not PipelineRun.
+        // Return null so the caller skips AddRun and avoids ghost "Impl" entries in Active Runs.
+        if (request.TaskType == WorkItemTaskType.Consolidation ||
+            request.RunType == PipelineRunType.Consolidation)
+            return null;
+
+        // Stamp the workItemId onto the request as RunId so FromDistributionRequest uses it.
+        var requestWithRunId = request with { RunId = workItemId.ToString() };
+        return FromDistributionRequest(requestWithRunId);
+    }
+
     /// <summary>
     /// Creates a <see cref="PipelineRun"/> from a deserialized <see cref="JobDistributionRequest"/>.
     /// </summary>
@@ -40,7 +62,9 @@ public static class PipelineRunFactory
                 ReviewPrTargetBranch = request.ReviewPrTargetBranch ?? string.Empty,
                 ReviewPrUrl = request.LinkedPullRequest?.Url,
                 ReviewPrDescription = request.ReviewPrDescription,
-                ReviewPrAuthor = request.ReviewPrAuthor
+                ReviewPrAuthor = request.ReviewPrAuthor,
+                AgentProviderConfigId = request.AgentProviderConfigId,
+                BrainProviderConfigId = request.BrainProviderConfigId
             }),
             PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
             {
@@ -52,7 +76,9 @@ public static class PipelineRunFactory
                 RunType = request.RunType,
                 InitiatedBy = request.InitiatedBy ?? "rehydrated",
                 AgentId = agentId,
-                StartedAt = startedAt
+                StartedAt = startedAt,
+                AgentProviderConfigId = request.AgentProviderConfigId,
+                BrainProviderConfigId = request.BrainProviderConfigId
             }),
             _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
             {
@@ -61,14 +87,13 @@ public static class PipelineRunFactory
                 IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
                 IssueProviderConfigId = request.IssueProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
-                // TODO: Behavioral change — the old PendingWorkItemDrainService inline code used "loop" as the
-                // null fallback for InitiatedBy. Now that the drain service shares this factory, a null InitiatedBy
-                // will be labeled "rehydrated" instead of "loop". In practice InitiatedBy is always set by
-                // dispatchers so this is unlikely to trigger, but consider whether the drain path should pass
-                // its own fallback or if "rehydrated" is acceptable for both callers.
+                // TODO: InitiatedBy null fallback — consider whether "rehydrated" is the right
+                // label for all callers, or whether each dispatch path should pass its own fallback.
                 InitiatedBy = request.InitiatedBy ?? "rehydrated",
                 AgentId = agentId,
-                StartedAt = startedAt
+                StartedAt = startedAt,
+                AgentProviderConfigId = request.AgentProviderConfigId,
+                BrainProviderConfigId = request.BrainProviderConfigId
             })
         };
 

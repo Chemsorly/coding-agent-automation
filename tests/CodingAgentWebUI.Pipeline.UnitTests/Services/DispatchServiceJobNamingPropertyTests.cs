@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Api.Dispatch;
 using FsCheck;
 using FsCheck.Xunit;
 using Xunit;
@@ -7,7 +7,9 @@ using Xunit;
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Property-based tests for DispatchService.GenerateJobName determinism.
+/// Property-based tests for DispatchLifecycleService.GenerateJobName determinism.
+/// Previously tested via DispatchService.GenerateJobName; migrated to the Api canonical copy
+/// in arch-audit 2026-08-22.
 /// **Validates: Requirements 5.13**
 /// </summary>
 public class DispatchServiceJobNamingPropertyTests
@@ -21,7 +23,7 @@ public class DispatchServiceJobNamingPropertyTests
     {
         var expected = "caa-" + workItemId.ToString("N")[..8];
 
-        var actual = DispatchService.GenerateJobName(workItemId);
+        var actual = DispatchLifecycleService.GenerateJobName(workItemId);
 
         actual.Should().Be(expected);
     }

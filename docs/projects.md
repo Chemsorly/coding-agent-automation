@@ -26,7 +26,7 @@ flowchart LR
 **Rules:**
 - A `null` project setting means "inherit from global defaults"
 - A non-null project setting completely replaces the global value
-- Nested objects (e.g., `CodeReview`) use **replace semantics** — the entire object is replaced, not deep-merged
+- Nested objects (e.g., `CodeReview`) use **deep-merge semantics** — only non-null sub-fields from the project override replace the corresponding global sub-fields; null sub-fields inherit the global value
 - Per-repository blacklist overrides (from ProviderConfig) still take precedence over project-level blacklist settings
 - Settings are resolved at dispatch time — changes take effect on the next dispatched job without restarting
 
@@ -38,13 +38,11 @@ flowchart LR
 
 Templates do NOT carry behavioral overrides. They define provider bindings only (issue/repo/brain/pipeline provider IDs and feature toggles).
 
-## Project JSON Structure
+## Project Storage
 
-Each project is persisted as an individual JSON file at:
+Projects are persisted in PostgreSQL (the `Projects` table). Configuration is managed via the web UI (Settings → Projects) or the import/export HTTP API. The runtime store is always PostgreSQL — JSON files are only used for first-boot migration (`DatabaseStartupService.ImportJsonConfigIfNeededAsync` reads from `/app/config/pipeline/` on an empty database). In normal operation there is no file-based runtime storage.
 
-```
-config/pipeline/projects/{project-id}.json
-```
+The JSON bundle produced by `GET /api/config/export` includes a `projects` array with the same shape documented below. This bundle can be used to migrate project configuration between instances (see [Bootstrap](bootstrap.md)).
 
 ### Example: Mono-Repo Project (Settings Only)
 
@@ -119,7 +117,7 @@ All settings below are nullable on the project. When `null`, the global default 
 | Setting | Type | Description |
 |---------|------|-------------|
 | `AnalysisReviewEnabled` | bool? | Enable analysis review step |
-| `CodeReview` | CodeReviewConfiguration? | Code review config (REPLACE semantics) |
+| `CodeReview` | CodeReviewConfiguration? | Code review config (deep-merge: non-null sub-fields override global) |
 | `RefactoringReviewEnabled` | bool? | Enable refactoring review |
 | `BrainConsolidationReviewEnabled` | bool? | Enable brain consolidation review |
 | `HarnessSuggestionsReviewEnabled` | bool? | Enable harness suggestions review |
@@ -161,6 +159,19 @@ All settings below are nullable on the project. When `null`, the global default 
 | `Secrets` | Dictionary? | Project-level secrets injected as environment variables for every run. Merged with repo-level secrets at dispatch time (repo wins on key collision). Keys must match POSIX env var pattern. |
 | `SteeringContent` | string? | Markdown steering content written to agent workspace before each run. Provides persistent behavioral instructions (code style, tool preferences, constraints). |
 
+### MCP Servers
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `McpServers` | List? | Project-level MCP server configurations. Merged with the resolved agent profile's MCP servers at dispatch time. `null` = inherit profile list unchanged. |
+
+**Merge semantics**: At dispatch time, project-level MCP servers are merged with the resolved agent profile's servers:
+- A project server with the same `Name` (case-insensitive) as a profile server **replaces** it
+- Project servers with new names are **appended** to the profile list
+- `null` (or empty list) = inherit profile list unchanged
+
+This allows projects to selectively override or augment the profile's MCP configuration without redefining the entire list. See [Configuration — Project-Level MCP Servers](configuration.md#project-level-mcp-servers) for merge semantics and examples.
+
 ## The Default Project
 
 On first startup (or upgrade from a pre-projects version), the system automatically creates a **Default** project:
@@ -189,7 +200,7 @@ Templates can be moved between projects via the **Agent Coding** page using the 
 When a non-Default project is deleted:
 
 1. All templates in that project are moved to the Default project (appended at the end)
-2. The project JSON file is removed from disk
+2. The project record is removed from the database
 
 This ensures no template is ever orphaned.
 

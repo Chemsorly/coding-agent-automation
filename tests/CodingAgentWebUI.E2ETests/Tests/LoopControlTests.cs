@@ -13,7 +13,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Ensures the loop status bar, buttons, and template table reflect the correct state.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class LoopControlTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class LoopControlTests : E2ETestBase
 {
     public LoopControlTests(E2EFixture fixture) : base(fixture) { }
 

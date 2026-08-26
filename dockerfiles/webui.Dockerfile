@@ -19,8 +19,12 @@ COPY Directory.Packages.props ./
 COPY src/KiroCliLib/KiroCliLib.csproj src/KiroCliLib/
 COPY src/CodingAgentWebUI.Pipeline/CodingAgentWebUI.Pipeline.csproj src/CodingAgentWebUI.Pipeline/
 COPY src/CodingAgentWebUI.Pipeline.CodeReview/CodingAgentWebUI.Pipeline.CodeReview.csproj src/CodingAgentWebUI.Pipeline.CodeReview/
-COPY src/CodingAgentWebUI.Infrastructure/CodingAgentWebUI.Infrastructure.csproj src/CodingAgentWebUI.Infrastructure/
+COPY src/CodingAgentWebUI.Infrastructure.Persistence/CodingAgentWebUI.Infrastructure.Persistence.csproj src/CodingAgentWebUI.Infrastructure.Persistence/
+COPY src/CodingAgentWebUI.Infrastructure.Providers/CodingAgentWebUI.Infrastructure.Providers.csproj src/CodingAgentWebUI.Infrastructure.Providers/
+COPY src/CodingAgentWebUI.Api.Client/CodingAgentWebUI.Api.Client.csproj src/CodingAgentWebUI.Api.Client/
 COPY src/CodingAgentWebUI.Orchestration/CodingAgentWebUI.Orchestration.csproj src/CodingAgentWebUI.Orchestration/
+COPY src/CodingAgentWebUI.Kubernetes/CodingAgentWebUI.Kubernetes.csproj src/CodingAgentWebUI.Kubernetes/
+COPY src/CodingAgentWebUI.Hub/CodingAgentWebUI.Hub.csproj src/CodingAgentWebUI.Hub/
 COPY src/CodingAgentWebUI/CodingAgentWebUI.csproj src/CodingAgentWebUI/
 COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWebUI.Agent/
 COPY src/CodingAgentWebUI.Agent.KiroCli/CodingAgentWebUI.Agent.KiroCli.csproj src/CodingAgentWebUI.Agent.KiroCli/
@@ -50,6 +54,14 @@ RUN mkdir -p /app/config/pipeline/providers/issue \
 
 USER ubuntu
 WORKDIR /app
+
+# Hygiene: assert no kubeconfig landed in the runtime image.
+# A stray ~/.kube/config would let BuildDefaultConfig() silently redirect agent-Job
+# creation to whatever cluster the file names — bypassing the in-cluster path even
+# inside a real cluster. Fail the build immediately if any such file is present.
+RUN test ! -e /home/ubuntu/.kube/config && \
+    test ! -e /root/.kube/config && \
+    echo "OK: no kubeconfig in runtime image"
 
 # Configure ASP.NET to listen on port 8080
 ENV ASPNETCORE_URLS=http://+:8080

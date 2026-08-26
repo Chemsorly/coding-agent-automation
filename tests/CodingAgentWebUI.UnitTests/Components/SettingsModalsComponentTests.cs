@@ -1,5 +1,6 @@
 using Bunit;
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -15,12 +16,12 @@ namespace CodingAgentWebUI.UnitTests.Components;
 public class SettingsModalsComponentTests : BunitContext
 {
     private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IConfigurationStore> _mockConfigStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient;
 
     public SettingsModalsComponentTests()
     {
         _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockConfigStore = new Mock<IConfigurationStore>();
+        _mockConfigClient = new Mock<IPipelineApiConfigClient>();
     }
 
     [Fact]
@@ -234,7 +235,7 @@ public class SettingsModalsComponentTests : BunitContext
     [Fact]
     public async Task SettingsModals_ConfirmRelatedProviders_SavesConfigs()
     {
-        _mockConfigStore.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.SaveProviderConfigAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var component = RenderSettingsModals();
@@ -262,7 +263,7 @@ public class SettingsModalsComponentTests : BunitContext
         var saveButton = component.Find(".btn-save");
         await saveButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
-        _mockConfigStore.Verify(s => s.SaveProviderConfigAsync(
+        _mockConfigClient.Verify(s => s.SaveProviderConfigAsync(
             It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
@@ -393,7 +394,7 @@ public class SettingsModalsComponentTests : BunitContext
         var labelsConfiguredFired = false;
         var component = Render<SettingsModals>(parameters => parameters
             .Add(p => p.ProviderFactory, _mockProviderFactory.Object)
-            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ConfigClient, _mockConfigClient.Object)
             .Add(p => p.IssueProviders, new List<ProviderConfig>())
             .Add(p => p.RepoProviders, new List<ProviderConfig>())
             .Add(p => p.PipelineProviders, new List<ProviderConfig>())
@@ -428,7 +429,7 @@ public class SettingsModalsComponentTests : BunitContext
     {
         return Render<SettingsModals>(parameters => parameters
             .Add(p => p.ProviderFactory, _mockProviderFactory.Object)
-            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ConfigClient, _mockConfigClient.Object)
             .Add(p => p.IssueProviders, issueProviders ?? new List<ProviderConfig>())
             .Add(p => p.RepoProviders, repoProviders ?? new List<ProviderConfig>())
             .Add(p => p.PipelineProviders, pipelineProviders ?? new List<ProviderConfig>()));

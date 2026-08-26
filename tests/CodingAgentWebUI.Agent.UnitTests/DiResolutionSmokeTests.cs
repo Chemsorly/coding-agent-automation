@@ -70,9 +70,9 @@ public class DiResolutionSmokeTests
         ((IServiceCollection)services).Add(ServiceDescriptor.Singleton(typeof(AgentId), new AgentId("test-agent-di-smoke")));
 
         // ── Hub connection manager ──
-        services.AddSingleton(new HubConnectionManagerFactory(
+        services.AddSingleton<IHubConnectionManagerFactory>(new HubConnectionManagerFactory(
             "http://localhost:9999", "test-agent-di-smoke", "fake-api-key", Log.Logger));
-        services.AddSingleton(sp => sp.GetRequiredService<HubConnectionManagerFactory>().Create());
+        services.AddSingleton<IHubConnectionManager>(sp => sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 
         // ── Pipeline executor ──
         services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
@@ -93,10 +93,10 @@ public class DiResolutionSmokeTests
             Log.Logger));
 
         // ── K8s-mode registrations (the critical path that had the bug) ──
-        // TODO: [WARNING] These K8s-mode registrations manually duplicate the wiring from AgentK8sModeRegistration.cs
+        // TODO: [WARNING] These K8s-mode registrations manually duplicate the wiring from AgentWorkItemModeRegistration.cs
         // instead of calling builder.Services.AddK8sModeServices(startupConfig, logger). Any future change to
         // AddK8sModeServices that diverges from the registrations below will go undetected by this smoke test.
-        // The canonical wiring now lives in AgentK8sModeRegistration.cs (extracted in #1790). Consider replacing
+        // The canonical wiring now lives in AgentWorkItemModeRegistration.cs (extracted in #1790). Consider replacing
         // the manual duplications here with a call to AddK8sModeServices so the smoke test exercises the actual
         // production code path.
         services.AddHttpClient<WorkItemHttpClient>(client =>
@@ -125,8 +125,8 @@ public class DiResolutionSmokeTests
         // ── WorkItemAgentService ──
         services.AddSingleton<IAgentConnectionManager>(sp =>
         {
-            var factory = sp.GetRequiredService<HubConnectionManagerFactory>();
-            var hubManager = sp.GetRequiredService<HubConnectionManager>();
+            var factory = sp.GetRequiredService<IHubConnectionManagerFactory>();
+            var hubManager = sp.GetRequiredService<IHubConnectionManager>();
             return new AgentConnectionManager(
                 hubManager,
                 factory,
@@ -224,7 +224,7 @@ public class DiResolutionSmokeTests
     {
         await using var sp = BuildK8sModeContainer();
 
-        var manager = sp.GetRequiredService<HubConnectionManager>();
+        var manager = sp.GetRequiredService<IHubConnectionManager>();
 
         Assert.NotNull(manager);
     }
@@ -303,9 +303,9 @@ public class DiResolutionSmokeTests
         ((IServiceCollection)services).Add(ServiceDescriptor.Singleton(typeof(AgentId), new AgentId("test-agent-signalr-smoke")));
 
         // ── Hub connection manager ──
-        services.AddSingleton(new HubConnectionManagerFactory(
+        services.AddSingleton<IHubConnectionManagerFactory>(new HubConnectionManagerFactory(
             "http://localhost:9999", "test-agent-signalr-smoke", "fake-api-key", Log.Logger));
-        services.AddSingleton(sp => sp.GetRequiredService<HubConnectionManagerFactory>().Create());
+        services.AddSingleton<IHubConnectionManager>(sp => sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 
         // ── Pipeline executor ──
         services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
@@ -332,14 +332,14 @@ public class DiResolutionSmokeTests
         services.AddSingleton<IJobCompletionReporter>(sp =>
             Mock.Of<IJobCompletionReporter>());
         services.AddSingleton<SignalRCompletionReporter>(sp => new SignalRCompletionReporter(
-            sp.GetRequiredService<HubConnectionManager>(),
+            sp.GetRequiredService<IHubConnectionManager>(),
             CodingAgentWebUI.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(Log.Logger),
             new CriticalMessageBuffer(),
             Log.Logger));
         services.AddSingleton<AgentJobSlotManager>(sp => new AgentJobSlotManager(() => Task.CompletedTask));
         services.AddSingleton<AgentConnectionLifecycle>(sp => new AgentConnectionLifecycle(
-            sp.GetRequiredService<HubConnectionManager>(),
-            sp.GetRequiredService<HubConnectionManagerFactory>(),
+            sp.GetRequiredService<IHubConnectionManager>(),
+            sp.GetRequiredService<IHubConnectionManagerFactory>(),
             sp.GetRequiredService<SignalRCompletionReporter>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
             sp.GetRequiredService<AgentId>(),

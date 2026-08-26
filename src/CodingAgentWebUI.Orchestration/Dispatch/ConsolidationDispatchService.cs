@@ -14,7 +14,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 public sealed record ConsolidationDispatchDependencies(
     IAgentRegistryService Registry,
-    JobDeduplicationGuardService JobDispatcher,
+    AgentReservationService JobDispatcher,
     IAgentCommunication AgentComm,
     IConfigurationStore ConfigStore,
     IProjectStore ProjectStore,
@@ -34,7 +34,7 @@ public sealed record ConsolidationDispatchDependencies(
 public sealed class ConsolidationDispatchService : IConsolidationDispatchService
 {
     private readonly IAgentRegistryService _registry;
-    private readonly JobDeduplicationGuardService _jobDispatcher;
+    private readonly AgentReservationService _jobDispatcher;
     private readonly IAgentCommunication _agentComm;
     private readonly IConfigurationStore _configStore;
     private readonly IProjectStore _projectStore;
@@ -116,7 +116,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
                 RepoProviderConfigId = "",
                 InitiatedBy = ConsolidationConstants.InitiatedBy,
                 TaskType = WorkItemTaskType.Consolidation,
-                AgentSelector = string.Join(",", agentSelectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
+                AgentSelector = AgentSelectorKey.From(agentSelectorLabels),
                 TimeoutSeconds = (int)liveConfig.AgentTimeout.TotalSeconds,
                 ConsolidationRunType = type,
                 ConsolidationTemplateId = templateId?.Value,
@@ -155,6 +155,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
 
             // Reset agent status on failure
             agent.ActiveJobId = null;
+            _ = _registry.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null);
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
             return ConsolidationDispatchResult.Failed;
@@ -201,8 +202,8 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         if (agent is null)
             return false;
 
-        // Accept Idle (Legacy drain — agent not yet reserved) or Busy with no active job
-        // (DB drain — agent pre-reserved by PendingWorkItemDrainService via ResolveAgent).
+        // Accept Idle or Busy with no active job
+        // (agent was reserved but never accepted a job, which can happen during agent startup).
         if (agent.Status != AgentStatus.Idle &&
             !(agent.Status == AgentStatus.Busy && agent.ActiveJobId is null))
             return false;
@@ -241,6 +242,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
                 runId, agentId);
 
             agent.ActiveJobId = null;
+            _ = _registry.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null);
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
             return false;
         }
@@ -258,11 +260,6 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         // Consider querying by IssueIdentifier instead of relying on ID equality. (#1084 follow-up)
         await _workDistributor.CancelJobAsync(runId.Value, ct);
 
-        // Legacy mode: remove from in-memory queue
-        // TODO: JobDeduplicationGuardService.RemoveJob still takes string — RunId.Value is unwrapped
-        // here at the JobDeduplicationGuardService boundary. Updating RemoveJob to accept RunId would
-        // close this remaining string crossing. (#2069 follow-up)
-        _jobDispatcher.RemoveJob(runId.Value);
     }
 
     /// <summary>
@@ -306,6 +303,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
 
         // Assign the job to the agent
         agent.ActiveJobId = ctx.Run.RunId;
+        _ = _registry.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", ctx.Run.RunId);
         _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
 
         await _agentComm.AssignConsolidationJobAsync(agent.ConnectionId, agent.AgentId, message, ct);

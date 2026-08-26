@@ -1,11 +1,14 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Moq;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 
@@ -426,4 +429,50 @@ file class ConsolContractTestDbContextFactory : IDbContextFactory<PipelineDbCont
     public PipelineDbContext CreateDbContext() => new(_options);
     public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
         => Task.FromResult(CreateDbContext());
+}
+
+// ── API-backed implementation ────────────────────────────────────────────────
+
+/// <summary>
+/// Runs the contract tests against <see cref="CodingAgentWebUI.Services.ApiBackedConsolidationRunStore"/>.
+/// The mock <see cref="IPipelineApiConsolidationRunClient"/> simulates real store semantics in-memory
+/// so every contract assertion (round-trip, upsert, delete isolation) exercises the adapter's delegation
+/// logic rather than just the mock infrastructure.
+/// </summary>
+public sealed class ApiBackedConsolidationRunStoreContractTests : ConsolidationRunStoreContractTests
+{
+    private readonly Dictionary<string, ConsolidationRun> _store = [];
+    private readonly Mock<IPipelineApiConsolidationRunClient> _client;
+
+    public ApiBackedConsolidationRunStoreContractTests()
+    {
+        _client = new Mock<IPipelineApiConsolidationRunClient>();
+
+        _client
+            .Setup(c => c.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
+            .Callback<ConsolidationRun, CancellationToken>((run, _) =>
+                _store[run.RunId] = run)
+            .Returns(Task.CompletedTask);
+
+        _client
+            .Setup(c => c.LoadAllRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => (IReadOnlyList<ConsolidationRun>)_store.Values.ToList());
+
+        _client
+            .Setup(c => c.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string id, CancellationToken _) =>
+                _store.TryGetValue(id, out var run) ? run : null);
+
+        _client
+            .Setup(c => c.DeleteRunAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((id, _) => _store.Remove(id))
+            .Returns(Task.CompletedTask);
+    }
+
+    protected override IConsolidationRunStore CreateStore()
+    {
+        // Each test gets a fresh view: clear the shared in-memory dictionary
+        _store.Clear();
+        return new CodingAgentWebUI.Services.ApiBackedConsolidationRunStore(_client.Object);
+    }
 }

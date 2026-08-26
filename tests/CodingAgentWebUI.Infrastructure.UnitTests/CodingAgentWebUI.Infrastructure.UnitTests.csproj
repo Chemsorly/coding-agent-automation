@@ -35,9 +35,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI\CodingAgentWebUI.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.Api.Client\CodingAgentWebUI.Api.Client.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure.Providers\CodingAgentWebUI.Infrastructure.Providers.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure.Persistence\CodingAgentWebUI.Infrastructure.Persistence.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Orchestration\CodingAgentWebUI.Orchestration.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.TestUtilities\CodingAgentWebUI.TestUtilities.csproj" />
   </ItemGroup>
 
 </Project>

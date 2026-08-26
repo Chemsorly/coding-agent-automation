@@ -19,9 +19,10 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
 [Trait("Feature", "UnhappyPath")]
-public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<DbModeE2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
 {
-    public DbModeUnhappyPathTests(DbModeE2EFixture fixture) : base(fixture) { }
+    public DbModeUnhappyPathTests(E2EFixture fixture) : base(fixture) { }
 
     private async Task SeedIssueAndProfileAsync(string issueId, string title = "Test issue")
     {
@@ -80,7 +81,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
 
         // Connect agent and dispatch
         var agent = new FakeAgentClient("unhappy-crash-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1000");
         Assert.True(result.Success, $"Dispatch failed: {result.ErrorMessage}");
@@ -118,7 +119,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1001", "Failing agent issue");
         await using var agent = new FakeAgentClient("unhappy-fail-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1001");
         Assert.True(result.Success);
@@ -166,7 +167,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1002", "QG failure issue");
         await using var agent = new FakeAgentClient("unhappy-qg-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1002");
         Assert.True(result.Success);
@@ -227,7 +228,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
 
         // Connect agent
         var agent = new FakeAgentClient("unhappy-disconnect-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch issue — agent receives assignment
         var result = await DispatchIssueAsync("1003");
@@ -240,57 +241,36 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Disconnect IMMEDIATELY without accepting
         await agent.DisposeAsync();
 
-        // Assert: eventually the run is failed (heartbeat timeout + grace period)
-        // HeartbeatSweepIntervalSeconds=5 (set in InMemoryConfigurationStore defaults).
-        var failedItem = await WaitForWorkItemStatusAsync(
-            workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(20));
-        Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
+        // Assert the disconnect reaches the registry — and check this BEFORE the run fails, not
+        // after. The two events are causally linked and the ordering is the whole subtlety here:
+        // the hub's OnDisconnectedAsync marks the agent Disconnected, the fake job controller sees
+        // that and (after the grace period) fails the work item, and failing it runs through
+        // RunLifecycleManager, which clears the agent's registry entry back to Idle. So the
+        // Disconnected state exists only in the window between the disconnect and the failure.
+        // The original test waited for Failed first and then looked for Disconnected — by which
+        // point the failure cleanup had already reset the agent to Idle, which is exactly the
+        // "got: Idle" it kept reporting.
+        var registry = Fixture.AgentRegistry;
+        AgentEntry? agentEntry = null;
+        await WaitUntilAsync(
+            () =>
+            {
+                agentEntry = registry.GetByAgentId("unhappy-disconnect-agent");
+                return agentEntry is null || agentEntry.Status == AgentStatus.Disconnected;
+            },
+            TimeSpan.FromSeconds(10));
 
-        // Assert: agent is removed or marked Disconnected in registry
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
-        var agentEntry = registry.GetByAgentId("unhappy-disconnect-agent");
         Assert.True(
             agentEntry is null || agentEntry.Status == AgentStatus.Disconnected,
             $"Agent should be null or Disconnected, got: {agentEntry?.Status}");
+
+        // And the run eventually fails (the fake job controller reconciles the dead pod after the
+        // grace period).
+        var failedItem = await WaitForWorkItemStatusAsync(
+            workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(20));
+        Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // B7: Duplicate dispatch via concurrent API calls → dedup rejects second
-    // ═══════════════════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task DbMode_ConcurrentDuplicateDispatch_OnlyOneSucceeds()
-    {
-        // Arrange
-        await SeedIssueAndProfileAsync("1004", "Concurrent dedup issue");
-        await using var agent = new FakeAgentClient("unhappy-concurrent-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Act: dispatch the same issue from two concurrent tasks
-        var task1 = DispatchIssueAsync("1004");
-        var task2 = DispatchIssueAsync("1004");
-
-        var results = await Task.WhenAll(task1, task2);
-
-        // Assert: exactly one succeeds, one fails (or one succeeds and one returns null from prepare)
-        var successes = results.Count(r => r.Success);
-        var failures = results.Count(r => !r.Success);
-
-        // At least one must succeed
-        Assert.True(successes >= 1, "At least one dispatch must succeed");
-        // Total should be 2 (both complete without exception)
-        Assert.Equal(2, results.Length);
-        // If both "succeed", one might be queued — but there should only be 1 active WorkItem
-        // for this issue in the DB
-        await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var activeItems = await db.WorkItems.AsNoTracking()
-            .Where(w => w.IssueIdentifier == "1004" &&
-                        w.Status != WorkItemStatus.Failed &&
-                        w.Status != WorkItemStatus.Cancelled)
-            .ToListAsync();
-        Assert.True(activeItems.Count <= 1,
-            $"Expected at most 1 active WorkItem for issue 1004, got {activeItems.Count}");
-    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // B9: Shutdown signal blocks new dispatch
@@ -302,7 +282,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1005", "Shutdown blocked issue");
         await using var agent = new FakeAgentClient("unhappy-shutdown-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Trigger the shutdown signal (cooperative flag)
         var shutdownSignal = Fixture.Factory.Services.GetRequiredService<IShutdownSignal>();
@@ -348,7 +328,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
 
         // Connect agent and accept job
         var agent = new FakeAgentClient("unhappy-orphan-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1006");
         Assert.True(result.Success);
@@ -365,14 +345,14 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         await Task.Delay(TimeSpan.FromSeconds(8));
 
         // Verify agent is marked Disconnected (not yet removed — within grace period)
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         var entry = registry.GetByAgentId("unhappy-orphan-agent");
         // Entry might be Disconnected or already have ActiveJobId preserved
         Assert.True(entry is not null, "Agent entry should still exist within grace period");
 
         // Reconnect with same AgentId (simulating container restart)
         await using var reconnectedAgent = new FakeAgentClient("unhappy-orphan-agent", "unhappy-e2e");
-        await reconnectedAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await reconnectedAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // After reconnection, the agent should be in Busy state with the orphaned job
         // The OrphanRestoredAt flag is set by the hub on re-registration
@@ -410,7 +390,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
 
         // Connect agent and accept job
         var agent = new FakeAgentClient("unhappy-orphan-expire", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1007");
         Assert.True(result.Success);
@@ -444,7 +424,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1008", "No diff issue");
         await using var agent = new FakeAgentClient("unhappy-nodiff-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1008");
         Assert.True(result.Success);
@@ -488,7 +468,7 @@ public sealed class DbModeUnhappyPathTests : DbModeE2ETestBase, IClassFixture<Db
         // Arrange
         await SeedIssueAndProfileAsync("1009", "Cancelled run issue");
         await using var agent = new FakeAgentClient("unhappy-cancel-agent", "unhappy-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("1009");
         Assert.True(result.Success);

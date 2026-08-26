@@ -6,7 +6,9 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 <!-- Intent Extraction Sessions -->
 <!-- Session: 12 | Last run: 2026-08-14 | Decisions captured: 64 -->
-<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService decomposition execution -->
+<!-- Session: 14 | Last run: 2026-08-22 | Updates: T12 audit — marked #2027/#2028/#2025/#1058/#1059 resolved; fixed ConsolidationDispatchHandler→ConsolidationWorkItemDispatchService; T10 decision added; T11 decisions added -->
+<!-- Session: 15 | Last run: 2026-08-22 | Updates: T22 — AgentSelectorKey.From() extracted; ScanPagedAsync private helper extracted in PostgresPipelineRunHistoryService; T6/T15/T16/T20 closed; LabelStateMachine.cs stale path fixed -->
+<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition -->
 
 ---
 
@@ -17,6 +19,41 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 <!-- Decisions about system structure, patterns, and component boundaries -->
 
+### Agent images rebuild with the control plane — no wire skew window
+
+**Date:** 2026-08-22
+**Category:** architecture
+
+**Decision:** Agent images (`kiro-*`, `opencode-*`) are built from the **same git commit** as the control-plane images (orchestrator, api, jobcontroller) in the same CI run (`docker-build` job depends on `build-and-test` in `.github/workflows/ci.yml`). All images share the same `BUILD_COMMIT_SHA`. This means the 27 MessagePack `[Key(n)]` wire types are always in sync between agents and the control plane — no skew window exists. A separate wire-contract snapshot test is therefore unnecessary.
+
+**Verification (2026-08-22):** `.github/workflows/ci.yml` `docker-build` job includes all agent image Dockerfiles (`dockerfiles/kiro/agent-kiro-*.Dockerfile`, `dockerfiles/opencode/agent-opencode-*.Dockerfile`) alongside control-plane Dockerfiles, all with `needs: [build-and-test]`. They are built from `${{ github.sha }}` — the same commit.
+
+**Reassess when:** If agent images are pinned separately (e.g., a `capability` tag that CI does NOT overwrite on every release commit). At that point add a `[Key(n)]` snapshot test as described in the architecture audit.
+
+### AgentHub consolidation cluster extracted into IHubConsolidationOperations (T10)
+
+**Date:** 2026-08-22
+**Category:** architecture
+
+**Decision:** `AgentHubDependencies` reduced from 13 to 11 members by extracting the consolidation cluster (`ModelFetchService`, `IConsolidationService`, `ConsolidationBadgeService`) into `IHubConsolidationOperations`. `AgentHub.Consolidation.cs` now delegates to one method on `_consolidationOps` instead of calling three services directly. Registered as singleton; scoped `AgentHubDependencies` still contains `IChangeNotifier` (shared with consolidation).
+
+**Payoff:** `AgentHubConsolidationTests` can now test `HubConsolidationOperations` directly without requiring `null!` for `ModelFetchService` (which was sealed/unmockable).
+
+**Reassess when:** If the remaining 10 deps prove unwieldy, apply the same Facade Service pattern to the IssueOps or Lifecycle clusters.
+
+### Environment variable options binding (T11)
+
+**Date:** 2026-08-22
+**Category:** architecture
+
+**Decision:** Created two options classes to replace scattered `Environment.GetEnvironmentVariable` calls:
+- `AgentRuntimeOptions` (Agent host): consolidates `AGENT_CHAT_MODE` (×3), `AGENT_LABELS` (×2), `AGENT_CHAT_SESSION_ID`, `AGENT_CHAT_MODEL`, `AGENT_CHAT_EFFORT`, `AGENT_PROVIDER_TYPE`, `OPENCODE_BASE_URL`, `OPENCODE_SERVER_PASSWORD`, `KIRO_CLI_PATH`. Registered via `AgentRuntimeOptionsSetup : IConfigureOptions<AgentRuntimeOptions>`. `AgentConnectionLifecycle` now accepts optional `AgentRuntimeOptions` and uses field-based access.
+- `MonolithRuntimeOptions` (Orchestrator host): consolidates `READINESS_DRAIN_DELAY_SECONDS`, `PIPELINE_LOOP_STARTUP_DELAY_SECONDS`, `AGENT_API_KEY`. Bound with `ValidateDataAnnotations().ValidateOnStart()` — misconfigured host fails at startup with a named error. `ReadinessDrainService` registration uses the options value.
+
+Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LOG_LEVEL`, `DB_LOG_LEVEL`), OTel standard vars, K8s Downward API (`POD_NAME`, `POD_NAMESPACE`), EF Core design-time factory.
+
+**Reassess when:** If a new env var is added for config, it must go into the appropriate options class rather than a new `GetEnvironmentVariable` call.
+
 ### LoopStatePersistenceService: no leader guard needed — loop gate + 90s delay is sufficient
 
 ### PipelineLoopService: full loop must be leader-gated in multi-replica deployments
@@ -24,9 +61,11 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Date:** 2026-08-14
 **Category:** architecture
 
-**Decision:** In K8s multi-replica deployments, `PipelineLoopService` MUST only run its poll loop when `ILeaderElectionService.IsLeader` is true. This applies to the entire loop — not just the housekeeping sub-step. The rationale: `LoopStatePersistenceService` auto-resumes the loop on pod restart, meaning all replicas would independently start polling if the loop were not leader-gated. Operations that bypass the WorkItem dedup pipeline (most immediately, the housekeeping auto-branch-updater calling `UpdatePullRequestBranchAsync` directly) have no dedup at all and WILL fire concurrently on non-gated replicas. In Legacy and SignalR modes (single-replica by design), `ILeaderElectionService` is not registered; the loop runs unconditionally as today. Issue #1987 tracks the implementation; it is blocked by #1912 (now closed — #1912 is complete, so #1987 is unblocked).
+**Decision:** In K8s multi-replica deployments, `PipelineLoopService` MUST only run its poll loop when `ILeaderElectionService.IsLeader` is true. This applies to the entire loop — not just the housekeeping sub-step. The rationale: `LoopStatePersistenceService` auto-resumes the loop on pod restart, meaning all replicas would independently start polling if the loop were not leader-gated. Operations that bypass the WorkItem dedup pipeline (most immediately, the housekeeping auto-branch-updater calling `UpdatePullRequestBranchAsync` directly) have no dedup at all and WILL fire concurrently on non-gated replicas. `ILeaderElectionService` is registered unconditionally in `WorkDistributionRegistration.Consolidation.cs` (Kubernetes path); when the gate resolves to null (test environments with no DI registration), the loop runs unconditionally as before.
 
-**Context:** `PipelineLoopService` predates the multi-replica deployment model. `LeaderElectedPollingService` was extracted in #1912 and is used by `DispatchService`, `ConsolidationDispatchHandler`, and `ReconciliationService`. `PipelineLoopService` was not migrated in that PR. `LeaderElectionService.cs` documentation already claims PipelineLoopService is covered — this is aspirational, not yet true.
+**Status (2026-08-20):** Implemented. `PipelineLoopService` uses a `_leaderGate` field (`ILeaderGate?`) sourced from `deps.LeaderElection` (= `sp.GetService<ILeaderElectionService>()`). On startup, the loop spins on `_leaderGate is { IsLeader: false }` before entering the activation loop, and links `_leaderGate.LeaderToken` into the run's `CancellationTokenSource` so the loop stops immediately on leadership loss. When `ILeaderElectionService` is not registered (test environments), `_leaderGate` is null and the loop runs unconditionally as before. Issue #1987 is complete.
+
+**Context:** `PipelineLoopService` predates the multi-replica deployment model. `LeaderElectedPollingService` was extracted in #1912 and is used by `DispatchService`, `ConsolidationWorkItemDispatchService`, and `ReconciliationService`. `PipelineLoopService` was not migrated to use `LeaderElectedPollingService` as its base — it has its own `_leaderGate` integration instead.
 
 **Alternatives considered:** Gate only direct API callers like housekeeping (partial gating) — rejected because WorkItem dedup is not a hard guarantee and auto-resume makes full loop gating necessary.
 
@@ -39,7 +78,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Date:** 2026-08-14
 **Category:** architecture
 
-**Decision:** `DatabaseMaintenanceService` should be migrated to extend `LeaderElectedPollingService` (the shared base class used by `DispatchService`, `ConsolidationDispatchHandler`, and `ReconciliationService`). The current ad-hoc pattern — resolving `ILeaderElectionService` once at startup via `IServiceProvider.GetService()` then checking `IsLeader` per cycle — has a documented race: if the service resolves before `ILeaderElectionService` is registered, all subsequent maintenance cycles run without leader gating. The ad-hoc pattern also lacks `LeaderToken` integration, meaning the service does not stop mid-term on leadership loss (it only checks at the next cycle boundary). Migrating removes the race and makes the gating consistent with all other leader-gated services.
+**Decision:** `DatabaseMaintenanceService` should be migrated to extend `LeaderElectedPollingService` (the shared base class used by `DispatchService`, `ConsolidationWorkItemDispatchService`, and `ReconciliationService`). The current ad-hoc pattern — resolving `ILeaderElectionService` once at startup via `IServiceProvider.GetService()` then checking `IsLeader` per cycle — has a documented race: if the service resolves before `ILeaderElectionService` is registered, all subsequent maintenance cycles run without leader gating. The ad-hoc pattern also lacks `LeaderToken` integration, meaning the service does not stop mid-term on leadership loss (it only checks at the next cycle boundary). Migrating removes the race and makes the gating consistent with all other leader-gated services.
 
 **Context:** The TODO comment in `DatabaseMaintenanceService` explicitly documents the DI resolution race. `LeaderElectedPollingService` already supports the simple `PeriodicTimer`-equivalent pattern via `OnPollCycleAsync` + `PollIntervalSeconds`. Maintenance runs hourly — double-execution risk is low but the DI race is a real correctness gap.
 
@@ -49,18 +88,18 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 ---
 
-### AgentCodingPageService: extract per-drawer orchestration when next touched
+### AgentCodingPageService: razor component is the current decomposition target
 
-**Date:** 2026-08-14
+**Date:** 2026-08-14 · **Updated:** 2026-08-22
 **Category:** ux
 
-**Decision:** `AgentCodingPageService` at ~747 lines is a decomposition candidate. The target: when the file is next touched for a feature or bug fix, extract the three drawer orchestrators (Issue, PR, Epic) into per-drawer services or a single generic `DrawerOrchestrationService<T>`. Each drawer currently has ~6-8 methods (load page, load labels, check dependencies, dispatch, open, close) that are logically independent. The two dispatch paths (`DispatchWithOrchestrationAsync` vs `DispatchLegacyAsync`) should also move into `AgentJobDispatcher`, making `AgentCodingPageService` dispatch-free. The Blazor component (`AgentCoding.razor.cs` at ~501 lines) retains only timer/dismiss logic and UI state — it delegates all business logic to the extracted services.
+**Decision:** `AgentCodingPageService` is now 449 lines (down from ~747). The service decomposition was partially completed. However, `AgentCoding.razor.cs` grew to 572 lines (was ~501, target was timer/dismiss-only) — logic landed in the component rather than leaving it. The razor component is now the higher-priority decomposition target: business logic should be extracted back into services on the next touch.
 
-**Context:** Same growth pattern as `LocalPipelineExecutor` (which was also flagged as an incidental monolith and decomposed). The `DrawerStateService<T>` generic was already extracted from the page service; this continues that extraction. The known `DrawerCancellationToken` bug (#2028) is a symptom of the tight coupling between drawer instances and the parent service.
+**Context:** Same growth pattern as `LocalPipelineExecutor` (which was also flagged as an incidental monolith and decomposed). The `DrawerStateService<T>` generic was already extracted from the page service. The known `DrawerCancellationToken` bug (#2028) is a symptom of tight coupling between drawer instances and the parent service.
 
-**Alternatives considered:** Keep as-is (coherent vertical slices are readable, ~750 lines is not yet blocking), dispatch-path extraction only (removes mode branching but leaves drawer methods dense).
+**Alternatives considered:** Keep as-is (coherent vertical slices are readable), service decomposition only (accomplished; next step is the component).
 
-**Reassess when:** After extraction, if the sub-services are harder to navigate than the original monolith, reconsider granularity.
+**Reassess when:** After the razor component's business logic is extracted, verify that the per-drawer split is the right granularity or reconsider.
 
 ---
 
@@ -139,18 +178,29 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 ---
 
-### Token vending: private keys never leave orchestrator (security invariant)
+### Token vending: private keys never leave orchestrator or API containers (security invariant)
 
-**Date:** 2026-07-04
+**Date:** 2026-07-04 · **Updated:** 2026-08-22 (post-041–045 topology correction)
 **Category:** architecture
 
-**Decision:** Private keys (GitHub App PEM, GitLab access tokens) NEVER leave the orchestrator container. Agents only receive short-lived tokens via the `TokenVendingService`. This is a hard security invariant — the motivation is that if an agent goes haywire (prompt injection, hallucination, malicious input), it cannot access secrets that would allow persistent harm. The orchestrator has no AI agent in its container.
+**Decision:** Private keys (GitHub App PEM, GitLab access tokens) NEVER leave the API or orchestrator containers. Agents only receive short-lived tokens via the `TokenVendingService`. This is a hard security invariant — the motivation is that if an agent goes haywire (prompt injection, hallucination, malicious input), it cannot access secrets that would allow persistent harm. Neither container runs an AI agent.
 
-**Context:** The `TokenVendingService` generates GitHub installation tokens (1-hour expiry). `ProactiveTokenRefresh` on the agent side requests fresh tokens via SignalR when the current one exceeds 45 minutes. The SignalR dependency for refresh is acceptable because agents already depend on SignalR for lifecycle management. This pattern mirrors GitHub Actions' per-job `GITHUB_TOKEN` injection.
+**Topology (verified 2026-08-22):**
+- GitHub App PEM and GitLab access tokens live exclusively in the database (`ProviderConfig.Settings["privateKeyBase64"]` / `Settings["accessToken"]`). No K8s Secret in the Helm chart contains these credentials — the chart manages only `agent-api-key` (the HMAC master key).
+- `TokenVendingService` is registered in both `CodingAgentWebUI.Api` and `CodingAgentWebUI.Orchestration`. Both processes read `ProviderConfig` from Postgres and perform the GitHub JWT exchange in-process.
+- Agent pods receive only: (a) the HMAC-derived per-job key (`HMAC-SHA256(master, jobName)`, mounted from the chart Secret), and (b) short-lived GitHub installation access tokens (1-hour expiry) vended via SignalR `RefreshToken` calls handled by `AgentTokenRefreshService` in the API hub. The raw PEM and long-lived GitLab PATs never enter the agent container.
+- The agent's `HubConnectionManager` receives the master key at construction and derives its per-agent key internally (`DeriveKey(masterKey, agentId.Value)`) — it never sends the master key over the wire.
+- Assembly boundary: NetArchTest rules in `LayerBoundaryTests.cs` prevent `CodingAgentWebUI.Agent`, `Agent.KiroCli`, and `Agent.OpenCode` from depending on `CodingAgentWebUI.Orchestration` (where `TokenVendingService` and `ProviderSettingKeys.PrivateKeyBase64` live). This is structural enforcement, not a named invariant test.
+
+**Known limitation — GitLab PATs:** GitLab access tokens are passed through in plaintext (no vending). Unlike GitHub App tokens (short-lived and scoped), GitLab PATs are long-lived. Recommend project access tokens with ≤1-day expiry to minimize exposure if an agent is compromised.
+
+**DerivedKeySecretName footgun:** `JobSpecBuilder.BuildContext.DerivedKeySecretName` must NEVER be set for work-item or consolidation pods. Setting it injects an already-derived key, causing `HubConnectionManager` to double-derive and fail auth. The comment in `DispatchLifecycleService.cs` and `DispatchLoop.cs` is the only guard. If this configuration needs to be made impossible to express accidentally, add a startup validation guard in `JobSpecBuilder`.
+
+**Context:** The `TokenVendingService` generates GitHub installation tokens (1-hour expiry). `AgentTokenRefreshService` handles mid-job refresh requests from agents over SignalR (triggered when token age exceeds 45 minutes). The SignalR dependency for refresh is acceptable because agents already depend on SignalR for lifecycle management. This pattern mirrors GitHub Actions' per-job `GITHUB_TOKEN` injection.
 
 **Alternatives considered:** Direct credential injection via K8s secrets (eliminates SignalR dependency but exposes long-lived keys), projected volumes with short-lived tokens (K8s only), environment-dependent strictness.
 
-**Reassess when:** Never. This is a security boundary, not a convenience trade-off.
+**Reassess when:** Never for the isolation principle. If GitLab short-lived project access tokens become available, migrate to those to match GitHub App token lifetime.
 
 ---
 
@@ -181,6 +231,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Alternatives considered:** Per-agent individual secrets (enables granular revocation but multiplies secret management), HMAC with scoped master keys per label group.
 
 **Reassess when:** If the system needs per-agent revocation without rotating the master key (e.g., a compromised agent that must be isolated without restarting others). This would require individual secrets or a revocation list.
+
+**Status (2026-08-17):** Resolved in Spec 043. JobSpecBuilder now vends HMAC-SHA256(master, agentId) via per-Job Secret with ownerReference. WorkItemHttpClient appends ?agentId= on GetAssignment and PostStatus. The divergence predated specs 041–045; prior to this spec, every agent pod mounted the master Secret directly despite the HMAC derivation logic existing at the auth layer.
 
 ---
 
@@ -279,6 +331,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 **Decision:** Two distinct agent lifetime models exist by deployment mode. Docker Compose: agents are persistent containers using a pull-model (connect via SignalR, receive jobs, execute, return to idle). K8s mode: agents are ephemeral pods using a push-model (one K8s Job per WorkItem, container destroyed after completion). The pull-model was the original design. The K8s push-model is the production-scale future. Docker-compose mode may eventually be deprecated once K8s-mode proves itself. `IWorkDistributor` abstracts the difference from the pipeline layer.
 
+**Status (2026-08-16):** Spec 041 removed the docker-compose deployment target and the Legacy/SignalR work distribution modes. Kubernetes Jobs are now the only work distribution mechanism. The pull-model (docker-compose) is gone; the push-model (K8s) is now the only runtime. The `IWorkDistributor` abstraction was retained — `KubernetesWorkDistributor` is the sole implementation.
+
 **Context:** GitHub Actions uses ephemeral runners. Argo uses ephemeral pods. The pull-model works well for developer/small-team deployments (low-latency, session affinity for resume). K8s ephemeral is better for production (clean-slate isolation, autoscaling, no stale state). The PVC pool in K8s manages credential persistence across ephemeral pods.
 
 **Alternatives considered:** Single model (always ephemeral — locks out non-K8s users), converge immediately (premature — K8s mode is still maturing).
@@ -293,6 +347,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Category:** architecture
 
 **Decision:** The Helm `values.yaml` separates `agents[]` (SignalR mode Deployments) from `jobTemplates[]` (Kubernetes mode Job pod specs). These serve fundamentally different purposes: `agents` creates persistent Deployments with PVCs, health probes, and rolling update strategies; `jobTemplates` defines ephemeral Job pod specs (image, resources, securityContext, initContainers) rendered into a ConfigMap consumed by `DispatchService`. The ConfigMap template falls back to `agents[]` when `jobTemplates` is empty for backward compatibility.
+
+**Status (2026-08-16):** Spec 041 removed `agents[]` from `values.yaml`. `jobTemplates[]` is now the sole definition for agent pod specs. The ConfigMap fallback to `agents[]` is gone. The separation rationale is now historical — the two values sections have been collapsed to one.
 
 **Context:** Originally a single `agents[]` field served both modes. In SignalR mode it creates Deployments; in K8s mode it only produced a ConfigMap (no Deployments). The dual-purpose design caused confusion: K8s-only fields (maxConcurrent, initContainers for permission fixers) mixed with Deployment-only fields (persistence, strategy, affinity). The split clarifies: `agents` for what runs persistently, `jobTemplates` for what ephemeral Job pods look like.
 
@@ -332,33 +388,25 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 ---
 
-### LeaderElectedPollingService: two correctness defects tracked by #2027
+### LeaderElectedPollingService: two correctness defects — resolved by #2027
 
-**Date:** 2026-08-14
+**Date:** 2026-08-14 · **Closed:** 2026-08-22
 **Category:** architecture
 
-**Decision:** `LeaderElectedPollingService` has two known defects, both self-documented with TODO comments tagged "DotNetSpecialist WARNING (Issue #1912)". (1) Missing `ArgumentNullException.ThrowIfNull(leaderElection)` in the constructor — a null injection produces a `NullReferenceException` at runtime rather than a clear construction-time failure. (2) The `OperationCanceledException` catch filter `!stoppingToken.IsCancellationRequested` evaluates false when host-stop and leadership-loss occur simultaneously, causing the OCE to propagate uncaught and BackgroundService to log a spurious `Error` on clean shutdown. Both are deferred cleanup from #1912. Currently broken — #2027 tracks the fix.
+**Decision:** `LeaderElectedPollingService` had two correctness defects: (1) Missing `ArgumentNullException.ThrowIfNull(leaderElection)` in the constructor. (2) A broken `OperationCanceledException` catch filter that caused a spurious `Error` log on clean pod shutdown. Both are fixed: (1) `ThrowIfNull` added to constructor. (2) The OCE catch now uses `if (stoppingToken.IsCancellationRequested) break` to correctly distinguish host-stop from leadership-loss. #2027 complete.
 
-**Context:** Intentionally deferred from #1912 to keep the extraction PR focused. Both fixes are small and self-contained. The spurious error log is observable on every clean K8s pod shutdown that races with Postgres lease expiry.
-
-**Alternatives considered:** Fix inline when next touched (no dedicated issue) — rejected because the spurious error log is observable in production and warrants explicit tracking.
-
-**Reassess when:** After #2027 is implemented. Both TODOs removed, decision stable.
+**Reassess when:** Never — both fixes are stable.
 
 ---
 
-### DrawerCancellationToken: wrong-token bug tracked by #2028
+### DrawerCancellationToken: wrong-token bug — resolved by #2028
 
-**Date:** 2026-08-14
+**Date:** 2026-08-14 · **Closed:** 2026-08-22
 **Category:** ux
 
-**Decision:** `AgentCodingPageService.DrawerCancellationToken` is a known bug — it always returns the issue drawer's `CancellationToken` regardless of which drawer is active. The property must be removed; callers should access the specific `DrawerStateService<T>` instance's `CancellationToken` directly (`IssueDrawer.CancellationToken`, `PrDrawer.CancellationToken`, `EpicDrawer.CancellationToken`). The three drawer instances are already public properties on `AgentCodingPageService`. Currently broken — #2028 tracks the fix.
+**Decision:** `AgentCodingPageService.DrawerCancellationToken` property has been removed. Callers access per-drawer `CancellationToken` directly from the specific `DrawerStateService<T>` instance (`IssueDrawer.CancellationToken`, `PrDrawer.CancellationToken`, `EpicDrawer.CancellationToken`). #2028 complete.
 
-**Context:** The property predates `DrawerStateService<T>` extraction. When drawer state was unified into the generic service, the shorthand was left pointing at the issue drawer. Symptom of the broader drawer coupling that the `AgentCodingPageService` decomposition (see session 11 Q3 decision) will address.
-
-**Alternatives considered:** Fix by returning the active drawer's token dynamically (switch on `ActiveDrawerTab`) — adds coupling between drawer state and the property; removing is cleaner.
-
-**Reassess when:** After #2028 is implemented. Stable once the property is gone.
+**Reassess when:** Never — stable once the property is gone.
 
 ---
 
@@ -452,33 +500,25 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 ---
 
-### LocalPipelineExecutor: accidental monolith, good refactoring candidate
+### LocalPipelineExecutor: decomposition complete
 
-**Date:** 2026-07-04
+**Date:** 2026-07-04 · **Closed:** 2026-08-22
 **Category:** architecture
 
-**Decision:** `LocalPipelineExecutor` at ~860 lines is NOT intentionally monolithic — it grew over time through feature additions. It's a good candidate for incremental extraction (context records → helpers → step methods). Issues #975, #957, #958 propose valid decompositions. The core orchestration flow (provider construction → context building → step execution → progress reporting) should stay in one file for readability, but ancillary logic (specific step implementations, record types, utility methods) should be extracted when touched.
+**Decision:** `LocalPipelineExecutor` is now 334 lines — well under the original 600-line target. Decomposition is complete; no further action needed. Issues #975, #957, #958 implemented the extraction of context records, helpers, and step methods.
 
-**Context:** The file has 96 changes in 90 days (#1 hotspot). It acts as the hub-to-pipeline bridge — a deliberate coordination point in concept, but its size is incidental. Comparable "orchestrator" classes in pipeline architectures are typically 300-500 lines.
-
-**Alternatives considered:** Keep as-is (reduces navigation across files), full decomposition into partial classes (fragments the narrative), split into separate step executor classes (too many files for coordination logic).
-
-**Reassess when:** After #975 is implemented (extract records), reassess if further decomposition is needed. Target: core file under 600 lines.
+**Reassess when:** If the file grows past 600 lines again, reapply the same extraction pattern.
 
 ---
 
-### Label lifecycle needs formalization — currently informal state machine (#1046)
+### Label lifecycle: formal state machine delivered (#1046)
 
-**Date:** 2026-07-04
+**Date:** 2026-07-04 · **Closed:** 2026-08-22
 **Category:** architecture
 
-**Decision:** The label transition graph (agent:next → in-progress → done/error/cancelled/needs-refinement/wont-do) is currently enforced implicitly by code structure, which is NOT intentional — it grew organically and has produced bugs in the past. A formal `LabelStateMachine` with explicit transition validation is needed. Issue #1046 tracks the implementation. Valid transitions should be defined in one authoritative location, with runtime validation (warn, don't block) catching invalid transitions.
+**Decision:** The label transition graph (agent:next → in-progress → done/error/cancelled/needs-refinement/wont-do) is enforced by `LabelStateMachine` with explicit transition validation. Issue #1046 implemented the formal state machine. Valid transitions are defined in one authoritative location with runtime validation.
 
-**Context:** Kubernetes uses strict status conditions validated at the API level. The current system relies on developers knowing the valid transitions — this has caused bugs. The state machine is simple enough to formalize without excessive complexity.
-
-**Alternatives considered:** Keep informal (continues producing bugs), strict blocking validation (too risky for production — might block legitimate edge cases during initial rollout).
-
-**Reassess when:** After #1046 is implemented, evaluate whether blocking mode (throw on invalid transition) is safe enough based on false-positive rate.
+**Reassess when:** If blocking mode (throw on invalid transition) was not enabled at implementation, revisit based on false-positive rate from warn mode.
 
 ---
 
@@ -503,6 +543,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Category:** architecture
 
 **Decision:** `InfiniteRetryPolicy` (exponential backoff 1s → 120s cap + jitter) ensures agents never self-terminate from disconnection. This is intentional for docker-compose mode: orchestrator restarts are common during development, and agents should recover automatically. For a future K8s-only setup, self-termination after prolonged disconnection (letting K8s liveness probes → pod restart) would be more appropriate. Currently, both modes use infinite retry.
+
+**Status (2026-08-16):** Spec 041 removed docker-compose mode. All agents are now ephemeral K8s Jobs. For work-item pods this is largely moot (the Job terminates after one work item). For chat pods (`AgentWorkerService`), infinite retry is retained — chat pods use SignalR throughout their lifetime and should reconnect automatically if the orchestrator restarts. The `InfiniteRetryPolicy` remains in place for chat pods.
 
 **Context:** Kubernetes controllers use infinite watch re-establishment. GitHub Actions runners self-terminate after prolonged disconnection (5 min). The 120s cap prevents CPU waste while maintaining ~30s average reconnection latency after orchestrator returns.
 
@@ -810,6 +852,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 **Decision:** The system supports three deployment modes representing progressive infrastructure investment. Legacy (in-memory JSON files, zero dependencies) was the initial implementation. DB+SignalR adds Postgres persistence for multi-replica safety. DB+Kubernetes adds K8s Job-based dispatch for production scale. For non-K8s deployments, DB+SignalR is the production path. K8s-only is a possible long-term direction but that decision hasn't been made yet. Legacy mode remains for zero-friction onboarding but is not guaranteed feature parity with DB modes — new persistence-dependent features can be DB-only.
 
+**Status (2026-08-16):** Spec 041 removed Legacy mode and DB+SignalR mode. Kubernetes (DB+Kubernetes) is now the only supported deployment target. PostgreSQL is required. The progressive model was collapsed to a single mode.
+
 **Context:** The `IWorkDistributor` and `IConfigurationStore` abstractions enable all three modes. Docker Compose is the development/small-team target. Helm chart is the K8s production target. Both deployment targets are first-class. New features requiring work item lifecycle or reconciliation can be DB-only.
 
 **Alternatives considered:** K8s-only (locks out non-K8s users), single mode (loses progressive adoption), deprecate Legacy immediately.
@@ -833,18 +877,14 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 ---
 
-### MaxConsolidationDispatchRetries: promote to PipelineConfiguration — tracked by #2025
+### MaxConsolidationDispatchRetries: promoted to PipelineConfiguration — resolved by #2025
 
-**Date:** 2026-08-14
+**Date:** 2026-08-14 · **Closed:** 2026-08-22
 **Category:** configuration
 
-**Decision:** `MaxConsolidationDispatchRetries` must use the same configuration mechanism as all other retry limits (`MaxRetries`, `MaxAnalysisRetries`): a `PipelineConfiguration` property with a nullable per-project override and `[ProjectOverridable]`. The current `internal const int = 5` in `JobQueueDrainService` is technical debt — it was left as a const with a TODO comment. There is no justification for treating consolidation dispatch retries differently from other retry values. Default value stays 5 (no behavior change). Currently broken — #2025 tracks the fix.
+**Decision:** `MaxConsolidationDispatchRetries` is now a `PipelineConfiguration` property `[Key(74)]` with `[ProjectOverridable(Order=30)]` and a nullable per-project override in `PipelineProject`. Default value is 5. #2025 complete. No behavioral change.
 
-**Context:** All other dispatch retry limits live in `PipelineConfiguration`. The const was added for expediency with an explicit TODO. Agents adding new retry limits should follow the `PipelineConfiguration` property pattern, not the hardcoded const pattern.
-
-**Alternatives considered:** Keep as const (inconsistency is a maintenance hazard — future agents see an ambiguous precedent).
-
-**Reassess when:** After #2025 is implemented. Once fixed, this decision is stable — no further reassessment needed.
+**Reassess when:** Never — once fixed, this decision is stable.
 
 ---
 
@@ -1039,7 +1079,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Date:** 2026-07-04
 **Category:** ux
 
-**Decision:** The Agent Coding page is exclusively for configuring templates and dispatching work. It does NOT show pipeline progress, output terminals, or run summaries. That was wrongly implemented (likely a leftover from before the remote agent model existed) and is being removed (#1059). The page always shows the same view regardless of whether runs are active — template table, loop controls, manual dispatch. Pipeline observation belongs on Agent Monitoring.
+**Decision:** The Agent Coding page is exclusively for configuring templates and dispatching work. It does NOT show pipeline progress, output terminals, or run summaries. That was wrongly implemented (likely a leftover from before the remote agent model existed) and has been removed (#1059). The page always shows the same view regardless of whether runs are active — template table, loop controls, manual dispatch. Pipeline observation belongs on Agent Monitoring.
 
 **Context:** `PipelineService.ActiveRun` is set by `PipelineRunLifecycleService` — there is no locally-executing pipeline in the intended architecture. Agents execute pipelines remotely via SignalR/K8s. The inline progress view on Agent Coding was dead code that never triggered correctly in production deployments.
 
@@ -1169,14 +1209,14 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 ### Monitoring refresh: 5-second polling is the correct interval
 
-**Date:** 2026-07-04
+**Date:** 2026-07-04 · **Updated:** 2026-08-22
 **Category:** ux
 
-**Decision:** The Agent Monitoring page should poll at 5-second intervals (not 2s). The current 2-second interval is too aggressive for a single-operator tool — 5 seconds provides adequate freshness without unnecessary server load. The freshness indicator transparency ("Refreshing every 5s") is intentional — it builds trust that data is current. Issue #1058 tracks the change from 2s → 5s.
+**Decision:** The Agent Monitoring page polls at 5-second intervals. Issue #1058 implemented the change from 2s → 5s. The freshness indicator transparency ("Refreshing every 5s") is intentional — it builds trust that data is current.
 
-**Context:** Grafana defaults to 5-second refresh. GitHub Actions uses 5-10s. The 2-second interval was set without deliberation and generates unnecessary load. For a tool where the operator is watching (not automated alerting), 5 seconds is indistinguishable from real-time.
+**Context:** Grafana defaults to 5-second refresh. GitHub Actions uses 5-10s.
 
-**Alternatives considered:** Event-driven via SignalR (eliminates polling entirely — future possibility), configurable interval (over-engineering for single-operator use), keep 2s (wasteful).
+**Alternatives considered:** Event-driven via SignalR (eliminates polling entirely — future possibility), configurable interval (over-engineering for single-operator use).
 
 **Reassess when:** If event-driven monitoring is implemented (SignalR push from pipeline events to monitoring page), polling becomes a fallback only.
 
@@ -1275,13 +1315,13 @@ Human-authored intent behind non-obvious design choices. This file is the author
 - "MaxDecompositionSubIssueFiles=12: research-based low-confidence" scoped by "Epic decomposition: two-phase with human gate" (sub-issue scope constraint operationalizes 'achievable in one agent run')
 - "MaxConsolidationDispatchRetries → #2025" constrains "Dispatch priority: static ordering" (consolidation is lowest priority; its retry mechanism must be consistent with other priority-tier retry config)
 
-- "PipelineLoopService: full loop leader-gated" scoped by "Agent lifetime: pull→push evolution" (only relevant in K8s multi-replica; Legacy/SignalR single-replica runs unconditionally)
+- "PipelineLoopService: full loop leader-gated" scoped by "Agent lifetime: pull→push evolution" (all deployments are K8s; the loop runs unconditionally only in test environments without leader election)
 - "PipelineLoopService: full loop leader-gated" enables "Housekeeping auto-update concurrency: 1 is permanent default" (concurrency gate only works correctly when a single leader runs the poll loop)
 - "DatabaseMaintenanceService: migrate to LeaderElectedPollingService" scoped by "PipelineLoopService: full loop leader-gated" (same principle: all background loops with side-effects must be leader-gated in multi-replica)
-- "DatabaseMaintenanceService: migrate to LeaderElectedPollingService" correlates with "LeaderElectedPollingService: two correctness defects (#2027)" (migration should not happen before #2027 is fixed — subclass inherits the constructor null-check and OCE filter)
+- "DatabaseMaintenanceService: migrate to LeaderElectedPollingService" correlates with "LeaderElectedPollingService: two correctness defects (#2027)" (migration can now proceed — #2027 is resolved; both the null-check and OCE filter are fixed)
 - "AgentCodingPageService: extract per-drawer orchestrators" scoped by "AgentCoding component ↔ PageService boundary" (drawer orchestration is the next extraction target after the component boundary was established)
 - "DrawerCancellationToken: wrong-token bug (#2028)" scoped by "AgentCodingPageService: extract per-drawer orchestrators" (bug is a symptom of the tight coupling; extraction removes the need for the property entirely)
-- "LeaderElectedPollingService: two correctness defects (#2027)" constrains "PipelineLoopService: full loop leader-gated" (#1987 should wait for #2027 — reusing the fixed base class is the suggested approach)
+- "LeaderElectedPollingService: two correctness defects (#2027)" — resolved; constraint on PipelineLoopService migration lifted
 - "ProviderConfigId validation: no strong opinion" scoped by "Dual JSON options (Default/Lenient)" (both decisions follow the principle: strict at boundaries the system controls, lenient at agent-produced boundaries)
 
 - "LoopStatePersistenceService: no leader guard needed" scoped by "PipelineLoopService: full loop leader-gated" (the loop gate makes eager activation on all replicas safe — all sit in leader-wait until promoted)
@@ -1297,3 +1337,64 @@ Human-authored intent behind non-obvious design choices. This file is the author
 - Automated calibration design — when a clear mechanism emerges, revisit
 - Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct?
 - AgentCodingPageService decomposition: after extraction, was the per-drawer split the right granularity?
+
+---
+
+### HeartbeatMonitorService: deleted at 041–045 arc close (T1, arch-audit 2026-08-22)
+
+**Date:** 2026-08-22
+**Category:** architecture
+
+**Decision (Option B — delete):** `HeartbeatMonitorService` and its six sweep phases (`ChatAgentSweepPhase`, `StaleHeartbeatSweepPhase`, `OrphanRestoredJobSweepPhase`, `ProgressTimeoutSweepPhase`, `DisconnectedAgentSweepPhase`, `OrphanedRunSweepPhase`) were deleted. The source files are gone; the empty `SweepPhases/` directory was removed.
+
+**Rationale:** The K8s topology (agents are ephemeral one-shot pods, not a long-lived fleet) makes several sweep phases hazardous:
+- `DisconnectedAgentSweepPhase` would fail runs for pods that completed and exited normally.
+- `StaleHeartbeatSweepPhase` and `ProgressTimeoutSweepPhase` duplicate work already done by `ReconciliationService` in JobController.
+- Only `OrphanRestoredJobSweepPhase` had no JobController equivalent — but `AgentOrphanRecoveryService` now logs a warning and ReconciliationService's work-item timeout fires within `ReconciliationTimeoutSeconds` (default: 3600s), which is acceptable.
+
+**What covers timeout enforcement now:**
+- **Work-item timeouts:** `ReconciliationService` + `ReconciliationLoop` in `CodingAgentWebUI.JobController`.
+- **Orphan detection/restoration:** `AgentOrphanRecoveryService` (in Hub, fires on agent re-registration).
+- **Stale-heartbeat / disconnect state cleanup:** Not enforced in the agent registry — agents are ephemeral. A pod that exits simply stops sending heartbeats; its registry entry ages out naturally when the reconciler terminates its work item.
+
+**`OrphanRestoredAt` field retained:** The field and its writers in `AgentOrphanRecoveryService`, `AgentHub.Lifecycle`, `AgentJobLifecycleService`, and `RunLifecycleManager` remain live. They gate the "should we fail this run if agent goes silent?" logic inside `AgentOrphanRecoveryService`'s crash-recovery path and are cleared on successful job completion.
+
+**T4 test guard:** `LayerBoundaryTests.AllBackgroundServices_AreRegisteredOrRetired` includes `HeartbeatMonitorService` in its retired allowlist with a "DELETED — do not add back" comment. The guard will fail if the class is ever re-introduced without a corresponding `AddHostedService` call.
+
+---
+
+### AgentSelectorKey: canonical label-to-selector serialization (T22, arch-audit 2026-08-22)
+
+**Date:** 2026-08-22
+**Category:** architecture
+
+**Decision:** Extracted `AgentSelectorKey.From(IEnumerable<string>? labels)` into `CodingAgentWebUI.Pipeline.Models.AgentSelectorKey`. It normalises a label list into the comma-separated, ordinally-sorted string stored in `WorkItemEntity.AgentSelector` and `JobDistributionRequest.AgentSelector`.
+
+**Rationale:** Two callers (`ConsolidationDispatchService.cs` and `ConsolidationRehydrationExtensions.cs`) had byte-identical logic that had already co-changed 4 times. Divergence in sort order or separator would cause agent selection to silently return `null` — the lookup in `JobDeduplicationGuardService.SelectAgent` uses the same serialization to build the candidate key. A difference causes a silent no-match rather than a compile error. Centralising makes the invariant visible.
+
+**Reassess when:** A third call site appears, or the separator changes (both must move together).
+
+### ScanPagedAsync: shared over-fetch paging loop for PostgresPipelineRunHistoryService (T22, arch-audit 2026-08-22)
+
+**Date:** 2026-08-22
+**Category:** architecture
+
+**Decision:** Extracted `private ScanPagedAsync(db, page, pageSize, fetchBatch, include, ct)` in `PostgresPipelineRunHistoryService`. The two paged-scan methods (`GetRunHistoryPagedInternalAsync` and `GetRunHistoryPagedWithFeedbackFilterInternalAsync`) differed only by their fetch delegate (LINQ vs `FromSqlRaw`) and an optional extra predicate for feedback-only. Three shared bugfix commits had already touched both.
+
+**Reassess when:** A third paged query with a different fetch strategy is added — extend the same helper.
+
+### Agent mode naming: ChatMode and WorkItemMode replace SignalRMode and K8sMode (T23, arch-audit 2026-08-22)
+
+**Date:** 2026-08-22
+**Category:** naming / architecture
+
+**Decision:** `AgentSignalRModeRegistration` → `AgentChatModeRegistration`; `AgentK8SModeRegistration` → `AgentWorkItemModeRegistration`.
+
+**Rationale:** The old names were actively misleading — both modes use SignalR and both run in Kubernetes. The essential difference is:
+
+- **Work-item mode** (one-shot batch): pod owns a durable `WorkItem` row; must drive it to a terminal status; uses `AgentConnectionManager`, `WorkItemAgentService`, and `IJobCompletionReporter`.
+- **Chat mode** (long-lived interactive): pod owns no durable row; product is streamed output; uses `AgentConnectionLifecycle`, `AgentWorkerService`, `ChatJobHandler`, and `CriticalMessageBuffer`.
+
+**The split is deliberate and should not be re-unified.** Registration overlap between the two files is 0% — not one registration line is shared. Three of ~10 slots fill the same abstraction with a genuinely different implementation (e.g., `IJobCompletionReporter` vs `SignalRCompletionReporter`). Merging them behind an `if` would be strictly worse.
+
+**Dead branch removed at same time:** The `!isChatMode` check at `AgentWorkerService.cs:94` is the correct live path (wires `OnAssignJob` for work-item pods). Confirmed live — not removed.

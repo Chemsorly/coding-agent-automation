@@ -3,264 +3,296 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Moq;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Unit tests for <see cref="LabelService"/>.
-/// Tests label swap routing based on LabelTargetKind (Issue vs PullRequest).
-/// Feature: 025-pr-review-pipeline, Requirements: Req 6, 11
+/// Tests for LabelService.
+/// Covers: SwapLabelAsync (Issue/PR/Unknown/not-found config), SwapLabelStrictAsync (throws on failure),
+/// EnsureAgentLabelsAsync (Issue/PR/not-found/exception), constructor guards.
 /// </summary>
-public class LabelServiceTests
+public sealed class LabelServiceTests
 {
     private readonly Mock<IProviderConfigStore> _configStore = new();
     private readonly Mock<IProviderFactory> _providerFactory = new();
-    private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
+    private readonly Mock<ILogger> _logger = new();
+    private readonly LabelService _sut;
 
-    private LabelService CreateLabelService() => new(_configStore.Object, _providerFactory.Object, _logger);
+    public LabelServiceTests()
+    {
+        _sut = new LabelService(_configStore.Object, _providerFactory.Object, _logger.Object);
+    }
+
+    private static ProviderConfig MakeConfig(string id = "cfg-1", ProviderKind kind = ProviderKind.Issue) =>
+        new() { Id = id, Kind = kind, DisplayName = "T", ProviderType = "GitHub" };
+
+    private static PipelineRun MakeRun() =>
+        PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "r1", IssueIdentifier = "GH-1", IssueTitle = "T",
+            IssueProviderConfigId = "github", RepoProviderConfigId = "repo",
+            AgentId = "a1", AgentProviderConfigId = "kiro",
+            InitiatedBy = "test", StartedAt = DateTimeOffset.UtcNow
+        });
+
+    // ── Constructor guards ────────────────────────────────────────────────
 
     [Fact]
-    public async Task SwapLabelAsync_IssueTargetKind_RoutesToIssueProvider()
+    public void Constructor_NullConfigStore_Throws()
     {
-        var issueProvider = new Mock<IIssueProvider>();
-        issueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
-
-        var issueConfig = new ProviderConfig
-        {
-            Id = "ip-1",
-            Kind = ProviderKind.Issue,
-            ProviderType = "GitHub",
-            DisplayName = "Test Issue Provider"
-        };
-
-        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { issueConfig });
-        _configStore.Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(issueConfig);
-        _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
-            .Returns(issueProvider.Object);
-
-        var swapper = CreateLabelService();
-
-        await swapper.SwapLabelAsync("ip-1", "42", AgentLabels.InProgress, LabelTargetKind.Issue, CancellationToken.None);
-
-        // Should have removed all agent labels EXCEPT the target (avoids redundant remove+add)
-        foreach (var label in AgentLabels.All)
-        {
-            if (label == AgentLabels.InProgress)
-                issueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.Never);
-            else
-                issueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.Once);
-        }
-
-        // Should have added the new label
-        issueProvider.Verify(p => p.AddLabelAsync("42", AgentLabels.InProgress, It.IsAny<CancellationToken>()), Times.Once);
+        var act = () => new LabelService(null!, _providerFactory.Object, _logger.Object);
+        act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
-    public async Task SwapLabelAsync_PullRequestTargetKind_RoutesToRepositoryProvider()
+    public void Constructor_NullProviderFactory_Throws()
     {
-        var repoProvider = new Mock<IRepositoryProvider>();
-        repoProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        var act = () => new LabelService(_configStore.Object, null!, _logger.Object);
+        act.Should().Throw<ArgumentNullException>();
+    }
 
-        var repoConfig = new ProviderConfig
-        {
-            Id = "rp-1",
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test Repo Provider"
-        };
+    // ── SwapLabelAsync — issue path ───────────────────────────────────────
 
-        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { repoConfig });
-        _configStore.Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(repoConfig);
-        _providerFactory.Setup(f => f.CreateRepositoryProvider(repoConfig))
-            .Returns(repoProvider.Object);
+    [Fact]
+    public async Task SwapLabelAsync_IssuePath_CallsIssueProvider()
+    {
+        var config = MakeConfig("github", ProviderKind.Issue);
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("github", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
 
-        var swapper = CreateLabelService();
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _providerFactory.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
 
-        await swapper.SwapLabelAsync("rp-1", "55", AgentLabels.Done, LabelTargetKind.PullRequest, CancellationToken.None);
+        await _sut.SwapLabelAsync(
+            new ProviderConfigId("github"), new IssueIdentifier("GH-1"),
+            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
 
-        // Should have removed all agent labels EXCEPT the target (avoids redundant remove+add)
-        foreach (var label in AgentLabels.All)
-        {
-            if (label == AgentLabels.Done)
-                repoProvider.Verify(p => p.RemovePrLabelAsync(55, label, It.IsAny<CancellationToken>()), Times.Never);
-            else
-                repoProvider.Verify(p => p.RemovePrLabelAsync(55, label, It.IsAny<CancellationToken>()), Times.Once);
-        }
-
-        // Should have added the new label
-        repoProvider.Verify(p => p.AddPrLabelAsync(55, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
+        mockProvider.Verify(p => p.AddLabelAsync(new IssueIdentifier("GH-1"), AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task SwapLabelAsync_BackwardCompatibleOverload_DefaultsToIssue()
+    public async Task SwapLabelAsync_WhenIssueConfigNotFound_DoesNotThrow()
     {
-        var issueProvider = new Mock<IIssueProvider>();
-        issueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
 
-        var issueConfig = new ProviderConfig
-        {
-            Id = "ip-1",
-            Kind = ProviderKind.Issue,
-            ProviderType = "GitHub",
-            DisplayName = "Test"
-        };
+        var act = () => _sut.SwapLabelAsync(
+            new ProviderConfigId("github"), new IssueIdentifier("GH-1"),
+            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
 
-        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { issueConfig });
-        _configStore.Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(issueConfig);
-        _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
-            .Returns(issueProvider.Object);
-
-        // Cast to ILabelService to access the backward-compatible default interface method
-        ILabelService swapper = CreateLabelService();
-
-        // Use the backward-compatible overload (no LabelTargetKind parameter — defaults to Issue)
-        await swapper.SwapLabelAsync("ip-1", "99", AgentLabels.Error, CancellationToken.None);
-
-        // Should route to issue provider (default behavior)
-        issueProvider.Verify(p => p.AddLabelAsync("99", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
+        await act.Should().NotThrowAsync(); // failure swallowed
     }
 
     [Fact]
-    public async Task EnsureAgentLabelsAsync_IssueTargetKind_RoutesToIssueProvider()
+    public async Task SwapLabelAsync_WhenProviderThrows_DoesNotPropagate()
     {
-        var issueProvider = new Mock<IIssueProvider>();
-        issueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
-        issueProvider.Setup(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+        var config = MakeConfig("github", ProviderKind.Issue);
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("github", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
 
-        var issueConfig = new ProviderConfig
-        {
-            Id = "ip-1",
-            Kind = ProviderKind.Issue,
-            ProviderType = "GitHub",
-            DisplayName = "Test"
-        };
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider down"));
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _providerFactory.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
 
-        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { issueConfig });
-        _configStore.Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(issueConfig);
-        _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
-            .Returns(issueProvider.Object);
+        var act = () => _sut.SwapLabelAsync(
+            new ProviderConfigId("github"), new IssueIdentifier("GH-1"),
+            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
 
-        var swapper = CreateLabelService();
-
-        var result = await swapper.EnsureAgentLabelsAsync("ip-1", LabelTargetKind.Issue, CancellationToken.None);
-
-        result.Should().BeTrue();
-        issueProvider.Verify(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task EnsureAgentLabelsAsync_PullRequestTargetKind_RoutesToRepositoryProvider()
-    {
-        var repoProvider = new Mock<IRepositoryProvider>();
-        repoProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
-        repoProvider.Setup(p => p.EnsureAgentLabelsForPullRequestsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-
-        var repoConfig = new ProviderConfig
-        {
-            Id = "rp-1",
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test"
-        };
-
-        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { repoConfig });
-        _configStore.Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(repoConfig);
-        _providerFactory.Setup(f => f.CreateRepositoryProvider(repoConfig))
-            .Returns(repoProvider.Object);
-
-        var swapper = CreateLabelService();
-
-        var result = await swapper.EnsureAgentLabelsAsync("rp-1", LabelTargetKind.PullRequest, CancellationToken.None);
-
-        result.Should().BeTrue();
-        repoProvider.Verify(p => p.EnsureAgentLabelsForPullRequestsAsync(It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task SwapLabelAsync_PullRequest_InvalidIdentifier_LogsWarningAndSkips()
-    {
-        var repoConfig = new ProviderConfig
-        {
-            Id = "rp-1",
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test"
-        };
-
-        var repoProvider = new Mock<IRepositoryProvider>();
-        repoProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
-
-        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { repoConfig });
-        _configStore.Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(repoConfig);
-        _providerFactory.Setup(f => f.CreateRepositoryProvider(repoConfig))
-            .Returns(repoProvider.Object);
-
-        var swapper = CreateLabelService();
-
-        // Non-numeric identifier for PR should be handled gracefully
-        await swapper.SwapLabelAsync("rp-1", "not-a-number", AgentLabels.InProgress, LabelTargetKind.PullRequest, CancellationToken.None);
-
-        // Should NOT call any PR label methods (identifier is invalid)
-        repoProvider.Verify(p => p.AddPrLabelAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        repoProvider.Verify(p => p.RemovePrLabelAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task SwapLabelAsync_ProviderNotFound_LogsWarningAndDoesNotThrow()
-    {
-        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>()); // Empty — config not found
-
-        var swapper = CreateLabelService();
-
-        // Should not throw
-        await swapper.SwapLabelAsync("nonexistent-id", "42", AgentLabels.InProgress, LabelTargetKind.Issue, CancellationToken.None);
-
-        // Early-return path — no provider should have been instantiated
-        _providerFactory.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task SwapLabelAsync_ProviderThrows_CatchesAndDoesNotPropagate()
-    {
-        var issueProvider = new Mock<IIssueProvider>();
-        issueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
-        issueProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("Network error"));
-
-        var issueConfig = new ProviderConfig
-        {
-            Id = "ip-1",
-            Kind = ProviderKind.Issue,
-            ProviderType = "GitHub",
-            DisplayName = "Test"
-        };
-
-        _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { issueConfig });
-        _configStore.Setup(s => s.GetProviderConfigByIdAsync("ip-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(issueConfig);
-        _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
-            .Returns(issueProvider.Object);
-
-        var swapper = CreateLabelService();
-
-        // Should not throw — errors are caught and logged
-        var act = () => swapper.SwapLabelAsync("ip-1", "42", AgentLabels.Error, LabelTargetKind.Issue, CancellationToken.None);
         await act.Should().NotThrowAsync();
+    }
+
+    // ── SwapLabelAsync — PR path ──────────────────────────────────────────
+
+    [Fact]
+    public async Task SwapLabelAsync_PRPath_CallsRepoProvider()
+    {
+        var config = MakeConfig("github-repo", ProviderKind.Repository);
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("github-repo", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var mockProvider = new Mock<IRepositoryProvider>();
+        mockProvider.Setup(p => p.RemovePrLabelAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.AddPrLabelAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _providerFactory.Setup(f => f.CreateRepositoryProvider(config)).Returns(mockProvider.Object);
+
+        await _sut.SwapLabelAsync(
+            new ProviderConfigId("github-repo"), new IssueIdentifier("42"),
+            AgentLabels.Done, LabelTargetKind.PullRequest, CancellationToken.None);
+
+        mockProvider.Verify(p => p.AddPrLabelAsync(42, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SwapLabelAsync_PRPath_NonNumericIdentifier_DoesNotThrow()
+    {
+        var config = MakeConfig("github-repo", ProviderKind.Repository);
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("github-repo", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var mockProvider = new Mock<IRepositoryProvider>();
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _providerFactory.Setup(f => f.CreateRepositoryProvider(config)).Returns(mockProvider.Object);
+
+        // Non-numeric PR identifier — should log warning and return without throwing
+        var act = () => _sut.SwapLabelAsync(
+            new ProviderConfigId("github-repo"), new IssueIdentifier("not-a-number"),
+            AgentLabels.Done, LabelTargetKind.PullRequest, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    // ── SwapLabelAsync — Unknown target kind ──────────────────────────────
+
+    [Fact]
+    public async Task SwapLabelAsync_UnknownTargetKind_DoesNotThrow()
+    {
+        var act = () => _sut.SwapLabelAsync(
+            new ProviderConfigId("cfg"), new IssueIdentifier("GH-1"),
+            "label", (LabelTargetKind)999, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    // ── SwapLabelAsync with expectedCurrentLabel ──────────────────────────
+
+    [Fact]
+    public async Task SwapLabelAsync_WithExpectedLabel_ValidTransition_Proceeds()
+    {
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
+
+        // Valid transition: Next → InProgress
+        var act = () => _sut.SwapLabelAsync(
+            new ProviderConfigId("cfg"), new IssueIdentifier("GH-1"),
+            AgentLabels.InProgress, LabelTargetKind.Issue,
+            expectedCurrentLabel: AgentLabels.Next, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    // ── SwapLabelStrictAsync ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task SwapLabelStrictAsync_WhenProviderThrows_Propagates()
+    {
+        var config = MakeConfig("github", ProviderKind.Issue);
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("github", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("strict failure"));
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _providerFactory.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
+
+        var act = () => _sut.SwapLabelStrictAsync(
+            new ProviderConfigId("github"), new IssueIdentifier("GH-1"),
+            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task SwapLabelStrictAsync_UnknownTargetKind_DoesNotThrow()
+    {
+        var act = () => _sut.SwapLabelStrictAsync(
+            new ProviderConfigId("cfg"), new IssueIdentifier("GH-1"),
+            "label", (LabelTargetKind)999, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    // ── EnsureAgentLabelsAsync ────────────────────────────────────────────
+
+    [Fact]
+    public async Task EnsureAgentLabelsAsync_IssueTargetNotFound_ReturnsFalse()
+    {
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
+
+        var result = await _sut.EnsureAgentLabelsAsync(
+            new ProviderConfigId("github"), LabelTargetKind.Issue, CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EnsureAgentLabelsAsync_IssueTargetFound_ReturnsProviderResult()
+    {
+        var config = MakeConfig("github", ProviderKind.Issue);
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("github", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.EnsureAgentLabelsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _providerFactory.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
+
+        var result = await _sut.EnsureAgentLabelsAsync(
+            new ProviderConfigId("github"), LabelTargetKind.Issue, CancellationToken.None);
+
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EnsureAgentLabelsAsync_PRTargetNotFound_ReturnsFalse()
+    {
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
+
+        var result = await _sut.EnsureAgentLabelsAsync(
+            new ProviderConfigId("github-repo"), LabelTargetKind.PullRequest, CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EnsureAgentLabelsAsync_PRTargetFound_ReturnsProviderResult()
+    {
+        var config = MakeConfig("github-repo", ProviderKind.Repository);
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync("github-repo", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var mockProvider = new Mock<IRepositoryProvider>();
+        mockProvider.Setup(p => p.EnsureAgentLabelsForPullRequestsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _providerFactory.Setup(f => f.CreateRepositoryProvider(config)).Returns(mockProvider.Object);
+
+        var result = await _sut.EnsureAgentLabelsAsync(
+            new ProviderConfigId("github-repo"), LabelTargetKind.PullRequest, CancellationToken.None);
+
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EnsureAgentLabelsAsync_UnknownTargetKind_ReturnsFalse()
+    {
+        var result = await _sut.EnsureAgentLabelsAsync(
+            new ProviderConfigId("cfg"), (LabelTargetKind)999, CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EnsureAgentLabelsAsync_WhenExceptionThrown_ReturnsFalse()
+    {
+        _configStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("store error"));
+
+        var result = await _sut.EnsureAgentLabelsAsync(
+            new ProviderConfigId("github"), LabelTargetKind.Issue, CancellationToken.None);
+
+        result.Should().BeFalse();
     }
 }

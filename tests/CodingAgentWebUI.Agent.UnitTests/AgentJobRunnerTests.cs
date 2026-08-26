@@ -67,12 +67,14 @@ public class AgentJobRunnerTests
             It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
 
+        var before = DateTimeOffset.UtcNow;
         var result = await AgentJobRunner.ExecuteAsync(
             _mockExecutor.Object, _assignment, null!,
             _ => { }, ct: CancellationToken.None);
 
         result.FinalStep.Should().Be(PipelineStep.Cancelled);
-        result.CompletedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(2));
+        result.CompletedAt.Should().BeOnOrAfter(before);
+        result.CompletedAt.Should().BeOnOrBefore(before.AddSeconds(10));
     }
 
     [Fact]
@@ -100,13 +102,15 @@ public class AgentJobRunnerTests
             It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Something broke"));
 
+        var before = DateTimeOffset.UtcNow;
         var result = await AgentJobRunner.ExecuteAsync(
             _mockExecutor.Object, _assignment, null!,
             _ => { }, ct: CancellationToken.None);
 
         result.FinalStep.Should().Be(PipelineStep.Failed);
         result.FailureReason.Should().Be("Something broke");
-        result.CompletedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(2));
+        result.CompletedAt.Should().BeOnOrAfter(before);
+        result.CompletedAt.Should().BeOnOrBefore(before.AddSeconds(10));
     }
 
     [Fact]

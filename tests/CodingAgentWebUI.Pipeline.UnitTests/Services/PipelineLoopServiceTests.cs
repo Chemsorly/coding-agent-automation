@@ -88,8 +88,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .Returns(_mockIssueProvider.Object);
     }
 
-    private PipelineLoopService CreateService(IWorkDistributor? workDistributor = null)
+    private PipelineLoopService CreateService(IWorkDistributor? workDistributor = null, IDispatchOrchestrationService? dispatchOrchestration = null)
     {
+        dispatchOrchestration ??= workDistributor is not null
+            ? new BridgingDispatchOrchestrationService(workDistributor)
+            : new NullDispatchOrchestrationService();
+
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
         {
             Orchestration = _runCreator,
@@ -99,7 +103,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             ProjectStore = _mockStore.Object,
             Logger = _mockLogger.Object,
             WorkDistributor = workDistributor,
-            DispatchOrchestration = null,
+            DispatchOrchestration = dispatchOrchestration,
             DependencyChecker = null,
             HousekeepingService = null,
             LeaderElection = null
@@ -1542,7 +1546,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             ProjectStore = _mockStore.Object,
             Logger = _mockLogger.Object,
             WorkDistributor = null,
-            DispatchOrchestration = null,
+            DispatchOrchestration = new Mock<IDispatchOrchestrationService>().Object,
             DependencyChecker = null,
             HousekeepingService = housekeepingMock.Object,
             LeaderElection = null
@@ -1605,7 +1609,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             ProjectStore = _mockStore.Object,
             Logger = _mockLogger.Object,
             WorkDistributor = null,
-            DispatchOrchestration = null,
+            DispatchOrchestration = new NullDispatchOrchestrationService(),
             DependencyChecker = null,
             HousekeepingService = housekeepingService,
             LeaderElection = null
@@ -2010,7 +2014,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             ProjectStore = _mockStore.Object,
             Logger = _mockLogger.Object,
             WorkDistributor = null,
-            DispatchOrchestration = null,
+            DispatchOrchestration = new Mock<IDispatchOrchestrationService>().Object,
             DependencyChecker = null,
             HousekeepingService = housekeepingMock.Object,
             LeaderElection = null

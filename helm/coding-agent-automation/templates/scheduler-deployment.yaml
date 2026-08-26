@@ -1,0 +1,77 @@
+{{- if .Values.scheduler.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-scheduler
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: {{ .Values.scheduler.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scheduler
+  template:
+    metadata:
+      labels:
+        {{- include "coding-agent-automation.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: scheduler
+    spec:
+      serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-scheduler
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ .Values.scheduler.terminationGracePeriodSeconds | default 90 }}
+      containers:
+        - name: scheduler
+          image: "{{ .Values.scheduler.image.repository }}:{{ required "scheduler.image.tag is required" .Values.scheduler.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.scheduler.service.port }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.scheduler.service.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.scheduler.service.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.scheduler.service.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}
+          env:
+            - name: ASPNETCORE_URLS
+              value: "http://+:{{ .Values.scheduler.service.port }}"
+            {{- include "coding-agent-automation.secretEnv" . | nindent 12 }}
+            # URL of the Pipeline API — the Scheduler calls this for config reads and
+            # maintenance endpoint triggers.
+            - name: PipelineApi__BaseUrl
+              value: {{ include "coding-agent-automation.agentOrchestratorUrl" . | quote }}
+            # Scheduler-specific leader election lease — distinct from the API's lease.
+            - name: LeaderElection__LeaseName
+              value: {{ include "coding-agent-automation.leaseName" (dict "override" .Values.scheduler.leaderElection.leaseName "suffix" "scheduler-lock" "root" .) }}
+            {{- include "coding-agent-automation.signalrEnv" . | nindent 12 }}
+            {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-scheduler" "root" .) | nindent 12 }}
+            - name: LOG_LEVEL
+              value: {{ .Values.scheduler.env.logLevel | default "Information" | quote }}
+      {{- with .Values.scheduler.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -33,16 +33,11 @@ public class AgentHubFacadeConcurrencyTests
         _registry = new AgentRegistryService(mockLogger.Object);
         _runService = new OrchestratorRunService(mockLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(_registry, mockLogger.Object);
-        var drainService = new JobQueueDrainService(
-            new JobQueueDrainDependencies(dispatcher, _registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
-            new ShutdownSignal(), mockLogger.Object));
 
         _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
             _registry,
             _runService,
             dispatcher,
-            drainService,
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
@@ -222,6 +217,7 @@ public class AgentHubFacadeConcurrencyTests
 
         const int iterations = 200;
         var exceptions = new List<Exception>();
+        var before = DateTimeOffset.UtcNow;
 
         var tasks = Enumerable.Range(0, iterations).Select(i => Task.Run(() =>
         {
@@ -237,6 +233,7 @@ public class AgentHubFacadeConcurrencyTests
         })).ToArray();
 
         await Task.WhenAll(tasks);
+        var after = DateTimeOffset.UtcNow;
 
         exceptions.Should().BeEmpty("Concurrent heartbeat updates should never throw");
 
@@ -245,7 +242,10 @@ public class AgentHubFacadeConcurrencyTests
         {
             var agent = _facade.GetByAgentId($"agent-{i}");
             agent.Should().NotBeNull();
-            agent!.LastHeartbeatAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+            agent!.LastHeartbeatAt.Should().BeOnOrAfter(before,
+                because: "LastHeartbeatAt must be set during the concurrent heartbeat window");
+            agent.LastHeartbeatAt.Should().BeOnOrBefore(after.AddSeconds(1),
+                because: "LastHeartbeatAt must not be set to a future time");
         }
     }
 

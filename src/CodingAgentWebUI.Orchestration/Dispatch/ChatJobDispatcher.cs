@@ -27,22 +27,42 @@ public sealed class ChatPodTimeoutException(int timeoutSeconds)
 public interface IChatJobDispatcher
 {
     Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Terminates the chat session for the given agent.
+    ///
+    /// <para>
+    /// <b>agentId == jobName invariant:</b> the <c>ChatJobDispatcher</c> implementation
+    /// relies on the fact that <c>agentId == jobName</c> for chat pods. The pod's
+    /// <c>AGENT_ID</c> environment variable is set via a Kubernetes field ref to
+    /// <c>metadata.name</c>, so the value the agent reports at hub registration equals
+    /// the K8s Job name. If a future pod image change breaks this invariant, a warning
+    /// is logged in <c>ChatJobDispatcher.PollForAgentConnectionAsync</c> and termination
+    /// may fail to locate the correct job.
+    /// </para>
+    /// </summary>
     Task TerminateChatSessionAsync(AgentId agentId, CancellationToken cancellationToken);
 }
 
 // ─── Null-object implementation (SignalR mode) ────────────────────────────────
 
 /// <summary>
-/// No-op implementation of <see cref="IChatJobDispatcher"/> registered in SignalR mode.
-/// Allows <c>AgentChat.razor</c> to inject <see cref="IChatJobDispatcher"/> unconditionally
-/// without IServiceProvider mode-guarding.
-/// Requirements: Req 15.
+/// No-op implementation of <see cref="IChatJobDispatcher"/> for a process that cannot dispatch
+/// chat pods itself. Lets <c>AgentChat.razor</c> inject <see cref="IChatJobDispatcher"/>
+/// unconditionally rather than mode-guarding through <c>IServiceProvider</c>.
+///
+/// <para>
+/// It was introduced for SignalR mode, which no longer exists; it is now what the Blazor host
+/// binds, because Spec 044 moved the real dispatcher to the Pipeline API alongside the hub whose
+/// registry it polls. Requirements: Req 15.
+/// </para>
 /// </summary>
 public sealed class NullChatJobDispatcher : IChatJobDispatcher
 {
     public Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken cancellationToken)
-        => throw new NotSupportedException("Chat pod dispatch is not available in SignalR mode.");
+        => throw new NotSupportedException(
+            "Chat pods are dispatched by the Pipeline API, which owns the agent hub. This process cannot start one.");
 
     public Task TerminateChatSessionAsync(AgentId agentId, CancellationToken cancellationToken)
-        => Task.CompletedTask; // safe no-op in SignalR mode
+        => Task.CompletedTask; // nothing was started here, so there is nothing to terminate
 }

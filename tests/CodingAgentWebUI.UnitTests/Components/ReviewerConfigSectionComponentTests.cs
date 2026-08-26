@@ -1,8 +1,8 @@
 using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.UnitTests.Components;
@@ -13,12 +13,12 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class ReviewerConfigSectionComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
     public ReviewerConfigSectionComponentTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
-        _mockStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore = new Mock<IPipelineApiConfigClient>();
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>());
     }
 
@@ -27,7 +27,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_RendersHeader()
     {
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("Reviewer Configurations", cut.Markup);
     }
@@ -35,7 +35,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_WhenNoConfigs_ShowsEmptyMessage()
     {
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("No reviewer configurations", cut.Markup);
     }
@@ -43,7 +43,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_ShowsAddButton()
     {
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("Add Reviewer Configuration", cut.Markup);
     }
@@ -53,7 +53,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_WithConfigs_ShowsTable()
     {
-        _mockStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
             {
                 new()
@@ -67,7 +67,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("DotNet Reviewers", cut.Markup);
         Assert.Contains("dotnet", cut.Markup);
@@ -78,7 +78,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_WithGlobalConfig_ShowsGlobalBadge()
     {
-        _mockStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
             {
                 new()
@@ -91,7 +91,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("GLOBAL", cut.Markup);
         Assert.Contains("(all jobs)", cut.Markup);
@@ -100,7 +100,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_ShowsEnabledStatus()
     {
-        _mockStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
             {
                 new()
@@ -121,7 +121,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         // TODO: Assertions don't verify icon-to-row association — test would pass even if conditional logic were inverted
         Assert.NotNull(cut.Find("[data-icon=\"check-circle\"]"));
@@ -131,7 +131,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public void Section_ShowsEditAndDeleteButtons()
     {
-        _mockStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
             {
                 new()
@@ -143,7 +143,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         Assert.Contains("Edit", cut.Markup);
         Assert.Contains("Delete", cut.Markup);
@@ -154,7 +154,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_ClickAdd_ShowsForm()
     {
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Reviewer"));
         await addBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -169,7 +169,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_FormSave_WithEmptyName_ShowsError()
     {
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Reviewer"));
         await addBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -183,7 +183,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_FormCancel_HidesForm()
     {
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Reviewer"));
         await addBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -199,12 +199,12 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     // ═══ Save Flow ═══
 
     [Fact]
-    public async Task Section_FormSave_CallsConfigStore()
+    public async Task Section_FormSave_CallsConfigClient()
     {
         _mockStore.Setup(s => s.SaveReviewerConfigAsync(It.IsAny<ReviewerConfiguration>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Reviewer"));
         await addBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -234,7 +234,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
 
         (string Message, bool IsError) status = default;
         var cut = Render<ReviewerConfigSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
         var addBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Add Reviewer"));
@@ -260,7 +260,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_ClickDelete_ShowsConfirmation()
     {
-        _mockStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
             {
                 new()
@@ -272,7 +272,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
                 }
             });
 
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var deleteBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Delete"));
         await deleteBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -282,9 +282,9 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public async Task Section_ConfirmDelete_CallsConfigStore()
+    public async Task Section_ConfirmDelete_CallsConfigClient()
     {
-        _mockStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
             {
                 new()
@@ -298,7 +298,7 @@ public class ReviewerConfigSectionComponentTests : BunitContext
         _mockStore.Setup(s => s.DeleteReviewerConfigAsync("rc-1", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         // Click Delete to show confirmation
         var deleteBtn = cut.FindAll("button").First(b => b.TextContent.Trim() == "Delete");
@@ -316,12 +316,12 @@ public class ReviewerConfigSectionComponentTests : BunitContext
     [Fact]
     public async Task Section_LoadFails_InvokesOnShowStatus()
     {
-        _mockStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("disk error"));
 
         (string Message, bool IsError) status = default;
         var cut = Render<ReviewerConfigSection>(p => p
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
         Assert.Contains("Failed to load", status.Message);

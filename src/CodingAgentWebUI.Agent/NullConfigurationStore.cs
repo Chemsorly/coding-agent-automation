@@ -1,15 +1,41 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using Serilog;
 
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
 /// No-op configuration store for agent-side execution where configs come from the job assignment.
-/// Steps that need configs (ReviewCodeStep, RunQualityGatesStep) use pre-resolved configs
-/// from <see cref="CodingAgentWebUI.Pipeline.Services.Steps.PipelineStepContext"/> instead.
+/// <para>
+/// Steps that read from this store use pre-resolved configs from
+/// <see cref="CodingAgentWebUI.Pipeline.Services.Steps.PipelineStepContext"/> instead:
+/// <list type="bullet">
+///   <item><see cref="CodingAgentWebUI.Pipeline.Services.Steps.ReviewCodeStep"/> — uses
+///     <c>PreResolvedReviewerConfigs</c> from the job assignment; the store is only reached on the
+///     orchestrator path where reviewer resolution happens live.</item>
+///   <item><see cref="CodingAgentWebUI.Pipeline.Services.Steps.RunQualityGatesStep"/> — uses
+///     <c>PreResolvedQualityGateConfigs</c> from the job assignment.</item>
+///   <item><see cref="CodingAgentWebUI.Pipeline.Services.Steps.VerifyBaselineStep"/> — uses
+///     <c>PreResolvedQualityGateConfigs</c> from the job assignment; returns a safe skip when the
+///     store returns an empty list.</item>
+///   <item><see cref="CodingAgentWebUI.Pipeline.Services.Steps.RunEnvironmentSetupStep"/> — calls
+///     <c>GetProviderConfigByIdAsync</c>; a <c>null</c> result is handled by null-safe operators and
+///     an early <c>return Continue</c> — no secrets or setup steps are run.</item>
+/// </list>
+/// </para>
+/// <para>
+/// All four reads are safe when this store is active. If this store is ever injected in a context
+/// where pre-resolved configs are <c>null</c>, <c>ReviewCodeStep</c> will silently resolve zero
+/// reviewers and <c>RunQualityGatesStep</c> will silently skip quality gates with no observable log
+/// output. Inject a real <see cref="IConfigurationStore"/> in any context other than the agent-side
+/// execution path established in
+/// <see cref="CodingAgentWebUI.Agent.PipelineExecutionContextBuilder"/>.
+/// </para>
 /// </summary>
 internal sealed class NullConfigurationStore : IConfigurationStore
 {
+    private static readonly Serilog.ILogger Log = Serilog.Log.ForContext<NullConfigurationStore>();
+
     public Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct) =>
         Task.FromResult(new PipelineConfiguration());
 
@@ -40,8 +66,13 @@ internal sealed class NullConfigurationStore : IConfigurationStore
     public Task DeleteAgentProfileAsync(string id, CancellationToken ct) =>
         Task.CompletedTask;
 
-    public Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<QualityGateConfiguration>>([]);
+    public Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
+    {
+        Log.Warning("NullConfigurationStore.LoadQualityGateConfigsAsync called — returning empty list. " +
+                    "PreResolvedQualityGateConfigs was null; quality gate steps will be skipped. " +
+                    "This is unexpected on the agent path. Verify job assignment includes QualityGateConfigs.");
+        return Task.FromResult<IReadOnlyList<QualityGateConfiguration>>([]);
+    }
 
     public Task SaveQualityGateConfigAsync(QualityGateConfiguration config, CancellationToken ct) =>
         Task.CompletedTask;
@@ -49,8 +80,13 @@ internal sealed class NullConfigurationStore : IConfigurationStore
     public Task DeleteQualityGateConfigAsync(string id, CancellationToken ct) =>
         Task.CompletedTask;
 
-    public Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<ReviewerConfiguration>>([]);
+    public Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
+    {
+        Log.Warning("NullConfigurationStore.LoadReviewerConfigsAsync called — returning empty list. " +
+                    "PreResolvedReviewerConfigs was null; code review will run with zero reviewers. " +
+                    "This is unexpected on the agent path. Verify job assignment includes ReviewerConfigs.");
+        return Task.FromResult<IReadOnlyList<ReviewerConfiguration>>([]);
+    }
 
     public Task SaveReviewerConfigAsync(ReviewerConfiguration config, CancellationToken ct) =>
         Task.CompletedTask;
@@ -87,4 +123,7 @@ internal sealed class NullConfigurationStore : IConfigurationStore
 
     public Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct) =>
         Task.CompletedTask;
+
+    public Task<bool> HasEnabledTemplatesAsync(CancellationToken ct) =>
+        Task.FromResult(false);
 }

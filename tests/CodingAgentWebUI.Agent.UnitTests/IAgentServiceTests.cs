@@ -32,45 +32,9 @@ public class IAgentServiceTests
 
     // ── Interface definition ─────────────────────────────────────────────
 
-    [Fact]
-    public void IAgentService_HasIsBusyProperty()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IAgentService.cs"));
 
-        sourceCode.Should().Contain("bool IsBusy",
-            "IAgentService must define IsBusy property");
-    }
 
-    [Fact]
-    public void IAgentService_HasCurrentStepProperty()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IAgentService.cs"));
 
-        sourceCode.Should().Contain("PipelineStep?",
-            "IAgentService must define CurrentStep property (nullable PipelineStep)");
-    }
-
-    [Fact]
-    public void IAgentService_HasIsConnectedProperty()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IAgentService.cs"));
-
-        sourceCode.Should().Contain("bool IsConnected",
-            "IAgentService must define IsConnected property");
-    }
-
-    [Fact]
-    public void IAgentService_HasCancelCurrentJobMethod()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IAgentService.cs"));
-
-        sourceCode.Should().Contain("CancelCurrentJob",
-            "IAgentService must define CancelCurrentJob method");
-    }
 
     // ── Behavioral tests: mock IAgentService ─────────────────────────────
 
@@ -131,15 +95,6 @@ public class IAgentServiceTests
 
     // ── Health endpoint source-code assertion ─────────────────────────────
 
-    [Fact]
-    public void SourceCode_HealthEndpoints_UsesIAgentService()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "HealthEndpoints.cs"));
-
-        sourceCode.Should().Contain("IAgentService",
-            "HealthEndpoints readyz probe should query via IAgentService interface, not concrete AgentWorkerService");
-    }
 
     // ── Default property values on both services ─────────────────────────
 

@@ -1,14 +1,15 @@
 @page "/consolidation"
 @implements IDisposable
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Hub
 @using CodingAgentWebUI.Services
 @using Serilog
 @inject IConsolidationService ConsolidationService
 @inject ConsolidationBadgeService BadgeService
-@inject IConfigurationStore ConfigStore
-@inject IProjectStore ProjectStore
+@inject IPipelineApiConfigClient ConfigClient
 
 <PageTitle>Consolidation - Coding Agent</PageTitle>
 
@@ -27,7 +28,11 @@
     <!-- Per-Template Cards -->
     <section class="settings-section" style="margin: 16px 20px;">
         <h2><Icon Name="clipboard-list" Size="16" /> Template Consolidation</h2>
-        @if (_templates.Count == 0)
+        @if (_isLoading)
+        {
+            <div class="monitoring-empty">Loading...</div>
+        }
+        else if (_templates.Count == 0)
         {
             <div class="monitoring-empty">No enabled templates configured.</div>
         }
@@ -113,7 +118,11 @@
     <!-- Global Harness Suggestions -->
     <section class="settings-section" style="margin: 16px 20px;">
         <h2><Icon Name="lightbulb" Size="16" /> Harness Suggestions</h2>
-        @if (_harnessSuggestions == null)
+        @if (_isLoading)
+        {
+            <div class="monitoring-empty">Loading...</div>
+        }
+        else if (_harnessSuggestions == null)
         {
             <div class="monitoring-empty">No suggestions generated yet.</div>
         }
@@ -143,7 +152,7 @@
             }
         }
         <div class="consolidation-card-actions" style="margin-top: 12px;">
-            <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.HarnessSuggestions, null)"
+            <button class="btn-trigger" disabled="@(_isLoading || IsRunning(ConsolidationRunType.HarnessSuggestions, null))"
                     @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null, null)">
                 <Icon Name="sparkles" Size="14" /> Generate Suggestions
             </button>
@@ -152,8 +161,12 @@
 
     <!-- Run History -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2><Icon Name="scroll" Size="16" /> Run History (@_runHistory.Count)</h2>
-        @if (_runHistory.Count == 0)
+        <h2><Icon Name="scroll" Size="16" /> Run History (@(_isLoading ? "…" : _runHistory.Count.ToString()))</h2>
+        @if (_isLoading)
+        {
+            <div class="monitoring-empty">Loading...</div>
+        }
+        else if (_runHistory.Count == 0)
         {
             <div class="monitoring-empty">No consolidation runs yet.</div>
         }
@@ -260,6 +273,7 @@
     private HarnessSuggestions? _harnessSuggestions;
     private string? _statusMessage;
     private bool _statusIsError;
+    private bool _isLoading = true;
 
     // Refactoring modal state
     private bool _showRefactoringModal;
@@ -302,8 +316,8 @@
     {
         try
         {
-            var allTemplates = await ProjectStore.LoadAllTemplatesAsync(CancellationToken.None);
-            var projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
+            var allTemplates = await ConfigClient.GetAllTemplatesAsync(CancellationToken.None);
+            var projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
             var templateLookup = allTemplates.ToDictionary(t => t.Id);
 
             _templates = projects
@@ -360,6 +374,8 @@
                 Log.Warning(ex, "Failed to load last runs for template {TemplateId}", template.Id);
             }
         }
+
+        _isLoading = false;
     }
 
     private async Task OpenRefactoringModal(string templateId, string templateName)
@@ -367,7 +383,7 @@
         // Load fresh config values when opening the modal
         try
         {
-            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
             _modalMaxProposals = config.MaxRefactoringProposals;
             _modalHotspotDays = (int)config.HotspotAnalysisLookback.TotalDays;
             _modalReviewEnabled = config.RefactoringReviewEnabled;

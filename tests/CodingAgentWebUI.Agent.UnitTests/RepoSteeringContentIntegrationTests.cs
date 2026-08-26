@@ -1,11 +1,11 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
-using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
+using CodingAgentWebUI.TestUtilities;
 using Moq;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
@@ -30,21 +30,18 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 public class RepoSteeringContentIntegrationTests : IDisposable
 {
     private readonly string _tempRoot;
-    private readonly string _configDir;
     private readonly string _workspaceDir;
-    private readonly JsonConfigurationStore _configStore;
+    private readonly InMemoryConfigurationStore _configStore;
     private readonly Mock<IPipelineCallbacks> _mockCallbacks = new();
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
 
     public RepoSteeringContentIntegrationTests()
     {
         _tempRoot = Path.Combine(Path.GetTempPath(), $"steering-integration-{Guid.NewGuid()}");
-        _configDir = Path.Combine(_tempRoot, "config");
         _workspaceDir = Path.Combine(_tempRoot, "workspace");
-        Directory.CreateDirectory(_configDir);
         Directory.CreateDirectory(_workspaceDir);
 
-        _configStore = new JsonConfigurationStore(_configDir);
+        _configStore = new InMemoryConfigurationStore();
         _mockCallbacks.Setup(c => c.EmitOutputLine(It.IsAny<string>()));
     }
 

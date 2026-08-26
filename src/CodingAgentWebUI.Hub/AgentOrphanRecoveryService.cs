@@ -1,0 +1,324 @@
+using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
+using ILogger = Serilog.ILogger;
+
+namespace CodingAgentWebUI.Hub;
+
+/// <summary>
+/// Extracts orphan-restoration logic from <see cref="AgentHub.RegisterAgent"/>.
+/// Handles active-job restoration, orphan detection, and crash recovery.
+/// </summary>
+public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
+{
+    private readonly IAgentHubFacade _facade;
+    private readonly IChangeNotifier _changeNotifier;
+    private readonly ILogger _logger;
+
+    public AgentOrphanRecoveryService(
+        IAgentHubFacade facade,
+        IChangeNotifier changeNotifier,
+        ILogger logger)
+    {
+        _facade = facade;
+        _changeNotifier = changeNotifier;
+        _logger = logger;
+    }
+
+    // TODO: Add CancellationToken parameter to RecoverOrphanedStateAsync (and update IAgentOrphanRecoveryService).
+    // Currently uses CancellationToken.None for GetRunHistoryAsync — a pre-existing issue preserved
+    // in the refactoring, but this operation hits history storage and should be cancellable.
+    /// <inheritdoc />
+    public async Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) — ThrowIfNull on a struct
+        // field reports "Value" as the parameter name in exceptions rather than "agentId".
+        ArgumentNullException.ThrowIfNull(agentId.Value);
+
+        // Re-track active job from agent state (handles orchestrator restart scenario)
+        if (message.ActiveJob is not null)
+        {
+            await RestoreActiveJobAsync(message, agentId);
+        }
+
+        // Detect orphaned runs: if the orchestrator tracks active runs for this agent
+        // but the agent registered without an active job, restore the ActiveJobId on the
+        // registry entry. This avoids immediately failing runs when an agent has a brief network blip.
+        // The ReconciliationService (JobController) enforces work-item timeouts.
+        var entry = _facade.GetByAgentId(agentId);
+        if (entry is { ActiveJobId: null })
+        {
+            DetectAndRestoreOrphans(agentId, entry);
+        }
+        else if (entry is { ActiveJobId: not null })
+        {
+            HandleCrashRecovery(message, agentId, entry);
+        }
+    }
+
+    private async Task RestoreActiveJobAsync(AgentRegistrationMessage message, AgentId agentId)
+    {
+        var activeJob = message.ActiveJob!;
+        var existingRun = _facade.GetRun(activeJob.RunId);
+
+        if (existingRun is null)
+        {
+            await RestoreRunFromAgentStateAsync(agentId, activeJob);
+        }
+        else
+        {
+            LinkAgentToExistingRun(existingRun, agentId, activeJob);
+        }
+    }
+
+    private async Task RestoreRunFromAgentStateAsync(
+        AgentId agentId, ActiveJobState activeJob)
+    {
+        // Check history — don't re-register a completed run.
+        // Only treat runs with successful terminal states as stale.
+        // Cancelled/Failed runs may be legitimately re-dispatched with the same RunId.
+        var history = await _facade.GetRunHistoryAsync(CancellationToken.None);
+        var inHistory = history.Any(r => r.RunId == activeJob.RunId
+            && r.FinalStep != PipelineStep.Cancelled
+            && r.FinalStep != PipelineStep.Failed);
+
+        if (!inHistory)
+        {
+            await RestoreNewRunAsync(agentId, activeJob);
+        }
+        else
+        {
+            _logger.Information(
+                "Agent {AgentId} reported active job {RunId} but it's already in history — ignoring stale state",
+                agentId, activeJob.RunId);
+        }
+    }
+
+    private Task RestoreNewRunAsync(AgentId agentId, ActiveJobState activeJob)
+    {
+        // Skip restoration for consolidation runs — they have their own
+        // completion path (ReportConsolidationComplete) and should not
+        // enter pipeline run tracking or history.
+        if (activeJob.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
+        {
+            RestoreConsolidationTracking(agentId, activeJob);
+        }
+        else
+        {
+            RestorePipelineRun(agentId, activeJob);
+        }
+        return Task.CompletedTask;
+    }
+
+    private void RestoreConsolidationTracking(AgentId agentId, ActiveJobState activeJob)
+    {
+        _logger.Information(
+            "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
+            agentId, activeJob.RunId);
+
+        // Still mark agent as busy with this job so it's tracked correctly
+        var consolEntry = _facade.GetByAgentId(agentId);
+        if (consolEntry is not null)
+        {
+            consolEntry.ActiveJobId = activeJob.RunId;
+            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
+            _facade.TransitionStatus(agentId, AgentStatus.Busy);
+        }
+
+        _changeNotifier.NotifyChange();
+    }
+
+    private void RestorePipelineRun(AgentId agentId, ActiveJobState activeJob)
+    {
+        var restoredRun = CreateRestoredPipelineRun(agentId.Value, activeJob);
+        restoredRun.CurrentStep = activeJob.CurrentStep;
+        restoredRun.PipelineProviderConfigId = activeJob.PipelineProviderConfigId;
+        restoredRun.ResolvedProfileId = activeJob.ResolvedProfileId;
+        restoredRun.ProjectId = activeJob.ProjectId;
+        restoredRun.ProjectName = activeJob.ProjectName;
+        restoredRun.RepositoryName = activeJob.RepositoryName;
+        restoredRun.ModelName = activeJob.ModelName;
+
+        _facade.AddRun(restoredRun);
+
+        // Set agent as busy with this job
+        var restoredEntry = _facade.GetByAgentId(agentId);
+        if (restoredEntry is not null)
+        {
+            restoredEntry.ActiveJobId = activeJob.RunId;
+            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
+            _facade.TransitionStatus(agentId, AgentStatus.Busy);
+        }
+
+        _logger.Information(
+            "Restored active run {RunId} for agent {AgentId} (issue {IssueIdentifier}, step {Step}) — orchestrator state recovery",
+            activeJob.RunId, agentId, activeJob.IssueIdentifier, activeJob.CurrentStep);
+
+        _changeNotifier.NotifyChange();
+    }
+
+    private static PipelineRun CreateRestoredPipelineRun(string agentId, ActiveJobState activeJob)
+    {
+        return activeJob.RunType switch
+        {
+            PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
+            {
+                RunId = activeJob.RunId,
+                IssueIdentifier = activeJob.IssueIdentifier,
+                IssueTitle = activeJob.IssueTitle,
+                IssueProviderConfigId = activeJob.IssueProviderConfigId,
+                RepoProviderConfigId = activeJob.RepoProviderConfigId,
+                RunType = PipelineRunType.Review,
+                StartedAt = activeJob.StartedAt,
+                InitiatedBy = activeJob.InitiatedBy,
+                AgentId = agentId,
+                AgentProviderConfigId = activeJob.AgentProviderConfigId,
+                BrainProviderConfigId = activeJob.BrainProviderConfigId,
+                ReviewPrBranchName = string.Empty,
+                ReviewPrTargetBranch = string.Empty
+            }),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
+            {
+                RunId = activeJob.RunId,
+                IssueIdentifier = activeJob.IssueIdentifier,
+                IssueTitle = activeJob.IssueTitle,
+                IssueProviderConfigId = activeJob.IssueProviderConfigId,
+                RepoProviderConfigId = activeJob.RepoProviderConfigId,
+                RunType = activeJob.RunType,
+                StartedAt = activeJob.StartedAt,
+                InitiatedBy = activeJob.InitiatedBy,
+                AgentId = agentId,
+                AgentProviderConfigId = activeJob.AgentProviderConfigId,
+                BrainProviderConfigId = activeJob.BrainProviderConfigId
+            }),
+            _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            {
+                RunId = activeJob.RunId,
+                IssueIdentifier = activeJob.IssueIdentifier,
+                IssueTitle = activeJob.IssueTitle,
+                IssueProviderConfigId = activeJob.IssueProviderConfigId,
+                RepoProviderConfigId = activeJob.RepoProviderConfigId,
+                StartedAt = activeJob.StartedAt,
+                InitiatedBy = activeJob.InitiatedBy,
+                AgentId = agentId,
+                AgentProviderConfigId = activeJob.AgentProviderConfigId,
+                BrainProviderConfigId = activeJob.BrainProviderConfigId
+            })
+        };
+    }
+
+    private void LinkAgentToExistingRun(
+        PipelineRun existingRun, AgentId agentId, ActiveJobState activeJob)
+    {
+        // Run already exists in-memory (e.g., created by K8s DispatchService with AgentId=null).
+        // Ensure the agent is linked to it and transitioned to Busy.
+        // Guard: only link if the run is unowned OR already owned by this agent (idempotent re-registration).
+        if (existingRun.AgentId is null || existingRun.AgentId == agentId.Value)
+        {
+            if (existingRun.AgentId is null)
+                existingRun.AgentId = agentId.Value;
+
+            // Adopt the metadata only the pod can compute. The model name is resolved agent-side
+            // from the agent provider config delivered with the assignment, and registration is
+            // the sole channel that carries it back — JobCompletionPayload has no ModelName field.
+            // RestorePipelineRun (the path taken when no run exists yet) already does this; this
+            // path did not, and this is the ordinary Kubernetes path, so every run that dispatched
+            // normally reached history with a null ModelName.
+            // ??= so a re-registration cannot blank a value already recorded.
+            existingRun.ModelName ??= activeJob.ModelName;
+            existingRun.RepositoryName ??= activeJob.RepositoryName;
+
+            var trackedEntry = _facade.GetByAgentId(agentId);
+            if (trackedEntry is not null)
+            {
+                lock (trackedEntry.SyncRoot)
+                {
+                    if (trackedEntry.ActiveJobId is null)
+                    {
+                        trackedEntry.ActiveJobId = activeJob.RunId;
+                        _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", activeJob.RunId);
+                    }
+                }
+                if (trackedEntry.ActiveJobId == activeJob.RunId)
+                    _facade.TransitionStatus(agentId, AgentStatus.Busy);
+            }
+        }
+
+        _logger.Debug("Agent {AgentId} active job {RunId} already tracked — linked agent to run",
+            agentId, activeJob.RunId);
+    }
+
+    private void DetectAndRestoreOrphans(AgentId agentId, AgentEntry entry)
+    {
+        var orphanedRuns = _facade.GetActiveRunsByAgent(agentId);
+        if (orphanedRuns.Count > 0)
+        {
+            // Restore the most recent orphaned run as the active job so the
+            // disconnect grace period timer applies. If the agent truly lost the job,
+            // ReconciliationService (JobController) will time out the run after the grace period.
+            var mostRecent = orphanedRuns[^1];
+            lock (entry.SyncRoot)
+            {
+                // Atomic check-and-set under lock: if DrainService assigned a job
+                // between GetActiveRunsByAgent and this lock acquisition, don't overwrite.
+                if (entry.ActiveJobId is not null)
+                {
+                    _logger.Information(
+                        "Agent {AgentId} acquired job {ActiveJobId} between registration and orphan check, skipping orphan restoration",
+                        agentId, entry.ActiveJobId);
+                }
+                else
+                {
+                    entry.ActiveJobId = mostRecent.RunId;
+                    entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
+                    _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", mostRecent.RunId);
+                    _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"));
+                }
+            }
+
+            if (entry.ActiveJobId == mostRecent.RunId)
+            {
+                _facade.TransitionStatus(agentId, AgentStatus.Busy);
+
+                _logger.Warning(
+                    "Agent {AgentId} re-registered without active job but orchestrator tracks {OrphanCount} orphaned run(s). " +
+                    "Restoring run {RunId} (issue {IssueIdentifier}) as active — ReconciliationService will time out the run if agent does not resume.",
+                    agentId, orphanedRuns.Count, mostRecent.RunId, mostRecent.IssueIdentifier);
+            }
+        }
+        else
+        {
+            _logger.Information(
+                "Agent {AgentId} registered with no active job and no orphaned runs (status={Status})",
+                agentId, entry.Status);
+        }
+    }
+
+    private void HandleCrashRecovery(AgentRegistrationMessage message, AgentId agentId, AgentEntry entry)
+    {
+        // Crash recovery detection: agent registered without an active job but the
+        // registry already restored ActiveJobId (from its own prior state in the update factory).
+        // This means the agent lost its in-memory state (container restart) while the orchestrator
+        // still thinks it's working. ReconciliationService (JobController) will time out the run
+        // if the agent does not report progress within the configured timeout.
+        if (message.ActiveJob is null && entry.OrphanRestoredAt is null)
+        {
+            lock (entry.SyncRoot)
+            {
+                entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
+                _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"));
+            }
+            _logger.Warning(
+                "Agent {AgentId} re-registered without active job but orchestrator has {JobId} assigned (crash recovery). " +
+                "ReconciliationService will time out the run if agent does not resume.",
+                agentId, entry.ActiveJobId);
+        }
+        else
+        {
+            _logger.Information(
+                "Agent {AgentId} registered with active job {ActiveJobId} (status={Status})",
+                agentId, entry.ActiveJobId, entry.Status);
+        }
+    }
+}

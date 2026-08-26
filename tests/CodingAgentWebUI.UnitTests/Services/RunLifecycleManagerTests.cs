@@ -23,14 +23,14 @@ public sealed class RunLifecycleManagerTests
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly JobDeduplicationGuardService _dispatcher;
+    private readonly AgentReservationService _dispatcher;
     private readonly RunLifecycleManager _sut;
 
     public RunLifecycleManagerTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
+        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
 
         _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
@@ -38,8 +38,7 @@ public sealed class RunLifecycleManagerTests
             _registry,
             _mockLabelService.Object,
             _dispatcher,
-            _mockLogger.Object,
-            WorkItemTransition: null)); // Legacy mode — no DB
+            _mockLogger.Object)); // Legacy mode — no DB
     }
 
     // ── AgentAcceptedRunAsync ────────────────────────────────────────────
@@ -115,6 +114,37 @@ public sealed class RunLifecycleManagerTests
         var agent = _registry.GetByAgentId("agent-1");
         agent!.ActiveJobId.Should().Be("run-4");
         agent.Status.Should().Be(AgentStatus.Busy);
+    }
+
+    [Fact]
+    public async Task AgentAcceptedRunAsync_RunNotFound_LogsWarning_StillSwapsLabel()
+    {
+        // Run does not exist in the store
+        RegisterAgent("agent-1");
+
+        // Should not throw — warning is logged but label swap still proceeds
+        await _sut.AgentAcceptedRunAsync("run-missing", "agent-1", "org/repo#1",
+            "ip-1", "rp-1", PipelineRunType.Implementation, CancellationToken.None);
+
+        // Label swap still fires even when run is absent
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.InProgress, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AgentAcceptedRunAsync_AgentNotFound_LogsWarning_StillSetsAgentIdOnRun()
+    {
+        // Agent is not registered — run exists but agent is absent
+        var run = CreateRun("run-5", PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        // Should not throw
+        await _sut.AgentAcceptedRunAsync("run-5", "agent-missing", "org/repo#1",
+            "ip-1", "rp-1", PipelineRunType.Implementation, CancellationToken.None);
+
+        // AgentId is still set on the run even though the agent wasn't in registry
+        run.AgentId.Should().Be("agent-missing");
     }
 
     // ── FailRunAsync ────────────────────────────────────────────────────
@@ -433,14 +463,14 @@ public sealed class RunLifecycleManagerResilienceTests
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly JobDeduplicationGuardService _dispatcher;
+    private readonly AgentReservationService _dispatcher;
     private readonly RunLifecycleManager _sut;
 
     public RunLifecycleManagerResilienceTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
+        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
 
         _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
@@ -448,29 +478,17 @@ public sealed class RunLifecycleManagerResilienceTests
             _registry,
             _mockLabelService.Object,
             _dispatcher,
-            _mockLogger.Object,
-            WorkItemTransition: null));
+            _mockLogger.Object));
     }
 
     [Fact]
-    public async Task FailRunAsync_WhenHistoryThrows_StillClearsDedupTracker()
+    public async Task FailRunAsync_WhenHistoryThrows_StillClearsAgentState()
     {
-        // Arrange: set up a run that's "in-progress" in the dedup tracker
+        // Arrange: set up a run that's "in-progress"
         var run = CreateRun("run-fail-history-err");
         run.AgentId = "agent-1";
         _runService.AddRun(run);
-        _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = "org/repo#1",
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1",
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            RequiredLabels = DotnetLabels,
-            InitiatedBy = "test"
-        });
-        // Dequeue to simulate "in processing" state
         var entry = RegisterAgent("agent-1");
-        _dispatcher.DequeueForAgent(entry);
 
         // Make history throw
         _mockHistoryService
@@ -483,32 +501,18 @@ public sealed class RunLifecycleManagerResilienceTests
         // Assert: run was still returned (claimed successfully)
         result.Should().NotBeNull();
 
-        // Dedup tracker was cleared despite the history exception
-        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
-
-        // Agent state was cleared
+        // Agent state was cleared despite the history exception
         var agent = _registry.GetByAgentId("agent-1");
         agent!.ActiveJobId.Should().BeNull();
         agent.Status.Should().Be(AgentStatus.Idle);
     }
 
     [Fact]
-    public async Task CompleteRunAsync_WhenHistoryThrows_StillClearsDedupTracker()
+    public async Task CompleteRunAsync_WhenHistoryThrows_StillReturnsRun()
     {
         // Arrange
         var run = CreateRun("run-complete-err");
         _runService.AddRun(run);
-        _dispatcher.EnqueueJob(new PendingJob
-        {
-            IssueIdentifier = "org/repo#1",
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1",
-            EnqueuedAt = DateTimeOffset.UtcNow,
-            RequiredLabels = DotnetLabels,
-            InitiatedBy = "test"
-        });
-        var entry = RegisterAgent("agent-1");
-        _dispatcher.DequeueForAgent(entry);
 
         _mockHistoryService
             .Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
@@ -519,9 +523,6 @@ public sealed class RunLifecycleManagerResilienceTests
 
         // Assert: still returned the run
         result.Should().NotBeNull();
-
-        // Dedup tracker was cleared
-        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
     }
 
     private static PipelineRun CreateRun(string runId)
@@ -563,14 +564,14 @@ public sealed class RunLifecycleManagerJobCleanupTests
     private readonly Mock<IJobCleanupStrategy> _mockJobCleanup = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly JobDeduplicationGuardService _dispatcher;
+    private readonly AgentReservationService _dispatcher;
     private readonly RunLifecycleManager _sut;
 
     public RunLifecycleManagerJobCleanupTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
+        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
 
         _mockJobCleanup
             .Setup(c => c.TryDeleteJobForRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
@@ -583,7 +584,6 @@ public sealed class RunLifecycleManagerJobCleanupTests
             _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
-            WorkItemTransition: null,
             JobCleanup: _mockJobCleanup.Object));
     }
 

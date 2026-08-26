@@ -1,8 +1,8 @@
 using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.UnitTests.Components;
@@ -14,12 +14,12 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class PipelineSectionComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
     public PipelineSectionComponentTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore = new Mock<IPipelineApiConfigClient>();
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -30,14 +30,14 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public void GeneralSection_RendersHeader()
     {
-        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("General", cut.Markup);
     }
 
     [Fact]
     public void GeneralSection_RendersMaxRetriesInput()
     {
-        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Max Retries", cut.Markup);
         Assert.NotNull(cut.Find("input[type='number']"));
     }
@@ -45,17 +45,17 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public void GeneralSection_RendersAgentTimeoutInput()
     {
-        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Agent Timeout", cut.Markup);
     }
 
     [Fact]
     public void GeneralSection_LoadsConfigValues()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { MaxRetries = 5, AgentTimeout = TimeSpan.FromMinutes(45) });
 
-        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var inputs = cut.FindAll("input[type='number']");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "5");
@@ -65,14 +65,14 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public void GeneralSection_RendersSaveButton()
     {
-        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Save General Settings", cut.Markup);
     }
 
     [Fact]
     public async Task GeneralSection_Save_CallsUpdatePipelineConfig()
     {
-        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save General"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -85,7 +85,7 @@ public class PipelineSectionComponentTests : BunitContext
     {
         (string Message, bool IsError) status = default;
         var cut = Render<PipelineGeneralSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockStore.Object)
              .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save General"));
@@ -103,7 +103,7 @@ public class PipelineSectionComponentTests : BunitContext
 
         (string Message, bool IsError) status = default;
         var cut = Render<PipelineGeneralSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockStore.Object)
              .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save General"));
@@ -118,14 +118,14 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public void LoopSection_RendersHeader()
     {
-        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Pipeline Loop", cut.Markup);
     }
 
     [Fact]
     public void LoopSection_RendersAllFields()
     {
-        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Poll Interval", cut.Markup);
         Assert.Contains("Max Runs Per Cycle", cut.Markup);
         Assert.Contains("Advanced settings", cut.Markup);
@@ -134,7 +134,7 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public void LoopSection_LoadsConfigValues()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
@@ -143,7 +143,7 @@ public class PipelineSectionComponentTests : BunitContext
                 ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(1800)
             });
 
-        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var inputs = cut.FindAll("input[type='number']");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "120");
@@ -153,7 +153,7 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public async Task LoopSection_Save_CallsUpdatePipelineConfig()
     {
-        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Pipeline Loop"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -164,7 +164,7 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public void LoopSection_RendersHintIcons()
     {
-        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         var hints = cut.FindAll(".form-hint-icon");
         Assert.Equal(2, hints.Count); // advanced fields hidden by default
     }
@@ -174,14 +174,14 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public void PromptsSection_RendersHeader()
     {
-        var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Prompts", cut.Markup);
     }
 
     [Fact]
     public void PromptsSection_RendersTextareas()
     {
-        var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Analysis Prompt", cut.Markup);
         Assert.Contains("Implementation Prompt", cut.Markup);
         var textareas = cut.FindAll("textarea");
@@ -191,7 +191,7 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public void PromptsSection_RendersResetButtons()
     {
-        var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         var resetButtons = cut.FindAll(".btn-revert");
         Assert.Equal(2, resetButtons.Count); // advanced fields hidden by default
     }
@@ -199,7 +199,7 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public void PromptsSection_ResetButtons_DisabledWhenDefault()
     {
-        var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         var resetButtons = cut.FindAll(".btn-revert");
         Assert.Equal(2, resetButtons.Count);
         Assert.All(resetButtons, btn => Assert.True(btn.HasAttribute("disabled")));
@@ -208,7 +208,7 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public async Task PromptsSection_Save_CallsUpdatePipelineConfig()
     {
-        var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelinePromptsSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Prompt"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -221,17 +221,17 @@ public class PipelineSectionComponentTests : BunitContext
     [Fact]
     public void GeneralSection_RendersFailedWorkspaceRetention()
     {
-        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Failed Run Workspace Retention", cut.Markup);
     }
 
     [Fact]
     public void GeneralSection_LoadsRetentionValue()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { FailedWorkspaceRetentionDays = 14 });
 
-        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         var inputs = cut.FindAll("input[type='number']");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "14");
     }
@@ -247,7 +247,7 @@ public class PipelineSectionComponentTests : BunitContext
                 return Task.CompletedTask;
             });
 
-        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
+        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save General"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());

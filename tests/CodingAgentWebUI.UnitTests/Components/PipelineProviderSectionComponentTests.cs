@@ -1,9 +1,9 @@
 using Bunit;
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Pipeline;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Components;
 
@@ -15,12 +15,12 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class PipelineProviderSectionComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockConfigStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient;
     private readonly GitHubValidationService _gitHubValidator;
 
     public PipelineProviderSectionComponentTests()
     {
-        _mockConfigStore = new Mock<IConfigurationStore>();
+        _mockConfigClient = new Mock<IPipelineApiConfigClient>();
         _gitHubValidator = new GitHubValidationService();
     }
 
@@ -151,7 +151,7 @@ public class PipelineProviderSectionComponentTests : BunitContext
 
         var component = Render<PipelineProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers)
-            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ConfigClient, _mockConfigClient.Object)
             .Add(p => p.GitHubValidator, _gitHubValidator)
             .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, id => deletedId = id)));
 
@@ -248,7 +248,7 @@ public class PipelineProviderSectionComponentTests : BunitContext
         (string Message, bool IsError)? statusResult = null;
         var component = Render<PipelineProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers)
-            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ConfigClient, _mockConfigClient.Object)
             .Add(p => p.GitHubValidator, _gitHubValidator)
             .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
             .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
@@ -270,7 +270,7 @@ public class PipelineProviderSectionComponentTests : BunitContext
     {
         return Render<PipelineProviderSection>(parameters => parameters
             .Add(p => p.Providers, providers ?? new List<ProviderConfig>())
-            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.ConfigClient, _mockConfigClient.Object)
             .Add(p => p.GitHubValidator, _gitHubValidator));
     }
 }

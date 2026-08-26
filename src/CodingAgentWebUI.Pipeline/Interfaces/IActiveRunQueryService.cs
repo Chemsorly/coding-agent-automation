@@ -4,8 +4,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
 /// Abstraction for querying active pipeline run state for UI display.
-/// In Legacy/single-instance mode: delegates to <see cref="IOrchestratorRunService"/> in-memory state.
-/// In DB mode: queries WorkItems table directly, enabling non-leader replicas to display
+/// Queries WorkItems table directly, enabling non-leader replicas to display
 /// current run state from Postgres without cross-replica in-memory sync.
 /// </summary>
 public interface IActiveRunQueryService
@@ -30,9 +29,9 @@ public sealed record ActiveRunSummary
     public required DateTimeOffset StartedAt { get; init; }
     public required string? ProjectName { get; init; }
 
-    /// <summary>
-    /// Current pipeline step. In DB mode, maps from WorkItemStatus (Dispatched→Running step);
-    /// in Legacy mode, reflects the actual PipelineStep from in-memory state.
-    /// </summary>
+/// <summary>
+/// Current pipeline step. Maps from WorkItemStatus (Dispatched→Running step)
+/// for active runs queried from the database.
+/// </summary>
     public required PipelineStep CurrentStep { get; init; }
 }

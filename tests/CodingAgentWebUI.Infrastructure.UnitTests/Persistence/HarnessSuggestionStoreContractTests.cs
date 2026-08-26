@@ -1,10 +1,13 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 
@@ -144,5 +147,44 @@ public sealed class PostgresHarnessSuggestionStoreContractTests : HarnessSuggest
         private readonly DbContextOptions<PipelineDbContext> _options;
         public InMemoryDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
         public PipelineDbContext CreateDbContext() => new(_options);
+    }
+}
+
+// ── API-backed implementation ────────────────────────────────────────────────
+
+/// <summary>
+/// Runs the contract tests against <see cref="CodingAgentWebUI.Services.ApiBackedHarnessSuggestionStore"/>.
+/// The mock <see cref="IPipelineApiHarnessSuggestionClient"/> simulates real store semantics in-memory
+/// so every contract assertion (null when empty, round-trip, overwrite) exercises the adapter's
+/// delegation logic.
+/// </summary>
+public sealed class ApiBackedHarnessSuggestionStoreContractTests : HarnessSuggestionStoreContractTests
+{
+    private HarnessSuggestions? _stored;
+    private readonly Mock<IPipelineApiHarnessSuggestionClient> _client;
+
+    public ApiBackedHarnessSuggestionStoreContractTests()
+    {
+        _client = new Mock<IPipelineApiHarnessSuggestionClient>();
+
+        _client
+            .Setup(c => c.GetAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => _stored);
+
+        _client
+            .Setup(c => c.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
+            .Callback<HarnessSuggestions, CancellationToken>((s, _) =>
+            {
+                ArgumentNullException.ThrowIfNull(s);
+                _stored = s;
+            })
+            .Returns(Task.CompletedTask);
+    }
+
+    protected override IHarnessSuggestionStore CreateStore()
+    {
+        // Reset in-memory state so each test starts from an empty store
+        _stored = null;
+        return new CodingAgentWebUI.Services.ApiBackedHarnessSuggestionStore(_client.Object);
     }
 }

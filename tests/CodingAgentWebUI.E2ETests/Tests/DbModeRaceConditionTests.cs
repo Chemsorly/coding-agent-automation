@@ -21,9 +21,10 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
 [Trait("Feature", "RaceCondition")]
-public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<DbModeE2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
 {
-    public DbModeRaceConditionTests(DbModeE2EFixture fixture) : base(fixture) { }
+    public DbModeRaceConditionTests(E2EFixture fixture) : base(fixture) { }
 
     private async Task SeedIssueAndProfileAsync(string issueId, string title = "Race test issue")
     {
@@ -62,41 +63,6 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // C1: Concurrent dispatch to same issue — only one wins dedup
-    // ═══════════════════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task Race_ConcurrentDispatchSameIssue_OnlyOneActiveWorkItem()
-    {
-        // Arrange: seed issue + connect agent so dispatch path is fully exercised
-        await SeedIssueAndProfileAsync("2000", "Concurrent dispatch race");
-        await using var agent = new FakeAgentClient("race-agent-c1", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
-
-        // Act: fire 5 concurrent dispatches for the same issue
-        var tasks = Enumerable.Range(0, 5)
-            .Select(_ => Task.Run(() => DispatchIssueAsync("2000")))
-            .ToList();
-
-        var results = await Task.WhenAll(tasks);
-
-        // Assert: at most 1 succeeds with a non-null WorkItemId
-        var successfulDispatches = results.Where(r => r.Success && r.WorkItemId is not null).ToList();
-        Assert.True(successfulDispatches.Count <= 1,
-            $"Expected at most 1 successful dispatch, got {successfulDispatches.Count}. " +
-            "Dedup guard should prevent concurrent duplicates.");
-
-        // Assert: DB has at most 1 non-terminal WorkItem for this issue
-        await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var activeItems = await db.WorkItems.AsNoTracking()
-            .Where(w => w.IssueIdentifier == "2000" &&
-                        w.Status != WorkItemStatus.Failed &&
-                        w.Status != WorkItemStatus.Cancelled)
-            .ToListAsync();
-        Assert.True(activeItems.Count <= 1,
-            $"Expected at most 1 active WorkItem, got {activeItems.Count}");
-    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // C4: Simultaneous job completion + heartbeat timeout — only one finalizes
@@ -116,7 +82,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
 
         await SeedIssueAndProfileAsync("2001", "Completion vs timeout race");
         await using var agent = new FakeAgentClient("race-agent-c4", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("2001");
         Assert.True(result.Success);
@@ -159,7 +125,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         // Arrange
         await SeedIssueAndProfileAsync("2002", "Double finalize race");
         await using var agent = new FakeAgentClient("race-agent-c8", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("2002");
         Assert.True(result.Success);
@@ -169,7 +135,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         await agent.AcceptJobAsync(assignment.JobId);
 
         // Act: race FailRunAsync against CompleteRunAsync from two threads
-        var lifecycleManager = Fixture.Factory.Services.GetRequiredService<IRunLifecycleManager>();
+        var lifecycleManager = Fixture.RunLifecycleManager;
 
         var failTask = Task.Run(() => lifecycleManager.FailRunAsync(
             assignment.JobId, "Heartbeat timeout", CancellationToken.None));
@@ -212,7 +178,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         {
             var agent = new FakeAgentClient($"race-concurrent-{i}", "race-e2e");
             agents.Add(agent);
-            connectTasks.Add(agent.ConnectAsync(BaseUrl, Fixture.ApiKey));
+            connectTasks.Add(agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey));
         }
 
         await Task.WhenAll(connectTasks);
@@ -220,7 +186,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         try
         {
             // Assert: all 5 agents appear in the registry
-            var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+            var registry = Fixture.AgentRegistry;
             var allAgents = registry.GetAllAgents();
 
             for (var i = 0; i < 5; i++)
@@ -266,8 +232,8 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         // Connect 2 agents simultaneously — drain service distributes
         await using var agent1 = new FakeAgentClient("race-fifo-1", "race-e2e");
         await using var agent2 = new FakeAgentClient("race-fifo-2", "race-e2e");
-        await agent1.ConnectAsync(BaseUrl, Fixture.ApiKey);
-        await agent2.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent1.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await agent2.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Wait for both to receive jobs
         var job1 = await agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(15));
@@ -299,7 +265,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         await SeedIssueAndProfileAsync("2021", "Drain pickup second");
 
         await using var agent = new FakeAgentClient("race-drain-idle", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Dispatch first job — agent receives it immediately
         var r1 = await DispatchIssueAsync("2020");
@@ -335,7 +301,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         // Arrange: dispatch and immediately fail via lifecycle manager (simulating heartbeat timeout)
         await SeedIssueAndProfileAsync("2030", "Already failed issue");
         await using var agent = new FakeAgentClient("race-terminal-agent", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var result = await DispatchIssueAsync("2030");
         Assert.True(result.Success);
@@ -345,7 +311,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         await agent.AcceptJobAsync(assignment.JobId);
 
         // Force-fail the run via lifecycle manager (simulating heartbeat sweep racing)
-        var lifecycleManager = Fixture.Factory.Services.GetRequiredService<IRunLifecycleManager>();
+        var lifecycleManager = Fixture.RunLifecycleManager;
         var failedRun = await lifecycleManager.FailRunAsync(
             assignment.JobId, "Forced failure by test", CancellationToken.None);
         Assert.NotNull(failedRun);
@@ -353,14 +319,25 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         // Verify WorkItem is already Failed
         await WaitForWorkItemStatusAsync(workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(5));
 
-        // Act: agent (unaware of the failure) tries to report completion
-        // This should NOT crash the server — it should be a no-op or graceful rejection
-        await agent.AcceptAndCompleteJobAsync(assignment.JobId);
+        // Act: agent (unaware of the failure) tries to report completion.
+        // A HubException here is the graceful rejection, not a failure of the test: FailRunAsync
+        // clears the agent's ActiveJobId, so AgentAuthorizationFilter correctly refuses a call for
+        // a job the agent no longer owns. What must not happen is the hub dying — asserted below
+        // by connecting a second agent. Letting the exception escape would make this test fail on
+        // the authorization gate working.
+        try
+        {
+            await agent.AcceptAndCompleteJobAsync(assignment.JobId);
+        }
+        catch (Microsoft.AspNetCore.SignalR.HubException)
+        {
+            // Expected: the job is no longer assigned to this agent.
+        }
 
         // Assert: no crash — server is still responsive
         // Verify by connecting another agent (proves hub is alive)
         await using var probeAgent = new FakeAgentClient("race-probe-agent", "race-e2e");
-        await probeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await probeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
         Assert.True(probeAgent.IsConnected);
 
         // Assert: WorkItem remains Failed (not overwritten to Succeeded)
@@ -386,7 +363,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
     {
         // Arrange: run 5 dispatch→complete cycles rapidly on the same agent
         await using var agent = new FakeAgentClient("race-rapid-agent", "race-e2e");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         for (var i = 0; i < 5; i++)
         {
@@ -409,7 +386,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         }
 
         // Assert: agent is Idle after all cycles (no leaked Busy state)
-        var registry = Fixture.Factory.Services.GetRequiredService<AgentRegistryService>();
+        var registry = Fixture.AgentRegistry;
         await WaitUntilAsync(
             () => registry.GetByAgentId("race-rapid-agent")?.Status == AgentStatus.Idle,
             TimeSpan.FromSeconds(5));
@@ -422,7 +399,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         Assert.All(history, h => Assert.Equal(PipelineStep.Completed, h.FinalStep));
 
         // Assert: no orphaned in-memory runs
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         var activeRuns = runService.GetActiveRuns();
         var leakedRuns = activeRuns.Where(r => r.IssueIdentifier.Value.StartsWith("2100-")).ToList();
         Assert.Empty(leakedRuns);

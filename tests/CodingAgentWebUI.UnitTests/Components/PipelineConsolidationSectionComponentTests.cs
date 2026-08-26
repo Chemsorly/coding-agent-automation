@@ -1,8 +1,8 @@
 using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.UnitTests.Components;
@@ -12,12 +12,12 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class PipelineConsolidationSectionComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
     public PipelineConsolidationSectionComponentTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore = new Mock<IPipelineApiConfigClient>();
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -27,7 +27,7 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
     public void RendersHeader()
     {
         var cut = Render<PipelineConsolidationSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Consolidation", cut.Markup);
     }
 
@@ -35,7 +35,7 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
     public void RendersAllFields()
     {
         var cut = Render<PipelineConsolidationSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Max Refactoring Proposals", cut.Markup);
         Assert.Contains("Advanced settings", cut.Markup);
 
@@ -51,7 +51,7 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
     [Fact]
     public void LoadsConfigValues()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 MaxRefactoringProposals = 5,
@@ -63,7 +63,7 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
             });
 
         var cut = Render<PipelineConsolidationSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var inputs = cut.FindAll("input[type='number']");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "5");
@@ -73,7 +73,7 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
     public async Task Save_CallsUpdatePipelineConfig()
     {
         var cut = Render<PipelineConsolidationSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Consolidation"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -88,7 +88,7 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
     {
         (string Message, bool IsError) status = default;
         var cut = Render<PipelineConsolidationSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockStore.Object)
              .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Consolidation"));
@@ -110,7 +110,7 @@ public class PipelineConsolidationSectionComponentTests : BunitContext
             });
 
         var cut = Render<PipelineConsolidationSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Consolidation"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());

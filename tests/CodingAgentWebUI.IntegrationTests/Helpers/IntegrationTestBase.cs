@@ -20,10 +20,9 @@ namespace CodingAgentWebUI.IntegrationTests.Helpers;
 public class IntegrationTestBase : IDisposable
 {
     protected readonly string TempRoot;
-    protected readonly string ConfigDir;
     protected readonly string RunsDir;
     protected readonly string WorkspaceBase;
-    protected readonly JsonConfigurationStore ConfigStore;
+    protected readonly InMemoryConfigurationStore ConfigStore;
     protected readonly Mock<IProviderFactory> MockFactory = new();
     protected readonly Mock<IIssueProvider> MockIssueProvider = new();
     protected readonly Mock<IRepositoryProvider> MockRepoProvider = new();
@@ -34,14 +33,13 @@ public class IntegrationTestBase : IDisposable
     protected IntegrationTestBase()
     {
         TempRoot = Path.Combine(Path.GetTempPath(), $"integration-{Guid.NewGuid()}");
-        ConfigDir = Path.Combine(TempRoot, "config");
         RunsDir = Path.Combine(TempRoot, "runs");
         WorkspaceBase = Path.Combine(TempRoot, "workspaces");
-        Directory.CreateDirectory(ConfigDir);
+        Directory.CreateDirectory(TempRoot);
         Directory.CreateDirectory(RunsDir);
         Directory.CreateDirectory(WorkspaceBase);
 
-        ConfigStore = new JsonConfigurationStore(ConfigDir);
+        ConfigStore = new InMemoryConfigurationStore();
         SetupDefaultMocks();
     }
 

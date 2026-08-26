@@ -12,7 +12,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Trait("Feature", "UI")]
-public sealed class AgentMonitoringUiTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class AgentMonitoringUiTests : E2ETestBase
 {
     public AgentMonitoringUiTests(E2EFixture fixture) : base(fixture) { }
 
@@ -54,16 +55,24 @@ public sealed class AgentMonitoringUiTests : E2ETestBase, IClassFixture<E2EFixtu
     {
         // Connect a fake agent
         await using var agent = new FakeAgentClient("ui-monitor-agent-1", "ui-test");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+
+        // The agent registered on the API's hub; the Blazor host reads a snapshot of that registry
+        // refreshed on a 2s poll. Pull it forward so the page renders the agent on first load
+        // rather than on its own 5s redraw — this is a wait the product genuinely has, and without
+        // forcing it the test is asserting inside the window where the two processes disagree.
+        await Fixture.ForceAgentRegistryRefreshAsync();
 
         // Navigate to monitoring page
         await Page.GotoAsync($"{BaseUrl}/agent-monitoring");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await Page.WaitForTimeoutAsync(3000); // Allow Blazor circuit + SignalR data push
 
-        // Assert: agent ID appears on the page
-        var agentText = await Page.TextContentAsync("body");
-        Assert.Contains("ui-monitor-agent-1", agentText ?? "");
+        // Assert: agent ID appears on the page. Waited for rather than sampled after a fixed
+        // delay — the page redraws every 5s, so a 3s sleep landed before the first redraw.
+        await Page.GetByText("ui-monitor-agent-1").First.WaitForAsync(new() { Timeout = 15_000 });
+
+        var agentText = Page.GetByText("ui-monitor-agent-1").First;
+        await Assertions.Expect(agentText).ToBeVisibleAsync();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -76,7 +85,7 @@ public sealed class AgentMonitoringUiTests : E2ETestBase, IClassFixture<E2EFixtu
         // Arrange
         await SeedAndConnectAsync("UI-200", "ui-progress-agent", new[] { "ui-test" });
         await using var agent = new FakeAgentClient("ui-progress-agent", "ui-test");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Navigate to coding page to trigger dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -127,7 +136,7 @@ public sealed class AgentMonitoringUiTests : E2ETestBase, IClassFixture<E2EFixtu
         // Arrange: seed and dispatch
         await SeedAndConnectAsync("UI-300", "ui-history-agent", new[] { "ui-test" });
         await using var agent = new FakeAgentClient("ui-history-agent", "ui-test");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -175,7 +184,7 @@ public sealed class AgentMonitoringUiTests : E2ETestBase, IClassFixture<E2EFixtu
         // Arrange
         await SeedAndConnectAsync("UI-400", "ui-toast-agent", new[] { "ui-test" });
         await using var agent = new FakeAgentClient("ui-toast-agent", "ui-test");
-        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();

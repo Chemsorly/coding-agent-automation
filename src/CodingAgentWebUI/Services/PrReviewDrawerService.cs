@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
@@ -17,21 +16,15 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
     private static readonly ILogger Logger = Log.ForContext<PrReviewDrawerService>();
 
     private readonly IProviderFactory _providerFactory;
-    private readonly IWorkDistributor _workDistributor;
-    private readonly IAgentRegistryService _agentRegistry;
-    private readonly IDispatchOrchestrationService? _dispatchOrchestration;
+    private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<PullRequestSummary> _prDrawer;
 
     public PrReviewDrawerService(
         IProviderFactory providerFactory,
-        IWorkDistributor workDistributor,
-        IAgentRegistryService agentRegistry,
-        IDispatchOrchestrationService? dispatchOrchestration = null)
+        IDispatchOrchestrationService dispatchOrchestration)
     {
         _providerFactory = providerFactory;
-        _workDistributor = workDistributor;
-        _agentRegistry = agentRegistry;
         _dispatchOrchestration = dispatchOrchestration;
 
         _prDrawer = new DrawerStateService<PullRequestSummary>(
@@ -55,15 +48,31 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
     {
         _prDrawer.Loading = true;
         _prDrawer.Page = page;
+        var ct = _prDrawer.CancellationToken;
         try
         {
             var repoConfig = _cachedRepoProviders?.FirstOrDefault(p => p.Id == template.RepoProviderId);
-            if (repoConfig == null) { _prDrawer.Items = new(); _prDrawer.Loading = false; return null; }
+            if (repoConfig == null)
+            {
+                _prDrawer.Items = new();
+                _prDrawer.Loading = false;
+                Logger.Warning(
+                    "LoadPrDrawerPageAsync: repo provider {ProviderId} not found in cached providers (count={Count}). " +
+                    "This usually means SetProviderContext was not called before opening the drawer.",
+                    template.RepoProviderId,
+                    _cachedRepoProviders?.Count ?? -1);
+                return "Repository provider configuration not loaded. Try closing and reopening the PR browser.";
+            }
             await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
             var labels = _prDrawer.SelectedLabels.Count > 0 ? _prDrawer.SelectedLabels : null;
-            var result = await repoProvider.ListOpenPullRequestsAsync(page, 15, labels, CancellationToken.None);
+            var result = await repoProvider.ListOpenPullRequestsAsync(page, 15, labels, ct);
             _prDrawer.Items = result.Items.ToList();
             _prDrawer.HasMore = result.HasMore;
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _prDrawer.Items = new();
             return null;
         }
         catch (Exception ex) { _prDrawer.Items = new(); return $"Failed to load pull requests: {ex.Message}"; }
@@ -72,13 +81,19 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
 
     private async Task<string?> LoadPrDrawerLabelsAsync(PipelineJobTemplate template)
     {
+        var ct = _prDrawer.CancellationToken;
         try
         {
             var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
             if (providerConfig == null) return null;
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
+            var labels = await provider.ListRepositoryLabelsAsync(ct);
             _prDrawer.Labels = labels.ToList();
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _prDrawer.Labels.Clear();
             return null;
         }
         catch (Exception ex) { Logger.Warning(ex, "Failed to load PR drawer labels"); _prDrawer.Labels.Clear(); return null; }
@@ -110,44 +125,31 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
         IReadOnlyList<ProviderConfig> repoProviders,
         PipelineProject? parentProject)
     {
-        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
-            return (false, "Could not dispatch — no agents are currently connected.", null);
-
-        if (_dispatchOrchestration is not null)
-        {
-            return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
-                _dispatchOrchestration,
-                project =>
+        return await DrawerDispatchHelper.DispatchWithOrchestrationAsync(
+            _dispatchOrchestration,
+            project =>
+            {
+                var reviewRequest = new ReviewDispatchRequest
                 {
-                    var reviewRequest = new ReviewDispatchRequest
-                    {
-                        PrIdentifier = pr.Identifier,
-                        PrBranchName = pr.BranchName,
-                        PrTitle = pr.Title ?? "",
-                        PrUrl = pr.Url,
-                        PrTargetBranch = pr.TargetBranch,
-                        PrDescription = pr.Description,
-                        PrAuthor = pr.Author,
-                        IssueProviderId = template.IssueProviderId,
-                        RepoProviderId = template.RepoProviderId,
-                        BrainProviderId = template.BrainProviderId,
-                        InitiatedBy = DrawerDispatchHelper.ManualInitiator
-                    };
-                    return _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
-                        reviewRequest, project, CancellationToken.None);
-                },
-                parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
-                $"PR #{pr.Identifier} is already being processed or queued.",
-                $"⏳ Queued PR #{pr.Identifier} for review — waiting for an idle agent",
-                $"PR #{pr.Identifier} dispatched for review.");
-        }
-
-        var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, pr, initiatedBy: DrawerDispatchHelper.ManualInitiator, timeoutSeconds: 3600,
-            projectId: parentProject?.Id, projectName: parentProject?.Name);
-        return await DrawerDispatchHelper.DispatchLegacyAsync(_workDistributor, minimalRequest,
-            $"PR #{pr.Identifier} dispatched for review.",
-            $"PR #{pr.Identifier} is already being processed or queued.");
+                    PrIdentifier = pr.Identifier,
+                    PrBranchName = pr.BranchName,
+                    PrTitle = pr.Title ?? "",
+                    PrUrl = pr.Url,
+                    PrTargetBranch = pr.TargetBranch,
+                    PrDescription = pr.Description,
+                    PrAuthor = pr.Author,
+                    IssueProviderId = template.IssueProviderId,
+                    RepoProviderId = template.RepoProviderId,
+                    BrainProviderId = template.BrainProviderId,
+                    InitiatedBy = DrawerDispatchHelper.ManualInitiator
+                };
+                return _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
+                    reviewRequest, project, CancellationToken.None);
+            },
+            parentProject ?? new PipelineProject { Id = "", Name = "Unknown" },
+            $"PR #{pr.Identifier} is already being processed or queued.",
+            $"⏳ Queued PR #{pr.Identifier} for review — the job controller will start an agent pod for it",
+            $"PR #{pr.Identifier} dispatched for review.");
     }
 
     // ── Drawer orchestration ──
@@ -170,7 +172,7 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
         Func<Task>? notifyStateChanged = null)
     {
         return _prDrawer.SwitchAsync(templateId, notifyStateChanged,
-            () => _prDrawer.Items.Count > 0,
+            () => _prDrawer.Items.Count > 0 && _prDrawer.Template?.Id == templateId.Value,
             async (id, ns) =>
             {
                 var template = templates.FirstOrDefault(t => t.Id == id);

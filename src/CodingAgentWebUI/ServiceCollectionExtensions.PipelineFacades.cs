@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
 using Serilog;
 
 namespace CodingAgentWebUI;
@@ -13,11 +14,10 @@ public static partial class ServiceCollectionExtensions
     private static void RegisterPipelineFacades(IServiceCollection services)
     {
         services.AddSingleton<IPipelineCancellationFacade>(sp => new PipelineCancellationFacade(
-            sp.GetRequiredService<IJobDeduplicationGuard>(),
             sp.GetRequiredService<IAgentCancellationSender>()));
 
         services.AddSingleton(sp => new PipelineOrchestrationService(
-            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IProviderConfigStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<IPipelineCancellationFacade>(),
             sp.GetRequiredService<PipelineRunLifecycleService>(),
@@ -36,8 +36,13 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IProviderFactory>(),
                 Log.Logger));
         services.AddSingleton<IDispatchRunCreator>(sp => sp.GetRequiredService<DispatchRunCreationService>());
-        services.AddSingleton<IChangeNotifier>(sp =>
-            sp.GetRequiredService<PipelineRunLifecycleService>());
+
+        // IChangeNotifier: NullChangeNotifier registered as a null-object for shared libraries
+        // that declare an IChangeNotifier constructor dependency. The monolith no longer drives
+        // state-change notifications directly — change events arrive via IAgentHubConnection
+        // hub push events (OnStepTransition, OnRunCompleted). IChangeNotifier is still registered
+        // with a real implementation in CodingAgentWebUI.Hub for AgentHub internals.
+        services.AddSingleton<IChangeNotifier, NullChangeNotifier>();
         services.AddSingleton<IChatNotifier>(sp =>
             sp.GetRequiredService<PipelineRunLifecycleService>());
     }

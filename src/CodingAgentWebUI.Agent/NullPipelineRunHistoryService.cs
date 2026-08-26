@@ -22,7 +22,22 @@ public sealed class NullPipelineRunHistoryService : IPipelineRunHistoryService
             HasMore = false
         });
 
+    public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
+        => Task.FromResult(new PagedResult<PipelineRunSummary>
+        {
+            Items = [],
+            Page = page,
+            PageSize = pageSize,
+            HasMore = false
+        });
+
+    public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
+        => Task.FromResult<PipelineRunSummary?>(null);
+
     public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
         => Task.CompletedTask;
 
     public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }

@@ -4,6 +4,8 @@ using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
+// WorkItemStatusUpdate moved to CodingAgentWebUI.Pipeline.Models
+
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
@@ -20,6 +22,12 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
 {
     private readonly HttpClient _httpClient;
     private readonly Serilog.ILogger _logger;
+
+    /// <summary>
+    /// When set, appended as ?agentId= query param to GetAssignment and PostStatus calls.
+    /// Null = no query param (agent authenticates with master key, no per-agent derivation).
+    /// </summary>
+    internal string? AgentId { get; set; }
 
     private static readonly JsonSerializerOptions JsonOptions = PipelineJsonOptions.Default;
 
@@ -48,7 +56,10 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
         HttpResponseMessage response;
         try
         {
-            response = await _httpClient.GetAsync($"/api/work-items/{workItemId}/assignment", ct);
+            var url = string.IsNullOrEmpty(AgentId)
+                ? $"/api/work-items/{workItemId}/assignment"
+                : $"/api/work-items/{workItemId}/assignment?agentId={Uri.EscapeDataString(AgentId)}";
+            response = await _httpClient.GetAsync(url, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -102,8 +113,11 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
         HttpResponseMessage response;
         try
         {
+            var url = string.IsNullOrEmpty(AgentId)
+                ? $"/api/work-items/{workItemId}/status"
+                : $"/api/work-items/{workItemId}/status?agentId={Uri.EscapeDataString(AgentId)}";
             response = await _httpClient.PostAsJsonAsync(
-                $"/api/work-items/{workItemId}/status", update, JsonOptions, ct);
+                url, update, JsonOptions, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -146,18 +160,6 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
             }
         }
     }
-}
-
-/// <summary>
-/// DTO for POST /api/work-items/{id}/status request body.
-/// </summary>
-public sealed class WorkItemStatusUpdate
-{
-    public required string Status { get; init; }
-    public string? AgentId { get; init; }
-    public string? Result { get; init; }
-    public string? ErrorMessage { get; init; }
-    public string? FailureReason { get; init; }
 }
 
 /// <summary>

@@ -15,7 +15,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Uses the multi-agent dispatch path (JobDispatcher → FakeAgentClient → ReportStepTransition).
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class AgentRunProgressTests : E2ETestBase
 {
     public AgentRunProgressTests(E2EFixture fixture) : base(fixture) { }
 
@@ -51,7 +52,7 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
 
         // Connect a fake agent
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -90,7 +91,7 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
             });
 
         // Wait briefly for the hub to process the step transitions
-        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var runService = Fixture.RunService;
         await WaitUntilAsync(() =>
         {
             var run = runService.GetActiveRuns().FirstOrDefault(r => r.IssueIdentifier == "42");
@@ -193,7 +194,7 @@ public sealed class AgentRunProgressTests : E2ETestBase, IClassFixture<E2EFixtur
 
         // Connect a fake agent
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: navigate and dispatch
         var codingPage = new AgentCodingPage(Page, BaseUrl);

@@ -101,6 +101,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         // Step 3: If inline comments are disabled, submit body-only and return
         if (!inlineSettings.Enabled)
         {
+            context.Logger.Information("PR #{PrNumber} inline comments disabled by config, submitting body-only review", prNumber);
             await SubmitWithOwnPrFallbackAsync(context, prNumber, body, reviewType, ct);
             return;
         }
@@ -111,6 +112,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         // inlineSettings.Enabled is always true — the guard is implicit and the behavior is preserved.
         if (!supportsInline)
         {
+            context.Logger.Information("PR #{PrNumber} provider does not support inline comments (SupportsInlineReviewComments=false), appending location section to body", prNumber);
             body = AppendLocationSection(body, context.Run.CodeReviewAgentFindings);
             await SubmitWithOwnPrFallbackAsync(context, prNumber, body, reviewType, ct);
             return;
@@ -119,6 +121,24 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         // Step 5: Parse structured findings per agent + retry loop
         var allFindings = await ParseFindingsWithRetryAsync(context, inlineSettings, ct);
 
+        // Log per-agent parsing summary to diagnose missing inline comments
+        var totalParsed = allFindings.Count;
+        var withLocation = allFindings.Count(f => f.FilePath is not null && f.LineNumber > 0);
+        var withoutLocation = totalParsed - withLocation;
+        context.Logger.Information(
+            "PR #{PrNumber} inline comment pipeline: parsed {Total} findings total — " +
+            "{WithLocation} have file:line, {WithoutLocation} have no location (body-only)",
+            prNumber, totalParsed, withLocation, withoutLocation);
+
+        foreach (var group in allFindings.GroupBy(f => f.AgentName))
+        {
+            var loc = group.Count(f => f.FilePath is not null && f.LineNumber > 0);
+            var noLoc = group.Count(f => f.FilePath is null || f.LineNumber <= 0);
+            context.Logger.Debug(
+                "PR #{PrNumber} agent '{AgentName}': {Total} findings — {WithLoc} with location, {NoLoc} without",
+                prNumber, group.Key, group.Count(), loc, noLoc);
+        }
+
         // Step 6: Select/filter/cap/consolidate via FindingsSelector
         var findingsWithLocation = allFindings
             .Where(f => f.FilePath is not null && f.LineNumber > 0)
@@ -126,9 +146,30 @@ public sealed class PostReviewFindingsStep : IPipelineStep
 
         var (comments, excludedCount) = FindingsSelector.Select(findingsWithLocation, inlineSettings);
 
+        // Log how many were dropped by threshold and cap
+        var belowThreshold = findingsWithLocation.Count(
+            f => (int)f.Severity < (int)inlineSettings.SeverityThreshold);
+        context.Logger.Information(
+            "PR #{PrNumber} FindingsSelector: {EligibleIn} findings with location → " +
+            "{BelowThreshold} below severity threshold ({Threshold}), " +
+            "{ExcludedByCap} excluded by cap ({Cap}), " +
+            "{Selected} selected → {CommentCount} comment(s) after consolidation",
+            prNumber,
+            findingsWithLocation.Count,
+            belowThreshold,
+            inlineSettings.SeverityThreshold,
+            excludedCount,
+            inlineSettings.MaxInlineComments,
+            findingsWithLocation.Count - belowThreshold,
+            comments.Count);
+
         // Step 6.5: Filter comments to only those targeting lines within diff hunks.
         // GitHub's API returns 422 if a comment targets a line outside the diff.
         var validComments = await FilterCommentsToDiffHunksAsync(context, comments, ct);
+
+        context.Logger.Information(
+            "PR #{PrNumber} diff-hunk filter: {Before} comment(s) → {After} valid (targeting lines in diff)",
+            prNumber, comments.Count, validComments.Count);
 
         // Step 7: Build ReviewSubmission with CommitId
         string? commitId = null;
@@ -154,6 +195,9 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         {
             await context.RepoProvider.SubmitPullRequestReviewAsync(prNumber, submission, ct);
             context.Run.InlineCommentsPosted = validComments.Count;
+            context.Logger.Information(
+                "PR #{PrNumber} review submitted: {CommentCount} inline comment(s), type={ReviewType}, commitId={CommitId}",
+                prNumber, validComments.Count, reviewType, commitId ?? "none");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -215,7 +259,12 @@ public sealed class PostReviewFindingsStep : IPipelineStep
     {
         var diffPath = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.FullDiffFilePath);
         if (!File.Exists(diffPath))
+        {
+            context.Logger.Warning(
+                "Diff file not found at {DiffPath} — skipping hunk validation, all {Count} comment(s) submitted unvalidated (may 422)",
+                diffPath, comments.Count);
             return comments;
+        }
 
         try
         {
@@ -300,7 +349,12 @@ public sealed class PostReviewFindingsStep : IPipelineStep
             var agentOutput = kvp.Value;
 
             if (string.IsNullOrEmpty(agentOutput))
+            {
+                context.Logger.Warning(
+                    "Agent '{AgentName}' produced empty findings output — skipping inline comment parsing for this agent",
+                    agentName);
                 continue;
+            }
 
             // Initial parse
             var findings = FindingsParser.Parse(agentOutput, agentName);
@@ -316,6 +370,18 @@ public sealed class PostReviewFindingsStep : IPipelineStep
                 {
                     findings = await RetryAgentForStructuredOutputAsync(
                         context, agentName, agentOutput, maxRetries, ct);
+                }
+            }
+            else if (!hasLocationFindings && maxRetries == 0)
+            {
+                var severityCounts = SeverityParser.Parse(agentOutput.Split('\n'));
+                var hasMarkers = severityCounts.Critical > 0 || severityCounts.Warning > 0 || severityCounts.Suggestion > 0;
+                if (hasMarkers)
+                {
+                    context.Logger.Information(
+                        "Agent '{AgentName}' has {Critical}C/{Warning}W/{Suggestion}S findings but no file:line references — " +
+                        "retries disabled (MaxRetries=0), findings will be body-only",
+                        agentName, severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
                 }
             }
 
@@ -397,7 +463,8 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         }
 
         // All retries exhausted — return original parse (findings without location)
-        context.Logger.Debug("All {MaxRetries} retries exhausted for agent '{AgentName}', using original findings",
+        context.Logger.Warning(
+            "All {MaxRetries} retries exhausted for agent '{AgentName}' without producing file:line findings — findings will be body-only",
             maxRetries, agentName);
         return FindingsParser.Parse(originalOutput, agentName);
     }

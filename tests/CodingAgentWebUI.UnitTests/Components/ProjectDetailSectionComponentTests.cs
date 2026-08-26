@@ -2,8 +2,8 @@ using Bunit;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.UnitTests.Components;
@@ -13,23 +13,23 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class ProjectDetailSectionComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
     public ProjectDetailSectionComponentTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
+        _mockStore = new Mock<IPipelineApiConfigClient>();
         SetupDefaults();
     }
 
     private void SetupDefaults()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
-        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
         _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -44,7 +44,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         // Click Settings tab
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
@@ -62,7 +62,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
 
@@ -86,7 +86,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
 
@@ -116,7 +116,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
 
@@ -144,7 +144,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
 
@@ -167,7 +167,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
 
@@ -181,23 +181,23 @@ public class ProjectDetailSectionComponentTests : BunitContext
 /// </summary>
 public class ProjectDetailSectionTemplatesTabTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
     public ProjectDetailSectionTemplatesTabTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
+        _mockStore = new Mock<IPipelineApiConfigClient>();
         SetupDefaults();
     }
 
     private void SetupDefaults()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 
@@ -216,14 +216,14 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
 
         _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>()))
             .ReturnsAsync(projectA);
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { projectA, projectB });
-        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "pA")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         // Click Templates tab
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
@@ -252,14 +252,14 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
 
         _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>()))
             .ReturnsAsync(projectA);
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { projectA, projectB });
-        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "pA")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
 
@@ -289,14 +289,14 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
 
         _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>()))
             .ReturnsAsync(projectA);
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { projectA, projectB });
-        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "pA")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         // Click Templates tab
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
@@ -329,14 +329,14 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
 
         _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>()))
             .ReturnsAsync(projectA);
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { projectA, projectB });
-        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "pA")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
 
@@ -347,8 +347,8 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
         // After AddTemplate, LoadDataAsync is called which re-invokes these:
         // Initial render calls each once, AddTemplate triggers a second call
         _mockStore.Verify(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>()), Times.AtLeast(2));
-        _mockStore.Verify(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()), Times.AtLeast(2));
-        _mockStore.Verify(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()), Times.AtLeast(2));
+        _mockStore.Verify(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()), Times.AtLeast(2));
+        _mockStore.Verify(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.AtLeast(2));
     }
 
     [Fact]
@@ -364,15 +364,15 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
 
         _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>()))
             .ReturnsAsync(projectA);
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { projectA }); // Only project A, which doesn't have T3
-        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
         (string Message, bool IsError)? statusMessage = null;
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "pA")
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, msg => { statusMessage = msg; })));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
@@ -382,7 +382,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
         cut.Find(".template-add-row .btn-save").Click();
 
         // MoveTemplateAsync should NOT be called
-        _mockStore.Verify(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockStore.Verify(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // Error status should be shown
         Assert.NotNull(statusMessage);
@@ -395,7 +395,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
     {
         // Project A has T1. After removal, LoadDataAsync must be called to refresh _allProjects.
         // TODO: The mock always returns the same projectA data (TemplateIds = ["t1"]) on every call,
-        // so this test only verifies LoadProjectsAsync was called, not that the refreshed data was
+        // so this test only verifies GetProjectsAsync was called, not that the refreshed data was
         // applied to the rendered component. To properly validate the stale-data fix, the mock should
         // return updated data on the second call (e.g., projectA with TemplateIds = []), and the test
         // should assert the rendered template list is empty after removal. As written the test would
@@ -408,23 +408,23 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
 
         _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>()))
             .ReturnsAsync(projectA);
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { projectA });
-        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "pA")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
 
         // Click remove button for Template One
         cut.Find(".btn-danger").Click();
 
-        // LoadProjectsAsync must be called at least twice:
+        // GetProjectsAsync must be called at least twice:
         // once on initial render, once after RemoveTemplate → LoadDataAsync
-        _mockStore.Verify(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()), Times.AtLeast(2));
+        _mockStore.Verify(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.AtLeast(2));
     }
 
     [Fact]
@@ -442,19 +442,19 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
 
         _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>()))
             .ReturnsAsync(projectA);
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { projectA, projectB });
-        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
         CancellationToken capturedToken = CancellationToken.None;
-        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, TemplateId, CancellationToken>((_, _, _, ct) => capturedToken = ct)
+        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((_, _, _, ct) => capturedToken = ct)
             .Returns(Task.CompletedTask);
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "pA")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
 
@@ -483,17 +483,17 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
 
         _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>()))
             .ReturnsAsync(projectA);
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { projectA, projectB });
-        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
-        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
 
         (string Message, bool IsError)? statusMessage = null;
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "pA")
-            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.ConfigClient, _mockStore.Object)
             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, msg => { statusMessage = msg; })));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
@@ -519,23 +519,23 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
 /// </summary>
 public class ProjectDetailSectionMcpTabTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
     public ProjectDetailSectionMcpTabTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
+        _mockStore = new Mock<IPipelineApiConfigClient>();
         SetupDefaults();
     }
 
     private void SetupDefaults()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
-        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
-        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
-        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
         _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -556,7 +556,7 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         // Act: navigate to MCP Servers tab
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("MCP Servers")).Click();
@@ -576,7 +576,7 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         // Act: navigate to MCP Servers tab
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("MCP Servers")).Click();
@@ -596,7 +596,7 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("MCP Servers")).Click();
 
@@ -619,7 +619,7 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         // Act: navigate to MCP Servers tab (form is false by default)
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("MCP Servers")).Click();
@@ -659,7 +659,7 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         // Act: navigate to MCP Servers tab — this triggered NullReferenceException before the fix
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("MCP Servers")).Click();
@@ -699,7 +699,7 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
 
         var cut = Render<ProjectDetailSection>(p => p
             .Add(s => s.ProjectId, "p1")
-            .Add(s => s.ConfigStore, _mockStore.Object));
+            .Add(s => s.ConfigClient, _mockStore.Object));
 
         // Act: navigate to MCP Servers tab — this triggered NullReferenceException before the fix
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("MCP Servers")).Click();

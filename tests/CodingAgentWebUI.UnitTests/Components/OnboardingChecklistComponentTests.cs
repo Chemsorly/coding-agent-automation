@@ -158,8 +158,8 @@ public class OnboardingChecklistComponentTests : BunitContext
     [Theory]
     [InlineData(0, "0", false, false, false, false, false, false)]
     [InlineData(50, "3", true, true, true, false, false, false)]
-    // TODO: Dead test case — the InlineData(100, ...) row always hits the early-return below and never executes assertions. Remove this row or restructure to verify the component is hidden when all steps are complete.
-    [InlineData(100, "6", true, true, true, true, true, true)]
+    // The [InlineData(100, ...)] row has been removed — it always hit the early-return guard
+    // and never executed assertions (self-documented TODO in original code).
     public void Checklist_ProgressBarWidth_ReflectsCompletion(int expectedWidth, string expectedAriaValue, bool hasIssue, bool hasRepo, bool hasProject, bool hasTemplate, bool hasAgent, bool isLoop)
     {
         // When all complete, the component hides — skip that case

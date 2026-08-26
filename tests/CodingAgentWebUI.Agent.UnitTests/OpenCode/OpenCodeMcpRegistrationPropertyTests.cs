@@ -3,6 +3,7 @@ using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Agent.OpenCode;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using FsCheck;
 using FsCheck.Fluent;

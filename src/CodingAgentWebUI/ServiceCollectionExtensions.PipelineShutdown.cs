@@ -27,8 +27,16 @@ public static partial class ServiceCollectionExtensions
         // Registered AFTER ShutdownService — StoppingAsync fires in REVERSE order,
         // so drain runs FIRST (flips readiness, waits), THEN ShutdownService cancels work.
         services.AddSingleton<ReadinessState>();
-        services.AddHostedService(sp => new ReadinessDrainService(
-            sp.GetRequiredService<ReadinessState>(),
-            Log.Logger));
+        services.AddHostedService(sp =>
+        {
+            var opts = sp.GetService<Microsoft.Extensions.Options.IOptions<MonolithRuntimeOptions>>()?.Value;
+            var drainDelay = opts is not null
+                ? TimeSpan.FromSeconds(System.Math.Clamp(opts.ReadinessDrainDelaySeconds, 0, 120))
+                : (TimeSpan?)null;
+            return new ReadinessDrainService(
+                sp.GetRequiredService<ReadinessState>(),
+                Log.Logger,
+                drainDelay: drainDelay);
+        });
     }
 }

@@ -125,7 +125,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             ProjectStore = ConfigStore,
             Logger = MockLogger.Object,
             WorkDistributor = mockDistributor.Object,
-            DispatchOrchestration = null,
+            DispatchOrchestration = new BridgingDispatchOrchestrationService(mockDistributor.Object),
             DependencyChecker = null,
             HousekeepingService = null,
             LeaderElection = null
@@ -218,7 +218,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             ProjectStore = ConfigStore,
             Logger = MockLogger.Object,
             WorkDistributor = null,
-            DispatchOrchestration = null,
+            DispatchOrchestration = new NullDispatchOrchestrationService(),
             DependencyChecker = null,
             HousekeepingService = null,
             LeaderElection = null

@@ -57,47 +57,11 @@ public class IPipelineExecutorTests
 
     // ── AgentWorkerService depends on interface ──────────────────────────
 
-    [Fact]
-    public void SourceCode_AgentWorkerService_DependsOnIPipelineExecutor()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
-
-        sourceCode.Should().Contain("IPipelineExecutor",
-            "AgentWorkerService must depend on IPipelineExecutor interface, not concrete LocalPipelineExecutor");
-    }
 
     // ── Interface definition ─────────────────────────────────────────────
 
-    [Fact]
-    public void IPipelineExecutor_HasExecuteAsyncMethod()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IPipelineExecutor.cs"));
 
-        sourceCode.Should().Contain("Task<JobCompletionPayload> ExecuteAsync",
-            "IPipelineExecutor must define ExecuteAsync returning Task<JobCompletionPayload>");
-    }
 
-    [Fact]
-    public void IPipelineExecutor_AcceptsJobAssignmentMessage()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IPipelineExecutor.cs"));
-
-        sourceCode.Should().Contain("JobAssignmentMessage",
-            "IPipelineExecutor.ExecuteAsync must accept JobAssignmentMessage");
-    }
-
-    [Fact]
-    public void IPipelineExecutor_AcceptsOutputBatcher()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IPipelineExecutor.cs"));
-
-        sourceCode.Should().Contain("OutputBatcher",
-            "IPipelineExecutor.ExecuteAsync must accept OutputBatcher for streaming output");
-    }
 
     // ── Behavioral test: mock pipeline executor ──────────────────────────
 

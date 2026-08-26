@@ -26,82 +26,13 @@ public class WorkItemExecutorRouterTests
 
     // ── Routing by TaskType ──────────────────────────────────────────────
 
-    [Fact]
-    public void SourceCode_Router_RoutesPipelineTasksToPipelineExecutor()
-    {
-        // WorkItemExecutorRouter must route non-consolidation tasks to the pipeline executor.
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemExecutorRouter.cs"));
 
-        // Must reference IPipelineExecutor (interface dependency)
-        sourceCode.Should().Contain("IPipelineExecutor",
-            "WorkItemExecutorRouter must delegate pipeline tasks via IPipelineExecutor interface");
-    }
 
-    [Fact]
-    public void SourceCode_Router_RoutesConsolidationToConsolidationExecutor()
-    {
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemExecutorRouter.cs"));
 
-        // Must reference IConsolidationExecutor (interface, not concrete class)
-        sourceCode.Should().Contain("IConsolidationExecutor",
-            "WorkItemExecutorRouter must delegate consolidation tasks via IConsolidationExecutor interface");
-
-        // Must check TaskType for routing
-        var checksTaskType = sourceCode.Contains("TaskType")
-            || sourceCode.Contains("Consolidation");
-        checksTaskType.Should().BeTrue(
-            "WorkItemExecutorRouter must route based on TaskType (Consolidation vs others)");
-    }
-
-    [Fact]
-    public void SourceCode_Router_AdaptsConsolidationResultToJobCompletionPayload()
-    {
-        // The consolidation executor returns ConsolidationJobResult, but the interface
-        // returns JobCompletionPayload. The router must adapt between them.
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemExecutorRouter.cs"));
-
-        sourceCode.Should().Contain("JobCompletionPayload",
-            "WorkItemExecutorRouter must return JobCompletionPayload for consolidation tasks (adapting from ConsolidationJobResult)");
-    }
-
-    [Fact]
-    public void SourceCode_Router_ReportsConsolidationComplete()
-    {
-        // The consolidation path must still report via ReportConsolidationComplete hub method
-        // (the orchestrator expects this specific message for consolidation runs).
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemExecutorRouter.cs"));
-
-        sourceCode.Should().Contain("ReportConsolidationComplete",
-            "WorkItemExecutorRouter must report consolidation results via ReportConsolidationComplete hub method");
-    }
 
     // ── Interface definition ─────────────────────────────────────────────
 
-    [Fact]
-    public void IWorkItemExecutor_ReturnsJobCompletionPayload()
-    {
-        // The interface must return JobCompletionPayload (unified return type)
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IWorkItemExecutor.cs"));
 
-        sourceCode.Should().Contain("Task<JobCompletionPayload>",
-            "IWorkItemExecutor.ExecuteAsync must return Task<JobCompletionPayload>");
-    }
-
-    [Fact]
-    public void IWorkItemExecutor_AcceptsJobAssignmentMessage()
-    {
-        // The interface must accept JobAssignmentMessage (the unified input)
-        var sourceCode = File.ReadAllText(
-            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "IWorkItemExecutor.cs"));
-
-        sourceCode.Should().Contain("JobAssignmentMessage",
-            "IWorkItemExecutor.ExecuteAsync must accept JobAssignmentMessage as input");
-    }
 
     // ── Constructor validation ───────────────────────────────────────────
 

@@ -1,7 +1,7 @@
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Services;
 
@@ -10,27 +10,25 @@ namespace CodingAgentWebUI.Services;
 /// forwards drawer operations to the focused drawer services.
 /// The Blazor component delegates to this service and retains only UI state.
 /// Registered as Scoped because it holds per-page mutable state.
+/// Config and project data are loaded via <see cref="IPipelineApiConfigClient"/>.
 /// </summary>
 public class AgentCodingPageService
 {
-    private readonly IPipelineLoopService _loopService;
-    private readonly IConfigurationStore _configStore;
-    private readonly IProjectStore _projectStore;
+    private readonly ISchedulerApiClient _schedulerClient;
+    private readonly IPipelineApiConfigClient _configClient;
     private readonly IIssueDrawerService _issueDrawerService;
     private readonly IPrReviewDrawerService _prReviewDrawerService;
     private readonly IEpicDrawerService _epicDrawerService;
 
     public AgentCodingPageService(
-        IPipelineLoopService loopService,
-        IConfigurationStore configStore,
-        IProjectStore projectStore,
+        ISchedulerApiClient schedulerClient,
+        IPipelineApiConfigClient configClient,
         IIssueDrawerService issueDrawerService,
         IPrReviewDrawerService prReviewDrawerService,
         IEpicDrawerService epicDrawerService)
     {
-        _loopService = loopService;
-        _configStore = configStore;
-        _projectStore = projectStore;
+        _schedulerClient = schedulerClient;
+        _configClient = configClient;
         _issueDrawerService = issueDrawerService;
         _prReviewDrawerService = prReviewDrawerService;
         _epicDrawerService = epicDrawerService;
@@ -119,20 +117,20 @@ public class AgentCodingPageService
     {
         try
         {
-            IssueProviders = (await _configStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
-            var allRepoProviders = (await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
-            PipelineProviders = (await _configStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
+            IssueProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
+            var allRepoProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
+            PipelineProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
             BrainProviders = allRepoProviders.Where(p => p.RepositoryRole == RepositoryRole.Brain).ToList();
             RepoProviders = allRepoProviders.Where(p => p.RepositoryRole != RepositoryRole.Brain).ToList();
 
-            var config = await _configStore.LoadPipelineConfigAsync(CancellationToken.None);
+            var config = await _configClient.GetPipelineConfigAsync(CancellationToken.None);
             MaxRetries = config.MaxRetries;
-            Templates = (await _projectStore.LoadAllTemplatesAsync(CancellationToken.None)).ToList();
+            Templates = (await _configClient.GetAllTemplatesAsync(CancellationToken.None)).ToList();
             PipelineConfig = config;
-            Projects = await _projectStore.LoadProjectsAsync(CancellationToken.None);
-            QualityGateConfigs = await _configStore.LoadQualityGateConfigsAsync(CancellationToken.None);
-            ReviewerConfigs = await _configStore.LoadReviewerConfigsAsync(CancellationToken.None);
-            AgentProfiles = await _configStore.LoadAgentProfilesAsync(CancellationToken.None);
+            Projects = await _configClient.GetProjectsAsync(CancellationToken.None);
+            QualityGateConfigs = await _configClient.GetQualityGateConfigsAsync(CancellationToken.None);
+            ReviewerConfigs = await _configClient.GetReviewerConfigsAsync(CancellationToken.None);
+            AgentProfiles = await _configClient.GetAgentProfilesAsync(CancellationToken.None);
 
             // Push provider context into drawer services so load callbacks have access
             PropagateProviderContext();
@@ -195,7 +193,7 @@ public class AgentCodingPageService
         if (idx < 0) return (true, null);
         var updated = updater(template, enabled);
         var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await _projectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
+        try { await _configClient.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}"); }
         Templates[idx] = updated;
         return (true, null);
@@ -227,20 +225,20 @@ public class AgentCodingPageService
             Enabled = true
         };
         var targetProjectId = string.IsNullOrEmpty(form.ProjectId) ? WellKnownIds.DefaultProjectId : form.ProjectId;
-        try { await _projectStore.SaveTemplateAsync(targetProjectId, newTemplate, CancellationToken.None); }
+        try { await _configClient.SaveTemplateAsync(targetProjectId, newTemplate, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}", null); }
         Templates.Add(newTemplate);
-        Projects = await _projectStore.LoadProjectsAsync(CancellationToken.None);
+        Projects = await _configClient.GetProjectsAsync(CancellationToken.None);
         return (true, null, $"Template \"{newTemplate.Name}\" added.");
     }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> RemoveTemplateAsync(PipelineJobTemplate template)
     {
         var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await _projectStore.DeleteTemplateAsync(projectId, template.Id, CancellationToken.None); }
+        try { await _configClient.DeleteTemplateAsync(projectId, template.Id, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to delete: {ex.Message}", null); }
         Templates.RemoveAll(t => t.Id == template.Id);
-        Projects = await _projectStore.LoadProjectsAsync(CancellationToken.None);
+        Projects = await _configClient.GetProjectsAsync(CancellationToken.None);
         return (true, null, $"Template \"{template.Name}\" removed.");
     }
 
@@ -252,9 +250,9 @@ public class AgentCodingPageService
             var sourceProject = Projects.FirstOrDefault(p => p.Id == sourceProjectId);
             var targetProject = Projects.FirstOrDefault(p => p.Id == targetProjectId);
             if (sourceProject == null || targetProject == null) return (true, null, null);
-            await _projectStore.SaveProjectAsync(sourceProject with { TemplateIds = sourceProject.TemplateIds.Where(id => id != templateId.Value).ToList() }, CancellationToken.None);
-            await _projectStore.SaveProjectAsync(targetProject with { TemplateIds = targetProject.TemplateIds.Append(templateId.Value).ToList() }, CancellationToken.None);
-            Projects = await _projectStore.LoadProjectsAsync(CancellationToken.None);
+            await _configClient.SaveProjectAsync(sourceProject with { TemplateIds = sourceProject.TemplateIds.Where(id => id != templateId.Value).ToList() }, CancellationToken.None);
+            await _configClient.SaveProjectAsync(targetProject with { TemplateIds = targetProject.TemplateIds.Append(templateId.Value).ToList() }, CancellationToken.None);
+            Projects = await _configClient.GetProjectsAsync(CancellationToken.None);
             return (true, null, $"Moved \"{Templates.FirstOrDefault(t => t.Id == templateId.Value)?.Name ?? templateId.Value}\" to {targetProject.Name}.");
         }
         catch (Exception ex) { return (false, $"Failed to move template: {ex.Message}", null); }
@@ -266,15 +264,9 @@ public class AgentCodingPageService
     {
         try
         {
-            var started = await _loopService.StartLoopAsync();
-            if (!started)
-            {
-                if (_loopService.ValidationErrors.Count > 0) return (false, "Loop failed to start due to validation errors (see below).");
-                if (_loopService.IsLoopActive) return (false, "Loop is already active.");
-                return (false, "A manual run is in progress. Wait for it to complete.");
-            }
-            await _configStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, CancellationToken.None);
-            return (true, null);
+            var result = await _schedulerClient.StartLoopAsync(CancellationToken.None);
+            // Persistence (ClosedLoopAutoStart=true) is handled by the Scheduler endpoint.
+            return (result.Started, result.Error);
         }
         catch (Exception ex)
         {
@@ -282,13 +274,31 @@ public class AgentCodingPageService
         }
     }
 
-    public async Task StopLoopAsync()
+    public async Task<(bool Success, string? Error)> StopLoopAsync()
     {
-        _loopService.StopLoop();
-        await _configStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, CancellationToken.None);
+        try
+        {
+            await _schedulerClient.StopLoopAsync(CancellationToken.None);
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Failed to stop loop: {ex.Message}");
+        }
     }
 
-    public void ResumeLoop() => _loopService.ResumeLoop();
+    public async Task<(bool Success, string? Error)> ResumeLoopAsync()
+    {
+        try
+        {
+            await _schedulerClient.ResumeLoopAsync(CancellationToken.None);
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Failed to resume loop: {ex.Message}");
+        }
+    }
 
     // ── Issue drawer forwarding wrappers ──
 
@@ -391,16 +401,23 @@ public class AgentCodingPageService
     {
         PropagateProviderContext();
         HideOtherDrawers(DrawerTabPr);
+        // Refresh the active-work-item set before opening, exactly as OpenIssueDrawerAsync does.
+        // The PR drawer greys out and badges rows that already have an in-flight work item, and
+        // that check reads the same ActiveIssues set the issue drawer maintains — which starts
+        // empty on a fresh circuit. Without this refresh the PR drawer never shows a PR as already
+        // being processed until something else happens to populate the set.
+        await RefreshActiveIssuesAsync();
         return await _prReviewDrawerService.OpenPrDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
     public void ClosePrDrawer() => _prReviewDrawerService.ClosePrDrawer();
 
-    public Task<string?> SwitchToPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
+    public async Task<string?> SwitchToPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         PropagateProviderContext();
         HideOtherDrawers(DrawerTabPr);
-        return _prReviewDrawerService.SwitchToPrDrawerAsync(templateId, Templates, notifyStateChanged);
+        await RefreshActiveIssuesAsync();
+        return await _prReviewDrawerService.SwitchToPrDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)

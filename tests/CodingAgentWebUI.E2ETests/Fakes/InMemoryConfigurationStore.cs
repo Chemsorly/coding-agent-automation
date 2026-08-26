@@ -258,4 +258,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
 
         return Task.CompletedTask;
     }
+
+    public Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)
+        => Task.FromResult(_templates.Any(t => t.Enabled));
 }

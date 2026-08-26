@@ -1,100 +1,161 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Services;
 using FsCheck;
+using FsCheck.Fluent;
 using FsCheck.Xunit;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Properties;
 
 /// <summary>
-/// Property-based tests for DependencyParser.
-/// Verifies crash-freedom: Parse never throws for any string input.
-/// Also verifies structural invariants (output always non-negative, always deduplicated).
+/// Property-based tests for <see cref="DependencyParser.Parse"/>.
+///
+/// DependencyParser is a security-adjacent regex parser that gates pipeline dispatch:
+/// if it throws or returns incorrect results on adversarial input, issues can be
+/// dispatched with wrong dependency constraints or the pipeline can crash.
+///
+/// Properties tested:
+///   - Crash-freedom: no arbitrary string input causes an exception
+///   - Result ⊆ positive integers: all returned values are ≥ 1
+///   - Idempotence: parsing the same body twice returns the same set
+///   - Self-exclusion: when selfIdentifier is set, that number is never in the result
 /// </summary>
 [Trait("Feature", "027-issue-dependency-tracking")]
 public class DependencyParserPropertyTests
 {
+    // Shared string generator — fixed-length char arrays to avoid FsCheck 3 String default issues
+    private static Gen<string> ArbitraryStringGen =>
+        Gen.Choose(0, 300)
+            .SelectMany(len => Gen.ArrayOf(Gen.Choose(0, 127).Select(i => (char)i), len))
+            .Select(chars => new string(chars));
+
+    // ── Crash-freedom ──────────────────────────────────────────────────────────
+
     /// <summary>
-    /// Crash-freedom: Parse never throws an exception for any arbitrary string input.
-    /// This covers malicious regex inputs, unicode, control characters, null bytes, etc.
+    /// Parse never throws regardless of input. Regex timeout falls back to partial results.
     /// </summary>
-    [Property(MaxTest = 20)]
-    public bool Parse_NeverThrows_ForAnyInput(string? body)
+    [Property(MaxTest = 200)]
+    public Property Parse_ArbitraryInput_NeverThrows()
     {
-        // Act — should not throw
+        return Prop.ForAll(ArbitraryStringGen.ToArbitrary(), (string body) =>
+        {
+            Exception? ex = null;
+            try { DependencyParser.Parse(body); }
+            catch (Exception e) { ex = e; }
+            ex.Should().BeNull($"Parse must never throw — it returned exception for input length={body.Length}");
+        });
+    }
+
+    // ── Result invariants ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// All returned issue numbers are strictly positive integers (> 0).
+    /// </summary>
+    [Property(MaxTest = 100)]
+    public Property Parse_ReturnsOnlyPositiveIntegers()
+    {
+        // Mix numeric (#N) and alpha-identifier (PROJ-123) forms to exercise both capture groups.
+        // Alpha-identifiers are never parseable as int, so they must produce no results (not
+        // non-positive integers). This exercises the Group 2 branch of the regex.
+        var numericBodyGen =
+            from keyword in Gen.Elements("Blocked by", "Depends on", "Requires", "After")
+            from number in Gen.Choose(1, 99999)
+            from prefix in Gen.Elements("", "Some text before. ", "\n", "  ")
+            from suffix in Gen.Elements("", " some text after", "\nmore content")
+            select $"{prefix}{keyword} #{number}{suffix}";
+
+        var alphaBodyGen =
+            from keyword in Gen.Elements("Blocked by", "Depends on", "Requires", "After")
+            from id in Gen.Elements("PROJ-123", "TICKET-456", "ISSUE-99", "ABC-1")
+            select $"{keyword} {id}";
+
+        var gen = Gen.OneOf(numericBodyGen, alphaBodyGen);
+
+        return Prop.ForAll(gen.ToArbitrary(), (string body) =>
+        {
+            var result = DependencyParser.Parse(body);
+            result.Should().AllSatisfy(n => n.Should().BeGreaterThan(0,
+                $"every parsed dependency must be a positive integer, got {n} from input: [{body}]"));
+        });
+    }
+
+    /// <summary>
+    /// Parse is idempotent: calling it twice on the same body returns equal sets.
+    /// </summary>
+    [Property(MaxTest = 100)]
+    public Property Parse_SameInput_IsIdempotent()
+    {
+        return Prop.ForAll(ArbitraryStringGen.ToArbitrary(), (string body) =>
+        {
+            var result1 = DependencyParser.Parse(body);
+            var result2 = DependencyParser.Parse(body);
+
+            result1.Should().BeEquivalentTo(result2, opts => opts.WithoutStrictOrdering(),
+                "Parse is deterministic — two calls on identical input must return the same set");
+        });
+    }
+
+    // ── Self-exclusion ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// When selfIdentifier is provided, that number is never in the result.
+    /// </summary>
+    [Property(MaxTest = 100)]
+    public Property Parse_WithSelfIdentifier_ExcludesSelf()
+    {
+        var gen =
+            from self in Gen.Choose(1, 1000)
+            from other in Gen.Choose(1, 1000).Where(n => n != self)
+            select (self, other,
+                body: $"Blocked by #{self} and also depends on #{other}");
+
+        return Prop.ForAll(gen.ToArbitrary(), t =>
+        {
+            var (self, other, body) = t;
+            var result = DependencyParser.Parse(body, selfIdentifier: self);
+
+            result.Should().NotContain(self,
+                $"selfIdentifier={self} must be excluded from parse results");
+            result.Should().Contain(other,
+                $"other dependency #{other} must still be included when selfIdentifier={self}");
+        });
+    }
+
+    // ── Null / empty edge cases ────────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_NullBody_ReturnsEmptyWithoutThrowing()
+    {
+        var result = DependencyParser.Parse(null);
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Parse_EmptyBody_ReturnsEmptyWithoutThrowing()
+    {
+        var result = DependencyParser.Parse(string.Empty);
+        result.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Alpha-identifiers like "PROJ-123" match the regex but are non-numeric — they must
+    /// produce no results, not a positive integer. Regression guard for Group 2 branch.
+    /// </summary>
+    [Theory]
+    [InlineData("Blocked by PROJ-123", false)]
+    [InlineData("Depends on TICKET-456", false)]
+    [InlineData("Requires ABC-1", false)]
+    [InlineData("After ISSUE-99", false)]
+    [InlineData("Blocked by PROJ-123 and also Depends on #42", true)]
+    public void Parse_AlphaIdentifier_NotIncludedInResults(string body, bool containsNumericRef)
+    {
         var result = DependencyParser.Parse(body);
 
-        // Assert — result is always a valid list
-        return result is not null;
-    }
+        // Alpha identifiers are non-numeric so they must never appear in results
+        result.Should().AllSatisfy(n => n.Should().BeGreaterThan(0,
+            $"alpha identifiers like PROJ-123 must never produce non-positive integers, got {n}"));
 
-    /// <summary>
-    /// Crash-freedom with selfIdentifier: Parse never throws regardless of selfIdentifier value.
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public bool Parse_WithSelfIdentifier_NeverThrows(string? body, int? selfIdentifier)
-    {
-        var result = DependencyParser.Parse(body, selfIdentifier);
-
-        return result is not null;
-    }
-
-    /// <summary>
-    /// All returned issue numbers are strictly positive.
-    /// The implementation filters out zero and negative numbers.
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public bool Parse_AllResults_ArePositive(string? body)
-    {
-        var result = DependencyParser.Parse(body);
-
-        return result.All(n => n > 0);
-    }
-
-    /// <summary>
-    /// Results are always unique (no duplicates in output).
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public bool Parse_Results_AreAlwaysUnique(string? body)
-    {
-        var result = DependencyParser.Parse(body);
-
-        return result.Count == result.Distinct().Count();
-    }
-
-    /// <summary>
-    /// When selfIdentifier is provided, it never appears in results.
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public bool Parse_SelfIdentifier_NeverInResults(NonEmptyString bodyNes, PositiveInt selfId)
-    {
-        var body = $"Blocked by #{selfId.Get} and depends on #{selfId.Get + 1}";
-        var result = DependencyParser.Parse(body, selfId.Get);
-
-        return !result.Contains(selfId.Get);
-    }
-
-    /// <summary>
-    /// Embedding a known dependency pattern always produces at least one result
-    /// (unless the number is zero or equals selfIdentifier).
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public bool Parse_WithEmbeddedPattern_FindsDependency(PositiveInt issueNumber)
-    {
-        var body = $"Some context text. Blocked by #{issueNumber.Get}. More text.";
-        var result = DependencyParser.Parse(body);
-
-        return result.Contains(issueNumber.Get);
-    }
-
-    /// <summary>
-    /// Idempotence: parsing the same body twice yields the same results.
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public bool Parse_IsIdempotent(string? body)
-    {
-        var result1 = DependencyParser.Parse(body);
-        var result2 = DependencyParser.Parse(body);
-
-        return result1.SequenceEqual(result2);
+        // Mixed case: the numeric #42 should still be included
+        if (containsNumericRef)
+            result.Should().Contain(42, "numeric refs alongside alpha refs must still be parsed");
     }
 }

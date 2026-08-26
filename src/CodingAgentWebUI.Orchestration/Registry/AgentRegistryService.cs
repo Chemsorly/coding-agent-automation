@@ -78,7 +78,7 @@ public sealed class AgentRegistryService : IAgentRegistryService
                             // Agent reconnected with active job — restore to Busy (REQ-3.6)
                             existing.Status = AgentStatus.Busy;
                             // TODO: Add test coverage for BusySince being set during re-registration with active job.
-                            // Without this, a reconnecting agent could be spuriously reset by HeartbeatMonitor.
+                            // Without this, a reconnecting agent could be spuriously reset by a concurrent status sweep.
                             existing.BusySince = DateTimeOffset.UtcNow;
                             _logger.Information(
                                 "Agent {AgentId} re-registered after disconnect with active job {JobId}, status restored to Busy",
@@ -279,5 +279,33 @@ public sealed class AgentRegistryService : IAgentRegistryService
     {
         _agents.Clear();
         _connectionIndex.Clear();
+    }
+
+    /// <inheritdoc />
+    public Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value)
+    {
+        ArgumentNullException.ThrowIfNull(agentId.Value);
+        if (!_agents.TryGetValue(agentId.Value, out var entry))
+        {
+            _logger.Warning("UpdateAgentFieldAsync: agent {AgentId} not found (field={Field})", agentId, field);
+            return Task.CompletedTask;
+        }
+
+        lock (entry.SyncRoot)
+        {
+            switch (field)
+            {
+                case "activeJobId":         entry.ActiveJobId = value; break;
+                case "orphanRestoredAt":    entry.OrphanRestoredAt = value is null ? null : DateTimeOffset.Parse(value); break;
+                case "activeChatSessionId": entry.ActiveChatSessionId = value; break;
+                case "lastJobCompletedAt":  entry.LastJobCompletedAt = value is null ? null : DateTimeOffset.Parse(value); break;
+                case "disabled":            entry.Disabled = value is not null && bool.Parse(value); break;
+                default:
+                    _logger.Warning("UpdateAgentFieldAsync: unknown field '{Field}' for agent {AgentId}", field, agentId);
+                    break;
+            }
+        }
+
+        return Task.CompletedTask;
     }
 }

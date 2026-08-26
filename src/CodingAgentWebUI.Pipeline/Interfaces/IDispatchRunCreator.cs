@@ -15,8 +15,8 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// </summary>
 /// <remarks>
 /// Extracted to break the concrete coupling between dispatch services
-/// (AgentJobDispatcher, DispatchOrchestrationService, PipelineLoopService)
-/// and the 14-dependency PipelineOrchestrationService god object.
+/// (<see cref="Services.DispatchRunCreationService"/>, <see cref="IDispatchOrchestrationService"/>, <see cref="Services.PipelineLoopService"/>)
+/// and the orchestration layer.
 /// </remarks>
 public interface IDispatchRunCreator
 {

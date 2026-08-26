@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Orchestration;
 /// Default implementation of <see cref="IRunLifecycleManager"/>.
 /// Coordinates terminal state transitions across all stores:
 /// - In-memory (OrchestratorRunService)
-/// - Database (WorkItemFallbackTransitionService / WorkItemTransitionService) — null in Legacy mode
+/// - Database (WorkItemFallbackTransitionService / WorkItemTransitionService) — null in test environments
 /// - Agent registry (IAgentRegistryService)
 /// - Labels (ILabelService)
 /// - History (IPipelineRunHistoryService)
@@ -26,7 +26,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IAgentRegistryService _registry;
     private readonly ILabelService _labelService;
-    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly ILogger _logger;
     private readonly IJobCleanupStrategy? _jobCleanup;
 
@@ -46,7 +45,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         _historyService = deps.HistoryService;
         _registry = deps.Registry;
         _labelService = deps.LabelService;
-        _dispatcher = deps.Dispatcher;
         _logger = deps.Logger;
         _jobCleanup = deps.JobCleanup;
     }
@@ -72,7 +70,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         run.MarkCompleted();
         run.CurrentStep = PipelineStep.Failed;
 
-        // 2. Transition WorkItem in DB (no-op in Legacy mode)
+        // 2. Transition WorkItem in DB (no-op when WorkItemFallbackTransitionService is not registered)
         await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct, failureReason, failureReasonEnum);
 
         // 3. Persist to history — wrapped in try/catch so downstream cleanup still runs
@@ -85,18 +83,16 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Error(ex, "FailRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
         }
 
-        // 4. Mark issue complete in dedup tracker
-        _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         // 5. Clear agent state
-        ClearAgentState(run.AgentId);
+        await ClearAgentStateAsync(run.AgentId);
 
         // 6. Swap label to error
         await _labelService.TrySwapLabelAsync(run, AgentLabels.Error, _logger, "RunLifecycleManager", ct);
 
         _logger.Information(
-            "RunLifecycleManager.FailRunAsync: run {RunId} failed (reason={Reason}, agent={AgentId})",
-            runId, failureReason, run.AgentId);
+            "RunLifecycleManager.FailRunAsync: run {RunId} terminal (status=Failed, step={Step}, highWater={HighWater}, reason={Reason}, agent={AgentId})",
+            runId, run.CurrentStep, run.HighWaterMark, failureReason, run.AgentId ?? "none");
 
         return run;
     }
@@ -144,12 +140,10 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Error(ex, "CompleteRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
         }
 
-        // 3. Mark issue complete in dedup tracker
-        _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         _logger.Information(
-            "RunLifecycleManager.CompleteRunAsync: run {RunId} completed (status={Status})",
-            runId, terminalStatus);
+            "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, step={Step}, highWater={HighWater}, agent={AgentId})",
+            runId, terminalStatus, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none");
 
         return run;
     }
@@ -188,11 +182,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Error(ex, "CancelRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
         }
 
-        // 4. Mark issue complete in dedup tracker
-        _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         // 5. Clear agent state
-        ClearAgentState(run.AgentId);
+        await ClearAgentStateAsync(run.AgentId);
 
         // 6. Swap label
         await _labelService.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "RunLifecycleManager", ct);
@@ -204,8 +196,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 
         _logger.Information(
-            "RunLifecycleManager.CancelRunAsync: run {RunId} cancelled (agent={AgentId})",
-            runId, run.AgentId);
+            "RunLifecycleManager.CancelRunAsync: run {RunId} terminal (status=Cancelled, step={Step}, highWater={HighWater}, agent={AgentId}, reason={Reason})",
+            runId, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none", failureReason ?? "none");
 
         return run;
     }
@@ -221,20 +213,32 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // field reports "Value" as the parameter name in exceptions rather than "agentId".
         ArgumentNullException.ThrowIfNull(agentId.Value);
 
-        // 1. Set AgentId on the in-memory PipelineRun
+        // 1. Set AgentId on the in-memory PipelineRun and persist
         var run = _runService.GetRun(runId);
         if (run is not null)
+        {
             run.AgentId = agentId.Value;
+            _runService.ReplaceRun(run);
+        }
+        else
+        {
+            _logger.Warning(
+                "AgentAcceptedRunAsync: run {RunId} not found in store — AgentId {AgentId} not persisted (run may have expired or been removed by another replica)",
+                runId, agentId);
+        }
 
         // 2. Set ActiveJobId on agent + transition to Busy
         var agent = _registry.GetByAgentId(agentId);
         if (agent is not null)
         {
-            lock (agent.SyncRoot)
-            {
-                agent.ActiveJobId = runId.Value;
-            }
+            await _registry.UpdateAgentFieldAsync(agentId, "activeJobId", runId.Value);
             _registry.TransitionStatus(agentId, AgentStatus.Busy);
+        }
+        else
+        {
+            _logger.Warning(
+                "AgentAcceptedRunAsync: agent {AgentId} not found in registry — activeJobId not set, status not transitioned to Busy",
+                agentId);
         }
 
         // 3. Swap label to agent:in-progress (best-effort)
@@ -283,22 +287,24 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         }
     }
 
-    private void ClearAgentState(string? agentId)
+    private async Task ClearAgentStateAsync(string? agentId)
     {
         if (string.IsNullOrEmpty(agentId))
             return;
 
         var agent = _registry.GetByAgentId(agentId);
         if (agent is null)
-            return;
-
-        lock (agent.SyncRoot)
         {
-            agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null;
+            _logger.Warning(
+                "ClearAgentState: agent {AgentId} not found in registry (hash expired or agent deregistered) — skipping status transition",
+                agentId);
+            return;
         }
 
-        _registry.TransitionStatus(agentId, AgentStatus.Idle);
+        await _registry.UpdateAgentFieldAsync(new AgentId(agentId), "activeJobId", null);
+        await _registry.UpdateAgentFieldAsync(new AgentId(agentId), "orphanRestoredAt", null);
+
+        _registry.TransitionStatus(new AgentId(agentId), AgentStatus.Idle);
     }
 
 }

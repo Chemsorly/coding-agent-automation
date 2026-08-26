@@ -10,7 +10,7 @@ namespace CodingAgentWebUI.Agent;
 /// constructor parameter count (S107). All members are required.
 /// </summary>
 // TODO: [WARNING] AgentId and HostApplicationLifetime are no longer consumed by AgentWorkerService itself —
-// they are passed through to ChatJobHandler/ConsolidationJobHandler via AgentSignalRModeRegistration before
+// they are passed through to ChatJobHandler/ConsolidationJobHandler via AgentChatModeRegistration before
 // being handed to this record. AgentWorkerService does not validate or store them, so callers are implicitly
 // required to provide them without knowing why. Consider removing them from this record (passing them directly
 // to the handler factories instead), or add ArgumentNullException.ThrowIfNull guards with an explanatory comment

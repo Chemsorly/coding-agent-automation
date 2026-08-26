@@ -1,0 +1,85 @@
+using CodingAgentWebUI.Hub;
+using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.Models;
+using MessagePack;
+using MessagePack.Formatters;
+using MessagePack.Resolvers;
+using Microsoft.AspNetCore.SignalR;
+using Serilog;
+using StackExchange.Redis;
+
+namespace CodingAgentWebUI.Api;
+
+/// <summary>
+/// Extension methods for registering SignalR for the Pipeline API,
+/// with optional Redis backplane (Req 5.8).
+/// </summary>
+internal static class ApiSignalRRegistration
+{
+    /// <summary>
+    /// Registers SignalR with MessagePack protocol, agent authorization filter,
+    /// and an optional Redis backplane when SignalR:Redis:ConnectionString is set.
+    /// Channel prefix "caa" matches the monolith (Req 5.8).
+    /// </summary>
+    public static IServiceCollection AddApiSignalR(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var signalR = services.AddSignalR(options =>
+            {
+                options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
+                // AddFilter is the ONLY way to activate a hub filter. Registering
+                // AgentAuthorizationFilter as IHubFilter in DI does not install it — the
+                // dispatcher reads HubOptions.HubFilters, which only AddFilter populates.
+                options.AddFilter<AgentAuthorizationFilter>();
+            })
+            .AddMessagePackProtocol(options =>
+            {
+                options.SerializerOptions = MessagePackSerializerOptions.Standard
+                    .WithResolver(CompositeResolver.Create(
+                        new IMessagePackFormatter[] { new JobIdFormatter(), new AgentIdFormatter() },
+                        new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
+            });
+
+        // Hub filter for agent authorization — resolved by AddFilter<AgentAuthorizationFilter>()
+        // above, so it must be registered under its concrete type.
+        services.AddSingleton(sp => new AgentAuthorizationFilter(
+            sp.GetRequiredService<IAgentRegistryService>(),
+            Log.Logger));
+
+        // ── Optional Redis backplane (Req 5.8) ──────────────────────────────
+        var redisConnectionString = configuration.GetValue<string>("SignalR:Redis:ConnectionString");
+        if (!string.IsNullOrEmpty(redisConnectionString))
+        {
+            var config = ConfigurationOptions.Parse(redisConnectionString);
+            config.ChannelPrefix = RedisChannel.Literal("caa");
+            config.AbortOnConnectFail = false;
+            config.ConnectRetry = 5;
+            config.ReconnectRetryPolicy = new ExponentialRetry(5000, 55000);
+
+            // Create the multiplexer once and share it between SignalR's backplane and
+            // the /readyz probe. A single shared instance means the probe checks the exact
+            // connection that serves hub messages — no second connection to maintain.
+            var multiplexer = ConnectionMultiplexer.Connect(config);
+            multiplexer.ConnectionFailed += (_, e) =>
+                Log.Warning("Redis backplane connection failed: {FailureType} — {Exception}",
+                    e.FailureType, e.Exception?.Message);
+            multiplexer.ConnectionRestored += (_, e) =>
+                Log.Information("Redis backplane connection restored: {EndPoint}", e.EndPoint);
+
+            // Register as IConnectionMultiplexer so /readyz can resolve it conditionally.
+            services.AddSingleton<IConnectionMultiplexer>(multiplexer);
+
+            signalR.AddStackExchangeRedis(options =>
+            {
+                options.Configuration = config;
+                // Reuse the shared multiplexer instead of creating a second connection.
+                options.ConnectionFactory = _ => Task.FromResult<IConnectionMultiplexer>(multiplexer);
+            });
+
+            Log.Information("Pipeline API: SignalR Redis backplane configured");
+        }
+
+        return services;
+    }
+}

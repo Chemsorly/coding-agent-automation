@@ -6,8 +6,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Encapsulates label swap logic with configurable retry policy.
-/// Used by both <see cref="DispatchService"/> (K8s mode, maxAttempts=1) and
-/// <see cref="PendingWorkItemDrainService"/> (SignalR mode, maxAttempts=3).
+/// Used by <see cref="DispatchService"/> with maxAttempts=1.
 /// </summary>
 public interface ILabelSwapService
 {
@@ -26,8 +25,6 @@ public interface ILabelSwapService
 
 /// <summary>
 /// Default implementation of <see cref="ILabelSwapService"/>.
-/// Extracted from <c>PendingWorkItemDrainService.SwapLabelWithRetryAsync</c>
-/// and <c>TrySwapLabelOnceAsync</c>.
 /// </summary>
 internal sealed class LabelSwapService : ILabelSwapService
 {

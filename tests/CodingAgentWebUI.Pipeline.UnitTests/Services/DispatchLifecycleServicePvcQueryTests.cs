@@ -1,7 +1,8 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Dispatch;
+using DispatchLifecycleService = CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;

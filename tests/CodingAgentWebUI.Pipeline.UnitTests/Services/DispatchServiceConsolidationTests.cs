@@ -1,11 +1,14 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Api.Dispatch;
+using DispatchLifecycleService = CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService;
+using DispatchStateBuilder = CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder;
+using DispatchTemplateResolver = CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.LeaderElection;
-using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
@@ -609,8 +612,13 @@ public class DispatchServiceConsolidationTests : IDisposable
     public async Task FullLifecycle_ConsolidationInsert_Dispatch_Complete()
     {
         // Step 1: Insert via KubernetesWorkDistributor
+        var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        mockApiClient
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => Guid.NewGuid());
+
         var distributor = new KubernetesWorkDistributor(
-            _dbFactory, _transitionService,
+            mockApiClient.Object,
             NullLogger<KubernetesWorkDistributor>.Instance);
 
         var runId = Guid.NewGuid().ToString();
@@ -632,6 +640,26 @@ public class DispatchServiceConsolidationTests : IDisposable
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
         result.Success.Should().BeTrue();
         result.Queued.Should().BeTrue();
+
+        // DistributeAsync is now API-backed and does not insert into local DB.
+        // Insert the row directly so the consolidation dispatch service can find it.
+        var workItemId = Guid.Parse(result.WorkItemId!);
+        await using (var seedDb = await _dbFactory.CreateDbContextAsync())
+        {
+            seedDb.WorkItems.Add(new CodingAgentWebUI.Infrastructure.Persistence.Entities.WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = request.TaskType,
+                IssueIdentifier = runId,
+                IssueProviderConfigId = "consolidation",
+                Status = WorkItemStatus.Pending,
+                Payload = System.Text.Json.JsonSerializer.Serialize(request, PipelineJsonOptions.Default),
+                AgentSelector = request.AgentSelector ?? "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 0
+            });
+            await seedDb.SaveChangesAsync();
+        }
 
         // Step 2: Dispatch via ConsolidationWorkItemDispatchService
         _mockKubeClient
@@ -666,7 +694,6 @@ public class DispatchServiceConsolidationTests : IDisposable
         }
 
         // Step 3: Simulate agent completion
-        var workItemId = Guid.Parse(result.WorkItemId!);
         await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, _ => { }, ct: CancellationToken.None);
         await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Succeeded,
             w => w.CompletedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);

@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Serilog;

@@ -3503,7 +3503,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new PipelineCancellationFacade(null, mockCancellation.Object),
+            new PipelineCancellationFacade(mockCancellation.Object),
             lifecycle,
             new TestOrchestrationFactory.NoOpLabelService(),
             _mockLogger.Object);
@@ -3552,7 +3552,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new PipelineCancellationFacade(null, mockCancellation.Object),
+            new PipelineCancellationFacade(mockCancellation.Object),
             lifecycle,
             new TestOrchestrationFactory.NoOpLabelService(),
             _mockLogger.Object);
@@ -3594,7 +3594,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new PipelineCancellationFacade(null, null),
+            new PipelineCancellationFacade(null),
             lifecycle,
             new Orchestration.LabelService(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),
             _mockLogger.Object);
@@ -3661,16 +3661,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var lifecycle = new PipelineRunLifecycleService(
             mockHistoryService.Object, runService, _mockLogger.Object);
 
-        var dedupCount = 0;
-        var mockDedup = new Mock<IJobDeduplicationGuard>();
-        mockDedup
-            .Setup(d => d.MarkIssueComplete(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
-            .Callback(() => dedupCount++);
-
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new PipelineCancellationFacade(mockDedup.Object, null),
+            new PipelineCancellationFacade(null),
             lifecycle,
             new TestOrchestrationFactory.NoOpLabelService(),
             _mockLogger.Object);
@@ -3680,7 +3674,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         // Assert — both sentinels released even though AgentId is null
         runService.GetActiveRuns().Should().BeEmpty();
-        dedupCount.Should().Be(2);
     }
 
     [Fact]
@@ -3712,7 +3705,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new PipelineCancellationFacade(null, mockCancellation.Object),
+            new PipelineCancellationFacade(mockCancellation.Object),
             lifecycle,
             new TestOrchestrationFactory.NoOpLabelService(),
             _mockLogger.Object);
@@ -3753,7 +3746,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new PipelineCancellationFacade(null, null),
+            new PipelineCancellationFacade(null),
             lifecycle,
             new TestOrchestrationFactory.NoOpLabelService(),
             _mockLogger.Object);
@@ -3767,50 +3760,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
             Times.Never);
     }
 
-    [Fact]
-    public async Task ReleaseActiveAgentRunsAsync_StillReleasesIssueFromDedupGuard()
-    {
-        // Arrange — dedup must be released so the new pod can adopt / re-dispatch the issue
-        var mockRunService = new Mock<IOrchestratorRunService>();
-        var agentRun = new PipelineRun
-        {
-            RunId = "agent-run-dedup",
-            IssueIdentifier = "1912",
-            IssueTitle = "Dedup release check",
-            IssueProviderConfigId = "issue-1",
-            RepoProviderConfigId = "repo-1",
-            CurrentStep = PipelineStep.GeneratingCode,
-            HighWaterMark = PipelineStep.GeneratingCode,
-            StartedAt = DateTime.UtcNow,
-            AgentId = "caa-dedup-agent"
-        };
-        mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun> { agentRun }.AsReadOnly());
-        mockRunService.Setup(r => r.HasActiveRuns).Returns(true);
-
-        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        var lifecycle = new PipelineRunLifecycleService(
-            mockHistoryService.Object, mockRunService.Object, _mockLogger.Object);
-
-        var dedupCallCount = 0;
-        var mockDedup = new Mock<IJobDeduplicationGuard>();
-        mockDedup
-            .Setup(d => d.MarkIssueComplete(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
-            .Callback(() => dedupCallCount++);
-
-        var service = new PipelineOrchestrationService(
-            _mockConfigStore.Object,
-            _mockFactory.Object,
-            new PipelineCancellationFacade(mockDedup.Object, null),
-            lifecycle,
-            new TestOrchestrationFactory.NoOpLabelService(),
-            _mockLogger.Object);
-
-        // Act
-        await service.ReleaseActiveAgentRunsAsync();
-
-        // Assert — dedup released so new pod is not blocked on re-dispatching
-        dedupCallCount.Should().Be(1);
-    }
 
     [Fact]
     public async Task ReleaseActiveAgentRunsAsync_StillRemovesRunsFromInMemoryTracking()
@@ -3838,7 +3787,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
             _mockFactory.Object,
-            new PipelineCancellationFacade(null, null),
+            new PipelineCancellationFacade(null),
             lifecycle,
             new TestOrchestrationFactory.NoOpLabelService(),
             _mockLogger.Object);

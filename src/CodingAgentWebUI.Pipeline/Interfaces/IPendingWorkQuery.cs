@@ -3,8 +3,7 @@ using CodingAgentWebUI.Pipeline.Models;
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
-/// Provides a unified view of work items queued for dispatch, regardless of the
-/// underlying distribution mode (Legacy in-memory, DB+SignalR, or Kubernetes).
+/// Provides a unified view of work items queued for dispatch.
 /// Consumed by UI components and telemetry — never by dispatch logic.
 /// </summary>
 public interface IPendingWorkQuery

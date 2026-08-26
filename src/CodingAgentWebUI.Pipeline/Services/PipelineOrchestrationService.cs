@@ -22,13 +22,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 {
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly ILabelService _labelSwapper;
-    private readonly IPipelineCancellationFacade _cancellationFacade;
     private readonly Serilog.ILogger _logger;
 
     protected readonly PipelineProviderManager _providerManager;
 
     public PipelineOrchestrationService(
-        IConfigurationStore configurationStore,
+        IProviderConfigStore configurationStore,
         IProviderFactory providerFactory,
         IPipelineCancellationFacade cancellationFacade,
         PipelineRunLifecycleService lifecycle,
@@ -44,7 +43,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
         _labelSwapper = labelSwapper;
         _logger = logger;
-        _cancellationFacade = cancellationFacade;
         _providerManager = new PipelineProviderManager(configurationStore, providerFactory, logger);
         _lifecycle = lifecycle;
     }
@@ -62,9 +60,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             _logger.Information(
                 "Pipeline {RunId} CancelPipelineAsync: {IssueIdentifier} → {Label} (runType={RunType}, step={CurrentStep})",
                 run.RunId, run.IssueIdentifier, AgentLabels.Cancelled, run.RunType, run.CurrentStep);
-            // TODO: Behavioral change — original SwapAgentLabelAsync caught ALL exceptions including
-            // OperationCanceledException. TrySwapLabelAsync lets OCE propagate. Unlikely with CancellationToken.None
-            // but possible if internal HttpClient times out.
+            // Note: TrySwapLabelAsync lets OperationCanceledException propagate (unlike the original
+            // SwapAgentLabelAsync which caught all exceptions). Unlikely with CancellationToken.None
+            // but possible if the internal HttpClient times out.
             await _labelSwapper.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "PipelineOrchestrationService.CancelPipelineAsync", CancellationToken.None);
         }
 
@@ -83,17 +81,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     public Task ReleaseActiveAgentRunsAsync()
     {
         // Release all runs from in-memory tracking — includes sentinels (AgentId == null)
-        // so their dedup guards are always freed, even if agents haven't called JobAccepted yet.
-        var releasedIssues = _lifecycle.ReleaseAgentRunsForHandoff();
-
-        // Release dedup guards so the new pod can adopt / re-dispatch the issues
-        if (_cancellationFacade.DedupGuard is not null)
-        {
-            foreach (var (issueId, providerId) in releasedIssues)
-            {
-                _cancellationFacade.DedupGuard.MarkIssueComplete(issueId, providerId);
-            }
-        }
+        // so the new pod can adopt / re-dispatch them, even if agents haven't called JobAccepted yet.
+        // Re-dispatch safety no longer needs an in-memory guard release: the partial unique index on
+        // WorkItems (IssueIdentifier, IssueProviderConfigId) — filtered to non-terminal statuses —
+        // plus the IsIssueBeingProcessed check at dispatch time are the dedup mechanisms.
+        _lifecycle.ReleaseAgentRunsForHandoff();
 
         return Task.CompletedTask;
     }

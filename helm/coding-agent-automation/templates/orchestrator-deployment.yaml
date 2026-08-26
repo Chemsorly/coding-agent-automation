@@ -1,3 +1,4 @@
+{{- include "coding-agent-automation.deprecations" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,9 +30,7 @@ spec:
         app.kubernetes.io/component: orchestrator
     spec:
       serviceAccountName: {{ include "coding-agent-automation.serviceAccountName" . }}
-      {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
       automountServiceAccountToken: true
-      {{- end }}
       terminationGracePeriodSeconds: {{ .Values.orchestrator.terminationGracePeriodSeconds }}
       {{- with .Values.orchestrator.podSecurityContext }}
       securityContext:
@@ -83,84 +82,43 @@ spec:
             - configMapRef:
                 name: {{ include "coding-agent-automation.fullname" . }}-orchestrator-env
           env:
-            - name: AGENT_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "coding-agent-automation.secretName" . }}
-                  key: agent-api-key
-            - name: OTEL_EXPORTER_OTLP_HEADERS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "coding-agent-automation.secretName" . }}
-                  key: otel-headers
-                  optional: true
-            {{- if .Values.database.enabled }}
-            - name: Database__Host
-              value: {{ required "database.host is required when database.enabled=true" .Values.database.host | quote }}
-            - name: Database__Port
-              value: {{ .Values.database.port | default 5432 | quote }}
-            - name: Database__Name
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "database.auth.existingSecret is required when database.enabled=true" .Values.database.auth.existingSecret }}
-                  key: {{ .Values.database.auth.keys.database | default "POSTGRES_DB" }}
-            - name: Database__Username
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.database.auth.existingSecret }}
-                  key: {{ .Values.database.auth.keys.username | default "POSTGRES_USER" }}
-            - name: Database__Password
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.database.auth.existingSecret }}
-                  key: {{ .Values.database.auth.keys.password | default "POSTGRES_PASSWORD" }}
-            {{- if .Values.database.sslMode }}
-            - name: Database__SslMode
-              value: {{ .Values.database.sslMode | quote }}
-            {{- end }}
-            - name: Database__MigrateOnStartup
-              value: {{ .Values.database.migrateOnStartup | quote }}
-            - name: WorkDistribution__Mode
-              value: {{ .Values.workDistribution.mode | quote }}
-            {{- end }}
-            {{- if .Values.signalr.redis.connectionString }}
-            - name: SignalR__Redis__ConnectionString
-              value: {{ .Values.signalr.redis.connectionString | quote }}
-            {{- end }}
-          volumeMounts:
-            {{- if ne .Values.orchestrator.persistence.mountMode "disabled" }}
-            - name: pipeline-config
-              mountPath: /app/config/pipeline
-              {{- if eq .Values.orchestrator.persistence.mountMode "readOnly" }}
-              readOnly: true
+            {{- include "coding-agent-automation.secretEnv" . | nindent 12 }}
+            # KubernetesWorkDistributor and KubernetesJobCleanup have been migrated to
+            # IPipelineApiWorkItemClient. IPipelineRunHistoryService, IConsolidationRunStore,
+            # IHarnessSuggestionStore, and IWorkItemFallbackTransitionService are all API-backed
+            # as of arch-audit 2026-08-22 (T8 complete). The orchestrator no longer holds a
+            # Postgres connection. Database env vars removed.
+            {{- include "coding-agent-automation.signalrEnv" . | nindent 12 }}
+            # Pipeline API connection — required by IPipelineApiConfigClient and IAgentHubConnection.
+            # Spec 045 Req 6.4: orchestrator must know API base URL and hub URL.
+            - name: PipelineApi__BaseUrl
+              value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
+            - name: PipelineApi__HubUrl
+              value: {{ if .Values.api.hubUrl -}}
+                {{- .Values.api.hubUrl | quote }}
+              {{- else -}}
+                {{- printf "%s/hubs/agent" (include "coding-agent-automation.apiBaseUrl" .) | quote }}
               {{- end }}
-            {{- end }}
-            {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
+            # Scheduler API URL — used by LoopStatusPollingService and scheduler loop controls.
+            # Defaults to the in-cluster scheduler service URL. Override via scheduler.baseUrl
+            # when the Scheduler is deployed externally or scheduler.enabled is false.
+            - name: SchedulerApi__BaseUrl
+              value: {{ if .Values.scheduler.baseUrl -}}
+                {{- .Values.scheduler.baseUrl | quote }}
+              {{- else -}}
+                {{- printf "http://%s-scheduler.%s.svc.cluster.local:%d" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.scheduler.service.port | int) | quote }}
+              {{- end }}
+            # Leader election lease name — release-scoped to prevent collision when multiple
+            # Helm releases share a namespace (Req 6.3/6.7). Overridable via values.yaml.
+            - name: LeaderElection__PipelineLoopLeaseName
+              value: {{ include "coding-agent-automation.leaseName" (dict "override" .Values.orchestrator.leaderElection.pipelineLoopLeaseName "suffix" "pipeline-loop-lock" "root" .) }}
+          volumeMounts:
             - name: job-templates
               mountPath: /app/config/job-templates.yaml
               subPath: job-templates.yaml
               readOnly: true
-            {{- end }}
       volumes:
-        {{- if ne .Values.orchestrator.persistence.mountMode "disabled" }}
-        - name: pipeline-config
-          {{- if eq .Values.orchestrator.persistence.type "pvc" }}
-          persistentVolumeClaim:
-            claimName: {{ include "coding-agent-automation.fullname" . }}-orchestrator-config
-            {{- if eq .Values.orchestrator.persistence.mountMode "readOnly" }}
-            readOnly: true
-            {{- end }}
-          {{- else if eq .Values.orchestrator.persistence.type "hostPath" }}
-          hostPath:
-            path: {{ .Values.orchestrator.persistence.hostPath }}
-            type: DirectoryOrCreate
-          {{- else }}
-          emptyDir:
-            sizeLimit: 1Gi
-          {{- end }}
-        {{- end }}
-        {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
         - name: job-templates
           configMap:
             name: {{ include "coding-agent-automation.fullname" . }}-job-templates
-        {{- end }}
+            optional: true

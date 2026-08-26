@@ -12,6 +12,12 @@ public interface IAgentHub
     Task RegisterAgent(AgentRegistrationMessage message);
     Task DeregisterAgent(AgentId agentId);
 
+    // UI group subscriptions (called by UI circuits, not agents)
+    Task SubscribeToRun(string jobId);
+    Task UnsubscribeFromRun(string jobId);
+    Task SubscribeToChatSession(string sessionId);
+    Task UnsubscribeFromChatSession(string sessionId);
+
     // Job lifecycle
     Task JobAccepted(JobId jobId);
     Task JobRejected(JobId jobId, string reason);
@@ -56,7 +62,27 @@ public interface IAgentHub
 }
 
 /// <summary>
+/// Server-to-UI push events broadcast to subscribed UI circuits via hub groups.
+/// Placed in CodingAgentWebUI.Pipeline so Api.Client can reference these event names.
+/// NOT added to <see cref="IAgentHubClient"/> — that interface pushes to agent connections only.
+/// </summary>
+public interface IAgentHubUiClient
+{
+    Task OnOutputLines(string jobId, IReadOnlyList<string> lines);
+    Task OnStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp);
+    Task OnRunCompleted(string jobId, JobCompletionPayload payload);
+    Task OnChatEntry(string jobId, ChatRole role, string content);
+    Task OnQualityGateResult(string jobId, QualityGateReport report);
+    Task OnBrainSyncResult(string jobId, bool contextLoaded, int fileCount);
+    Task OnChatResponse(string sessionId, IReadOnlyList<string> lines);
+    Task OnChatCompleted(string sessionId, int exitCode, string? error);
+}
+
+/// <summary>
 /// Client-side SignalR methods invoked by the orchestrator on agents.
+/// Hub is hosted in <c>CodingAgentWebUI.Api</c>. The monolith retains a reference to
+/// <c>IHubContext&lt;AgentHub, IAgentHubClient&gt;</c> for <c>AgentChat.razor</c>; that context
+/// is disconnected (agents register on the API hub) and will be re-routed via a REST endpoint.
 /// </summary>
 public interface IAgentHubClient
 {

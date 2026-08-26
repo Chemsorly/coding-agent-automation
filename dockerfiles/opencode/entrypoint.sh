@@ -23,7 +23,12 @@ set -e
 # Generate a 48-character alphanumeric password from /dev/urandom.
 # This is used for HTTP Basic Auth between the Agent Worker and OpenCode server.
 export OPENCODE_SERVER_PASSWORD
+# Use set +e around the pipe to prevent SIGPIPE from tr/head causing a false failure.
+# head -c 48 closes the pipe early (after 48 bytes), which sends SIGPIPE to tr and makes
+# it exit non-zero. With set -e active this would silently leave the password empty.
+set +e
 OPENCODE_SERVER_PASSWORD=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 48)
+set -e
 
 if [ -z "$OPENCODE_SERVER_PASSWORD" ]; then
     echo "ERROR: Failed to generate OPENCODE_SERVER_PASSWORD" >&2
@@ -47,7 +52,9 @@ fi
 # Bind exclusively to 127.0.0.1 so the API is not accessible from outside the
 # container (Requirement 2.4). Port 4096 is container-internal only.
 echo "Starting OpenCode server on 127.0.0.1:4096..."
-opencode serve --port 4096 --hostname 127.0.0.1 &
+# Pass OPENCODE_SERVER_PASSWORD explicitly on the command line so OpenCode's auth
+# middleware receives it regardless of shell export inheritance edge cases.
+OPENCODE_SERVER_PASSWORD="$OPENCODE_SERVER_PASSWORD" opencode serve --port 4096 --hostname 127.0.0.1 &
 OPENCODE_PID=$!
 
 echo "OpenCode server started (PID: $OPENCODE_PID)"
@@ -158,7 +165,7 @@ fi
 # The Agent Worker is the .NET process that orchestrates pipeline steps and
 # communicates with the orchestrator via SignalR.
 echo "Starting Agent Worker..."
-dotnet /app/CodingAgentWebUI.Agent.dll &
+dotnet /app/CodingAgentWebUI.Agent.dll "$@" &
 WORKER_PID=$!
 
 echo "Agent Worker started (PID: $WORKER_PID)"

@@ -1,8 +1,8 @@
 using Bunit;
 using Moq;
 using Microsoft.AspNetCore.Components;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.UnitTests.Components;
@@ -12,12 +12,12 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class PipelineDecompositionSectionComponentTests : BunitContext
 {
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
     public PipelineDecompositionSectionComponentTests()
     {
-        _mockStore = new Mock<IConfigurationStore>();
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore = new Mock<IPipelineApiConfigClient>();
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -27,7 +27,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
     public void RendersHeader()
     {
         var cut = Render<PipelineDecompositionSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Decomposition", cut.Markup);
     }
 
@@ -35,7 +35,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
     public void RendersAllFields()
     {
         var cut = Render<PipelineDecompositionSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Max Sub-Issues Per Epic", cut.Markup);
         Assert.Contains("Decomposition Timeout", cut.Markup);
         Assert.Contains("Advanced settings", cut.Markup);
@@ -45,7 +45,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
     public void RendersHintIcons()
     {
         var cut = Render<PipelineDecompositionSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
         var hints = cut.FindAll(".form-hint-icon");
         Assert.Equal(3, hints.Count); // advanced fields hidden by default
     }
@@ -53,7 +53,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
     [Fact]
     public void LoadsConfigValues()
     {
-        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
                 MaxDecompositionSubIssues = 8,
@@ -63,7 +63,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
             });
 
         var cut = Render<PipelineDecompositionSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var inputs = cut.FindAll("input[type='number']");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "8");
@@ -74,7 +74,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
     public async Task Save_CallsUpdatePipelineConfig()
     {
         var cut = Render<PipelineDecompositionSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Decomposition"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
@@ -89,7 +89,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
     {
         (string Message, bool IsError) status = default;
         var cut = Render<PipelineDecompositionSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object)
+            p.Add(s => s.ConfigClient, _mockStore.Object)
              .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Decomposition"));
@@ -111,7 +111,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
             });
 
         var cut = Render<PipelineDecompositionSection>(p =>
-            p.Add(s => s.ConfigStore, _mockStore.Object));
+            p.Add(s => s.ConfigClient, _mockStore.Object));
 
         var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Decomposition"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());

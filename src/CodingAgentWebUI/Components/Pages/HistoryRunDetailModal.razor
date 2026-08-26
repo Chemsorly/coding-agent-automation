@@ -35,13 +35,14 @@
                             PipelineStep.Completed => "Completed",
                             PipelineStep.Failed => "Failed",
                             PipelineStep.Cancelled => "Cancelled",
-                            _ => "Failed"
+                            _ => "Running"
                         };
                         var detailResultClass = Run.FinalStep switch
                         {
                             PipelineStep.Completed => "step-completed",
                             PipelineStep.Cancelled => "step-cancelled",
-                            _ => "step-failed"
+                            PipelineStep.Failed => "step-failed",
+                            _ => "step-running"
                         };
                     }
                     <span class="step-badge @detailResultClass">@detailResult</span>

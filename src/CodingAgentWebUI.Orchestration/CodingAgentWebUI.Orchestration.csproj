@@ -8,12 +8,15 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgentWebUI" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Api" />
     <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.IntegrationTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.E2ETests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Api.IntegrationTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Orchestration.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Scheduler" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,11 +28,15 @@
     <PackageReference Include="OpenTelemetry.Api" />
     <PackageReference Include="Polly.Core" />
     <PackageReference Include="Serilog" />
+    <PackageReference Include="StackExchange.Redis" />
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Api.Client\CodingAgentWebUI.Api.Client.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure.Providers\CodingAgentWebUI.Infrastructure.Providers.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Infrastructure.Persistence\CodingAgentWebUI.Infrastructure.Persistence.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.Kubernetes\CodingAgentWebUI.Kubernetes.csproj" />
     <ProjectReference Include="..\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
   </ItemGroup>
 

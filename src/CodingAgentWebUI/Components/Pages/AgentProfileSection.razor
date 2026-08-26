@@ -1,6 +1,7 @@
-@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Orchestration.Dispatch
+@using CodingAgentWebUI.Kubernetes
 
 <section class="settings-section">
     <h2>Agent Profiles</h2>
@@ -255,7 +256,7 @@
 </section>
 
 @code {
-    [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
     [Parameter] public IReadOnlyList<ProviderConfig> AgentProviders { get; set; } = [];
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
     /// <summary>
@@ -289,7 +290,7 @@
     {
         try
         {
-            _profiles = (await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None)).ToList();
+            _profiles = (await ConfigClient.GetAgentProfilesAsync(CancellationToken.None)).ToList();
             _missingTemplates = ComputeMissingTemplates(_profiles, JobTemplateStore, IsKubernetesMode);
         }
         catch (Exception ex)
@@ -383,7 +384,7 @@
 
         try
         {
-            await ConfigStore.SaveAgentProfileAsync(profile, CancellationToken.None);
+            await ConfigClient.SaveAgentProfileAsync(profile, CancellationToken.None);
             _showForm = false;
             await LoadProfiles();
             await OnShowStatus.InvokeAsync(("Agent profile saved.", false));
@@ -450,7 +451,7 @@
 
         try
         {
-            await ConfigStore.DeleteAgentProfileAsync(_deletingProfile.Id, CancellationToken.None);
+            await ConfigClient.DeleteAgentProfileAsync(_deletingProfile.Id, CancellationToken.None);
             _showDeleteConfirm = false;
             _deletingProfile = null;
             await LoadProfiles();

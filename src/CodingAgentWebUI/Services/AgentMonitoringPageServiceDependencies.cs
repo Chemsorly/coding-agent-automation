@@ -1,27 +1,22 @@
-using CodingAgentWebUI.Hubs;
-using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
-using Microsoft.AspNetCore.SignalR;
 
 namespace CodingAgentWebUI.Services;
 
 /// <summary>
 /// Groups the core dependencies of <see cref="AgentMonitoringPageService"/> to reduce
 /// constructor parameter count (S107). All members are required.
+/// T19 (arch-audit 2026-08-22): PendingWorkQuery is no longer nullable — ApiBackedPendingWorkQuery
+/// is registered unconditionally so the job-queue panel is always populated.
 /// </summary>
 public sealed record AgentMonitoringPageServiceDependencies(
-    IActiveRunQueryService ActiveRunQuery,
     IAgentRegistryService Registry,
     JobDeduplicationGuardService Dispatcher,
-    IOrchestratorRunService RunService,
-    PipelineRunLifecycleService Lifecycle,
-    IConfigurationStore ConfigStore,
+    IPipelineApiConfigClient ConfigClient,
     IConsolidationService ConsolidationService,
     IPendingWorkQuery PendingWorkQuery,
     IWorkDistributor WorkDistributor,
-    IHubContext<AgentHub, IAgentHubClient> HubContext,
-    IPipelineRunHistoryService HistoryService,
-    IRunLifecycleManager LifecycleManager);
+    IPipelineApiRunHistoryClient RunHistoryClient);

@@ -1,8 +1,8 @@
 using Bunit;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Moq;
 
@@ -16,11 +16,10 @@ public class SettingsTreeNavComponentTests : BunitContext
 {
     public SettingsTreeNavComponentTests()
     {
-        var mockProjectStore = new Mock<IProjectStore>();
-        mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
+        mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
-        Services.AddSingleton(mockProjectStore.Object);
-        Services.AddSingleton(new CodingAgentWebUI.Services.FeatureFlags { IsDatabaseMode = false });
+        Services.AddSingleton(mockConfigClient.Object);
     }
     [Fact]
     public void TreeNav_RendersAllGroups()
@@ -131,8 +130,8 @@ public class SettingsTreeNavComponentTests : BunitContext
 
         // After collapse, children should not be visible
         var childNodes = cut.FindAll(".tree-group-children");
-        // The Providers group children should be gone (Projects, Global Defaults, and Label Routing remain; Data Management hidden in non-DB mode)
-        Assert.Equal(3, childNodes.Count);
+        // The Providers group children should be gone (Projects, Global Defaults, Label Routing, and Data Management remain)
+        Assert.Equal(4, childNodes.Count);
     }
 
     [Fact]
@@ -158,9 +157,9 @@ public class SettingsTreeNavComponentTests : BunitContext
             .Add(s => s.SelectedNode, "")
             .Add(s => s.OnNodeSelected, EventCallback<string>.Empty));
 
-        // All four groups should have children visible (Data Management hidden in non-DB mode)
+        // All five groups should have children visible (Data Management always visible now)
         var childGroups = cut.FindAll(".tree-group-children");
-        Assert.Equal(4, childGroups.Count);
+        Assert.Equal(5, childGroups.Count);
     }
 
     [Fact]
@@ -171,7 +170,7 @@ public class SettingsTreeNavComponentTests : BunitContext
             .Add(s => s.OnNodeSelected, EventCallback<string>.Empty));
 
         var chevrons = cut.FindAll(".tree-chevron");
-        Assert.Equal(4, chevrons.Count);
+        Assert.Equal(5, chevrons.Count);
         // All expanded by default, so all should show chevron-down icon
         Assert.All(chevrons, c => Assert.NotNull(c.QuerySelector("[data-icon='chevron-down']")));
     }

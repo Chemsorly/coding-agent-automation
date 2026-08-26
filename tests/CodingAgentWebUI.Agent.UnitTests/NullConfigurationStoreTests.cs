@@ -461,6 +461,177 @@ public class NullConfigurationStoreTests
             return false;
         }
     }
+
+    // ── LoadProjectsAsync ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task LoadProjectsAsync_ReturnsEmptyList()
+    {
+        var result = await _sut.LoadProjectsAsync(CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result.Should().BeEmpty();
+    }
+
+    // ── GetProjectByIdAsync ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetProjectByIdAsync_ReturnsNull()
+    {
+        var result = await _sut.GetProjectByIdAsync("any-id", CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    // ── SaveProjectAsync ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SaveProjectAsync_CompletesWithoutThrowing()
+    {
+        var project = new PipelineProject { Id = Guid.NewGuid().ToString(), Name = "Test Project" };
+
+        var act = () => _sut.SaveProjectAsync(project, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task SaveProjectAsync_DoesNotPersistState_SubsequentLoadReturnsEmpty()
+    {
+        var project = new PipelineProject { Id = Guid.NewGuid().ToString(), Name = "Test Project" };
+        await _sut.SaveProjectAsync(project, CancellationToken.None);
+
+        var result = await _sut.LoadProjectsAsync(CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    // ── DeleteProjectAsync ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteProjectAsync_CompletesWithoutThrowing()
+    {
+        var act = () => _sut.DeleteProjectAsync("some-id", CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task DeleteProjectAsync_DoesNotPersistState_SubsequentLoadReturnsEmpty()
+    {
+        await _sut.DeleteProjectAsync("some-id", CancellationToken.None);
+
+        var result = await _sut.LoadProjectsAsync(CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    // ── LoadTemplatesForProjectAsync ─────────────────────────────────────
+
+    [Fact]
+    public async Task LoadTemplatesForProjectAsync_ReturnsEmptyList()
+    {
+        var result = await _sut.LoadTemplatesForProjectAsync("any-project-id", CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result.Should().BeEmpty();
+    }
+
+    // ── LoadAllTemplatesAsync ────────────────────────────────────────────
+
+    [Fact]
+    public async Task LoadAllTemplatesAsync_ReturnsEmptyList()
+    {
+        var result = await _sut.LoadAllTemplatesAsync(CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result.Should().BeEmpty();
+    }
+
+    // ── SaveTemplateAsync ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SaveTemplateAsync_CompletesWithoutThrowing()
+    {
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "Test Template",
+            IssueProviderId = "issue-provider-1",
+            RepoProviderId = "repo-provider-1"
+        };
+
+        var act = () => _sut.SaveTemplateAsync("some-project-id", template, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task SaveTemplateAsync_DoesNotPersistState_SubsequentLoadReturnsEmpty()
+    {
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "Test Template",
+            IssueProviderId = "issue-provider-1",
+            RepoProviderId = "repo-provider-1"
+        };
+        await _sut.SaveTemplateAsync("some-project-id", template, CancellationToken.None);
+
+        var result = await _sut.LoadAllTemplatesAsync(CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    // ── DeleteTemplateAsync ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteTemplateAsync_CompletesWithoutThrowing()
+    {
+        var act = () => _sut.DeleteTemplateAsync("some-project-id", new TemplateId("some-template-id"), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task DeleteTemplateAsync_DoesNotPersistState_SubsequentLoadReturnsEmpty()
+    {
+        await _sut.DeleteTemplateAsync("some-project-id", new TemplateId("some-template-id"), CancellationToken.None);
+
+        var result = await _sut.LoadAllTemplatesAsync(CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    // ── MoveTemplateAsync ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task MoveTemplateAsync_CompletesWithoutThrowing()
+    {
+        var act = () => _sut.MoveTemplateAsync("source-project", "target-project", new TemplateId("some-template-id"), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task MoveTemplateAsync_DoesNotPersistState_SubsequentLoadReturnsEmpty()
+    {
+        await _sut.MoveTemplateAsync("source-project", "target-project", new TemplateId("some-template-id"), CancellationToken.None);
+
+        var result = await _sut.LoadAllTemplatesAsync(CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    // ── HasEnabledTemplatesAsync ─────────────────────────────────────────
+
+    [Fact]
+    public async Task HasEnabledTemplatesAsync_ReturnsFalse()
+    {
+        var result = await _sut.HasEnabledTemplatesAsync(CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
 }
 
 /// <summary>

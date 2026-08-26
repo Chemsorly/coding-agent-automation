@@ -11,7 +11,8 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// Verifies label state machine transitions and correct RunType dispatch.
 /// </summary>
 [Trait("Category", "E2E")]
-public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixture>
+[Collection(E2ECollection.Name)]
+public sealed class EpicDecompositionTests : E2ETestBase
 {
     public EpicDecompositionTests(E2EFixture fixture) : base(fixture) { }
 
@@ -52,11 +53,10 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("decomp-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act
         var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
-        await loopService.StartAsync(CancellationToken.None);
         try
         {
             var started = await loopService.StartLoopAsync();
@@ -97,8 +97,6 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         finally
         {
             loopService.StopLoop();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await loopService.StopAsync(cts.Token);
         }
     }
 
@@ -139,11 +137,10 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("decomp-agent-2", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act
         var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
-        await loopService.StartAsync(CancellationToken.None);
         try
         {
             var started = await loopService.StartLoopAsync();
@@ -198,8 +195,6 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         finally
         {
             loopService.StopLoop();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await loopService.StopAsync(cts.Token);
         }
     }
 
@@ -240,11 +235,10 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         }, CancellationToken.None);
 
         await using var fakeAgent = new FakeAgentClient("decomp-agent-3", "e2e");
-        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act
         var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
-        await loopService.StartAsync(CancellationToken.None);
         try
         {
             var started = await loopService.StartLoopAsync();
@@ -295,8 +289,6 @@ public sealed class EpicDecompositionTests : E2ETestBase, IClassFixture<E2EFixtu
         finally
         {
             loopService.StopLoop();
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await loopService.StopAsync(cts.Token);
         }
     }
 }

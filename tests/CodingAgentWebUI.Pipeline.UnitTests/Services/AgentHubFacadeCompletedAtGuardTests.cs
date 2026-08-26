@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
@@ -48,14 +48,11 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
         var registry = new AgentRegistryService(mockSerilogLogger.Object);
         var runService = new OrchestratorRunService(mockSerilogLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(registry, mockSerilogLogger.Object);
-        var drainService = new JobQueueDrainService(new JobQueueDrainDependencies(dispatcher, registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(), new ShutdownSignal(), mockSerilogLogger.Object));
 
         _facade = new AgentHubFacade(new AgentHubFacadeDependencies(
             registry,
             runService,
             dispatcher,
-            drainService,
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),

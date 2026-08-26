@@ -10,6 +10,20 @@ public static class HubMethodNames
     public const string RegisterAgent = nameof(IAgentHub.RegisterAgent);
     public const string DeregisterAgent = nameof(IAgentHub.DeregisterAgent);
 
+    // UI group subscriptions
+    public const string SubscribeToRun = nameof(IAgentHub.SubscribeToRun);
+    public const string UnsubscribeFromRun = nameof(IAgentHub.UnsubscribeFromRun);
+    public const string SubscribeToChatSession = nameof(IAgentHub.SubscribeToChatSession);
+    public const string UnsubscribeFromChatSession = nameof(IAgentHub.UnsubscribeFromChatSession);
+
+    // UI push events (server → UI circuit via hub group)
+    public const string OnOutputLines = nameof(IAgentHubUiClient.OnOutputLines);
+    public const string OnStepTransition = nameof(IAgentHubUiClient.OnStepTransition);
+    public const string OnRunCompleted = nameof(IAgentHubUiClient.OnRunCompleted);
+    public const string OnChatEntry = nameof(IAgentHubUiClient.OnChatEntry);
+    public const string OnQualityGateResult = nameof(IAgentHubUiClient.OnQualityGateResult);
+    public const string OnBrainSyncResult = nameof(IAgentHubUiClient.OnBrainSyncResult);
+
     // Job lifecycle
     public const string JobAccepted = nameof(IAgentHub.JobAccepted);
     public const string JobRejected = nameof(IAgentHub.JobRejected);
@@ -45,6 +59,10 @@ public static class HubMethodNames
     // Interactive chat
     public const string ReportChatResponse = nameof(IAgentHub.ReportChatResponse);
     public const string ReportChatCompleted = nameof(IAgentHub.ReportChatCompleted);
+
+    // UI push events — chat (server → UI circuit via chat-session group)
+    public const string OnChatResponse = nameof(IAgentHubUiClient.OnChatResponse);
+    public const string OnChatCompleted = nameof(IAgentHubUiClient.OnChatCompleted);
 
     // Model fetch
     public const string ReportFetchModelsResult = nameof(IAgentHub.ReportFetchModelsResult);

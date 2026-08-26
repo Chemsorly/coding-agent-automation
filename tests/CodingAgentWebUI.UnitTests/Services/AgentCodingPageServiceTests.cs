@@ -1,10 +1,10 @@
 using Moq;
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 
@@ -15,15 +15,17 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// loop controls, and cross-drawer coordination work correctly.
 /// Drawer-specific tests live in IssueDrawerServiceTests, PrReviewDrawerServiceTests,
 /// and EpicDrawerServiceTests.
+/// <para>
+/// Spec 045: IConfigurationStore and IProjectStore replaced by IPipelineApiConfigClient.
+/// </para>
 /// </summary>
 public class AgentCodingPageServiceTests
 {
-    private readonly Mock<IConfigurationStore> _mockConfigStore;
-    private readonly Mock<IProjectStore> _mockProjectStore;
+    private readonly Mock<IPipelineApiConfigClient> _mockConfigClient;
     private readonly Mock<IIssueDrawerService> _mockIssueDrawerService;
     private readonly Mock<IPrReviewDrawerService> _mockPrReviewDrawerService;
     private readonly Mock<IEpicDrawerService> _mockEpicDrawerService;
-    private readonly PipelineLoopService _loopService;
+    private readonly Mock<ISchedulerApiClient> _mockSchedulerClient;
     private readonly AgentCodingPageService _service;
 
     // Real drawer state services so property forwarding works in tests that check DrawerState
@@ -31,10 +33,12 @@ public class AgentCodingPageServiceTests
     private readonly DrawerStateService<PullRequestSummary> _prDrawerState;
     private readonly DrawerStateService<IssueSummary> _epicDrawerState;
 
+    // Spec 047: _mockLoopConfigStore and _mockLoopProjectStore removed — AgentCodingPageService
+    // no longer holds a PipelineLoopService; loop controls go through ISchedulerApiClient.
+
     public AgentCodingPageServiceTests()
     {
-        _mockConfigStore = new Mock<IConfigurationStore>();
-        _mockProjectStore = new Mock<IProjectStore>();
+        _mockConfigClient = new Mock<IPipelineApiConfigClient>();
         _mockIssueDrawerService = new Mock<IIssueDrawerService>();
         _mockPrReviewDrawerService = new Mock<IPrReviewDrawerService>();
         _mockEpicDrawerService = new Mock<IEpicDrawerService>();
@@ -59,35 +63,14 @@ public class AgentCodingPageServiceTests
         _mockPrReviewDrawerService.Setup(s => s.DrawerState).Returns(_prDrawerState);
         _mockEpicDrawerService.Setup(s => s.DrawerState).Returns(_epicDrawerState);
 
-        var mockLogger = new Mock<Serilog.ILogger>();
-        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
-
-        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
-            configStore: _mockConfigStore.Object,
-            providerFactory: new Mock<IProviderFactory>().Object,
-            historyService: mockHistoryService.Object);
-
-        _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
-        {
-            Orchestration = runCreator,
-            ProviderFactory = new Mock<IProviderFactory>().Object,
-            PipelineConfigStore = _mockConfigStore.Object,
-            ProviderConfigStore = _mockConfigStore.Object,
-            ProjectStore = _mockConfigStore.Object,
-            Logger = mockLogger.Object,
-            WorkDistributor = null,
-            DispatchOrchestration = null,
-            DependencyChecker = null,
-            HousekeepingService = null,
-            LeaderElection = null
-        });
+        // Spec 047: AgentCodingPageService now takes ISchedulerApiClient instead of PipelineLoopService.
+        _mockSchedulerClient = new Mock<ISchedulerApiClient>();
+        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopStartResultDto(true, null));
 
         _service = new AgentCodingPageService(
-            _loopService,
-            _mockConfigStore.Object,
-            _mockProjectStore.Object,
+            _mockSchedulerClient.Object,
+            _mockConfigClient.Object,
             _mockIssueDrawerService.Object,
             _mockPrReviewDrawerService.Object,
             _mockEpicDrawerService.Object);
@@ -113,23 +96,23 @@ public class AgentCodingPageServiceTests
         // initialization. A regression in PropagateProviderContext (wrong list, missing call) would not
         // be detected here. Dedicated integration-style tests using concrete drawer service instances
         // would be needed to validate end-to-end provider context propagation.
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { MakeProvider("ip-1") });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { MakeProvider("rp-1", ProviderKind.Repository) });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration { MaxRetries = 5 });
-        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { MakeTemplate() });
-        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
-        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
-        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
 
         var error = await _service.InitializeAsync();
@@ -144,7 +127,7 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task InitializeAsync_ReturnsError_WhenExceptionThrown()
     {
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("connection failed"));
 
         var error = await _service.InitializeAsync();
@@ -159,7 +142,7 @@ public class AgentCodingPageServiceTests
     {
         var template = MakeTemplate();
         _service.Templates.Add(template);
-        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var (success, error) = await _service.ToggleTemplateEnabledAsync(template, false);
@@ -174,7 +157,7 @@ public class AgentCodingPageServiceTests
     {
         var template = MakeTemplate();
         _service.Templates.Add(template);
-        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("disk full"));
 
         var (success, error) = await _service.ToggleTemplateEnabledAsync(template, false);
@@ -209,9 +192,9 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task AddTemplateAsync_AddsTemplateAndReloadsProjects()
     {
-        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
         var form = new TemplateTableSection.TemplateFormModel { Name = "New Template", IssueProviderId = "ip-1", RepoProviderId = "rp-1" };
 
@@ -228,9 +211,9 @@ public class AgentCodingPageServiceTests
     {
         var template = MakeTemplate("t-1", "Removable");
         _service.Templates.Add(template);
-        _mockProjectStore.Setup(s => s.DeleteTemplateAsync(It.IsAny<string>(), "t-1", It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.DeleteTemplateAsync(It.IsAny<string>(), "t-1", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineProject>());
 
         var (success, error, msg) = await _service.RemoveTemplateAsync(template);
@@ -252,10 +235,10 @@ public class AgentCodingPageServiceTests
         await _service.InitializeAsync();
 
         var savedProjects = new List<PipelineProject>();
-        _mockProjectStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Callback<PipelineProject, CancellationToken>((p, _) => savedProjects.Add(p))
             .Returns(Task.CompletedTask);
-        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject> { sourceProject, targetProject });
 
         var (success, error, msg) = await _service.MoveTemplateToProjectAsync("t-1", "proj-src", "proj-tgt");
@@ -281,55 +264,58 @@ public class AgentCodingPageServiceTests
         Assert.True(success);
         Assert.Null(error);
         Assert.Null(msg);
-        _mockProjectStore.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockConfigClient.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Loop Controls ──
 
     [Fact]
-    public async Task StopLoopAsync_StopsAndPersistsConfig()
+    public async Task StopLoopAsync_CallsSchedulerClient()
     {
-        _mockConfigStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+        _mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         await _service.StopLoopAsync();
 
-        _mockConfigStore.Verify(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockSchedulerClient.Verify(c => c.StopLoopAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "StopLoopAsync must delegate to ISchedulerApiClient.StopLoopAsync");
     }
 
     [Fact]
-    public async Task StartLoopAsync_WhenLoopServiceThrows_ReturnsErrorTuple()
+    public async Task StartLoopAsync_WhenSchedulerClientThrows_ReturnsErrorTuple()
     {
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Database locked"));
+        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("connection refused"));
 
         var (success, error) = await _service.StartLoopAsync();
 
         Assert.False(success);
         Assert.NotNull(error);
+        Assert.Contains("connection refused", error);
     }
 
     [Fact]
-    public async Task StartLoopAsync_WhenUpdateConfigThrows_ReturnsErrorTuple()
+    public async Task StartLoopAsync_WhenSchedulerReturnsStarted_ReturnsSuccess()
     {
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.Default());
-        _mockConfigStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineJobTemplate>
-            {
-                new() { Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true }
-            });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { MakeProvider("ip-1") });
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { MakeProvider("rp-1", ProviderKind.Repository) });
-        _mockConfigStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("Disk full"));
+        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopStartResultDto(true, null));
+
+        var (success, error) = await _service.StartLoopAsync();
+
+        Assert.True(success);
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public async Task StartLoopAsync_WhenSchedulerReturnsNotStarted_ReturnsFailure()
+    {
+        _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopStartResultDto(false, "Loop is already active."));
 
         var (success, error) = await _service.StartLoopAsync();
 
         Assert.False(success);
-        Assert.Contains("Disk full", error!);
+        Assert.Equal("Loop is already active.", error);
     }
 
     // ── Cross-drawer coordination via coordinator ──
@@ -530,9 +516,12 @@ public class AgentCodingPageServiceTests
     // ── IssueDrawer CancellationToken (forwarded via DrawerState accessor) ──
 
     [Fact]
-    public void IssueDrawer_CancellationToken_ReturnsNone_WhenNoDrawerOpen()
+    public void IssueDrawer_CancellationToken_IsNotNone_BeforeDrawerOpen()
     {
-        Assert.Equal(CancellationToken.None, _service.IssueDrawer.CancellationToken);
+        // CTS is pre-initialized at construction so public load methods get a real token
+        // even before OpenAsync is called. CancellationToken.None is no longer returned.
+        Assert.NotEqual(CancellationToken.None, _service.IssueDrawer.CancellationToken);
+        Assert.False(_service.IssueDrawer.CancellationToken.IsCancellationRequested);
     }
 
     // ── Helper ──
@@ -541,19 +530,19 @@ public class AgentCodingPageServiceTests
         IReadOnlyList<PipelineProject>? projects = null,
         IReadOnlyList<PipelineJobTemplate>? templates = null)
     {
-        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
-        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates ?? Array.Empty<PipelineJobTemplate>());
-        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(projects ?? Array.Empty<PipelineProject>());
-        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
-        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+        _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
     }
 }

@@ -1,11 +1,11 @@
 using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
