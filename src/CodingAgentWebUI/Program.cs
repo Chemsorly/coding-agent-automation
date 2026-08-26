@@ -7,6 +7,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Services;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.SignalR;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -130,6 +131,14 @@ builder.Host.ConfigureSerilog();
 
 // Configure OpenTelemetry (tracing + metrics)
 var redisConnectionString = builder.Configuration.GetValue<string>("SignalR:Redis:ConnectionString");
+
+// ── Data Protection — shared key ring across replicas ─────────────────────
+// See DataProtectionRegistration.cs for the full explanation.
+// Uses the same SignalR:Redis:ConnectionString config key — no additional Helm values needed.
+Func<StackExchange.Redis.IConnectionMultiplexer>? dpMultiplexerFactory = string.IsNullOrEmpty(redisConnectionString)
+    ? null
+    : () => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
+builder.Services.AddDataProtectionServices(dpMultiplexerFactory);
 builder.Services.AddApplicationTelemetry(dbConnectionString, redisConnectionString);
 
 var app = builder.Build();
