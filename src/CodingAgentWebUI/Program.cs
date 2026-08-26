@@ -7,6 +7,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Services;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.SignalR;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -130,6 +131,26 @@ builder.Host.ConfigureSerilog();
 
 // Configure OpenTelemetry (tracing + metrics)
 var redisConnectionString = builder.Configuration.GetValue<string>("SignalR:Redis:ConnectionString");
+
+// ── Data Protection — shared key ring across replicas ─────────────────────
+// Without this, each pod generates its own ephemeral key ring. When the Rancher
+// proxy load-balances a page load to replica A (antiforgery token encrypted with A's key)
+// then routes the Blazor WebSocket to replica B, B cannot decrypt the token and the
+// circuit fails with "The key {guid} was not found in the key ring."
+// When Redis is configured, all replicas share one key ring under the app-scoped key.
+// When Redis is absent (local dev, single replica), falls back to the default ephemeral ring.
+if (!string.IsNullOrEmpty(redisConnectionString))
+{
+    var dpRedis = StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
+    builder.Services.AddDataProtection()
+        .PersistKeysToStackExchangeRedis(dpRedis, "caa:data-protection-keys")
+        .SetApplicationName("coding-agent-webui");
+    Log.Information("Data Protection: keys persisted to Redis (key=caa:data-protection-keys)");
+}
+else
+{
+    Log.Warning("Data Protection: Redis not configured — using ephemeral in-process key ring (single replica only)");
+}
 builder.Services.AddApplicationTelemetry(dbConnectionString, redisConnectionString);
 
 var app = builder.Build();
