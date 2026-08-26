@@ -70,6 +70,8 @@ public sealed class ConsolidationDispatchLoop
         if (pending.Count == 0)
             return;
 
+        Log.Debug("ConsolidationDispatchLoop: {Count} pending consolidation item(s) found, building concurrency map", pending.Count);
+
         var activeConcurrency = await BuildConcurrencyMapAsync(ct);
 
         foreach (var item in pending)
@@ -129,8 +131,9 @@ public sealed class ConsolidationDispatchLoop
         if (template.MaxConcurrent > 0 &&
             (activeConcurrency.TryGetValue(selector, out var active) ? active : 0) >= template.MaxConcurrent)
         {
-            Log.Debug("ConsolidationDispatchLoop: concurrency limit reached for selector '{Selector}' ({Max}), skipping {Id}",
-                selector, template.MaxConcurrent, item.Id);
+            Log.Information(
+                "ConsolidationDispatchLoop: concurrency limit reached for selector '{Selector}' (limit={Max}, active={Active}), holding WorkItem {Id}",
+                selector, template.MaxConcurrent, active, item.Id);
             return;
         }
 

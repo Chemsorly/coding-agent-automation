@@ -71,6 +71,8 @@ public sealed class DispatchLoop
         if (pending.Count == 0)
             return;
 
+        Log.Debug("DispatchLoop: {Count} pending work item(s) found, building concurrency map", pending.Count);
+
         // Refresh concurrency map from live K8s Jobs each cycle
         var activeConcurrency = await BuildConcurrencyMapAsync(ct);
 
@@ -158,8 +160,9 @@ public sealed class DispatchLoop
         if (template.MaxConcurrent > 0 &&
             (activeConcurrency.TryGetValue(selector, out var active) ? active : 0) >= template.MaxConcurrent)
         {
-            Log.Debug("Concurrency limit reached for selector '{Selector}' ({Max}), skipping {Id}",
-                selector, template.MaxConcurrent, item.Id);
+            Log.Information(
+                "DispatchLoop: concurrency limit reached for selector '{Selector}' (limit={Max}, active={Active}), holding WorkItem {Id}",
+                selector, template.MaxConcurrent, active, item.Id);
             return;
         }
 
