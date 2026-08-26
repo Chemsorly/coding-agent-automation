@@ -199,11 +199,19 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
     {
         var agentId = overrideAgentId ?? $"fake-chat-agent-{Guid.NewGuid().ToString("N")[..6]}";
 
-        // Snapshot known job names BEFORE dispatch so concurrent calls with the same selector
-        // can each wait for — and read — only the job they created. Without this, two concurrent
-        // dispatches for "kiro,dotnet" both see the first job via GetChatJobBySelector, extract
-        // the same dispatchId, and the second dispatcher never gets an agent → ChatPodTimeoutException.
-        var knownJobNames = Fixture.K8sClient.ChatJobs.Keys.ToHashSet(StringComparer.Ordinal);
+        // Subscribe to ChatJobCreated BEFORE starting dispatch so the event fires into our TCS
+        // on the exact job this dispatch call creates — with no dependency on insertion order,
+        // poll timing, or snapshot exclusion. Each concurrent call gets its own TCS; the handler
+        // unsubscribes itself after the first match so it doesn't fire again on later dispatches.
+        var jobTcs = new TaskCompletionSource<V1Job>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action<V1Job>? handler = null;
+        handler = createdJob =>
+        {
+            // Unsubscribe atomically on first call so concurrent dispatches each own exactly one job.
+            Fixture.K8sClient.ChatJobCreated -= handler;
+            jobTcs.TrySetResult(createdJob);
+        };
+        Fixture.K8sClient.ChatJobCreated += handler;
 
         // Start dispatch — this will poll for agent connection.
         // ChatJobDispatcher lives on the API host (Spec 044/045) — use Fixture.ChatDispatcher
@@ -211,28 +219,32 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         var dispatchTask = Fixture.ChatDispatcher.DispatchChatPodAsync(
             agentSelector, model, effort, CancellationToken.None);
 
-        // Wait for a NEW job (not in snapshot) to appear, then connect the fake agent.
-        // DispatchChatPodAsync runs unawaited until the agent is connected, so a failure inside it
-        // would otherwise surface here as an unexplained "chat job not created" timeout. Rethrow
-        // the dispatch fault instead — it names the actual cause.
+        // Wait for the job that THIS dispatch created. The event fires synchronously inside
+        // FakeKubernetesJobClient.CreateJobAsync, so the TCS completes as soon as the job
+        // lands — zero polling, no ordering assumption, structurally race-free.
+        // If the dispatch faults before creating a job (e.g. NoPvcAvailableException), cancel
+        // the TCS so we surface the real exception rather than timing out with a cryptic message.
+        V1Job job;
         try
         {
-            await WaitForChatJobCreatedAsync(agentSelector,
-                excludeJobNames: knownJobNames,
-                timeout: TimeSpan.FromSeconds(10));
+            // Propagate dispatch fault into the TCS so jobTcs.Task throws immediately.
+            _ = dispatchTask.ContinueWith(
+                t => jobTcs.TrySetCanceled(),
+                TaskContinuationOptions.OnlyOnFaulted |
+                TaskContinuationOptions.ExecuteSynchronously);
+
+            job = await jobTcs.Task;
         }
-        catch (TimeoutException) when (dispatchTask.IsFaulted)
+        catch (TaskCanceledException) when (dispatchTask.IsFaulted)
         {
-            await dispatchTask; // throws the dispatch exception
+            await dispatchTask; // re-throws the real dispatch exception
             throw;
         }
-
-        // Find the dispatch ID from the NEW job (excluding the pre-dispatch snapshot) so
-        // concurrent dispatches for the same selector each connect to their own pod.
-        var encodedSelector = EncodeSelector(agentSelector);
-        var job = Fixture.K8sClient.GetChatJobBySelector(encodedSelector, excludeJobNames: knownJobNames)
-            ?? throw new InvalidOperationException(
-                $"Chat job not found for selector '{encodedSelector}' after waiting");
+        finally
+        {
+            // Ensure no dangling subscription if we exit via exception before the event fires.
+            Fixture.K8sClient.ChatJobCreated -= handler;
+        }
 
         var labels = job.Metadata?.Labels;
         string? dispatchId = null;
@@ -374,16 +386,12 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
     }
 
     /// <summary>
-    /// Polls <see cref="FakeKubernetesJobClient.ChatJobs"/> until a job with a
     /// <summary>
-    /// Polls until a chat job with the given <paramref name="agentSelector"/>'s encoded
+    /// Polls <see cref="FakeKubernetesJobClient.ChatJobs"/> until a job with a
     /// <c>caa/chat-selector</c> label matching <paramref name="agentSelector"/> appears.
-    /// Jobs whose names are in <paramref name="excludeJobNames"/> are ignored, so concurrent
-    /// dispatch tasks each wait for their own newly-created job.
     /// </summary>
     protected async Task WaitForChatJobCreatedAsync(
         string agentSelector,
-        IReadOnlySet<string>? excludeJobNames = null,
         TimeSpan? timeout = null)
     {
         var encodedSelector = EncodeSelector(agentSelector);
@@ -391,7 +399,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
 
         while (DateTime.UtcNow < deadline)
         {
-            var job = Fixture.K8sClient.GetChatJobBySelector(encodedSelector, excludeJobNames);
+            var job = Fixture.K8sClient.GetChatJobBySelector(encodedSelector);
             if (job is not null) return;
             await Task.Delay(TimeSpan.FromMilliseconds(100));
         }

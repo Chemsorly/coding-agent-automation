@@ -175,21 +175,10 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
     /// Returns null if no matching job exists.
     /// </summary>
     public V1Job? GetChatJobBySelector(string encodedSelector)
-        => GetChatJobBySelector(encodedSelector, excludeJobNames: null);
-
-    /// <summary>
-    /// Finds a chat job by its <c>caa/chat-selector</c> label value, excluding jobs whose names
-    /// are in <paramref name="excludeJobNames"/>. Used by concurrent-dispatch tests to ensure
-    /// each dispatch task finds only the job it created, not one created by a sibling task.
-    /// </summary>
-    public V1Job? GetChatJobBySelector(string encodedSelector, IReadOnlySet<string>? excludeJobNames)
     {
-        return ChatJobs
-            .Where(kv => excludeJobNames is null || !excludeJobNames.Contains(kv.Key))
-            .Select(kv => kv.Value)
-            .FirstOrDefault(j =>
-                j.Metadata?.Labels != null &&
-                j.Metadata.Labels.TryGetValue("caa/chat-selector", out var val) &&
-                string.Equals(val, encodedSelector, StringComparison.OrdinalIgnoreCase));
+        return ChatJobs.Values.FirstOrDefault(j =>
+            j.Metadata?.Labels != null &&
+            j.Metadata.Labels.TryGetValue("caa/chat-selector", out var val) &&
+            string.Equals(val, encodedSelector, StringComparison.OrdinalIgnoreCase));
     }
 }
