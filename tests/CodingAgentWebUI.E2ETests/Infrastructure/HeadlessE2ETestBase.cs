@@ -234,10 +234,25 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
 
         // Connect the fake agent with chat labels (this satisfies the dispatcher's poll loop).
         // The hub is on the API host since Spec 044, not on the Blazor app.
+        //
+        // Fire the SignalR handshake WITHOUT awaiting it immediately. The dispatcher's
+        // ChatPodConnectTimeoutSeconds countdown started at DispatchChatPodAsync call time.
+        // Awaiting ConnectAsChatAgentAsync serially (real Kestrel+WebSocket+RegisterAgent
+        // round-trip, 1–3s under CI load) before handing back to the dispatcher means the
+        // first 2s poll fires while the connection is still in progress. Under load the second
+        // poll at t+4s can also miss, and the 10s window closes. Firing it unawaited lets the
+        // SignalR handshake race in parallel with the dispatcher's first 2s sleep so the agent
+        // is in the registry at or before the first poll tick.
         var fakeAgent = new FakeAgentClient(agentId, agentSelector.Split(',', StringSplitOptions.TrimEntries));
-        await fakeAgent.ConnectAsChatAgentAsync(AgentHubUrl, Fixture.ApiKey, dispatchId);
+        var connectTask = fakeAgent.ConnectAsChatAgentAsync(AgentHubUrl, Fixture.ApiKey, dispatchId!);
 
-        // Now wait for dispatch to complete
+        // Wait for both to complete: the connection must succeed before the test can proceed,
+        // and the dispatcher must find the agent before returning the agentId.
+        // Await the connection first (with a generous timeout so a real failure surfaces clearly),
+        // then await the dispatch result. Both run in parallel — the dispatcher's first 2s poll
+        // fires while ConnectAsChatAgentAsync is in-flight, so the agent is registered at or
+        // before the first probe rather than serially after it.
+        await connectTask.WaitAsync(TimeSpan.FromSeconds(15));
         var returnedAgentId = await dispatchTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         return (returnedAgentId, fakeAgent);
