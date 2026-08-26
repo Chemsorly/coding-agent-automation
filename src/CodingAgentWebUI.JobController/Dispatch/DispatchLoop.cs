@@ -280,8 +280,8 @@ public sealed class DispatchLoop
 
     /// <summary>
     /// Generates a deterministic K8s Job name from a WorkItem ID.
-    /// Format: caa-agent-{first-8-chars-of-guid} — short enough to stay under K8s 63-char limit.
+    /// Format: caa-agent-{first-11-chars-of-guid-no-dashes} — short enough to stay under K8s 63-char limit.
     /// </summary>
     internal static string GenerateJobName(Guid workItemId) =>
-        $"caa-agent-{workItemId:N}"[..21]; // "caa-agent-" + 11 hex chars
+        $"caa-agent-{workItemId:N}"[..21]; // "caa-agent-" (10) + 11 hex chars = 21 total
 }

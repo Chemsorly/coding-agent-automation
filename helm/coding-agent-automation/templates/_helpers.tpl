@@ -49,16 +49,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
-Agent-specific fully qualified name.
-Used inside range loops where dot is rebound to the agent entry.
-Accepts a dict with "agentName" and "root" keys.
-Usage: {{ include "coding-agent-automation.agentFullname" (dict "agentName" .name "root" $) }}
-*/}}
-{{- define "coding-agent-automation.agentFullname" -}}
-{{- printf "%s-%s" (include "coding-agent-automation.fullname" .root) .agentName | trunc 63 | trimSuffix "-" }}
-{{- end }}
-
-{{/*
 ServiceAccount name
 */}}
 {{- define "coding-agent-automation.serviceAccountName" -}}
@@ -116,10 +106,14 @@ Pipeline API over HTTP. Honours api.baseUrl so an externally deployed API
 {{- end }}
 
 {{/*
-Common secret env vars (API key + OTEL headers) injected into every deployment.
-Usage: {{ include "coding-agent-automation.commonSecretEnv" . }}
+Secret env vars injected into every component:
+  AGENT_API_KEY           — required for API authentication
+  OTEL_EXPORTER_OTLP_HEADERS — optional telemetry auth header
+
+Usage (inside an env: list, indented to 12):
+  {{- include "coding-agent-automation.secretEnv" . | nindent 12 }}
 */}}
-{{- define "coding-agent-automation.commonSecretEnv" -}}
+{{- define "coding-agent-automation.secretEnv" -}}
 - name: AGENT_API_KEY
   valueFrom:
     secretKeyRef:
@@ -134,8 +128,12 @@ Usage: {{ include "coding-agent-automation.commonSecretEnv" . }}
 {{- end }}
 
 {{/*
-OTEL endpoint env vars. Accepts a dict with keys "root" (.) and "serviceName" (string).
-Usage: {{ include "coding-agent-automation.otelEnv" (dict "root" . "serviceName" "coding-agent-api") }}
+OpenTelemetry env vars. Accepts a dict with "serviceName" and "root" keys.
+Renders OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL.
+OTEL_EXPORTER_OTLP_HEADERS is handled by secretEnv.
+
+Usage (inside an env: list, indented to 12):
+  {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-api" "root" .) | nindent 12 }}
 */}}
 {{- define "coding-agent-automation.otelEnv" -}}
 - name: OTEL_SERVICE_NAME
@@ -147,8 +145,11 @@ Usage: {{ include "coding-agent-automation.otelEnv" (dict "root" . "serviceName"
 {{- end }}
 
 {{/*
-WorkDistribution env vars shared by api and jobcontroller.
-Usage: {{ include "coding-agent-automation.workDistributionEnv" . }}
+WorkDistribution env vars shared by api, jobcontroller, and orchestrator.
+Renders all WorkDistribution__* keys as env list items.
+
+Usage (inside an env: list, indented to 12):
+  {{- include "coding-agent-automation.workDistributionEnv" . | nindent 12 }}
 */}}
 {{- define "coding-agent-automation.workDistributionEnv" -}}
 - name: WorkDistribution__OrchestratorUrl
@@ -175,10 +176,6 @@ Usage: {{ include "coding-agent-automation.workDistributionEnv" . }}
   value: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
 - name: WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds
   value: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
-- name: WorkDistribution__Reconciliation__IntervalSeconds
-  value: {{ .Values.workDistribution.reconciliation.intervalSeconds | quote }}
-- name: WorkDistribution__Reconciliation__StaleRetentionDays
-  value: {{ .Values.workDistribution.reconciliation.staleRetentionDays | quote }}
 {{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}
 - name: WorkDistribution__CredentialPools__Kiro__{{ $i }}
   value: {{ $pvc | quote }}
@@ -186,31 +183,57 @@ Usage: {{ include "coding-agent-automation.workDistributionEnv" . }}
 {{- end }}
 
 {{/*
-Standard ClusterIP service for a named component.
-Accepts a dict with keys:
-  root        — top-level context (.)
-  component   — component label value (e.g. "api")
-  port        — service port number
-  serviceType — service type (e.g. "ClusterIP")
-Usage:
-  {{- include "coding-agent-automation.componentService" (dict "root" . "component" "api" "port" .Values.api.service.port "serviceType" .Values.api.service.type) }}
+WorkDistribution ConfigMap data block for orchestrator-env-configmap.
+Same values as workDistributionEnv but rendered as flat key: value pairs
+(no env list wrapper) for use in ConfigMap .data.
+Namespace is a literal release namespace here since fieldRef is not available in ConfigMaps.
+
+Usage (inside ConfigMap data:, indented to 2):
+  {{- include "coding-agent-automation.workDistributionConfigMapData" . | nindent 2 }}
 */}}
-{{- define "coding-agent-automation.componentService" -}}
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "coding-agent-automation.fullname" .root }}-{{ .component }}
-  labels:
-    {{- include "coding-agent-automation.labels" .root | nindent 4 }}
-    app.kubernetes.io/component: {{ .component }}
-spec:
-  type: {{ .serviceType }}
-  selector:
-    {{- include "coding-agent-automation.selectorLabels" .root | nindent 4 }}
-    app.kubernetes.io/component: {{ .component }}
-  ports:
-    - name: http
-      port: {{ .port }}
-      targetPort: http
-      protocol: TCP
+{{- define "coding-agent-automation.workDistributionConfigMapData" -}}
+WorkDistribution__OrchestratorUrl: {{ include "coding-agent-automation.agentOrchestratorUrl" . | quote }}
+WorkDistribution__AgentApiKeySecretName: {{ include "coding-agent-automation.secretName" . | quote }}
+WorkDistribution__AgentServiceAccountName: "{{ include "coding-agent-automation.fullname" . }}-agent"
+WorkDistribution__Namespace: {{ .Release.Namespace | quote }}
+WorkDistribution__OpencodeConfigSecretName: {{ include "coding-agent-automation.secretName" . | quote }}
+WorkDistribution__JobTemplatesPath: "/app/config/job-templates.yaml"
+WorkDistribution__Dispatch__IntervalSeconds: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
+WorkDistribution__Dispatch__RateLimitPerSecond: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
+WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds: {{ .Values.workDistribution.dispatch.chatSessionMaxDurationSeconds | quote }}
+WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
+WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
+WorkDistribution__Reconciliation__IntervalSeconds: {{ .Values.workDistribution.reconciliation.intervalSeconds | quote }}
+WorkDistribution__Reconciliation__StaleRetentionDays: {{ .Values.workDistribution.reconciliation.staleRetentionDays | quote }}
+{{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}
+WorkDistribution__CredentialPools__Kiro__{{ $i }}: {{ $pvc | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
+SignalR Redis env var. Renders the env entry only when connectionString is set.
+
+Usage (inside an env: list, indented to 12):
+  {{- include "coding-agent-automation.signalrEnv" . | nindent 12 }}
+*/}}
+{{- define "coding-agent-automation.signalrEnv" -}}
+{{- if .Values.signalr.redis.connectionString }}
+- name: SignalR__Redis__ConnectionString
+  value: {{ .Values.signalr.redis.connectionString | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
+Leader election lease name. Accepts a dict with "override", "suffix", and "root" keys.
+Returns the override value if non-empty, otherwise "caa-<release>-<suffix>".
+
+Usage:
+  value: {{ include "coding-agent-automation.leaseName" (dict "override" .Values.jobController.leaderElection.dispatchLeaseName "suffix" "dispatch-lock" "root" .) }}
+*/}}
+{{- define "coding-agent-automation.leaseName" -}}
+{{- if .override -}}
+{{- .override | quote -}}
+{{- else -}}
+{{- printf "caa-%s-%s" .root.Release.Name .suffix | quote -}}
+{{- end -}}
 {{- end }}

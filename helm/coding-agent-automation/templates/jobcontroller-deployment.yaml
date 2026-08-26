@@ -11,16 +11,15 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  replicas: {{ .Values.jobController.replicas }}
-  # RollingUpdate is safe: /readyz returns 200 regardless of leader state.
-  # Leader election gates actual dispatch — the non-leader idles until it wins.
+  replicas: {{ .Values.jobController.replicas | default 1 }}
+  # RollingUpdate is safe with multi-replica: /readyz returns 200 for all replicas regardless of
+  # leader state, so the new pod becomes Ready and the old one terminates cleanly.
+  # Leader election gates actual dispatch/reconciliation — the non-leader idles until it wins.
   strategy:
-    type: {{ .Values.jobController.strategy.type }}
-    {{- if eq .Values.jobController.strategy.type "RollingUpdate" }}
+    type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: {{ .Values.jobController.strategy.rollingUpdate.maxUnavailable }}
-      maxSurge: {{ .Values.jobController.strategy.rollingUpdate.maxSurge }}
-    {{- end }}
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
@@ -33,85 +32,64 @@ spec:
     spec:
       serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
       automountServiceAccountToken: true
-      terminationGracePeriodSeconds: {{ .Values.jobController.terminationGracePeriodSeconds }}
-      {{- with .Values.jobController.podSecurityContext }}
-      securityContext:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.jobController.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.jobController.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.jobController.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.jobController.initContainers }}
-      initContainers:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.jobController.terminationGracePeriodSeconds | default 30 }}
       containers:
         - name: jobcontroller
-          image: "{{ .Values.jobController.image.repository }}:{{ required "jobController.image.tag is required" .Values.jobController.image.tag }}"
+          image: "{{ .Values.jobController.image.repository }}:{{ .Values.jobController.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            runAsUser: 1000
-            seccompProfile:
-              type: RuntimeDefault
           ports:
             - name: http
               containerPort: {{ .Values.jobController.service.port }}
               protocol: TCP
+          # Startup probe gives the Job Controller up to 150 seconds to initialise
+          # (30 × 5 s) before liveness kicks in. Without this, liveness kills the pod
+          # after 40 s (initialDelaySeconds=10 + 3×10 s), which is too short for cold
+          # starts that include leader-election lease acquisition. Matches api-deployment.yaml.
           startupProbe:
             httpGet:
               path: /healthz
               port: {{ .Values.jobController.service.port }}
-            periodSeconds: {{ .Values.jobController.probes.startup.periodSeconds }}
-            failureThreshold: {{ .Values.jobController.probes.startup.failureThreshold }}
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /healthz
               port: {{ .Values.jobController.service.port }}
-            initialDelaySeconds: {{ .Values.jobController.probes.liveness.initialDelaySeconds }}
-            periodSeconds: {{ .Values.jobController.probes.liveness.periodSeconds }}
-            timeoutSeconds: {{ .Values.jobController.probes.liveness.timeoutSeconds }}
-            failureThreshold: {{ .Values.jobController.probes.liveness.failureThreshold }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /readyz
               port: {{ .Values.jobController.service.port }}
-            initialDelaySeconds: {{ .Values.jobController.probes.readiness.initialDelaySeconds }}
-            periodSeconds: {{ .Values.jobController.probes.readiness.periodSeconds }}
-            timeoutSeconds: {{ .Values.jobController.probes.readiness.timeoutSeconds }}
-            failureThreshold: {{ .Values.jobController.probes.readiness.failureThreshold }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
           resources:
             {{- toYaml .Values.jobController.resources | nindent 12 }}
           env:
-            {{- include "coding-agent-automation.commonSecretEnv" . | nindent 12 }}
-            {{- include "coding-agent-automation.otelEnv" (dict "root" . "serviceName" "coding-agent-jobcontroller") | nindent 12 }}
             - name: ASPNETCORE_URLS
               value: "http://+:{{ .Values.jobController.service.port }}"
             - name: PipelineApi__BaseUrl
               value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
+            {{- include "coding-agent-automation.secretEnv" . | nindent 12 }}
+            {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-jobcontroller" "root" .) | nindent 12 }}
+            # Leader election lease names — release-scoped to prevent collision
+            # when multiple Helm releases share a namespace (e.g. staging vs prod).
             - name: LeaderElection__DispatchLeaseName
-              value: {{ if .Values.jobController.leaderElection.dispatchLeaseName -}}
-                {{- .Values.jobController.leaderElection.dispatchLeaseName | quote }}
-              {{- else -}}
-                {{- printf "caa-%s-dispatch-lock" .Release.Name | quote }}
-              {{- end }}
+              value: {{ include "coding-agent-automation.leaseName" (dict "override" .Values.jobController.leaderElection.dispatchLeaseName "suffix" "dispatch-lock" "root" .) }}
             - name: LeaderElection__Namespace
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: LOG_LEVEL
-              value: {{ .Values.jobController.env.logLevel | quote }}
+            # WorkDistribution env vars — required by DispatchServiceOptionsFactory.
             {{- include "coding-agent-automation.workDistributionEnv" . | nindent 12 }}
+            - name: WorkDistribution__Reconciliation__IntervalSeconds
+              value: {{ .Values.workDistribution.reconciliation.intervalSeconds | quote }}
+            - name: WorkDistribution__Reconciliation__StaleRetentionDays
+              value: {{ .Values.workDistribution.reconciliation.staleRetentionDays | quote }}
           volumeMounts:
             - name: job-templates
               mountPath: /app/config

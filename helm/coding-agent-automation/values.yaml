@@ -39,12 +39,6 @@ orchestrator:
       cpu: 500m
       memory: 512Mi
   probes:
-    startup:
-      path: /healthz
-      port: 8080
-      initialDelaySeconds: 0
-      periodSeconds: 5
-      failureThreshold: 30
     liveness:
       path: /healthz
       port: 8080
@@ -117,11 +111,7 @@ existingSecret: ""
 otel:
   endpoint: ""
   protocol: grpc
-  # Service name injected into the orchestrator ConfigMap as OTEL_SERVICE_NAME.
-  # api, jobcontroller, and scheduler use hard-coded names via the otelEnv helper.
   serviceName: coding-agent-orchestrator
-  # OTEL_RESOURCE_ATTRIBUTES injected into the orchestrator ConfigMap.
-  # api, jobcontroller, and scheduler do not currently expose resource attributes.
   resourceAttributes: ""
 
 # ── ServiceAccount ───────────────────────────────────────────────────────────
@@ -225,10 +215,11 @@ jobTemplates: []
 
 signalr:
   redis:
-    # NOTE: This flag is used only in the install notes (NOTES.txt) to warn about
-    # multi-replica deployments without a backplane. It does NOT gate Redis configuration
-    # in any deployment template — all templates gate on connectionString being non-empty.
-    # To enable Redis, set connectionString to a valid Redis connection string.
+    # NOTE: This flag is used only in NOTES.txt to warn about multi-replica deployments
+    # without a backplane. It does NOT gate Redis configuration in any deployment template —
+    # all templates gate exclusively on connectionString being non-empty.
+    # To enable the Redis backplane, set connectionString to a valid Redis connection string.
+    # Setting enabled: true without a non-empty connectionString has no effect.
     enabled: false
     # Connection string for Redis. Operators deploy Redis independently
     # (e.g., Bitnami Redis chart, ElastiCache, Memorystore).
@@ -262,11 +253,6 @@ api:
   service:
     type: ClusterIP
     port: 8090
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
   # serviceUrl is the in-cluster URL that agent pods use to reach the API hub and HTTP
   # endpoints (ORCHESTRATOR_URL). Both work-item pods and chat pods share this single config
   # key (WorkDistribution__OrchestratorUrl) — changing it re-points both shapes simultaneously
@@ -291,31 +277,6 @@ api:
       cpu: 500m
       memory: 512Mi
   terminationGracePeriodSeconds: 30
-  # Note: if the API's ChatJobDispatcher must wait for chat pod teardown to complete
-  # before shutdown, this value should exceed workDistribution.dispatch.chatTerminationGracePeriodSeconds (120).
-  # The current default of 30s assumes the API does not block on pod teardown completion.
-  # If that changes, raise this to at least 150 (matching the scheduler).
-  probes:
-    startup:
-      periodSeconds: 5
-      failureThreshold: 30
-    liveness:
-      initialDelaySeconds: 0
-      periodSeconds: 10
-      timeoutSeconds: 5
-      failureThreshold: 3
-    readiness:
-      initialDelaySeconds: 0
-      periodSeconds: 5
-      timeoutSeconds: 3
-      failureThreshold: 3
-  # Pod-level securityContext (e.g., runAsUser, fsGroup)
-  podSecurityContext: {}
-  # Extra initContainers injected before the main container
-  initContainers: []
-  nodeSelector: {}
-  affinity: {}
-  tolerations: []
   env:
     logLevel: Information
     dbLogLevel: Warning
@@ -350,36 +311,6 @@ jobController:
     # Empty (default) = release-scoped: caa-<release>-dispatch-lock
     # Set explicitly to use a fixed name across Helm releases (e.g. shared namespaces).
     dispatchLeaseName: ""
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
-  terminationGracePeriodSeconds: 30
-  probes:
-    startup:
-      periodSeconds: 5
-      failureThreshold: 30
-    liveness:
-      initialDelaySeconds: 10
-      periodSeconds: 10
-      timeoutSeconds: 5
-      failureThreshold: 3
-    readiness:
-      initialDelaySeconds: 5
-      periodSeconds: 5
-      timeoutSeconds: 3
-      failureThreshold: 3
-  # Pod-level securityContext (e.g., runAsUser, fsGroup)
-  podSecurityContext: {}
-  # Extra initContainers injected before the main container
-  initContainers: []
-  nodeSelector: {}
-  affinity: {}
-  tolerations: []
-  env:
-    # Log level for the Job Controller application
-    logLevel: Information
 
 # =============================================================================
 # Scheduler microservice (Spec 047)
@@ -410,38 +341,6 @@ scheduler:
     # Scheduler-specific K8s Lease name — distinct from the API's lease.
     # Empty (default) = release-scoped: caa-<release>-scheduler-lock
     leaseName: ""
-  # terminationGracePeriodSeconds must be > workDistribution.dispatch.chatTerminationGracePeriodSeconds (120)
-  # to ensure the scheduler completes chat session teardown before SIGKILL fires.
-  terminationGracePeriodSeconds: 150
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
-  # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
-  annotations: {}
-  probes:
-    path: /health
-    startup:
-      initialDelaySeconds: 10
-      periodSeconds: 5
-      failureThreshold: 12
-    liveness:
-      initialDelaySeconds: 10
-      periodSeconds: 10
-      timeoutSeconds: 5
-      failureThreshold: 3
-    readiness:
-      initialDelaySeconds: 10
-      periodSeconds: 5
-      timeoutSeconds: 3
-      failureThreshold: 3
+  terminationGracePeriodSeconds: 90
   env:
     logLevel: Information
-  # Pod-level securityContext (e.g., runAsUser, fsGroup)
-  podSecurityContext: {}
-  # Extra initContainers injected before the main container
-  initContainers: []
-  nodeSelector: {}
-  affinity: {}
-  tolerations: []

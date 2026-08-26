@@ -48,6 +48,14 @@ public static class JobSpecBuilder
         /// mounting the master <c>agent-api-key</c> Secret. This prevents compromised agent pods
         /// from holding the master key.
         /// Null for non-work-item jobs (model-fetch, etc.) which are not yet migrated.
+        ///
+        /// ⚠️ <b>Double-derivation footgun:</b> Do NOT set this for any pod whose agent code
+        /// calls <c>DeriveKey</c> internally (e.g., <c>HubConnectionManager</c>,
+        /// <c>WorkItemHttpClient</c>). Those agents derive the key themselves at runtime from
+        /// <c>AGENT_API_KEY</c> + <c>AGENT_ID</c>. Injecting a pre-derived key via this Secret
+        /// causes a second derivation and authentication failure. This property is intended only
+        /// for hypothetical future agent variants that accept a fully-formed key without
+        /// re-deriving it.
         /// </summary>
         public string? DerivedKeySecretName { get; init; }
     }

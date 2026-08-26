@@ -5,6 +5,8 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Api.Client.Stores;
+using ApiBackedPipelineRunHistoryService = CodingAgentWebUI.Services.ApiBackedPipelineRunHistoryService;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;

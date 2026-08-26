@@ -4,7 +4,7 @@ metadata:
   name: {{ include "coding-agent-automation.fullname" . }}-job-templates
   labels:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
-    app.kubernetes.io/component: job-templates
+    app.kubernetes.io/component: shared-config
 data:
   job-templates.yaml: |
     {{- if not .Values.jobTemplates }}

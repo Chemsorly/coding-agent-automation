@@ -5,6 +5,8 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Api.Client.Stores;
+using ApiBackedPipelineRunHistoryService = CodingAgentWebUI.Services.ApiBackedPipelineRunHistoryService;
 using Moq;
 using ILogger = Serilog.ILogger;
 

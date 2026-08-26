@@ -1,7 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Api.Client.Stores;
 using Moq;
 using Xunit;
 

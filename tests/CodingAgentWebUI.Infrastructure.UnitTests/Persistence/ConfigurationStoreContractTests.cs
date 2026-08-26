@@ -5,6 +5,7 @@ using CodingAgentWebUI.Infrastructure.Persistence.Stores;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Api.Client.Stores;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Moq;
@@ -292,7 +293,7 @@ file class ContractTestDbContextFactory : IDbContextFactory<PipelineDbContext>
 // ── API-backed implementation ────────────────────────────────────────────────
 
 /// <summary>
-/// Runs the contract tests against <see cref="CodingAgentWebUI.Services.ApiConfigurationStore"/>.
+/// Runs the contract tests against <see cref="CodingAgentWebUI.Api.Client.Stores.ApiConfigurationStore"/>.
 ///
 /// This is the implementation used by the monolith frontend — a hot-path singleton that sits in
 /// front of every config read the dispatch loop makes. Each test gets a fresh in-memory mock
@@ -363,14 +364,14 @@ public sealed class ApiConfigurationStoreContractTests : ConfigurationStoreContr
         return mock;
     }
 
-    private static CodingAgentWebUI.Services.ApiConfigurationStore BuildStore(Mock<IPipelineApiConfigClient> client)
+    private static CodingAgentWebUI.Api.Client.Stores.ApiConfigurationStore BuildStore(Mock<IPipelineApiConfigClient> client)
     {
         // CacheTtlSeconds = 0 disables the TTL cache so each call goes through to the mock,
         // letting the contract tests observe real-time state changes without delay.
-        var pipeline = new CodingAgentWebUI.Services.ApiPipelineConfigStore(client.Object) { CacheTtlSeconds = 0 };
-        var providers = new CodingAgentWebUI.Services.ApiProviderConfigStore(client.Object) { CacheTtlSeconds = 0 };
-        var projects = new CodingAgentWebUI.Services.ApiProjectStore(client.Object) { CacheTtlSeconds = 0 };
-        return new CodingAgentWebUI.Services.ApiConfigurationStore(client.Object, pipeline, providers, projects)
+        var pipeline = new CodingAgentWebUI.Api.Client.Stores.ApiPipelineConfigStore(client.Object) { CacheTtlSeconds = 0 };
+        var providers = new CodingAgentWebUI.Api.Client.Stores.ApiProviderConfigStore(client.Object) { CacheTtlSeconds = 0 };
+        var projects = new CodingAgentWebUI.Api.Client.Stores.ApiProjectStore(client.Object) { CacheTtlSeconds = 0 };
+        return new CodingAgentWebUI.Api.Client.Stores.ApiConfigurationStore(client.Object, pipeline, providers, projects)
             { CacheTtlSeconds = 0 };
     }
 }

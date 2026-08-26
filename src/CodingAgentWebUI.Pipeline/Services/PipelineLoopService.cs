@@ -304,6 +304,13 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
         lock (_lock)
         {
             IsLoopActive = false;
+            // Capture _stopRequested BEFORE clearing it so the re-arm guard below can read the
+            // value that was current when CleanupAsync entered the lock.
+            // StopLoop() also acquires _lock, so if it arrived before CleanupAsync it already
+            // set _stopRequested=true and we capture that true here.
+            // If it arrives AFTER CleanupAsync takes the lock it will block until we release;
+            // at that point the re-arm decision will already have been made correctly.
+            var wasStopRequested = _stopRequested;
             _stopRequested = false;
             CurrentIssueIdentifier = null;
             CurrentCycleTemplateIndex = 0;
@@ -316,7 +323,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             _loopCts?.Dispose();
             _loopCts = null;
 
-            if (rearmForLeaderReacquisition && !_stopRequested)
+            if (rearmForLeaderReacquisition && !wasStopRequested)
             {
                 // Leadership was lost mid-run. Re-arm the activation signal and a fresh loop CTS
                 // so that ExecuteAsync automatically re-enters RunMultiTemplateLoopAsync as soon
@@ -327,9 +334,11 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
                 // will resume as soon as it becomes leader again.
                 //
                 // Guard: if StopLoop() was called between leadership loss and this re-arm (setting
-                // _stopRequested = true), do NOT re-arm. Otherwise the pre-signalled _activationSignal
-                // would cause ExecuteAsync to run one spurious short-circuit pass through
-                // RunMultiTemplateLoopAsync before CleanupAsync(false) fires.
+                // _stopRequested = true before we entered this lock), do NOT re-arm. Otherwise the
+                // pre-signalled _activationSignal would cause ExecuteAsync to run one spurious
+                // short-circuit pass through RunMultiTemplateLoopAsync before CleanupAsync(false)
+                // fires. wasStopRequested captures the flag value at lock-entry time; _stopRequested
+                // itself is cleared above so the next StartLoopAsync() starts clean.
                 IsLoopActive = true;
                 _loopCts = new CancellationTokenSource();
                 _activationSignal.TrySetResult();

@@ -3,6 +3,7 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Api.Client.Stores;
 using CodingAgentWebUI.Services;
 using Serilog;
 
@@ -14,14 +15,13 @@ public static partial class ServiceCollectionExtensions
     /// Registers the WebUI pipeline background services.
     ///
     /// Spec 047: PipelineLoopService, HousekeepingService, OrphanedLabelRecoveryService,
-    /// IDependencyChecker, PipelineLoopServiceDependencies, IPipelineLoopService, and all
-    /// Api*Store shim registrations (ApiPipelineConfigStore, ApiProviderConfigStore,
-    /// ApiProjectStore) that were exclusively used by the loop have been REMOVED. They now
-    /// live in CodingAgentWebUI.Scheduler.
+    /// IDependencyChecker, PipelineLoopServiceDependencies, and IPipelineLoopService have been
+    /// moved to CodingAgentWebUI.Scheduler.
     ///
     /// RETAINED (consumed by drawer services and DispatchOrchestrationService):
     /// - ApiConfigurationStore + IConfigurationStore + IAgentProfileStore +
     ///   IQualityGateConfigStore + IReviewerConfigStore
+    ///   (sourced from CodingAgentWebUI.Api.Client.Stores)
     /// - IDispatchOrchestrationService
     ///
     /// ADDED (Spec 047):
