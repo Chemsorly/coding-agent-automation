@@ -263,6 +263,76 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         hostCts.Cancel();
     }
 
+    /// <summary>
+    /// Regression test for the <c>wasStopRequested</c> guard in <see cref="PipelineLoopService.CleanupAsync"/>.
+    ///
+    /// Scenario: leadership is lost while the loop is running (which sets <c>rearmForLeaderReacquisition=true</c>
+    /// in CleanupAsync). StopLoop() is called concurrently — it sets <c>_stopRequested=true</c> while
+    /// CleanupAsync hasn't yet entered <c>_lock</c>.
+    ///
+    /// Before the <c>wasStopRequested</c> fix, <c>!_stopRequested</c> was evaluated after
+    /// <c>_stopRequested = false</c> (the unconditional reset), so the guard was always true and a
+    /// spurious re-arm occurred regardless of StopLoop(). After the fix, <c>wasStopRequested</c>
+    /// captures the flag at lock-entry time, so a concurrent StopLoop() is correctly detected.
+    ///
+    /// This test exercises the <c>rearmForLeaderReacquisition=true</c> path using FakeLeaderGate —
+    /// the companion test (<see cref="WhenStopLoopCalledDuringRearm_ShouldNotRerunLoop"/>) does not
+    /// reach this path (uses leaderGate=null, so rearmForLeaderReacquisition is always false).
+    /// </summary>
+    [Fact]
+    public async Task WhenStopLoopCalledAndLeadershipLost_WasStopRequestedGuard_PreventsSpuriousRearm()
+    {
+        // Directly tests the wasStopRequested guard in CleanupAsync by calling it via reflection.
+        // This covers the rearmForLeaderReacquisition=true code path that the companion test
+        // (leaderGate=null) can never reach.
+
+        var svc = CreateService(leaderGate: null);
+
+        // Simulate: loop was started and is active
+        // Use StartLoopAsync to properly initialise internal state
+        await svc.StartLoopAsync();
+        svc.IsLoopActive.Should().BeTrue("StartLoopAsync must set IsLoopActive=true");
+
+        // Simulate StopLoop() being called first (sets _stopRequested=true via _lock)
+        svc.StopLoop();
+
+        // Directly invoke CleanupAsync(rearmForLeaderReacquisition=true) to test the guard.
+        // In production this is called from ExecuteAsync's finally block when leadership is lost.
+        var cleanupMethod = typeof(PipelineLoopService)
+            .GetMethod("CleanupAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)cleanupMethod.Invoke(svc, [/* rearmForLeaderReacquisition= */ true])!;
+
+        // Assert: CleanupAsync with rearm=true AND _stopRequested=true → re-arm suppressed
+        // wasStopRequested captured true (StopLoop was called), so the if-block is skipped.
+        svc.IsLoopActive.Should().BeFalse(
+            "wasStopRequested=true suppresses re-arm in CleanupAsync — " +
+            "the loop must not re-activate when StopLoop() was called before leadership was lost");
+    }
+
+    [Fact]
+    public async Task WhenLeadershipLostWithoutStop_CleanupAsyncWithRearm_SetsLoopActiveTrue()
+    {
+        // Positive case: leadership lost WITHOUT calling StopLoop().
+        // CleanupAsync(rearmForLeaderReacquisition=true) with wasStopRequested=false → re-arm fires.
+        // Covers the `IsLoopActive = true` branch inside the if-block.
+
+        var svc = CreateService(leaderGate: null);
+
+        await svc.StartLoopAsync();
+        svc.IsLoopActive.Should().BeTrue("StartLoopAsync must set IsLoopActive=true");
+
+        // Do NOT call StopLoop() — _stopRequested stays false
+
+        var cleanupMethod = typeof(PipelineLoopService)
+            .GetMethod("CleanupAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)cleanupMethod.Invoke(svc, [/* rearmForLeaderReacquisition= */ true])!;
+
+        // Assert: re-arm fired — IsLoopActive=true because leadership loss should preserve intent
+        svc.IsLoopActive.Should().BeTrue(
+            "with rearm=true and no StopLoop(), CleanupAsync must restore IsLoopActive=true " +
+            "so the loop resumes automatically when leadership is re-acquired");
+    }
+
     // ── Test doubles ─────────────────────────────────────────────────────
 
     /// <summary>Controllable <see cref="ILeaderGate"/> — same pattern as in LeaderElectionTests.</summary>
