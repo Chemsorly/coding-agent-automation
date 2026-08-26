@@ -38,6 +38,14 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
     /// <summary>Jobs to return from ListJobsAsync (simulates existing jobs in cluster).</summary>
     public List<V1Job> ExistingJobs { get; } = new();
 
+    /// <summary>
+    /// Raised synchronously inside <see cref="CreateJobAsync"/> immediately after the job is
+    /// recorded in <see cref="ChatJobs"/>. Each subscriber receives the created <see cref="V1Job"/>.
+    /// Used by <c>DispatchChatPodAndConnectAsync</c> to claim ownership of the specific job that
+    /// was created by its dispatch call, without relying on insertion-order iteration.
+    /// </summary>
+    public event Action<V1Job>? ChatJobCreated;
+
     public Task CreateJobAsync(V1Job job, string ns, CancellationToken ct = default)
     {
         if (CreateJobException is not null)
@@ -58,7 +66,10 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
 
         // Chat jobs are tracked separately for easy assertions
         if (jobName.StartsWith("caa-chat-", StringComparison.OrdinalIgnoreCase))
+        {
             ChatJobs[jobName] = job;
+            ChatJobCreated?.Invoke(job);
+        }
 
         return Task.CompletedTask;
     }
@@ -123,6 +134,7 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         CreateJobException = null;
         FailNextCreate = false;
         ChatJobs.Clear();
+        ChatJobCreated = null;
     }
 
     /// <summary>
@@ -163,10 +175,21 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
     /// Returns null if no matching job exists.
     /// </summary>
     public V1Job? GetChatJobBySelector(string encodedSelector)
+        => GetChatJobBySelector(encodedSelector, excludeJobNames: null);
+
+    /// <summary>
+    /// Finds a chat job by its <c>caa/chat-selector</c> label value, excluding jobs whose names
+    /// are in <paramref name="excludeJobNames"/>. Used by concurrent-dispatch tests to ensure
+    /// each dispatch task finds only the job it created, not one created by a sibling task.
+    /// </summary>
+    public V1Job? GetChatJobBySelector(string encodedSelector, IReadOnlySet<string>? excludeJobNames)
     {
-        return ChatJobs.Values.FirstOrDefault(j =>
-            j.Metadata?.Labels != null &&
-            j.Metadata.Labels.TryGetValue("caa/chat-selector", out var val) &&
-            string.Equals(val, encodedSelector, StringComparison.OrdinalIgnoreCase));
+        return ChatJobs
+            .Where(kv => excludeJobNames is null || !excludeJobNames.Contains(kv.Key))
+            .Select(kv => kv.Value)
+            .FirstOrDefault(j =>
+                j.Metadata?.Labels != null &&
+                j.Metadata.Labels.TryGetValue("caa/chat-selector", out var val) &&
+                string.Equals(val, encodedSelector, StringComparison.OrdinalIgnoreCase));
     }
 }
