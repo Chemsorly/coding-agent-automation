@@ -731,9 +731,11 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TransitionRunToRunningAsync_RunNotQueued_NoOp()
+    public async Task TransitionRunToRunningAsync_RunNotQueued_TrackerCalledButInternallyGuards()
     {
-        // Arrange: run is already Running — should be a no-op
+        // Arrange: run is already Running.
+        // The service always delegates to the tracker when one is registered.
+        // The tracker itself guards on Queued status and is a no-op internally for Running runs.
         var runStore = new FileSystemConsolidationRunStore(_tempDir);
         var run = new ConsolidationRun
         {
@@ -750,9 +752,8 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         // Act
         await svc.TransitionRunToRunningAsync("already-running-1", CancellationToken.None);
 
-        // Assert: tracker NOT called (ConsolidationService.TransitionToRunningAsync guards on Queued status)
-        // Note: The tracker's TransitionToRunningAsync has its own guard, but calling it is still fine —
-        // it's the implementation that decides whether to proceed.
+        // Assert: tracker IS called (service always delegates when tracker is registered);
+        // the tracker's internal guard on Queued status means it will be a no-op inside the tracker.
         mockTracker.Verify(
             t => t.TransitionToRunningAsync("already-running-1", It.IsAny<CancellationToken>()),
             Times.Once, "tracker is always called when available; it internally guards on Queued status");

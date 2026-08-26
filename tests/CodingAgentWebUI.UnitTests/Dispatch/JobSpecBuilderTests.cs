@@ -9,6 +9,7 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 /// Tests for <see cref="JobSpecBuilder"/> — applies <see cref="JobTemplate"/> fields
 /// to a K8s Job pod spec (initContainers, podSecurityContext, nodeSelector, resources, tolerations).
 /// </summary>
+[Collection("EnvironmentVariables")]
 public class JobSpecBuilderTests
 {
     private static JobTemplate CreateTemplate(

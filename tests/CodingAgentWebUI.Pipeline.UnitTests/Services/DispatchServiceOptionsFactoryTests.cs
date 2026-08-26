@@ -10,6 +10,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Validates the extracted InitializeOptions logic reads all 7 config keys correctly.
 /// Issue #1630: eliminates duplicated InitializeOptions across 3 sites.
 /// </summary>
+[Collection("EnvironmentVariables")]
 public class DispatchServiceOptionsFactoryTests
 {
     [Fact]

@@ -491,3 +491,128 @@ public sealed class InMemoryConfigurationStoreBehaviorTests
         agents.Should().NotContain(c => c.Id == repoId);
     }
 }
+
+// ── InMemoryConfigurationStore — 3 missing property invariants ───────────────
+
+/// <summary>
+/// Adds the three property invariants that <c>PostgresConfigurationStorePropertyTests</c>
+/// covers (P3 idempotent-save, P5 GetById, P1-UpdateAsync) but that were absent from
+/// <c>InMemoryConfigurationStoreBehaviorTests</c>.
+/// Inherits nothing — standalone Facts to avoid the xUnit1024 duplicate-name restriction.
+/// </summary>
+public sealed class InMemoryConfigurationStorePropertyInvariantTests
+{
+    private static CodingAgentWebUI.TestUtilities.InMemoryConfigurationStore CreateStore()
+        => new();
+
+    /// <summary>
+    /// P3 equivalent: saving PipelineConfiguration twice does not create duplicates —
+    /// the second save wins (upsert semantics).
+    /// </summary>
+    [Fact]
+    public async Task PipelineConfig_SaveTwice_IsIdempotent()
+    {
+        var store = CreateStore();
+
+        await store.SavePipelineConfigAsync(
+            new PipelineConfiguration { MaxRetries = 5 }, CancellationToken.None);
+        await store.SavePipelineConfigAsync(
+            new PipelineConfiguration { MaxRetries = 99 }, CancellationToken.None);
+
+        var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+        loaded.MaxRetries.Should().Be(99, "second save must overwrite the first (idempotent upsert)");
+    }
+
+    /// <summary>
+    /// P5 equivalent: GetProviderConfigByIdAsync returns the exact config that was saved.
+    /// </summary>
+    [Fact]
+    public async Task ProviderConfig_GetById_ReturnsSavedConfig()
+    {
+        var store = CreateStore();
+        var id = Guid.NewGuid().ToString();
+        var original = new ProviderConfig
+        {
+            Id = id,
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "GetById Test Agent",
+            Settings = new Dictionary<string, string> { ["model"] = "claude-sonnet" }
+        };
+
+        await store.SaveProviderConfigAsync(original, CancellationToken.None);
+        var loaded = await store.GetProviderConfigByIdAsync(id, ProviderKind.Agent, CancellationToken.None);
+
+        loaded.Should().NotBeNull();
+        loaded!.Id.Should().Be(id);
+        loaded.DisplayName.Should().Be("GetById Test Agent");
+        loaded.Settings["model"].Should().Be("claude-sonnet");
+    }
+
+    /// <summary>
+    /// P3a: GetProviderConfigByIdAsync returns null for a non-existent ID.
+    /// </summary>
+    [Fact]
+    public async Task ProviderConfig_GetById_NonExistentId_ReturnsNull()
+    {
+        var store = CreateStore();
+        var loaded = await store.GetProviderConfigByIdAsync(
+            Guid.NewGuid().ToString(), ProviderKind.Repository, CancellationToken.None);
+
+        loaded.Should().BeNull();
+    }
+
+    /// <summary>
+    /// UpdateAsync equivalent: UpdatePipelineConfigAsync applies the transform function.
+    /// </summary>
+    [Fact]
+    public async Task PipelineConfig_Update_AppliesTransform()
+    {
+        var store = CreateStore();
+        await store.SavePipelineConfigAsync(
+            new PipelineConfiguration { MaxRetries = 3, WorkspaceBaseDirectory = "/test" },
+            CancellationToken.None);
+
+        await store.UpdatePipelineConfigAsync(
+            c => c with { MaxRetries = c.MaxRetries + 2 },
+            CancellationToken.None);
+
+        var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+        loaded.MaxRetries.Should().Be(5, "transform MaxRetries += 2 must be applied");
+        loaded.WorkspaceBaseDirectory.Should().Be("/test", "other fields must be preserved by the transform");
+    }
+
+    /// <summary>
+    /// Save existing ID with different DisplayName updates it (not creates duplicate).
+    /// </summary>
+    [Fact]
+    public async Task ProviderConfig_SaveExistingId_UpdatesDisplayName()
+    {
+        var store = CreateStore();
+        var id = Guid.NewGuid().ToString();
+
+        await store.SaveProviderConfigAsync(
+            new ProviderConfig
+            {
+                Id = id, Kind = ProviderKind.Repository,
+                ProviderType = "GitHub", DisplayName = "Original",
+                Settings = new Dictionary<string, string> { ["owner"] = "org1" }
+            }, CancellationToken.None);
+
+        await store.SaveProviderConfigAsync(
+            new ProviderConfig
+            {
+                Id = id, Kind = ProviderKind.Repository,
+                ProviderType = "GitHub", DisplayName = "Updated",
+                Settings = new Dictionary<string, string> { ["owner"] = "org2" }
+            }, CancellationToken.None);
+
+        var loaded = await store.GetProviderConfigByIdAsync(id, ProviderKind.Repository, CancellationToken.None);
+        loaded!.DisplayName.Should().Be("Updated");
+        loaded.Settings["owner"].Should().Be("org2");
+
+        // Confirm no duplicate was created
+        var all = await store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
+        all.Count(c => c.Id == id).Should().Be(1, "upsert must not create a duplicate");
+    }
+}

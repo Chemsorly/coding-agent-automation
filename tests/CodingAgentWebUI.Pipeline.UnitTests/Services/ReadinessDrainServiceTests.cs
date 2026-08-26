@@ -5,6 +5,7 @@ using Xunit;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
+[Collection("EnvironmentVariables")]
 public class ReadinessDrainServiceTests
 {
     private readonly ILogger _logger = new LoggerConfiguration().CreateLogger();
