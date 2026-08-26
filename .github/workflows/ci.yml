@@ -217,6 +217,7 @@ jobs:
           - tag: coding-agent-opencode-python312
           - tag: coding-agent-api
           - tag: coding-agent-jobcontroller
+          - tag: coding-agent-scheduler
 
     steps:
       - name: Create and push multi-arch manifest for ${{ matrix.tag }}
