@@ -8,8 +8,8 @@ namespace CodingAgentWebUI.Scheduler.Services;
 
 /// <summary>
 /// Background service that triggers the API's retention sweep on a configurable interval.
-/// Only the leader Scheduler replica triggers the sweep — the API returns 503 when its own
-/// leader is not available, which this service treats as a non-error skip.
+/// Only the leader Scheduler replica triggers the sweep. The API is stateless — it always
+/// executes when called (Spec 049: API leader election removed).
 /// </summary>
 public sealed class RetentionSweepSchedulerService : BackgroundService
 {
@@ -64,11 +64,6 @@ public sealed class RetentionSweepSchedulerService : BackgroundService
                     result.StaleWorkItemsDeleted, result.StalePipelineRunsDeleted,
                     result.StaleConsolidationRunsDeleted, result.RetentionPipelineRunsDeleted,
                     result.RetentionWorkItemsDeleted);
-            }
-            catch (RetentionSweepUnavailableException)
-            {
-                // API replica is not the leader — expected in multi-replica deployments
-                _logger.Debug("Retention sweep skipped: API replica not leader this tick");
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

@@ -11,8 +11,10 @@ api:
     tag: ci-api-placeholder
 jobController:
   image:
-    repository: chemsorly/coding-agent
     tag: coding-agent-jobcontroller
 scheduler:
   image:
     tag: ci-scheduler-placeholder
+orchestrator:
+  image:
+    tag: ci-orchestrator-placeholder

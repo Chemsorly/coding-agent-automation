@@ -4,6 +4,7 @@ metadata:
   name: {{ include "coding-agent-automation.fullname" . }}-orchestrator-env
   labels:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
 data:
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
   OTEL_EXPORTER_OTLP_PROTOCOL: {{ .Values.otel.protocol | quote }}
@@ -22,6 +23,9 @@ data:
   WorkDistribution__AgentApiKeySecretName: {{ include "coding-agent-automation.secretName" . | quote }}
   WorkDistribution__AgentServiceAccountName: "{{ include "coding-agent-automation.fullname" . }}-agent"
   WorkDistribution__Namespace: {{ .Release.Namespace | quote }}
+  # Note: api and jobcontroller inject WorkDistribution__Namespace via Downward API fieldRef
+  # (metadata.namespace), which is functionally identical in a standard helm install but
+  # self-corrects if manifests are applied to a different namespace.
   WorkDistribution__OpencodeConfigSecretName: {{ include "coding-agent-automation.secretName" . | quote }}
   {{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}
   WorkDistribution__CredentialPools__Kiro__{{ $i }}: {{ $pvc | quote }}
@@ -29,3 +33,4 @@ data:
   WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds: {{ .Values.workDistribution.dispatch.chatSessionMaxDurationSeconds | quote }}
   WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
   WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
+  WorkDistribution__JobTemplatesPath: "/app/config/job-templates.yaml"

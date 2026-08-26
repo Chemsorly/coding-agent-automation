@@ -13,7 +13,8 @@ namespace CodingAgentWebUI.JobController.Dispatch;
 public static class DispatchServiceRegistration
 {
     /// <summary>
-    /// Registers <see cref="DispatchService"/>, <see cref="DispatchLoop"/>, and <see cref="PvcPool"/>
+    /// Registers <see cref="DispatchService"/>, <see cref="DispatchLoop"/>, <see cref="PvcPool"/>,
+    /// <see cref="ConsolidationDispatchService"/>, and <see cref="ConsolidationDispatchLoop"/>
     /// using options from configuration.
     /// </summary>
     public static IServiceCollection AddDispatchService(
@@ -33,6 +34,7 @@ public static class DispatchServiceRegistration
             return new PvcPool(opts.KiroPvcPool);
         });
 
+        // ── Regular work item dispatch ────────────────────────────────────────
         services.AddSingleton<DispatchLoop>(sp => new DispatchLoop(
             sp.GetRequiredService<IPipelineApiWorkItemClient>(),
             sp.GetRequiredService<IPipelineApiConfigClient>(),
@@ -49,6 +51,24 @@ public static class DispatchServiceRegistration
             sp.GetRequiredService<IKubernetesJobClient>()));
 
         services.AddHostedService(sp => sp.GetRequiredService<DispatchService>());
+
+        // ── Consolidation work item dispatch ──────────────────────────────────
+        // Shares the same ILeaderElectionService lease as DispatchService — only the leader
+        // replica dispatches. Stateless: all domain operations delegated to the API via
+        // IPipelineApiConsolidationWorkItemClient.
+        services.AddSingleton<ConsolidationDispatchLoop>(sp => new ConsolidationDispatchLoop(
+            sp.GetRequiredService<IPipelineApiConsolidationWorkItemClient>(),
+            sp.GetRequiredService<IKubernetesJobClient>(),
+            sp.GetRequiredService<JobTemplateStore>(),
+            sp.GetRequiredService<PvcPool>(),
+            sp.GetRequiredService<DispatchServiceOptions>()));
+
+        services.AddSingleton<ConsolidationDispatchService>(sp => new ConsolidationDispatchService(
+            sp.GetRequiredService<ILeaderElectionService>(),
+            sp.GetRequiredService<ConsolidationDispatchLoop>(),
+            sp.GetRequiredService<DispatchServiceOptions>()));
+
+        services.AddHostedService(sp => sp.GetRequiredService<ConsolidationDispatchService>());
 
         return services;
     }

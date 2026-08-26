@@ -13,3 +13,19 @@ spec:
       {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: orchestrator
 {{- end }}
+{{- if and .Values.api.enabled (gt (int .Values.api.replicas) 1) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-api
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+{{- end }}

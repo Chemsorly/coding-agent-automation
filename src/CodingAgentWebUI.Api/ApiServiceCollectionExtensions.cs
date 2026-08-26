@@ -12,7 +12,6 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
-using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using k8s;
@@ -218,39 +217,6 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<JobDeduplicationGuardService>(sp =>
             new JobDeduplicationGuardService(sp.GetRequiredService<IAgentRegistryService>(), Log.Logger));
 
-        // ── Redis cleanup background services (only registered when Redis is configured) ──
-        // AddHostedService<T> uses TryAddEnumerable which requires a non-IHostedService concrete type.
-        // We check for Redis at registration time via a post-configure callback or simply skip
-        // registration when Redis is absent, since these services are no-ops without Redis.
-        {
-            var hasMuxDescriptor = services.Any(d => d.ServiceType == typeof(StackExchange.Redis.IConnectionMultiplexer));
-            // Always register the singletons — only constructed when Redis is available.
-            // Returns null when the mux is absent; the hosted-service fallback below handles
-            // that case with a NullRedisStore no-op implementation.
-            services.AddSingleton<CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService>(sp =>
-            {
-                var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
-                if (mux is null) return null!;
-                var store = new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase());
-                // Resolved lazily from the built provider — registered later in AddApiOrchestration,
-                // but factory lambdas execute after the full IServiceCollection is built.
-                var leaderElection = sp.GetService<ILeaderElectionService>();
-                return new CodingAgentWebUI.Orchestration.Registry.AgentRegistryCleanupService(store, Log.Logger, leaderElection);
-            });
-            services.AddSingleton<RunServiceCleanupService>(sp =>
-            {
-                var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
-                if (mux is null) return null!;
-                var store = new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase());
-                var leaderElection = sp.GetService<ILeaderElectionService>();
-                return new RunServiceCleanupService(store, Log.Logger, leaderElection);
-            });
-            // Spec 047: AddHostedService registrations removed — AgentRegistryCleanupService
-            // and RunServiceCleanupService have moved to CodingAgentWebUI.Scheduler.
-            // The singleton registrations above are kept because IRedisStore/IConnectionMultiplexer
-            // are still needed by DistributedAgentRegistryService and DistributedRunService.
-        }
-
         // ── ITokenVendingService ─────────────────────────────────────────────
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler();
@@ -321,11 +287,8 @@ public static class ApiServiceCollectionExtensions
                 sp.GetService<IJobCleanupStrategy>(),
                 sp.GetRequiredService<IWorkItemFallbackTransitionService>())));
 
-        // ── IKubernetes + ILeaderElectionService ────────────────────────────────────────────
-        // Required by ConsolidationWorkItemDispatchService and DatabaseMaintenanceService.
-        // LeaderElectionService uses K8s Lease-based election when running in-cluster.
-        // The Lease name is injected via LeaderElection:PipelineLoopLeaseName (Helm env var) or
-        // defaults to "caa-{release}-pipeline-loop-lock" set by orchestrator-deployment.yaml.
+        // ── IKubernetes ──────────────────────────────────────────────────────────────────────
+        // Required by IKubernetesJobClient (ModelFetchJobService, ChatJobDispatcher).
         services.AddSingleton<IKubernetes>(sp =>
         {
             try
@@ -356,31 +319,11 @@ public static class ApiServiceCollectionExtensions
         // IKubernetesJobClient wraps IKubernetes. Use GetService (nullable) so the factory
         // returns a no-op stub when K8s is unavailable, instead of passing null to
         // KubernetesJobClient which would NRE on the first dispatch attempt.
-        services.AddOptions<LeaderElectionOptions>()
-            .Configure<IConfiguration>((opts, config) =>
-            {
-                config.GetSection(LeaderElectionOptions.SectionName).Bind(opts);
-                // Also accept PipelineLoopLeaseName as an alias for LeaseName (Helm env var compat).
-                // LeaderElection__PipelineLoopLeaseName binds to LeaderElection:PipelineLoopLeaseName
-                // but LeaderElectionOptions has no such property — the alias maps it to LeaseName.
-                // Existing deployments using LeaderElection__LeaseName continue to work unchanged.
-                var leaseName = config.GetValue<string>($"{LeaderElectionOptions.SectionName}:PipelineLoopLeaseName");
-                if (!string.IsNullOrEmpty(leaseName))
-                    opts.LeaseName = leaseName;
-            });
-        // LeaderElectionService accepts a nullable IKubernetes — if null, it logs a warning
-        // and IsLeader remains false, so DatabaseMaintenanceService.RunMaintenanceCycleAsync
-        // runs ungated (the null-check guard is in the service itself via GetService).
-        services.AddSingleton<LeaderElectionService>(sp =>
-            new LeaderElectionService(
-                sp.GetRequiredService<IOptions<LeaderElectionOptions>>(),
-                sp.GetService<IKubernetes>()));
-        services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
-        services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
 
         // ── IConsolidationJobPreparationService ────────────────────────────
-        // Required by ConsolidationWorkItemDispatchService to resolve provider configs
-        // and build the consolidation job payload.
+        // Required by the ConsolidationWorkItemEndpoints (POST /api/consolidation-work-items/{id}/claim)
+        // to resolve provider configs and vend short-lived tokens at claim time.
+        // Also used by ReportConsolidationComplete hub handling.
         services.AddSingleton<IConsolidationJobPreparationService>(sp =>
             new ConsolidationJobPreparationService(
                 sp.GetRequiredService<IProviderConfigStore>(),
@@ -390,21 +333,21 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IAgentProfileStore>()));
 
         // ── IKubernetesJobClient ─────────────────────────────────────────────
-        // Required by DispatchLifecycleService and ModelFetchJobService.
+        // Required by ModelFetchJobService and ChatJobDispatcher.
         // IKubernetes is already registered above; only the job client wrapper is missing.
         services.AddSingleton<IKubernetesJobClient>(sp =>
         {
             var k8s = sp.GetService<IKubernetes>();
             if (k8s is null)
             {
-                Log.Warning("API: IKubernetesJobClient unavailable — K8s not configured. Dispatch and consolidation will fail if triggered.");
+                Log.Warning("API: IKubernetesJobClient unavailable — K8s not configured. ModelFetch and ChatJobDispatcher will fail if triggered.");
                 return null!;
             }
             return new KubernetesJobClient(k8s);
         });
 
         // ── JobTemplateStore ─────────────────────────────────────────────────
-        // Required by DispatchLifecycleService, DispatchStateBuilder, and ModelFetchJobService.
+        // Required by ModelFetchJobService and ChatJobDispatcher.
         // Path matches WorkDistribution__JobTemplatesPath env var set in api-deployment.yaml.
         services.AddSingleton(sp =>
         {
@@ -422,10 +365,11 @@ public static class ApiServiceCollectionExtensions
         // ── DatabaseMaintenanceService ────────────────────────────────────────────────────────
         // The only retention sweep in the system — orphaning it causes Postgres to grow
         // without bound while retention settings still render in the UI.
-        // Gated by ILeaderElectionService so only one replica runs cleanup at a time.
         // Registered as a singleton (not hosted) so the maintenance endpoint in ApiSchedulerEndpoints
         // can resolve and invoke RunRetentionSweepAsync directly. The Scheduler triggers sweeps
-        // via POST /api/scheduler/maintenance/retention-sweep rather than the internal timer.
+        // via POST /api/scheduler/maintenance/retention-sweep.
+        // Leader gating removed (Spec 049): the Scheduler's RetentionSweepSchedulerService
+        // gates on its own leader election — no API-side lease needed.
         services.AddSingleton<DatabaseMaintenanceService>(sp => new DatabaseMaintenanceService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<IConsolidationService>(),
@@ -436,48 +380,6 @@ public static class ApiServiceCollectionExtensions
         // Spec 047: Removed from API hosted services — replaced by WorkItemCountsPoller in
         // CodingAgentWebUI.Scheduler. WorkItemCountsPoller polls GET /api/work-items/counts-by-status
         // and registers the same WorkDistributionTelemetry callback from the Scheduler process.
-
-        // ── DispatchLifecycleService (API copy, EF-coupled) ─────────────────────────────
-        // Used by ConsolidationWorkItemDispatchService and ModelFetchJobService.
-        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(sp =>
-        {
-            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
-            return new CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService(
-                sp.GetRequiredService<IKubernetesJobClient>(),
-                sp.GetRequiredService<WorkItemTransitionService>(),
-                options);
-        });
-
-        // ── DispatchStateBuilder (API copy, EF-coupled) ─────────────────────────────────
-        // Used by ConsolidationWorkItemDispatchService.
-        services.AddSingleton<CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder>(sp => new CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(),
-            sp.GetRequiredService<JobTemplateStore>(),
-            new CodingAgentWebUI.Api.Dispatch.DispatchTemplateResolver(
-                sp.GetService<IAgentProfileStore>(),
-                sp.GetRequiredService<JobTemplateStore>()),
-            DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>())));
-
-        // ── ConsolidationWorkItemDispatchService ──────────────────────────────────────────────
-        // Handles consolidation work items (TaskType=Consolidation).
-        // ILabelSwapService: LabelSwapService is internal sealed in Orchestration,
-        // but CodingAgentWebUI.Api is in InternalsVisibleTo — registered above as ILabelSwapService.
-        services.AddHostedService(sp => new CodingAgentWebUI.Api.Dispatch.ConsolidationWorkItemDispatchService(
-            new CodingAgentWebUI.Api.Dispatch.ConsolidationWorkItemDispatchServiceDependencies(
-                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-                sp.GetRequiredService<ILeaderElectionService>(),
-                sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchLifecycleService>(),
-                sp.GetRequiredService<JobTemplateStore>(),
-                sp.GetRequiredService<IConfiguration>(),
-                sp.GetRequiredService<WorkItemTransitionService>(),
-                sp.GetService<IConsolidationRunStore>(),
-                sp.GetService<IConsolidationService>(),
-                sp.GetService<IConsolidationJobPreparationService>(),
-                sp.GetService<IPipelineConfigStore>(),
-                sp.GetService<IProjectStore>(),
-                sp.GetService<IAgentProfileStore>(),
-                sp.GetRequiredService<CodingAgentWebUI.Api.Dispatch.DispatchStateBuilder>())));
 
         // ── ModelFetchJobService ─────────────────────────────────────────────────────────────
         // Singleton in the API. The API has K8s RBAC for batch/jobs.
@@ -495,6 +397,8 @@ public static class ApiServiceCollectionExtensions
         // The monolith no longer maps AgentHub, so IHubContext<AgentHub> on the monolith was
         // disconnected from any real agents. The API host owns the hub and the AgentRegistryService,
         // making it the correct process for chat dispatch and the registry poll loop.
+        // Spec 049: ILeaderElectionService removed — all replicas can dispatch. The K8s
+        // double-dispatch guard (CheckForExistingJob) is already replica-safe.
         services.AddSingleton<ChatJobDispatcher>(sp =>
         {
             var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
@@ -505,7 +409,6 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<JobTemplateStore>(),
                 sp.GetRequiredService<IAgentRegistryService>(),
                 options,
-                sp.GetRequiredService<ILeaderElectionService>(),
                 Log.Logger);
         });
         services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());

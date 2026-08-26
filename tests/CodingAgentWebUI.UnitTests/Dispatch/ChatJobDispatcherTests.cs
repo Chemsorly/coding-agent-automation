@@ -1,7 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -15,8 +14,6 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 /// <summary>
 /// Unit tests for <see cref="ChatJobDispatcher"/>.
 /// Requirements: Req 2, Req 3, Req 12, Req 13.
-/// NOTE: ChatJobDispatcher class does not exist yet — tests will fail to compile until task 4.4.
-/// That compile error IS the expected red state for task 4.3.
 /// </summary>
 public class ChatJobDispatcherTests
 {
@@ -64,17 +61,9 @@ public class ChatJobDispatcherTests
             .Returns(Task.CompletedTask);
         mock.Setup(c => c.DeleteJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        // ReadJobAsync returns null-like V1Job with no conditions (non-terminal) by default
+        // ReadJobAsync returns non-terminal by default
         mock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
-        return mock;
-    }
-
-    private static Mock<ILeaderElectionService> CreateAlwaysLeaderMock()
-    {
-        var mock = new Mock<ILeaderElectionService>();
-        mock.Setup(l => l.IsLeader).Returns(true);
-        mock.Setup(l => l.LeaderToken).Returns(CancellationToken.None);
         return mock;
     }
 
@@ -91,8 +80,7 @@ public class ChatJobDispatcherTests
     }
 
     /// <summary>
-    /// Registers an agent in the registry with the given labels and returns the agentId.
-    /// Simulates a chat pod connecting and registering with the hub.
+    /// Registers an agent in the registry simulating a chat pod connecting.
     /// </summary>
     private static string RegisterChatAgent(
         AgentRegistryService registry,
@@ -111,6 +99,9 @@ public class ChatJobDispatcherTests
         return agentId;
     }
 
+    /// <summary>
+    /// Creates a ChatJobDispatcher. No ILeaderElectionService parameter — removed in this refactor.
+    /// </summary>
     private static ChatJobDispatcher CreateDispatcher(
         IKubernetesJobClient? jobClient = null,
         IHubContext<AgentHub, IAgentHubClient>? hubContext = null,
@@ -124,7 +115,6 @@ public class ChatJobDispatcherTests
             templateStore ?? CreateTemplateStore(),
             registry ?? CreateRegistry(),
             options ?? CreateOptions(),
-            CreateAlwaysLeaderMock().Object,
             Mock.Of<ILogger>());
     }
 
@@ -135,19 +125,13 @@ public class ChatJobDispatcherTests
     {
         var jobClientMock = CreateJobClientMock();
         V1Job? createdJob = null;
-        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
-            .Callback<V1Job, string, CancellationToken>((j, _, _) => createdJob = j)
-            .Returns(Task.CompletedTask);
-
         var registry = CreateRegistry();
-        string? capturedDispatchId = null;
 
-        // Hook into job creation to intercept the dispatchId, then register an agent with it
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
                 createdJob = j;
-                capturedDispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var capId) ? capId : null;
+                var capturedDispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var capId) ? capId : null;
                 if (capturedDispatchId != null)
                     RegisterChatAgent(registry, "agent-1", capturedDispatchId);
             })
@@ -163,16 +147,14 @@ public class ChatJobDispatcherTests
         createdJob.Metadata.Labels["caa/chat-selector"].Should().Be(TestEncodedSelector);
     }
 
-    // ─── 2. DispatchChatPodAsync — active chat job exists ────────────────────
+    // ─── 2. DispatchChatPodAsync — --mode=chat in args ───────────────────────
 
     /// <summary>
     /// Spec 044 Req C5.1, C5.1a: ChatJobDispatcher MUST emit --mode=chat in the container Args.
-    /// This is phase 1 of making --mode mandatory (Task 15b.2 enforces it in AgentStartupConfig).
     /// </summary>
     [Fact]
     public async Task DispatchChatPodAsync_PodSpec_ContainsModeChat()
     {
-        // Arrange
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
         V1Job? createdJob = null;
@@ -189,10 +171,8 @@ public class ChatJobDispatcherTests
 
         var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
-        // Act
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
-        // Assert
         createdJob.Should().NotBeNull("job must be created");
         var container = createdJob!.Spec.Template.Spec.Containers[0];
         container.Args.Should().Contain("--mode=chat",
@@ -212,10 +192,10 @@ public class ChatJobDispatcherTests
                 Labels = new Dictionary<string, string>
                 {
                     ["caa/chat-session-id"] = Guid.NewGuid().ToString(),
-                    ["caa/chat-selector"] = TestEncodedSelector // must match the dispatched selector
+                    ["caa/chat-selector"] = TestEncodedSelector
                 }
             },
-            Status = new V1JobStatus { Conditions = [] } // non-terminal
+            Status = new V1JobStatus { Conditions = [] }
         };
         var jobClientMock = CreateJobClientMock(new V1JobList { Items = [existingJob] });
 
@@ -233,12 +213,14 @@ public class ChatJobDispatcherTests
     {
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
+        string? capturedJobName = null;
 
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
+                capturedJobName = j.Metadata.Name;
                 var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
-                RegisterChatAgent(registry, "agent-xyz", dispatchId);
+                RegisterChatAgent(registry, capturedJobName!, dispatchId);
             })
             .Returns(Task.CompletedTask);
 
@@ -246,7 +228,7 @@ public class ChatJobDispatcherTests
 
         var result = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
-        result.Should().Be("agent-xyz");
+        result.Should().Be(capturedJobName, "returned agentId must equal the job name");
     }
 
     // ─── 4. DispatchChatPodAsync — agent never connects ──────────────────────
@@ -255,7 +237,6 @@ public class ChatJobDispatcherTests
     public async Task DispatchChatPodAsync_AgentNeverConnects_ThrowsChatPodTimeoutException()
     {
         var jobClientMock = CreateJobClientMock();
-        // No agent registers — poll will time out
         var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             options: CreateOptions(connectTimeoutSeconds: 1));
@@ -265,7 +246,7 @@ public class ChatJobDispatcherTests
         await act.Should().ThrowAsync<ChatPodTimeoutException>();
     }
 
-    // ─── 5. DispatchChatPodAsync — kiro agent gets a PVC from the pool ───────
+    // ─── 5. DispatchChatPodAsync — kiro agent gets PVC from pool ─────────────
 
     [Fact]
     public async Task DispatchChatPodAsync_KiroAgent_GetsFirstFreePvcFromPool()
@@ -287,7 +268,6 @@ public class ChatJobDispatcherTests
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
-        // The job label should record the first pool PVC
         createdJob.Should().NotBeNull();
         createdJob!.Metadata.Labels.Should().ContainKey("caa/claimed-pvc");
         createdJob.Metadata.Labels["caa/claimed-pvc"].Should().Be("pvc-0");
@@ -298,9 +278,6 @@ public class ChatJobDispatcherTests
     [Fact]
     public async Task DispatchChatPodAsync_NoPvcAvailable_ThrowsNoPvcAvailableException()
     {
-        // Pre-populate ListJobsAsync with two existing non-terminal jobs, each claiming a pool PVC.
-        // This is replica-safe: the dispatcher reads PVC availability from k8s labels, not in-memory state.
-        // KiroPvcPool = ["pvc-0", "pvc-1"] — both are claimed, so the third dispatch has no free PVC.
         var existingJob1 = new V1Job
         {
             Metadata = new V1ObjectMeta
@@ -313,7 +290,7 @@ public class ChatJobDispatcherTests
                     ["caa/claimed-pvc"] = "pvc-0"
                 }
             },
-            Status = new V1JobStatus { Conditions = [] } // non-terminal
+            Status = new V1JobStatus { Conditions = [] }
         };
         var existingJob2 = new V1Job
         {
@@ -327,13 +304,11 @@ public class ChatJobDispatcherTests
                     ["caa/claimed-pvc"] = "pvc-1"
                 }
             },
-            Status = new V1JobStatus { Conditions = [] } // non-terminal
+            Status = new V1JobStatus { Conditions = [] }
         };
 
         var jobClientMock = CreateJobClientMock(new V1JobList { Items = [existingJob1, existingJob2] });
 
-        // The third dispatch uses a different selector ("node_kiro") — no double-dispatch collision,
-        // but both PVCs are already claimed by the existing k8s jobs.
         var templateStoreMulti = JobTemplateStore.LoadFromYaml("""
             - labels: "node,kiro"
               image: "chemsorly/coding-agent:kiro-node"
@@ -464,7 +439,6 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        // Template uses providerType "kiro" from CreateTemplateStore()
         var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -599,7 +573,6 @@ public class ChatJobDispatcherTests
             .Returns(Task.CompletedTask);
 
         var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
-        // "kiro,dotnet" normalizes to "dotnet,kiro" then encodes commas to underscores → "dotnet_kiro"
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         createdJob!.Metadata.Labels["caa/chat-selector"].Should()
@@ -626,7 +599,6 @@ public class ChatJobDispatcherTests
         await Assert.ThrowsAsync<ChatPodTimeoutException>(
             () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None));
 
-        // Job deleted best-effort
         jobClientMock.Verify(c => c.DeleteJobAsync(
             It.Is<string>(name => name == createdJobName),
             TestNamespace,
@@ -634,19 +606,22 @@ public class ChatJobDispatcherTests
             Times.Once);
     }
 
-    // ─── 16. Session lifecycle — registers session after dispatch ────────────
+    // ─── 16. Session lifecycle — watcher tracked after dispatch ──────────────
 
     [Fact]
-    public async Task DispatchChatPodAsync_Success_RegistersSession()
+    public async Task DispatchChatPodAsync_Success_SessionTrackedInActiveWatchers()
     {
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
+        string? capturedJobName = null;
 
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
+                capturedJobName = j.Metadata.Name; // agentId == jobName in real pods
                 var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
-                RegisterChatAgent(registry, "agent-sess", dispatchId);
+                // Register with jobName as agentId — matches the real-world invariant
+                RegisterChatAgent(registry, capturedJobName!, dispatchId);
             })
             .Returns(Task.CompletedTask);
 
@@ -654,93 +629,37 @@ public class ChatJobDispatcherTests
 
         var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
-        // After dispatch, session should be registered — TerminateChatSessionAsync should not return early
-        // We verify this indirectly: if session was NOT registered, TerminateChatSessionAsync is a no-op
-        // and won't call hub. After registering, calling terminate should attempt to send CancelChat.
-        agentId.Should().Be("agent-sess");
-        // Session exists — verified by confirming the dispatcher tracks agentId→jobName
-        // (tested further in TerminateChatSessionAsync tests)
+        // agentId == jobName (the invariant) — HasActiveSession uses agentId as the key
+        agentId.Should().Be(capturedJobName, "returned agentId must equal the job name");
+        dispatcher.HasActiveSession(agentId).Should().BeTrue("watcher must be tracked after successful dispatch");
     }
 
-    // ─── 17. StartAsync — recovers sessions from k8s ─────────────────────────
+    // ─── 17. StartAsync — is a no-op (RecoverSessionsAsync removed) ──────────
 
     [Fact]
-    public async Task StartAsync_RecoversSessions_WhenJobsExistInK8s()
+    public async Task StartAsync_IsNoOp_ReturnsImmediately()
     {
-        var dispatchId = Guid.NewGuid();
-        var existingJob = new V1Job
-        {
-            Metadata = new V1ObjectMeta
-            {
-                Name = "caa-chat-abcdef12",
-                Labels = new Dictionary<string, string>
-                {
-                    ["caa/chat-session-id"] = dispatchId.ToString(),
-                    ["caa/chat-selector"] = "dotnet_kiro",
-                    ["caa/claimed-pvc"] = "pvc-0"
-                }
-            },
-            Status = new V1JobStatus { Conditions = [] } // non-terminal
-        };
-
+        // RecoverSessionsAsync was removed — StartAsync must return immediately without any K8s call.
+        // Jobs active before restart drain via ActiveDeadlineSeconds.
         var jobClientMock = CreateJobClientMock();
-        jobClientMock.Setup(c => c.ListJobsAsync(TestNamespace, "caa/chat-session-id", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new V1JobList { Items = [existingJob] });
-
         var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object);
 
-        // StartAsync now returns immediately (fire-and-forget recovery)
         var act = async () => await dispatcher.StartAsync(CancellationToken.None);
         await act.Should().NotThrowAsync();
 
-        // Poll until the background recovery task has called ListJobsAsync, with a 5s timeout.
-        // A fixed Task.Delay(500) is flaky under load; polling is deterministic.
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (DateTime.UtcNow < deadline)
-        {
-            try
-            {
-                jobClientMock.Verify(c => c.ListJobsAsync(
-                    TestNamespace,
-                    It.Is<string>(s => s.Contains("caa/chat-session-id")),
-                    It.IsAny<CancellationToken>()),
-                    Times.Once);
-                break; // verified — exit the poll loop
-            }
-            catch (MockException)
-            {
-                await Task.Delay(50);
-            }
-        }
-
-        // Final assertion (throws if still not satisfied after deadline)
-        jobClientMock.Verify(c => c.ListJobsAsync(
-            TestNamespace,
-            It.Is<string>(s => s.Contains("caa/chat-session-id")),
-            It.IsAny<CancellationToken>()),
-            Times.Once);
+        // Must NOT call ListJobsAsync — no session recovery
+        jobClientMock.Verify(
+            c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
-    // ─── 18. StartAsync — k8s API failure doesn't throw ──────────────────────
+    // ─── 18. Any replica can dispatch — no leader gate ───────────────────────
 
     [Fact]
-    public async Task StartAsync_K8sApiFailure_DoesNotThrow()
+    public async Task DispatchChatPodAsync_NoLeaderCheck_AnyReplicaCanDispatch()
     {
-        var jobClientMock = CreateJobClientMock();
-        jobClientMock.Setup(c => c.ListJobsAsync(TestNamespace, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new k8s.Autorest.HttpOperationException("k8s unavailable"));
-
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object);
-
-        var act = async () => await dispatcher.StartAsync(CancellationToken.None);
-        await act.Should().NotThrowAsync("k8s API failures at startup must be swallowed (non-fatal)");
-    }
-
-    // ─── 19. StopAsync — cleans up sessions ──────────────────────────────────
-
-    [Fact]
-    public async Task StopAsync_ReleasesAllPvcs()
-    {
+        // Previously threw InvalidOperationException when not leader.
+        // Now there is no leader check — dispatch is always allowed (guarded only by K8s double-dispatch check).
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
 
@@ -748,23 +667,46 @@ public class ChatJobDispatcherTests
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
                 var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
-                RegisterChatAgent(registry, "agent-stop", dispatchId);
+                RegisterChatAgent(registry, "agent-nonleader", dispatchId);
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(
-            jobClient: jobClientMock.Object,
-            registry: registry);
+        // No leader election service passed — any replica is treated the same
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+
+        // Must NOT throw — no leader gate
+        var act = async () => await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await act.Should().NotThrowAsync<InvalidOperationException>(
+            "dispatch must not require leadership — all replicas can dispatch");
+    }
+
+    // ─── 19. StopAsync — completes cleanly ────────────────────────────────────
+
+    [Fact]
+    public async Task StopAsync_CompletesCleanly()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? capturedJobName = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                capturedJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, capturedJobName!, dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
-        // Stop — should complete without error; sessions tracked in-memory are cleaned up
-        await dispatcher.StopAsync(CancellationToken.None);
+        var act = async () => await dispatcher.StopAsync(CancellationToken.None);
+        await act.Should().NotThrowAsync("StopAsync must complete without error even with active watchers");
 
-        // Verify exactly one job was created before stop (confirms the session existed and was cleaned up)
-        jobClientMock.Verify(
-            c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()),
-            Times.Once);
+        // After stop, session must be cleaned up
+        dispatcher.HasActiveSession(capturedJobName!).Should().BeFalse("watcher must be removed after StopAsync");
     }
 
     // ─── 20. TerminateChatSessionAsync — sends CancelChat ────────────────────
@@ -779,14 +721,15 @@ public class ChatJobDispatcherTests
         mockClient.Setup(c => c.CancelChat(It.IsAny<string>())).Returns(Task.CompletedTask);
         hubContextMock.Setup(h => h.Clients.Client(It.IsAny<string>())).Returns(mockClient.Object);
 
-        string? registeredAgentId = null;
+        string? capturedJobName = null;
 
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
+                capturedJobName = j.Metadata.Name;
                 var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
-                registeredAgentId = "agent-terminate";
-                RegisterChatAgent(registry, registeredAgentId, dispatchId, "conn-terminate");
+                // Register with job name as agentId — matches real-world invariant (agentId == jobName)
+                RegisterChatAgent(registry, capturedJobName!, dispatchId, "conn-terminate");
             })
             .Returns(Task.CompletedTask);
 
@@ -796,9 +739,7 @@ public class ChatJobDispatcherTests
             hubContext: hubContextMock.Object);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
-
-        // Simulate watcher not completing in time — we call terminate which should send CancelChat
-        await dispatcher.TerminateChatSessionAsync(registeredAgentId!, CancellationToken.None);
+        await dispatcher.TerminateChatSessionAsync(capturedJobName!, CancellationToken.None);
 
         mockClient.Verify(c => c.CancelChat(It.IsAny<string>()), Times.Once);
     }
@@ -810,22 +751,64 @@ public class ChatJobDispatcherTests
     {
         var dispatcher = CreateDispatcher();
 
-        // No session for "unknown-agent" — should return without error
         var act = async () => await dispatcher.TerminateChatSessionAsync("unknown-agent", CancellationToken.None);
         await act.Should().NotThrowAsync();
     }
 
-    // ─── 22. TerminateChatSessionAsync — grace period expired, force deletes ──
+    // ─── 22. TerminateChatSessionAsync — watcher completes → no force delete ─
 
     [Fact]
-    public async Task TerminateChatSessionAsync_GracePeriodExpired_ForceDeletesJobAndReleasesPvc()
+    public async Task TerminateChatSessionAsync_WatcherCompletesWithinGrace_NoForceDelete()
     {
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
-        var hubContextMock = CreateHubContextMock();
         string? createdJobName = null;
 
-        // WatcherTask never completes because ReadJobAsync always returns non-terminal
+        // First ReadJobAsync call returns terminal — watcher exits immediately
+        jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job
+            {
+                Status = new V1JobStatus
+                {
+                    Conditions = [new V1JobCondition { Type = "Complete", Status = "True" }]
+                }
+            });
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, createdJobName!, dispatchId, "conn-clean");
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // Wait for the watcher to see the terminal job and exit
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(15));
+        watcherDone.Should().BeTrue("watcher must exit when job is terminal");
+
+        // DeleteJobAsync must NOT have been called — watcher cleanup, not force-delete
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.Is<string>(n => n == createdJobName),
+            TestNamespace,
+            It.IsAny<CancellationToken>()),
+            Times.Never,
+            "force-delete must not be called when watcher completes naturally");
+    }
+
+    // ─── 23. TerminateChatSessionAsync — force deletes when watcher stalls ───
+
+    [Fact]
+    public async Task TerminateChatSessionAsync_WatcherStalls_ForceDeletesJob()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? createdJobName = null;
+
+        // ReadJobAsync always returns non-terminal — watcher never exits on its own
         jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
 
@@ -834,11 +817,11 @@ public class ChatJobDispatcherTests
             {
                 createdJobName = j.Metadata.Name;
                 var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
-                RegisterChatAgent(registry, "agent-force", dispatchId, "conn-force");
+                RegisterChatAgent(registry, createdJobName!, dispatchId, "conn-force");
             })
             .Returns(Task.CompletedTask);
 
-        // Use a 1-second grace period for the terminate path (not connect timeout)
+        // Very short grace period so the force-delete path triggers quickly in tests
         var options = new DispatchServiceOptions
         {
             Namespace = TestNamespace,
@@ -848,30 +831,26 @@ public class ChatJobDispatcherTests
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
             ChatSessionMaxDurationSeconds = 7200,
-            ChatTerminationGracePeriodSeconds = 120
+            ChatTerminationGracePeriodSeconds = 1   // 1 second grace → force-delete triggers fast
         };
 
         var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
-            hubContext: hubContextMock.Object,
             options: options);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        await dispatcher.TerminateChatSessionAsync(createdJobName!, CancellationToken.None);
 
-        // TerminateChatSessionAsync with a very short timeout to force the grace-period-expired path
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        await dispatcher.TerminateChatSessionAsync("agent-force", cts.Token);
-
-        // Force delete must be called
         jobClientMock.Verify(c => c.DeleteJobAsync(
             It.Is<string>(n => n == createdJobName),
             TestNamespace,
             It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Once,
+            "force-delete must be called when watcher does not complete within grace period");
     }
 
-    // ─── IsTerminal / IsKiroAgent / IsOpencodeAgent static helpers ────────────
+    // ─── Static helpers ───────────────────────────────────────────────────────
 
     [Fact]
     public void IsTerminal_CompleteConditionTrue_ReturnsTrue()
@@ -960,49 +939,41 @@ public class ChatJobDispatcherTests
     public void IsNotFound_TransientOrOtherErrors_ReturnsFalse(string message)
         => ChatJobDispatcher.IsNotFound(new Exception(message)).Should().BeFalse();
 
+    // ─── 404-loop regression test ─────────────────────────────────────────────
+
     /// <summary>
-    /// Regression test for the infinite-404-loop bug:
-    /// When ReadJobAsync throws a 404 (job deleted from K8s), the watcher must clean up
-    /// the session and exit — not retry forever.
-    ///
-    /// Previously TryReadJobAsync treated ALL exceptions as transient and kept retrying,
-    /// leaving orphaned sessions that would eventually kill a newly-connected agent.
+    /// Regression: when ReadJobAsync throws 404, the watcher must exit — not retry forever.
     /// </summary>
     [Fact]
     public async Task WatcherTask_WhenReadJobAsyncThrowsNotFound_SessionIsRemovedWithoutRetry()
     {
-        // Arrange
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
 
-        // ReadJobAsync throws 404 — job was deleted from K8s
         var notFoundEx = new Exception("Operation returned an invalid status code 'NotFound'");
         jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .ThrowsAsync(notFoundEx);
 
-        // Register an agent so dispatch can complete
-        string? capturedDispatchId = null;
+        string? capturedJobName = null;
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
-                capturedDispatchId = j.Metadata.Labels["caa/chat-session-id"];
-                RegisterChatAgent(registry, "agent-404-test", capturedDispatchId);
+                capturedJobName = j.Metadata.Name;
+                var capturedDispatchId = j.Metadata.Labels["caa/chat-session-id"];
+                // Register with job name as agentId — matches real-world invariant
+                RegisterChatAgent(registry, capturedJobName!, capturedDispatchId);
             })
             .Returns(Task.CompletedTask);
 
         var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
-        // Act: dispatch creates session + starts watcher
         var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
-        agentId.Should().Be("agent-404-test");
+        agentId.Should().Be(capturedJobName, "returned agentId must equal job name");
 
-        // The watcher polls every 10s — use a short timeout and wait for it to finish.
-        // With the fix, the first poll gets 404 → watcher exits → session removed.
-        // Without the fix, the watcher retries forever and this assertion times out.
+        // Watcher must exit on 404, not retry forever
         var watcherCompleted = await dispatcher.WaitForWatcherAsync(agentId, TimeSpan.FromSeconds(15));
         watcherCompleted.Should().BeTrue("watcher must exit when job returns 404, not retry forever");
 
-        // Session must be cleaned up
         dispatcher.HasActiveSession(agentId).Should().BeFalse("session must be removed after 404");
     }
 }

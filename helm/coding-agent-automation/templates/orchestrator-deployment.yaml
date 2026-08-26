@@ -28,6 +28,8 @@ spec:
       labels:
         {{- include "coding-agent-automation.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: orchestrator
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/orchestrator-env-configmap.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ include "coding-agent-automation.serviceAccountName" . }}
       automountServiceAccountToken: true
@@ -54,12 +56,24 @@ spec:
       {{- end }}
       containers:
         - name: orchestrator
-          image: "{{ .Values.orchestrator.image.repository }}:{{ .Values.orchestrator.image.tag }}"
+          image: "{{ .Values.orchestrator.image.repository }}:{{ required "orchestrator.image.tag is required" .Values.orchestrator.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - name: http
               containerPort: {{ .Values.orchestrator.service.port }}
               protocol: TCP
+          startupProbe:
+            httpGet:
+              path: {{ .Values.orchestrator.probes.startup.path }}
+              port: {{ .Values.orchestrator.probes.startup.port }}
+            initialDelaySeconds: {{ .Values.orchestrator.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.orchestrator.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.orchestrator.probes.startup.failureThreshold }}
           livenessProbe:
             httpGet:
               path: {{ .Values.orchestrator.probes.liveness.path }}
@@ -83,17 +97,10 @@ spec:
                 name: {{ include "coding-agent-automation.fullname" . }}-orchestrator-env
           env:
             {{- include "coding-agent-automation.commonSecretEnv" . | nindent 12 }}
-            # KubernetesWorkDistributor and KubernetesJobCleanup have been migrated to
-            # IPipelineApiWorkItemClient. IPipelineRunHistoryService, IConsolidationRunStore,
-            # IHarnessSuggestionStore, and IWorkItemFallbackTransitionService are all API-backed
-            # as of arch-audit 2026-08-22 (T8 complete). The orchestrator no longer holds a
-            # Postgres connection. Database env vars removed.
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}
             {{- end }}
-            # Pipeline API connection — required by IPipelineApiConfigClient and IAgentHubConnection.
-            # Spec 045 Req 6.4: orchestrator must know API base URL and hub URL.
             - name: PipelineApi__BaseUrl
               value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
             - name: PipelineApi__HubUrl
@@ -102,17 +109,12 @@ spec:
               {{- else -}}
                 {{- printf "%s/hubs/agent" (include "coding-agent-automation.apiBaseUrl" .) | quote }}
               {{- end }}
-            # Scheduler API URL — used by LoopStatusPollingService and scheduler loop controls.
-            # Defaults to the in-cluster scheduler service URL. Override via scheduler.baseUrl
-            # when the Scheduler is deployed externally or scheduler.enabled is false.
             - name: SchedulerApi__BaseUrl
               value: {{ if .Values.scheduler.baseUrl -}}
                 {{- .Values.scheduler.baseUrl | quote }}
               {{- else -}}
                 {{- printf "http://%s-scheduler.%s.svc.cluster.local:%d" (include "coding-agent-automation.fullname" .) .Release.Namespace (.Values.scheduler.service.port | int) | quote }}
               {{- end }}
-            # Leader election lease name — release-scoped to prevent collision when multiple
-            # Helm releases share a namespace (Req 6.3/6.7). Overridable via values.yaml.
             - name: LeaderElection__PipelineLoopLeaseName
               value: {{ if .Values.orchestrator.leaderElection.pipelineLoopLeaseName -}}
                 {{- .Values.orchestrator.leaderElection.pipelineLoopLeaseName | quote }}

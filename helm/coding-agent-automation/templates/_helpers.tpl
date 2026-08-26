@@ -188,11 +188,12 @@ Usage: {{ include "coding-agent-automation.workDistributionEnv" . }}
 {{/*
 Standard ClusterIP service for a named component.
 Accepts a dict with keys:
-  root      — top-level context (.)
-  component — component label value (e.g. "api")
-  port      — service port number
+  root        — top-level context (.)
+  component   — component label value (e.g. "api")
+  port        — service port number
+  serviceType — service type (e.g. "ClusterIP")
 Usage:
-  {{- include "coding-agent-automation.componentService" (dict "root" . "component" "api" "port" .Values.api.service.port) }}
+  {{- include "coding-agent-automation.componentService" (dict "root" . "component" "api" "port" .Values.api.service.port "serviceType" .Values.api.service.type) }}
 */}}
 {{- define "coding-agent-automation.componentService" -}}
 apiVersion: v1

@@ -44,13 +44,3 @@ public record RetentionSweepResultDto(
 
 /// <summary>Work item count grouped by status, returned by GET /api/work-items/counts-by-status.</summary>
 public record WorkItemCountDto(string Status, string AgentSelector, long Count);
-
-/// <summary>
-/// Thrown by ISchedulerApiClient.TriggerRetentionSweepAsync when the API returns 503
-/// (replica not leader — sweep skipped this tick).
-/// </summary>
-public sealed class RetentionSweepUnavailableException : Exception
-{
-    public RetentionSweepUnavailableException()
-        : base("Retention sweep unavailable: API replica is not the leader.") { }
-}

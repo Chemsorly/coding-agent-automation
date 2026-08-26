@@ -11,9 +11,7 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  # Spec 046: api.replicas > 1 is now safe. AgentRegistryService, OrchestratorRunService, and
-  # JobDeduplicationGuardService are backed by Redis when signalr.redis.connectionString is set.
-  # If signalr.redis.connectionString is empty and replicas > 1, a startup warning is logged.
+  # Spec 046: api.replicas > 1 is now safe when signalr.redis.connectionString is set.
   replicas: {{ .Values.api.replicas }}
   strategy:
     type: {{ .Values.api.strategy.type }}
@@ -35,10 +33,35 @@ spec:
       serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-api
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
+      {{- with .Values.api.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: api
           image: "{{ .Values.api.image.repository }}:{{ required "api.image.tag is required" .Values.api.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - name: http
               containerPort: {{ .Values.api.service.port }}
@@ -53,12 +76,18 @@ spec:
             httpGet:
               path: /healthz
               port: {{ .Values.api.service.port }}
+            initialDelaySeconds: {{ .Values.api.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.api.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.api.probes.liveness.failureThreshold }}
           readinessProbe:
             httpGet:
               path: /readyz
               port: {{ .Values.api.service.port }}
+            initialDelaySeconds: {{ .Values.api.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.api.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.api.probes.readiness.failureThreshold }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           env:
@@ -95,8 +124,6 @@ spec:
             {{- end }}
             - name: Database__MigrateOnStartup
               value: {{ .Values.database.migrateOnStartup | toString | quote }}
-            - name: LeaderElection__LeaseName
-              value: "caa-{{ .Release.Name }}-api-lock"
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}

@@ -1,6 +1,5 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Pipeline.LeaderElection;
 
 namespace CodingAgentWebUI.Api;
 
@@ -25,27 +24,14 @@ public static class ApiSchedulerEndpoints
 
     /// <summary>
     /// Executes all five DatabaseMaintenanceService sweep operations and returns counts.
-    /// Returns 503 when this API replica is not the leader — the Scheduler retries on the
-    /// next tick (typically 60 minutes). Only the leader API replica should execute the sweep
-    /// to avoid concurrent bulk deletes across replicas.
+    /// The Scheduler's RetentionSweepSchedulerService gates calls on its own leader election,
+    /// so only one Scheduler replica triggers the sweep per interval. The API is stateless —
+    /// no secondary leader gate is needed here.
     /// </summary>
     private static async Task<IResult> RunRetentionSweep(
         DatabaseMaintenanceService maintenanceService,
-        ILeaderElectionService? leaderElection,
         CancellationToken ct)
     {
-        // Leader-gate: only the leader API replica executes the sweep.
-        // When leaderElection is null (no K8s / test env), allow execution unconditionally —
-        // same behaviour as DatabaseMaintenanceService.RunMaintenanceCycleAsync.
-        if (leaderElection is not null && !leaderElection.IsLeader)
-        {
-            return Results.Problem(
-                title: "Not leader",
-                detail: "This API replica is not the leader. The Scheduler should retry on the next interval.",
-                statusCode: StatusCodes.Status503ServiceUnavailable,
-                extensions: new Dictionary<string, object?> { ["reason"] = "not_leader" });
-        }
-
         var result = await maintenanceService.RunRetentionSweepAsync(ct);
 
         return Results.Ok(new RetentionSweepResultDto(

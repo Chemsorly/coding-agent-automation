@@ -4,7 +4,6 @@ using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -106,14 +105,6 @@ public class ChatDispatcherObservabilityTests : IDisposable
         return agentId;
     }
 
-    private static Mock<ILeaderElectionService> CreateAlwaysLeaderMock()
-    {
-        var mock = new Mock<ILeaderElectionService>();
-        mock.Setup(l => l.IsLeader).Returns(true);
-        mock.Setup(l => l.LeaderToken).Returns(CancellationToken.None);
-        return mock;
-    }
-
     private static ChatJobDispatcher CreateDispatcher(
         IKubernetesJobClient? jobClient = null,
         AgentRegistryService? registry = null,
@@ -138,7 +129,6 @@ public class ChatDispatcherObservabilityTests : IDisposable
             templateStore,
             registry ?? CreateRegistry(),
             options ?? CreateOptions(),
-            CreateAlwaysLeaderMock().Object,
             Mock.Of<ILogger>());
     }
 
@@ -268,27 +258,28 @@ public class ChatDispatcherObservabilityTests : IDisposable
     {
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
-        const string agentId = "agent-term-trace";
+        string? capturedJobName = null;
 
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
+                capturedJobName = j.Metadata.Name;
                 var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
-                RegisterChatAgent(registry, agentId, dispatchId, "conn-term");
+                RegisterChatAgent(registry, capturedJobName!, dispatchId, "conn-term");
             })
             .Returns(Task.CompletedTask);
 
         var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
-        await dispatcher.TerminateChatSessionAsync(agentId, CancellationToken.None);
+        await dispatcher.TerminateChatSessionAsync(capturedJobName!, CancellationToken.None);
 
         var terminateActivity = _capturedActivities
             .FirstOrDefault(a => a.OperationName == "Chat.Terminate"
-                && a.GetTagItem("agent_id")?.ToString() == agentId);
+                && a.GetTagItem("agent_id")?.ToString() == capturedJobName);
 
-        terminateActivity.Should().NotBeNull($"Chat.Terminate span with agent_id='{agentId}' must be created");
-        terminateActivity!.GetTagItem("agent_id")!.ToString().Should().Be(agentId);
+        terminateActivity.Should().NotBeNull($"Chat.Terminate span with agent_id='{capturedJobName}' must be created");
+        terminateActivity!.GetTagItem("agent_id")!.ToString().Should().Be(capturedJobName);
         terminateActivity.GetTagItem("job_name").Should().NotBeNull();
     }
 
@@ -407,17 +398,12 @@ public class ChatDispatcherObservabilityTests : IDisposable
                 """;
             var templateStore = JobTemplateStore.LoadFromYaml(yaml);
 
-            var leaderMock = new Mock<ILeaderElectionService>();
-            leaderMock.Setup(l => l.IsLeader).Returns(true);
-            leaderMock.Setup(l => l.LeaderToken).Returns(CancellationToken.None);
-
             return new ChatJobDispatcher(
                 jobClient ?? CreateJobClientMock().Object,
                 hubContext ?? CreateHubContextMock().Object,
                 templateStore,
                 registry ?? CreateRegistry(),
                 options ?? CreateOptions(),
-                leaderMock.Object,
                 logger);
         }
 
@@ -476,13 +462,14 @@ public class ChatDispatcherObservabilityTests : IDisposable
             var (logger, events) = CreateCapturingLogger();
             var jobClientMock = CreateJobClientMock();
             var registry = CreateRegistry();
-            const string agentId = "agent-force-log";
+            string? capturedJobName = null;
 
             jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
                 .Callback<V1Job, string, CancellationToken>((j, _, _) =>
                 {
+                    capturedJobName = j.Metadata.Name;
                     var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
-                    RegisterChatAgent(registry, agentId, dispatchId, "conn-force");
+                    RegisterChatAgent(registry, capturedJobName!, dispatchId, "conn-force");
                 })
                 .Returns(Task.CompletedTask);
 
@@ -502,7 +489,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             using var cts = new CancellationTokenSource();
             cts.Cancel();
 
-            await dispatcher.TerminateChatSessionAsync(agentId, cts.Token);
+            await dispatcher.TerminateChatSessionAsync(capturedJobName!, cts.Token);
 
             var forceDeleteLogs = events
                 .Where(e => e.Level == Serilog.Events.LogEventLevel.Warning &&
@@ -512,40 +499,23 @@ public class ChatDispatcherObservabilityTests : IDisposable
             forceDeleteLogs.Should().NotBeEmpty("force-delete path must produce a Warning log");
         }
 
-        // ─── StartAsync API failure → Warning log, does NOT rethrow ──────────
+        // ─── StartAsync is now a no-op (RecoverSessionsAsync removed in Spec 049) ────
 
         [Fact]
-        public async Task StartAsync_ApiFailure_LogsWarning_DoesNotRethrow()
+        public async Task StartAsync_IsNoOp_DoesNotCallK8s()
         {
-            var (logger, events) = CreateCapturingLogger();
+            var (logger, _) = CreateCapturingLogger();
             var jobClientMock = CreateJobClientMock();
-            jobClientMock.Setup(c => c.ListJobsAsync(TestNamespace, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ThrowsAsync(new k8s.Autorest.HttpOperationException("k8s API unavailable"));
 
             var dispatcher = CreateDispatcher(logger, jobClient: jobClientMock.Object);
 
-            // Must not throw
             var act = () => dispatcher.StartAsync(CancellationToken.None);
-            await act.Should().NotThrowAsync("k8s startup failure must be swallowed");
+            await act.Should().NotThrowAsync("StartAsync must be a no-op");
 
-            // Wait for the background recovery Task.Run to produce the warning log.
-            // Poll with short intervals instead of a fixed sleep to avoid CI timing jitter.
-            var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-            while (DateTimeOffset.UtcNow < deadline)
-            {
-                var found = events.Any(e =>
-                    e.Level == Serilog.Events.LogEventLevel.Warning &&
-                    e.Message.Contains("failed to restore sessions"));
-                if (found) break;
-                await Task.Delay(TimeSpan.FromMilliseconds(50));
-            }
-
-            var warningLogs = events
-                .Where(e => e.Level == Serilog.Events.LogEventLevel.Warning &&
-                            e.Message.Contains("failed to restore sessions"))
-                .ToList();
-
-            warningLogs.Should().NotBeEmpty("StartAsync API failure must produce a Warning log");
+            // Must NOT call ListJobsAsync — session recovery was removed
+            jobClientMock.Verify(
+                c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                Times.Never);
         }
     }
 }

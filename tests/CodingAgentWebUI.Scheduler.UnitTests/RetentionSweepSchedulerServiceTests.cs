@@ -64,23 +64,6 @@ public sealed class RetentionSweepSchedulerServiceTests
     }
 
     [Fact]
-    public async Task WhenLeaderAndApiReturns503_ShouldLogDebugOnly()
-    {
-        _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
-        _mockClient.Setup(c => c.TriggerRetentionSweepAsync(It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new RetentionSweepUnavailableException());
-
-        await RunServiceForDurationAsync(CreateService(), TimeSpan.FromMilliseconds(50));
-
-        _mockLogger.Verify(l => l.Error(It.IsAny<Exception>(), It.IsAny<string>()),
-            Times.Never(), "503 (not leader) must not log Error");
-        _mockLogger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>()),
-            Times.Never(), "503 (not leader) must not log Warning");
-        _mockLogger.Verify(l => l.Debug(It.IsAny<string>()),
-            Times.AtLeastOnce(), "503 (not leader) should log Debug");
-    }
-
-    [Fact]
     public async Task WhenLeaderAndNetworkError_ShouldLogWarningAndNotThrow()
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);

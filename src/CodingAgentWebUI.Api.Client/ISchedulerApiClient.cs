@@ -21,7 +21,9 @@ public interface ISchedulerApiClient
 
     /// <summary>
     /// POST /api/scheduler/maintenance/retention-sweep on the API.
-    /// Throws <see cref="RetentionSweepUnavailableException"/> when API returns 503 (not leader).
+    /// Executes all five DatabaseMaintenanceService sweep operations and returns counts.
+    /// The API is stateless — it always executes when called. The Scheduler's
+    /// RetentionSweepSchedulerService gates calls on its own leader election.
     /// </summary>
     Task<RetentionSweepResultDto> TriggerRetentionSweepAsync(CancellationToken ct = default);
 

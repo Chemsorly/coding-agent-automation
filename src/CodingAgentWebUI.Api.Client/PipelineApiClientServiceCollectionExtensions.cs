@@ -74,6 +74,15 @@ public static class PipelineApiClientServiceCollectionExtensions
                 new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
         }).AddStandardResilienceHandler();
 
+        // Consolidation work item client — authenticated (operator tier; master key required).
+        // Used by the Job Controller's ConsolidationDispatchLoop.
+        services.AddHttpClient<IPipelineApiConsolidationWorkItemClient, PipelineApiConsolidationWorkItemClient>(client =>
+        {
+            client.BaseAddress = new Uri(options.BaseUrl);
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
+        }).AddStandardResilienceHandler();
+
         // Harness suggestion client — authenticated (operator tier; master key required)
         services.AddHttpClient<IPipelineApiHarnessSuggestionClient, PipelineApiHarnessSuggestionClient>(client =>
         {

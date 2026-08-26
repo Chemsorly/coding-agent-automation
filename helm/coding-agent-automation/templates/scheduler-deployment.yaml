@@ -6,13 +6,19 @@ metadata:
   labels:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
     app.kubernetes.io/component: scheduler
+  {{- with .Values.scheduler.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.scheduler.replicas }}
   strategy:
-    type: RollingUpdate
+    type: {{ .Values.scheduler.strategy.type }}
+    {{- if eq .Values.scheduler.strategy.type "RollingUpdate" }}
     rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
+      maxUnavailable: {{ .Values.scheduler.strategy.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.scheduler.strategy.rollingUpdate.maxSurge }}
+    {{- end }}
   selector:
     matchLabels:
       {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
@@ -26,10 +32,35 @@ spec:
       serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-scheduler
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: {{ .Values.scheduler.terminationGracePeriodSeconds }}
+      {{- with .Values.scheduler.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: scheduler
           image: "{{ .Values.scheduler.image.repository }}:{{ required "scheduler.image.tag is required" .Values.scheduler.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - name: http
               containerPort: {{ .Values.scheduler.service.port }}
@@ -47,12 +78,16 @@ spec:
               port: {{ .Values.scheduler.service.port }}
             initialDelaySeconds: {{ .Values.scheduler.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.scheduler.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.scheduler.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.scheduler.probes.liveness.failureThreshold }}
           readinessProbe:
             httpGet:
               path: {{ .Values.scheduler.probes.path }}
               port: {{ .Values.scheduler.service.port }}
             initialDelaySeconds: {{ .Values.scheduler.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.scheduler.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.scheduler.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.scheduler.probes.readiness.failureThreshold }}
           resources:
             {{- toYaml .Values.scheduler.resources | nindent 12 }}
           env:
@@ -61,25 +96,21 @@ spec:
             - name: ASPNETCORE_URLS
               value: "http://+:{{ .Values.scheduler.service.port }}"
             - name: PipelineApi__BaseUrl
-              value: {{ include "coding-agent-automation.agentOrchestratorUrl" . | quote }}
+              value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
             - name: LeaderElection__LeaseName
-              value: {{ .Values.scheduler.leaderElection.leaseName | default (printf "caa-%s-scheduler-lock" .Release.Name) | quote }}
+              value: {{ if .Values.scheduler.leaderElection.leaseName -}}
+                {{- .Values.scheduler.leaderElection.leaseName | quote }}
+              {{- else -}}
+                {{- printf "caa-%s-scheduler-lock" .Release.Name | quote }}
+              {{- end }}
+            - name: LeaderElection__Namespace
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             {{- if .Values.signalr.redis.connectionString }}
             - name: SignalR__Redis__ConnectionString
               value: {{ .Values.signalr.redis.connectionString | quote }}
             {{- end }}
             - name: LOG_LEVEL
               value: {{ .Values.scheduler.env.logLevel | quote }}
-      {{- with .Values.scheduler.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.scheduler.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.scheduler.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
 {{- end }}

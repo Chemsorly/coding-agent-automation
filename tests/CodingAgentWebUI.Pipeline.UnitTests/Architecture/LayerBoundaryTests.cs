@@ -388,6 +388,14 @@ public partial class LayerBoundaryTests
             // with a cast: AddHostedService(sp => (LoopStatusPollingService)sp.GetRequiredService<ILoopStatusService>()).
             // The T4 scanner does not detect the cast pattern — service is actively registered.
             "LoopStatusPollingService",
+
+            // Spec 049: ConsolidationWorkItemDispatchService moved from CodingAgentWebUI.Api to
+            // the JobController (as ConsolidationDispatchService). The source file remains in the
+            // Api project for existing unit test coverage (CodingAgentWebUI.Orchestration.UnitTests)
+            // but it is no longer registered as a hosted service anywhere in the API.
+            // It will be deleted once the Orchestration.UnitTests are migrated to test the new
+            // ConsolidationDispatchLoop in the JobController.
+            "ConsolidationWorkItemDispatchService",
         };
 
         // ── Step 3: find all concrete BackgroundService subclasses in src files ──

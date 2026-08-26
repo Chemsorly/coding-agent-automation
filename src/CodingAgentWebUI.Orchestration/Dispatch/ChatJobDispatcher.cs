@@ -27,6 +27,20 @@ public sealed class ChatPodTimeoutException(int timeoutSeconds)
 public interface IChatJobDispatcher
 {
     Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Terminates the chat session for the given agent.
+    ///
+    /// <para>
+    /// <b>agentId == jobName invariant:</b> the <c>ChatJobDispatcher</c> implementation
+    /// relies on the fact that <c>agentId == jobName</c> for chat pods. The pod's
+    /// <c>AGENT_ID</c> environment variable is set via a Kubernetes field ref to
+    /// <c>metadata.name</c>, so the value the agent reports at hub registration equals
+    /// the K8s Job name. If a future pod image change breaks this invariant, a warning
+    /// is logged in <c>ChatJobDispatcher.PollForAgentConnectionAsync</c> and termination
+    /// may fail to locate the correct job.
+    /// </para>
+    /// </summary>
     Task TerminateChatSessionAsync(AgentId agentId, CancellationToken cancellationToken);
 }
 

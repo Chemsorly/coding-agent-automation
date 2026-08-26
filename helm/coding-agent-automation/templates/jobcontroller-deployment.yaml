@@ -12,9 +12,8 @@ metadata:
   {{- end }}
 spec:
   replicas: {{ .Values.jobController.replicas }}
-  # RollingUpdate is safe with multi-replica: /readyz returns 200 for all replicas regardless of
-  # leader state, so the new pod becomes Ready and the old one terminates cleanly.
-  # Leader election gates actual dispatch/reconciliation — the non-leader idles until it wins.
+  # RollingUpdate is safe: /readyz returns 200 regardless of leader state.
+  # Leader election gates actual dispatch — the non-leader idles until it wins.
   strategy:
     type: {{ .Values.jobController.strategy.type }}
     {{- if eq .Values.jobController.strategy.type "RollingUpdate" }}
@@ -35,10 +34,35 @@ spec:
       serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: {{ .Values.jobController.terminationGracePeriodSeconds }}
+      {{- with .Values.jobController.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.jobController.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.jobController.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.jobController.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.jobController.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: jobcontroller
-          image: "{{ .Values.jobController.image.repository }}:{{ .Values.jobController.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.jobController.image.repository }}:{{ required "jobController.image.tag is required" .Values.jobController.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - name: http
               containerPort: {{ .Values.jobController.service.port }}
@@ -84,6 +108,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: LOG_LEVEL
+              value: {{ .Values.jobController.env.logLevel | quote }}
             {{- include "coding-agent-automation.workDistributionEnv" . | nindent 12 }}
           volumeMounts:
             - name: job-templates
