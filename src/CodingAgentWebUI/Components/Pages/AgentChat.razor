@@ -374,7 +374,6 @@
     private string? ClassifyLaunchError(Exception ex) => ex switch
     {
         OperationCanceledException when _cts?.IsCancellationRequested == true => "Launch cancelled.",
-        ChatAlreadyActiveException => "A chat pod is already running for this agent type.",
         NoPvcAvailableException => "No agent credentials available. Try again later.",
         ChatPodTimeoutException tEx => $"Pod did not connect within {tEx.TimeoutSeconds}s. Check cluster logs.",
         InvalidOperationException iEx when iEx.Message.Contains("not the leader")

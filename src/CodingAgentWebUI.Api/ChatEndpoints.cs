@@ -67,10 +67,6 @@ public static class ChatEndpoints
 
             return TypedResults.Ok(new DispatchChatPodResponse(agentId));
         }
-        catch (ChatAlreadyActiveException ex)
-        {
-            return TypedResults.Conflict(ex.Message);
-        }
         catch (NoPvcAvailableException)
         {
             return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);

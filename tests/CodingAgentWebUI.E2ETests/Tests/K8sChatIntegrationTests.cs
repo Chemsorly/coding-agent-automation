@@ -162,27 +162,19 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
     // ── Double-dispatch guard ─────────────────────────────────────────────
 
     [Fact]
-    public async Task K8sChat_DoubleDispatch_SameSelector_SecondThrows()
+    public async Task K8sChat_SameSelector_TwoTabsGetTwoPods()
     {
-        // First dispatch — don't connect agent (keep job non-terminal)
-        var firstDispatchTask = Fixture.ChatDispatcher.DispatchChatPodAsync(
-            "kiro,dotnet", null, null, CancellationToken.None);
+        // Two concurrent dispatches for the same selector — both should succeed.
+        // The per-selector guard was removed (Spec 049): only PVC pool exhaustion blocks dispatch.
+        var (agentId1, fakeAgent1) = await DispatchChatPodAndConnectAsync("kiro,dotnet");
+        var (agentId2, fakeAgent2) = await DispatchChatPodAndConnectAsync("kiro,dotnet", overrideAgentId: $"fake-chat-agent-2nd-{Guid.NewGuid():N}"[..21]);
 
-        // Wait for job to be created
-        await WaitForChatJobCreatedAsync("kiro,dotnet", timeout: TimeSpan.FromSeconds(10));
-
-        // Second dispatch for same selector — should throw immediately
-        var ex = await Assert.ThrowsAsync<ChatAlreadyActiveException>(async () =>
-            await Fixture.ChatDispatcher.DispatchChatPodAsync(
-                "kiro,dotnet", null, null, CancellationToken.None));
-
-        Assert.NotEmpty(ex.Message);
-        Assert.Single(Fixture.K8sClient.ChatJobs);
-
-        // Cancel first dispatch to clean up
-        _ = firstDispatchTask.ContinueWith(_ => { }); // suppress unobserved exception
-        await Fixture.K8sClient.SimulateChatJobTerminalAsync(
-            Fixture.K8sClient.ChatJobs.Keys.First());
+        await using (fakeAgent1)
+        await using (fakeAgent2)
+        {
+            Assert.Equal(2, Fixture.K8sClient.ChatJobs.Count);
+            Assert.NotEqual(agentId1, agentId2);
+        }
     }
 
     [Fact]

@@ -125,8 +125,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             .Where(j => !IsTerminal(j))
             .ToList() ?? [];
 
-        CheckForExistingJob(activeChatJobs, selectorLabelValue, normalized);
-
         var template = _templateStore.Resolve(normalized)
             ?? throw new InvalidOperationException($"No template for selector '{normalized}'");
 
@@ -164,23 +162,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 "Label values must match [a-zA-Z0-9._-] and be ≤63 characters.");
 
         return (normalized, selectorLabelValue);
-    }
-
-    private void CheckForExistingJob(List<V1Job> activeChatJobs, string selectorLabelValue, string normalized)
-    {
-        var existingForSelector = activeChatJobs.FirstOrDefault(j =>
-        {
-            var labels = j.Metadata?.Labels;
-            return labels is not null && labels.TryGetValue("caa/chat-selector", out var v) && v == selectorLabelValue;
-        });
-        if (existingForSelector is not null)
-        {
-            var existingName = existingForSelector.Metadata?.Name ?? "unknown";
-            _logger.Information(
-                "ChatJobDispatcher: double-dispatch blocked for selector {AgentSelector} — existing job {JobName}",
-                normalized, existingName);
-            throw new ChatAlreadyActiveException(existingName);
-        }
     }
 
     private string? ClaimPvcForKiroAgent(string providerType, List<V1Job> activeChatJobs)

@@ -885,19 +885,6 @@ public sealed class ApiBackedServicesTests
     }
 
     [Fact]
-    public async Task ChatJobDispatcher_DispatchChatPodAsync_On409_ThrowsChatAlreadyActiveException()
-    {
-        var client = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiChatClient>();
-        client.Setup(c => c.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("Conflict", null, HttpStatusCode.Conflict));
-
-        var dispatcher = new ApiChatJobDispatcher(client.Object);
-        var act = () => dispatcher.DispatchChatPodAsync("kiro", null, null, CancellationToken.None);
-
-        await act.Should().ThrowAsync<ChatAlreadyActiveException>();
-    }
-
-    [Fact]
     public async Task ChatJobDispatcher_DispatchChatPodAsync_On503_ThrowsNoPvcAvailableException()
     {
         var client = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiChatClient>();

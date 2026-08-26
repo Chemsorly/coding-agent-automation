@@ -181,31 +181,6 @@ public class ChatJobDispatcherTests
             "chat pods must not emit --mode=workitem");
     }
 
-    [Fact]
-    public async Task DispatchChatPodAsync_ActiveChatJobExists_ThrowsChatAlreadyActiveException()
-    {
-        var existingJob = new V1Job
-        {
-            Metadata = new V1ObjectMeta
-            {
-                Name = "caa-chat-existing1",
-                Labels = new Dictionary<string, string>
-                {
-                    ["caa/chat-session-id"] = Guid.NewGuid().ToString(),
-                    ["caa/chat-selector"] = TestEncodedSelector
-                }
-            },
-            Status = new V1JobStatus { Conditions = [] }
-        };
-        var jobClientMock = CreateJobClientMock(new V1JobList { Items = [existingJob] });
-
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object);
-
-        var act = () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
-
-        await act.Should().ThrowAsync<ChatAlreadyActiveException>();
-    }
-
     // ─── 3. DispatchChatPodAsync — agent connects within timeout ─────────────
 
     [Fact]
