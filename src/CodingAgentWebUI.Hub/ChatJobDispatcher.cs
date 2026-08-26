@@ -282,7 +282,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                     return connected.AgentId.Value;
                 }
 
-                await Task.Delay(2000, timeoutCts.Token);
+                await Task.Delay(500, timeoutCts.Token);
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)

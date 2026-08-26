@@ -248,12 +248,11 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
 
         // Wait for both to complete: the connection must succeed before the test can proceed,
         // and the dispatcher must find the agent before returning the agentId.
-        // Await the connection first (with a generous timeout so a real failure surfaces clearly),
-        // then await the dispatch result. Both run in parallel — the dispatcher's first 2s poll
-        // fires while ConnectAsChatAgentAsync is in-flight, so the agent is registered at or
-        // before the first probe rather than serially after it.
-        await connectTask.WaitAsync(TimeSpan.FromSeconds(15));
-        var returnedAgentId = await dispatchTask.WaitAsync(TimeSpan.FromSeconds(30));
+        // Await the connection first (timeout matches ChatPodConnectTimeoutSeconds so a genuine
+        // hang in ConnectAsChatAgentAsync fails with a clear message rather than a cryptic
+        // ChatPodTimeoutException from the dispatcher), then await the dispatch result.
+        await connectTask.WaitAsync(TimeSpan.FromSeconds(35));
+        var returnedAgentId = await dispatchTask.WaitAsync(TimeSpan.FromSeconds(60));
 
         return (returnedAgentId, fakeAgent);
     }

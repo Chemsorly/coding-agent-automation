@@ -61,14 +61,15 @@ internal static class E2ETestDefaults
         Environment.SetEnvironmentVariable("WorkDistribution__CredentialPools__Kiro__0", "fake-pvc-0");
         Environment.SetEnvironmentVariable("WorkDistribution__CredentialPools__Kiro__1", "fake-pvc-1");
         Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds", "7200");
-        // 10s, not the production 30s. In the harness the fake agent connects within one 2s poll
-        // of the Job being created, so a working dispatch never approaches this — but a *broken*
-        // one waits it out, and at ten chat tests that is the difference between 100s and 300s of
-        // pure timeout. A run where chat regresses should fail the pod-connect assertions well
-        // inside the 15-minute CI budget rather than blowing it, which is exactly what happened
-        // (the cancelled CI runs were still grinding through 30s ChatPodTimeoutExceptions at 12
-        // minutes). ChatJobDispatcher clamps this to a floor, so it cannot be set uselessly low.
-        Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds", "10");
+        // 30s, matching the production default. The original 10s was meant to fail fast for broken
+        // dispatches — but loaded CI runners can take 12s+ for a real Kestrel+WebSocket+SignalR
+        // handshake on the second concurrent chat connection, which caused false failures.
+        // The poll interval in ChatJobDispatcher was simultaneously reduced from 2s to 500ms, so a
+        // working dispatch still finds the agent within one poll after it registers (~500ms) rather
+        // than up to 2s. Net effect: broken dispatches fail within 30s instead of 10s (still well
+        // within the 15-minute CI budget at 10 chat tests), and timing-sensitive connections never
+        // time out.
+        Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds", "30");
         Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds", "10");
     }
 
