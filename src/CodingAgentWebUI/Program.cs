@@ -133,24 +133,12 @@ builder.Host.ConfigureSerilog();
 var redisConnectionString = builder.Configuration.GetValue<string>("SignalR:Redis:ConnectionString");
 
 // ── Data Protection — shared key ring across replicas ─────────────────────
-// Without this, each pod generates its own ephemeral key ring. When the Rancher
-// proxy load-balances a page load to replica A (antiforgery token encrypted with A's key)
-// then routes the Blazor WebSocket to replica B, B cannot decrypt the token and the
-// circuit fails with "The key {guid} was not found in the key ring."
-// When Redis is configured, all replicas share one key ring under the app-scoped key.
-// When Redis is absent (local dev, single replica), falls back to the default ephemeral ring.
-if (!string.IsNullOrEmpty(redisConnectionString))
-{
-    var dpRedis = StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
-    builder.Services.AddDataProtection()
-        .PersistKeysToStackExchangeRedis(dpRedis, "caa:data-protection-keys")
-        .SetApplicationName("coding-agent-webui");
-    Log.Information("Data Protection: keys persisted to Redis (key=caa:data-protection-keys)");
-}
-else
-{
-    Log.Warning("Data Protection: Redis not configured — using ephemeral in-process key ring (single replica only)");
-}
+// See DataProtectionRegistration.cs for the full explanation.
+// Uses the same SignalR:Redis:ConnectionString config key — no additional Helm values needed.
+Func<StackExchange.Redis.IConnectionMultiplexer>? dpMultiplexerFactory = string.IsNullOrEmpty(redisConnectionString)
+    ? null
+    : () => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
+builder.Services.AddDataProtectionServices(dpMultiplexerFactory);
 builder.Services.AddApplicationTelemetry(dbConnectionString, redisConnectionString);
 
 var app = builder.Build();
