@@ -166,8 +166,16 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
     {
         // Two concurrent dispatches for the same selector — both should succeed.
         // The per-selector guard was removed (Spec 049): only PVC pool exhaustion blocks dispatch.
-        var (agentId1, fakeAgent1) = await DispatchChatPodAndConnectAsync("kiro,dotnet");
-        var (agentId2, fakeAgent2) = await DispatchChatPodAndConnectAsync("kiro,dotnet", overrideAgentId: $"fake-chat-agent-2nd-{Guid.NewGuid():N}"[..21]);
+        // Run them concurrently: this is the actual "two tabs" scenario, and parallelism avoids
+        // the second dispatch suffering from server load accumulated by the first one being fully
+        // alive and polling when it starts.
+        var task1 = DispatchChatPodAndConnectAsync("kiro,dotnet");
+        var task2 = DispatchChatPodAndConnectAsync("kiro,dotnet",
+            overrideAgentId: $"fake-chat-agent-2nd-{Guid.NewGuid():N}"[..21]);
+
+        var results = await Task.WhenAll(task1, task2);
+        var (agentId1, fakeAgent1) = results[0];
+        var (agentId2, fakeAgent2) = results[1];
 
         await using (fakeAgent1)
         await using (fakeAgent2)

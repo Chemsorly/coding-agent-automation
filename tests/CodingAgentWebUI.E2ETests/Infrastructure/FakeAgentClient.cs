@@ -163,7 +163,8 @@ public sealed class FakeAgentClient : IAsyncDisposable
     /// </summary>
     public async Task ConnectAsChatAgentAsync(string serverAddress, string apiKey, string chatSessionId)
     {
-        await BuildAndStartConnectionAsync(serverAddress, apiKey);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        await BuildAndStartConnectionAsync(serverAddress, apiKey, cts.Token);
 
         var chatLabels = Labels
             .Concat(new[] { "chat=true", $"chat-session-id={chatSessionId}" })
@@ -174,7 +175,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
             AgentId = AgentId,
             Hostname = "fake-chat-pod",
             Labels = chatLabels
-        });
+        }, cts.Token);
     }
 
     private void OnAssignJob(JobAssignmentMessage msg)
@@ -464,7 +465,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
     /// Builds the SignalR connection, wires up client-side handlers, and starts it.
     /// Shared between ConnectAsync and ConnectWithActiveJobAsync.
     /// </summary>
-    private async Task BuildAndStartConnectionAsync(string serverAddress, string apiKey)
+    private async Task BuildAndStartConnectionAsync(string serverAddress, string apiKey, CancellationToken ct = default)
     {
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(apiKey));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(AgentId));
@@ -493,7 +494,10 @@ public sealed class FakeAgentClient : IAsyncDisposable
                 await _connection.StopAsync();
         });
 
-        await _connection.StartAsync();
+        // Use a 25s timeout if no token provided — prevents indefinite hangs under CI load
+        using var fallbackCts = ct == default ? new CancellationTokenSource(TimeSpan.FromSeconds(25)) : null;
+        var effectiveCt = fallbackCts?.Token ?? ct;
+        await _connection.StartAsync(effectiveCt);
     }
 
     public async ValueTask DisposeAsync()
