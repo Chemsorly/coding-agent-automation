@@ -16,7 +16,7 @@ orchestrator:
     repository: chemsorly/coding-agent
     # Tag for the orchestrator image. On release, CI overwrites this to semver.
     tag: coding-agent-webui
-  replicas: 1
+  replicas: 2
   # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
   annotations: {}
   # Pod-level securityContext (e.g., runAsUser, fsGroup for hostPath ownership)
@@ -250,11 +250,12 @@ api:
   image:
     repository: chemsorly/coding-agent
     tag: coding-agent-api
-  # Spec 046: api.replicas > 1 is supported when signalr.redis.connectionString is set.
-  # AgentRegistryService and OrchestratorRunService are now Redis-backed (distributed mode).
-  # When signalr.redis.connectionString is empty the API falls back to in-memory implementations
-  # and replicas must remain 1. A startup warning is logged if replicas > 1 and Redis is absent.
-  replicas: 1
+  # Spec 046: api.replicas > 1 requires signalr.redis.connectionString to be set.
+  # AgentRegistryService and OrchestratorRunService switch to Redis-backed distributed mode
+  # automatically when Redis is configured. Without Redis the API falls back to in-memory
+  # implementations and hub messages cannot be routed cross-replica — reduce to 1 in that case.
+  # A startup warning is logged if replicas > 1 and Redis is absent.
+  replicas: 2
   # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
   annotations: {}
   service:
@@ -298,9 +299,9 @@ jobController:
   image:
     repository: chemsorly/coding-agent
     tag: coding-agent-jobcontroller
-  # replicas: leader election (caa-dispatch-lock) handles multi-replica safety.
-  # Only the leader pod dispatches and reconciles; others idle waiting for leadership.
-  replicas: 1
+  # Leader election (caa-dispatch-lock) handles multi-replica safety.
+  # Only the leader pod dispatches and reconciles; others idle as hot standbys.
+  replicas: 2
   # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
   annotations: {}
   service:
@@ -330,7 +331,7 @@ jobController:
 # =============================================================================
 scheduler:
   enabled: true
-  replicas: 1
+  replicas: 2
   image:
     repository: chemsorly/coding-agent
     # Tag is overridden at deploy time with the build SHA. Empty = fail fast on deploy.
