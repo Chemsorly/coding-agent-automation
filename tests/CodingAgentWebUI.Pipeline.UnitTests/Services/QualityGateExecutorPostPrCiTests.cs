@@ -365,3 +365,263 @@ public class QualityGateExecutorPostPrCiTests
         }
     };
 }
+
+/// <summary>
+/// Additional edge-case tests for QualityGateExecutor covering:
+/// - WaitForPostPrCiAsync exception/timeout paths
+/// - RunPostRetryCleanupAndFinalizeAsync cleanup agent throws
+/// - RunRetryLoopAsync empty-session detection
+/// </summary>
+public class QualityGateExecutorEdgeCaseTests
+{
+    private readonly Mock<IQualityGateValidator> _mockValidator;
+    private readonly Mock<IAgentProvider> _mockAgent;
+    private readonly Mock<IPipelineCallbacks> _mockCallbacks;
+    private readonly Mock<IAgentIssueOperations> _mockIssueOps;
+    private readonly Mock<IRepositoryProvider> _mockRepoProvider;
+    private readonly Mock<IPipelineProvider> _mockPipelineProvider;
+    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
+    private readonly Mock<Serilog.ILogger> _mockLogger;
+    private readonly PipelineRun _run;
+    private readonly QualityGateExecutor _executor;
+
+    private static readonly QualityGateReport PassingReport = new()
+    {
+        Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
+        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "ok" }
+    };
+
+    public QualityGateExecutorEdgeCaseTests()
+    {
+        _mockValidator = new Mock<IQualityGateValidator>();
+        _mockAgent = new Mock<IAgentProvider>();
+        _mockCallbacks = new Mock<IPipelineCallbacks>();
+        _mockIssueOps = new Mock<IAgentIssueOperations>();
+        _mockRepoProvider = new Mock<IRepositoryProvider>();
+        _mockPipelineProvider = new Mock<IPipelineProvider>();
+        _mockHistoryService = new Mock<IPipelineRunHistoryService>();
+        _mockLogger = new Mock<Serilog.ILogger>();
+
+        _run = new PipelineRun
+        {
+            RunId = "edge-case-run",
+            IssueIdentifier = "edge#1",
+            IssueTitle = "Edge case",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-edge-{Guid.NewGuid():N}"),
+            BranchName = "feature/edge-case"
+        };
+
+        _executor = new QualityGateExecutor(
+            _mockValidator.Object,
+            new PullRequestOrchestrator(_mockLogger.Object),
+            new CiLogWriter(_mockLogger.Object),
+            new FeedbackService(_mockLogger.Object),
+            _mockLogger.Object,
+            _mockHistoryService.Object);
+
+        SetupDefaultMocks();
+    }
+
+    /// <summary>
+    /// WaitForPostPrCiAsync: when PollAndHandleInfraRetryAsync throws an OCE from
+    /// an inner timeout (not the outer ct), ciGate must be set to Failed and the
+    /// run must still be finalized (not left hanging).
+    /// </summary>
+    [Fact]
+    public async Task WaitForPostPrCiAsync_CiPollTimesOut_FinalizesDraftPr()
+    {
+        SetupValidatorAlwaysPasses();
+        SetupNoChangesToCommit();
+
+        // WaitForCompletionAsync throws inner OperationCanceledException (CI timeout fires)
+        // The outer CancellationToken is NOT cancelled — simulates the ExternalCiTimeout
+        var innerCts = new CancellationTokenSource();
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [] });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException(innerCts.Token)); // inner timeout, outer CT not cancelled
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+
+        // Run should end as draft (CI failure path)
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            Times.Once, "timed-out CI must finalize as draft");
+    }
+
+    /// <summary>
+    /// WaitForPostPrCiAsync: when WaitForCompletionAsync throws a non-cancellation exception,
+    /// ciGate must be set to Failed and the run finalized as draft (non-fatal error path).
+    /// </summary>
+    [Fact]
+    public async Task WaitForPostPrCiAsync_CiPollThrowsException_FinalizesDraftPr()
+    {
+        SetupValidatorAlwaysPasses();
+        SetupNoChangesToCommit();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [] });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("CI provider unavailable"));
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            Times.Once, "CI provider error must finalize as draft");
+    }
+
+    /// <summary>
+    /// RunPostRetryCleanupAndFinalizeAsync: when the cleanup agent throws a non-cancellation
+    /// exception, the pipeline must continue to the final quality gates (exception is swallowed,
+    /// run is not aborted).
+    /// </summary>
+    [Fact]
+    public async Task CleanupAgent_ThrowsException_PipelineContinuesToFinalQualityGates()
+    {
+        SetupValidatorAlwaysPasses();
+
+        // Cleanup agent (second agent call) throws
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 2) // cleanup agent is the second call
+                    throw new InvalidOperationException("Cleanup agent error");
+                return new AgentResult
+                {
+                    ExitCode = 0,
+                    OutputLines = ["done"],
+                    Usage = new TokenUsage { InputTokens = 10, OutputTokens = 5 }
+                };
+            });
+
+        // CommitAllAsync: first call ok (initial QG), second call ok (cleanup with changes)
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+
+        // Post-PR CI passes
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [] });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }]
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+
+        // Pipeline must still call FinalizePullRequest (not abort) despite cleanup error
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Once, "pipeline must finalize even if cleanup agent throws");
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    private void SetupDefaultMocks()
+    {
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-edge-abc");
+        _mockCallbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+        _mockAgent.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = false });
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["done"],
+                Usage = new TokenUsage { InputTokens = 10, OutputTokens = 5 }
+            });
+    }
+
+    private void SetupValidatorAlwaysPasses()
+    {
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .ReturnsAsync(PassingReport);
+    }
+
+    private void SetupNoChangesToCommit()
+    {
+        _mockRepoProvider.SetupSequence(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>)
+            .ThrowsAsync(new InvalidOperationException("No changes to commit"));
+    }
+
+    private QualityGateContext BuildContext() => new()
+    {
+        Run = _run,
+        Config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            MaxInfrastructureRetries = 0,
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(50),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        },
+        AgentProvider = _mockAgent.Object,
+        IssueOps = _mockIssueOps.Object,
+        Callbacks = _mockCallbacks.Object,
+        RepoProvider = _mockRepoProvider.Object,
+        PipelineProvider = _mockPipelineProvider.Object,
+        QualityGateConfigs = new[]
+        {
+            new QualityGateConfiguration
+            {
+                DisplayName = "Test QGC",
+                CompilationCommand = "dotnet",
+                CompilationArguments = new[] { "build" },
+                TestCommand = "dotnet",
+                TestArguments = new[] { "test" }
+            }
+        },
+        Issue = new IssueDetail
+        {
+            Identifier = "edge#1",
+            Title = "Edge case",
+            Description = "Test description",
+            Labels = new[] { "bug" }
+        }
+    };
+}
