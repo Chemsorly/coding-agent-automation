@@ -46,13 +46,12 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         // path via TryInfrastructureRecoveryAsync (Failed+InfrastructureFailure → Succeeded/Running),
         // and Cancelled/Failed → Pending is a valid requeue path handled by TryDirectAsync.
         var currentStatus = await _workItemTransition.GetCurrentStatusAsync(workItemId, ct);
-        if (currentStatus.HasValue
-            && currentStatus.Value is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled
-            && currentStatus.Value != status)
+        if (currentStatus is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled
+            && currentStatus != status)
         {
             _logger.LogDebug(
                 "WorkItem {WorkItemId} already in terminal state {Current}, skipping fallback chain for requested {Target}",
-                workItemId, currentStatus.Value, status);
+                workItemId, currentStatus, status);
             return false;
         }
 

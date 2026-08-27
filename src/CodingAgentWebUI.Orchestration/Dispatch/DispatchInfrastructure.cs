@@ -382,48 +382,56 @@ public sealed class DispatchInfrastructure
         var refreshCount = issueContext.RefreshCount;
 
         // ── Step 4.5: Commit-count staleness (1F-001) ──
-        // If no higher-priority staleness signal is set and the issue has an existing analysis,
-        // check if enough commits have landed since the analysis was written. Uses the repo
-        // provider (already resolved via providerConfigs) so no additional network call is needed.
         if (!forceRefresh && issueContext.ExistingAnalysis is not null && config.AnalysisCommitThreshold > 0)
         {
-            try
-            {
-                var repoConfig = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId.Value);
-                if (repoConfig is not null)
-                {
-                    await using var repoProvider = ProviderFactory.CreateRepositoryProvider(repoConfig);
-                    if (repoProvider is Pipeline.Interfaces.IRepositoryAnalyticsProvider analyticsProvider)
-                    {
-                        // Find the timestamp of the most recent analysis comment from issue context
-                        var latestAnalysisComment = issueContext.IssueComments
-                            .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
-                            .OrderByDescending(c => c.CreatedAt)
-                            .FirstOrDefault();
-
-                        if (latestAnalysisComment is not null)
-                        {
-                            var commitCount = await analyticsProvider.GetCommitCountSinceAsync(
-                                latestAnalysisComment.CreatedAt, ct);
-                            if (commitCount >= config.AnalysisCommitThreshold)
-                            {
-                                forceRefresh = true;
-                                stalenessSignal = "commit_threshold";
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // Non-fatal: if the commit count check fails, proceed without forcing refresh.
-                request.Logger.Warning(ex,
-                    "DispatchInfrastructure: commit-count staleness check failed for {IssueIdentifier}; proceeding without refresh",
-                    issueIdentifier);
-            }
+            (forceRefresh, stalenessSignal) = await CheckCommitCountStalenessAsync(
+                issueContext, repoProviderId, providerConfigs, config.AnalysisCommitThreshold, request.Logger, ct);
         }
 
         return (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
             forceRefresh, stalenessSignal, refreshCount);
+    }
+
+    /// <summary>
+    /// Checks whether enough commits have landed since the last analysis to force a refresh.
+    /// Extracted from <see cref="PrepareDispatchCoreAsync"/> to reduce cognitive complexity (S3776).
+    /// Returns the updated (forceRefresh, stalenessSignal) pair.
+    /// </summary>
+    private async Task<(bool ForceRefresh, string? StalenessSignal)> CheckCommitCountStalenessAsync(
+        IssueContextResult issueContext,
+        ProviderConfigId repoProviderId,
+        IReadOnlyList<ProviderConfig> providerConfigs,
+        int analysisCommitThreshold,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        try
+        {
+            var repoConfig = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId.Value);
+            if (repoConfig is null) return (false, null);
+
+            await using var repoProvider = ProviderFactory.CreateRepositoryProvider(repoConfig);
+            if (repoProvider is not Pipeline.Interfaces.IRepositoryAnalyticsProvider analyticsProvider)
+                return (false, null);
+
+            var latestAnalysisComment = issueContext.IssueComments
+                .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefault();
+
+            if (latestAnalysisComment is null) return (false, null);
+
+            var commitCount = await analyticsProvider.GetCommitCountSinceAsync(latestAnalysisComment.CreatedAt, ct);
+            if (commitCount >= analysisCommitThreshold)
+                return (true, "commit_threshold");
+
+            return (false, null);
+        }
+        catch (Exception ex)
+        {
+            logger.Warning(ex,
+                "DispatchInfrastructure: commit-count staleness check failed; proceeding without refresh");
+            return (false, null);
+        }
     }
 }
