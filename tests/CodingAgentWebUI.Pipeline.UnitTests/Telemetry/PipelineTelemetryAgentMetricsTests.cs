@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -14,7 +15,11 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 public class PipelineTelemetryAgentMetricsTests : IDisposable
 {
     private readonly MeterListener _listener = new();
-    private readonly List<(string InstrumentName, List<KeyValuePair<string, object?>> Tags)> _measurements = [];
+    // ConcurrentBag is used instead of List to avoid data races: the MeterListener
+    // callback fires on the calling thread (which may be a parallel test's thread),
+    // so the collection must be thread-safe. Each test replaces the field reference
+    // to "clear" it rather than calling a non-atomic clear on a shared instance.
+    private ConcurrentBag<(string InstrumentName, KeyValuePair<string, object?>[] Tags)> _measurements = [];
 
     public PipelineTelemetryAgentMetricsTests()
     {
@@ -26,10 +31,7 @@ public class PipelineTelemetryAgentMetricsTests : IDisposable
 
         _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
         {
-            var tagList = new List<KeyValuePair<string, object?>>();
-            foreach (var tag in tags)
-                tagList.Add(tag);
-            _measurements.Add((instrument.Name, tagList));
+            _measurements.Add((instrument.Name, tags.ToArray()));
         });
 
         _listener.Start();
@@ -48,7 +50,12 @@ public class PipelineTelemetryAgentMetricsTests : IDisposable
                 "MeterListener warm-up failed: no instruments observed. " +
                 "If counter names changed in PipelineTelemetry, update this warm-up block.");
 
-        _measurements.Clear();
+        // Reset after warm-up. Replacing the field rather than calling Clear() avoids a race
+        // where a concurrent MeterListener callback (from a parallel test on another thread)
+        // is mid-Add when Clear() executes. The lambda closure captures `this` and evaluates
+        // `this._measurements` on each invocation, so field reassignment is visible to future
+        // callback invocations immediately.
+        _measurements = [];
     }
 
     public void Dispose() => _listener.Dispose();
@@ -56,7 +63,7 @@ public class PipelineTelemetryAgentMetricsTests : IDisposable
     [Fact]
     public void AgentJobsReceived_Add_EmitsCounter()
     {
-        _measurements.Clear();
+        _measurements = [];
 
         PipelineTelemetry.AgentJobsReceived.Add(1);
 
@@ -66,7 +73,7 @@ public class PipelineTelemetryAgentMetricsTests : IDisposable
     [Fact]
     public void AgentJobsRejected_Add_IncludesReasonTag()
     {
-        _measurements.Clear();
+        _measurements = [];
 
         PipelineTelemetry.AgentJobsRejected.Add(1,
             new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
@@ -80,7 +87,7 @@ public class PipelineTelemetryAgentMetricsTests : IDisposable
     [Fact]
     public void AgentHeartbeatFailures_Add_EmitsCounter()
     {
-        _measurements.Clear();
+        _measurements = [];
 
         PipelineTelemetry.AgentHeartbeatFailures.Add(1);
 
@@ -90,7 +97,7 @@ public class PipelineTelemetryAgentMetricsTests : IDisposable
     [Fact]
     public void AgentReconnections_Add_EmitsCounter()
     {
-        _measurements.Clear();
+        _measurements = [];
 
         PipelineTelemetry.AgentReconnections.Add(1);
 
