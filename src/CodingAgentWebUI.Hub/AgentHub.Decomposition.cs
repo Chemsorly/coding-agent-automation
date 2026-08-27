@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
@@ -47,7 +48,7 @@ public sealed partial class AgentHub
         // will run to completion against a now-dead connection context. This method is the only
         // location in the decomposition file with multiple uncancellable async I/O calls.
         var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-        var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderConfigId);
+        var issueConfig = issueConfigs.TryGetProviderConfig(issueProviderConfigId);
         if (issueConfig is null)
             throw new HubException($"Issue provider config '{issueProviderConfigId}' not found for cross-repo routing in job {jobId.Value}");
 

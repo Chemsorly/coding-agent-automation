@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -135,7 +136,7 @@ internal sealed class ProviderCacheManager : IAsyncDisposable
 
             if (!cache.ContainsKey(neededId))
             {
-                var config = providerConfigs.FirstOrDefault(c => c.Id == neededId);
+                var config = providerConfigs.TryGetProviderConfig(neededId);
                 if (config is not null)
                 {
                     try
