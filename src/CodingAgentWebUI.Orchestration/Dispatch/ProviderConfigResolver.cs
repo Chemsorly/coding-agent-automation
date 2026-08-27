@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
@@ -34,7 +35,7 @@ internal static class ProviderConfigResolver
         ILogger logger,
         CancellationToken ct)
     {
-        var config = cachedList.FirstOrDefault(c => c.Id == id);
+        var config = cachedList.TryGetProviderConfig(id);
         if (config is not null)
             return config;
 
