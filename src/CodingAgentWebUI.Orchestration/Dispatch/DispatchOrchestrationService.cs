@@ -337,6 +337,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// Each enabled template becomes a <see cref="RepositoryTarget"/> entry so the agent knows
     /// which repositories and issue providers are available for cross-repo sub-issue routing.
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(
+        Justification = "DI/config orchestration helper — tested indirectly via PrepareDecompositionDistributionRequestAsync integration path")]
     private async Task<DecompositionProjectContext?> BuildDecompositionProjectContextAsync(
         PipelineProject project, CancellationToken ct)
     {
