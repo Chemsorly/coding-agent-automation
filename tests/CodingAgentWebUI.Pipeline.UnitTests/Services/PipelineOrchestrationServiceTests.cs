@@ -3086,16 +3086,20 @@ public class PipelineOrchestrationServiceTests : IDisposable
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.IsDraftPr.Should().BeFalse();
 
-        // External CI should have been called once (initial QG) but NOT for the final QG after cleanup
+        // External CI is called twice:
+        // 1. Initial QG pass — pre-PR CI (commit+push succeeded on call #1).
+        // 2. Post-PR CI wait — after FinalizePullRequest promotes the PR to ready-for-review,
+        //    the pipeline must poll CI again to verify PR-triggered workflows passed.
+        //    (Regression fix for run 563d3745: CI only fires on pull_request, not on branch push.)
         mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
-            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
 
-        // The 5-param CommitAllAsync (allowEmpty) should never be called — we skip CI instead
+        // The 5-param CommitAllAsync (allowEmpty) should never be called — we skip CI instead of empty-commit
         _mockRepoProvider.Verify(p => p.CommitAllAsync(
             It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
             It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()), Times.Never);
 
-        // Output should contain the skip message
+        // Output should contain the skip message for the cleanup phase CI skip
         outputLines.Should().Contain(l => l.Contains("skipped"));
     }
 

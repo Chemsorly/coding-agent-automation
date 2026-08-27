@@ -104,11 +104,26 @@ public sealed partial class AgentHub
     /// <summary>
     /// Gets full issue details by identifier via the run's configured <see cref="IIssueProvider"/>.
     /// Called by the agent's <c>OrchestratorProxy.GetIssueAsync</c>.
+    /// Logs a warning when the requested identifier differs from the run's own issue (audit trail for 1G-006).
     /// </summary>
     [RequiresActiveJob]
     public Task<IssueDetail> RequestGetIssue(JobId jobId, string identifier)
     {
         ArgumentNullException.ThrowIfNull(identifier);
+
+        // Security audit (1G-006): log when an agent reads an issue other than its own.
+        // This is not blocked — decomposition and cross-repo workflows legitimately read
+        // related issues — but it is logged at Debug level for auditability.
+        var run = _facade.GetRun(jobId);
+        if (run is not null
+            && !string.IsNullOrEmpty(run.IssueIdentifier)
+            && !string.Equals(identifier, run.IssueIdentifier, StringComparison.Ordinal))
+        {
+            _logger.Debug(
+                "RequestGetIssue: agent {AgentId} reading issue '{RequestedIdentifier}' " +
+                "(own issue: '{OwnIdentifier}', job {JobId})",
+                run.AgentId, SanitizeForLog(identifier), SanitizeForLog(run.IssueIdentifier), jobId.Value);
+        }
 
         return ExecuteWithIssueProviderAsync<IssueDetail>(jobId.Value, $"get issue '{identifier}'",
             (provider, ct) => provider.GetIssueAsync(identifier, ct));

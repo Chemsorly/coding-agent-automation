@@ -346,6 +346,27 @@ public static class ApiServiceCollectionExtensions
             return new KubernetesJobClient(k8s);
         });
 
+        // ── IJobCleanupStrategy (1D-003) ─────────────────────────────────────
+        // Registered here so RunLifecycleManager.CancelRunAsync (and FailRunAsync) can delete
+        // the K8s Job on cancellation/failure, preventing the pod from consuming backoffLimit retries.
+        // Gracefully degrades to no-op when IKubernetesJobClient is null (K8s unavailable).
+        services.AddSingleton<IJobCleanupStrategy>(sp =>
+        {
+            var jobClient = sp.GetService<IKubernetesJobClient>();
+            if (jobClient is null)
+            {
+                Log.Warning("API: IJobCleanupStrategy unavailable — IKubernetesJobClient not registered. K8s Jobs will not be deleted on cancel/fail.");
+                return new NoOpJobCleanupStrategy();
+            }
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            var ns = cfg.GetValue<string>("WorkDistribution:Namespace") ?? "coding-agent";
+            return new KubernetesJobCleanup(
+                new DbWorkItemClientAdapter(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()),
+                jobClient,
+                ns,
+                Log.Logger);
+        });
+
         // ── JobTemplateStore ─────────────────────────────────────────────────
         // Required by ModelFetchJobService and ChatJobDispatcher.
         // Path matches WorkDistribution__JobTemplatesPath env var set in api-deployment.yaml.

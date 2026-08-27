@@ -22,7 +22,6 @@ Projects can override most general settings on a per-project basis using a nulla
 | `ciNotStartedMaxRetries` | 5 | Max re-push retries when CI never starts (range: 0–20). Each retry creates an empty commit and force-pushes to re-trigger CI |
 | `acceptanceCriteriaEnabled` | true | Enable acceptance criteria compliance check (runs in parallel with code reviewers, produces structured JSON report) |
 | `blacklistedPaths` | .agent, .brain | Paths excluded from agent commits |
-
 | `orphanedLabelSweepIntervalMinutes` | 30 | Minutes between orphaned label recovery sweeps (periodic background check for issues stuck with `agent:in-progress` label when no active run exists) |
 | `failedWorkspaceRetentionDays` | 7 | Days to keep failed workspaces before cleanup |
 | `stallWarningInterval` | 00:02:00 | Time without agent output before a stall warning is logged |
@@ -286,7 +285,7 @@ The maintenance service is triggered by the Scheduler via `POST /api/scheduler/m
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
-| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-orchestrator`, `coding-agent-api`, `coding-agent-jobcontroller`) |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-orchestrator`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`) |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
 
 ### Agent Containers

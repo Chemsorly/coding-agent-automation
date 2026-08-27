@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Hosting;
 using Polly;
+using Polly.Retry;
 
 namespace CodingAgentWebUI.Agent;
 
@@ -78,8 +79,31 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         ArgumentNullException.ThrowIfNull(registration);
         _currentRegistration = registration;
 
-        // Connect
-        await _hubManager.StartAsync(ct);
+        // Connect — retry on transient failures (e.g. 404 when an API pod is
+        // mid-rollout and the load-balancer routes to an unready instance).
+        // 3 attempts: immediate, +1 s, +2 s (total budget ≤ 5 s).
+        var connectPipeline = new ResiliencePipelineBuilder()
+            .AddRetry(new Polly.Retry.RetryStrategyOptions
+            {
+                MaxRetryAttempts = 2,
+                BackoffType = DelayBackoffType.Linear,
+                Delay = TimeSpan.FromSeconds(1),
+                ShouldHandle = new PredicateBuilder()
+                    .Handle<HttpRequestException>()
+                    .Handle<System.Net.Sockets.SocketException>()
+                    .Handle<IOException>(),
+                OnRetry = args =>
+                {
+                    _logger.Warning(
+                        "Hub connect attempt {Attempt} failed for agent {AgentId}: {Msg}. Retrying in {Delay}.",
+                        args.AttemptNumber + 1, _agentId.Value,
+                        args.Outcome.Exception?.Message ?? "unknown",
+                        args.RetryDelay);
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .Build();
+        await connectPipeline.ExecuteAsync(async token => await _hubManager.StartAsync(token), ct);
 
         // Register with resilience
         await _signalRPipeline.ExecuteAsync(async token =>

@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -28,11 +29,17 @@ public sealed class DispatchInfrastructure
     public ILabelService LabelService { get; }
     public DispatchResolutionService Resolution { get; }
 
+    /// <summary>
+    /// Optional: used for agent-error staleness detection. Null in test/local contexts.
+    /// </summary>
+    private readonly IPipelineApiWorkItemClient? _workItemClient;
+
     public DispatchInfrastructure(
         ITokenVendingService tokenVending,
         IProviderFactory providerFactory,
         ILabelService labelService,
-        DispatchResolutionService resolution)
+        DispatchResolutionService resolution,
+        IPipelineApiWorkItemClient? workItemClient = null)
     {
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(providerFactory);
@@ -43,6 +50,7 @@ public sealed class DispatchInfrastructure
         ProviderFactory = providerFactory;
         LabelService = labelService;
         Resolution = resolution;
+        _workItemClient = workItemClient;
     }
 
     // ── Config Resolution ──────────────────────────────────────────────────────────
@@ -270,6 +278,30 @@ public sealed class DispatchInfrastructure
                 forceRefreshAnalysis = true;
                 stalenessSignal = "gate_wont_do";
             }
+            // Agent-error-since check (1F-001): if the agent errored since the last analysis,
+            // force a fresh analysis run. Uses the work item client to query the DB via the API.
+            // Note: checked after the if/else-if chain so forceRefreshAnalysis is guaranteed false here.
+        }
+
+        if (!forceRefreshAnalysis && _workItemClient is not null && analysisComment is not null)
+        {
+            try
+            {
+                var staleness = await _workItemClient.GetStalenessAsync(
+                    issueIdentifier.Value, issueProviderId.Value, analysisComment.CreatedAt, ct);
+                if (staleness?.HasAgentErrorSince == true)
+                {
+                    forceRefreshAnalysis = true;
+                    stalenessSignal = "agent_error_since";
+                }
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal: if the staleness check fails, proceed without forcing refresh.
+                Serilog.Log.Warning(ex,
+                    "DispatchInfrastructure: agent-error staleness check failed for {IssueIdentifier}; proceeding without refresh",
+                    issueIdentifier);
+            }
         }
 
         return new IssueContextResult(
@@ -351,7 +383,57 @@ public sealed class DispatchInfrastructure
         var stalenessSignal = issueContext.StalenessSignal;
         var refreshCount = issueContext.RefreshCount;
 
+        // ── Step 4.5: Commit-count staleness (1F-001) ──
+        if (!forceRefresh && issueContext.ExistingAnalysis is not null && config.AnalysisCommitThreshold > 0)
+        {
+            (forceRefresh, stalenessSignal) = await CheckCommitCountStalenessAsync(
+                issueContext, repoProviderId, providerConfigs, config.AnalysisCommitThreshold, request.Logger, ct);
+        }
+
         return (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
             forceRefresh, stalenessSignal, refreshCount);
+    }
+
+    /// <summary>
+    /// Checks whether enough commits have landed since the last analysis to force a refresh.
+    /// Extracted from <see cref="PrepareDispatchCoreAsync"/> to reduce cognitive complexity (S3776).
+    /// Returns the updated (forceRefresh, stalenessSignal) pair.
+    /// </summary>
+    internal async Task<(bool ForceRefresh, string? StalenessSignal)> CheckCommitCountStalenessAsync(
+        IssueContextResult issueContext,
+        ProviderConfigId repoProviderId,
+        IReadOnlyList<ProviderConfig> providerConfigs,
+        int analysisCommitThreshold,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        try
+        {
+            var repoConfig = providerConfigs.FirstOrDefault(c => c.Id == repoProviderId.Value);
+            if (repoConfig is null) return (false, null);
+
+            await using var repoProvider = ProviderFactory.CreateRepositoryProvider(repoConfig);
+            if (repoProvider is not Pipeline.Interfaces.IRepositoryAnalyticsProvider analyticsProvider)
+                return (false, null);
+
+            var latestAnalysisComment = issueContext.IssueComments
+                .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefault();
+
+            if (latestAnalysisComment is null) return (false, null);
+
+            var commitCount = await analyticsProvider.GetCommitCountSinceAsync(latestAnalysisComment.CreatedAt, ct);
+            if (commitCount >= analysisCommitThreshold)
+                return (true, "commit_threshold");
+
+            return (false, null);
+        }
+        catch (Exception ex)
+        {
+            logger.Warning(ex,
+                "DispatchInfrastructure: commit-count staleness check failed; proceeding without refresh");
+            return (false, null);
+        }
     }
 }

@@ -45,3 +45,19 @@ spec:
       {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: jobcontroller
 {{- end }}
+{{- if and .Values.scheduler.enabled (gt (int (.Values.scheduler.replicas | default 1)) 1) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-scheduler
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scheduler
+{{- end }}

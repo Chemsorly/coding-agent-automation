@@ -26,10 +26,16 @@ internal static class AgentSerilogConfiguration
             .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
             // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every 10s)
             .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
+            // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
+            .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
+            // Suppress OpenTelemetry SDK internal logs (chatty at Debug — export errors still pass at Warning+)
+            .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
             .Enrich.FromLogContext()
             .Enrich.WithSpan()
             .Enrich.WithProperty("AgentId", agentId)
-            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{AgentId}] {Message:lj}{NewLine}{Exception}")
+            .WriteTo.Console(
+                outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] [{AgentId}] {Message:lj}{NewLine}{Exception}",
+                theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
             .WriteToOtlpIfConfigured(Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-worker")
             .CreateLogger();
     }

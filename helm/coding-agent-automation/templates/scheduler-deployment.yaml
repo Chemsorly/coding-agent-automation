@@ -6,6 +6,10 @@ metadata:
   labels:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
     app.kubernetes.io/component: scheduler
+  {{- with .Values.scheduler.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.scheduler.replicas }}
   strategy:
@@ -25,7 +29,7 @@ spec:
     spec:
       serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-scheduler
       automountServiceAccountToken: true
-      terminationGracePeriodSeconds: {{ .Values.scheduler.terminationGracePeriodSeconds | default 90 }}
+      terminationGracePeriodSeconds: {{ .Values.scheduler.terminationGracePeriodSeconds }}
       containers:
         - name: scheduler
           image: "{{ .Values.scheduler.image.repository }}:{{ required "scheduler.image.tag is required" .Values.scheduler.image.tag }}"
@@ -34,25 +38,32 @@ spec:
             - name: http
               containerPort: {{ .Values.scheduler.service.port }}
               protocol: TCP
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
           startupProbe:
             httpGet:
-              path: /health
+              path: /healthz
               port: {{ .Values.scheduler.service.port }}
-            initialDelaySeconds: 10
             periodSeconds: 5
-            failureThreshold: 12
+            failureThreshold: 30
           livenessProbe:
             httpGet:
-              path: /health
+              path: /healthz
               port: {{ .Values.scheduler.service.port }}
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: {{ .Values.scheduler.service.port }}
             initialDelaySeconds: 10
             periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
           resources:
             {{- toYaml .Values.scheduler.resources | nindent 12 }}
           env:
@@ -62,10 +73,14 @@ spec:
             # URL of the Pipeline API — the Scheduler calls this for config reads and
             # maintenance endpoint triggers.
             - name: PipelineApi__BaseUrl
-              value: {{ include "coding-agent-automation.agentOrchestratorUrl" . | quote }}
+              value: {{ include "coding-agent-automation.apiBaseUrl" . | quote }}
             # Scheduler-specific leader election lease — distinct from the API's lease.
             - name: LeaderElection__LeaseName
               value: {{ include "coding-agent-automation.leaseName" (dict "override" .Values.scheduler.leaderElection.leaseName "suffix" "scheduler-lock" "root" .) }}
+            - name: LeaderElection__Namespace
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             {{- include "coding-agent-automation.signalrEnv" . | nindent 12 }}
             {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-scheduler" "root" .) | nindent 12 }}
             - name: LOG_LEVEL

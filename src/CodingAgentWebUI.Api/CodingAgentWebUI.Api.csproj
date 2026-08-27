@@ -8,6 +8,7 @@
     <InternalsVisibleTo Include="CodingAgentWebUI.Orchestration.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.Api.IntegrationTests" />
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
   <ItemGroup>

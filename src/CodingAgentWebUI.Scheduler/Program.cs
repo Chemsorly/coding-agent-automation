@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Infrastructure.Telemetry;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Scheduler;
 using OpenTelemetry.Metrics;
@@ -10,7 +11,9 @@ using Serilog.Enrichers.Span;
 // Bootstrap logger: captures log output before UseSerilog takes over
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
-    .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+    .WriteTo.Console(
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
+        theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
@@ -64,15 +67,30 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSchedulerServices(pipelineApiBaseUrl, agentApiKey, builder.Configuration);
 
 // ── Serilog ───────────────────────────────────────────────────────────────
-builder.Host.UseSerilog((ctx, services, loggerConfig) =>
+var schedulerLogLevel = CodingAgentWebUI.Infrastructure.Telemetry.LogLevelParser.Parse(
+    Environment.GetEnvironmentVariable("LOG_LEVEL"),
+    Serilog.Events.LogEventLevel.Information);
+
+builder.Host.UseSerilog((ctx, lc) =>
 {
-    loggerConfig
-        .ReadFrom.Configuration(ctx.Configuration)
-        .ReadFrom.Services(services)
+    lc
+        .MinimumLevel.Is(schedulerLogLevel)
+        .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+        // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
+        .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
+        // Suppress per-request HttpClient trace logs (OTLP/trace exports fire at Debug on every call)
+        .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
+        // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
+        .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
+        // Suppress OpenTelemetry SDK internal logs (chatty at Debug — export errors still pass at Warning+)
+        .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
         .Enrich.FromLogContext()
         .Enrich.WithSpan()
-        .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None);
-}, preserveStaticLogger: true);
+        .WriteTo.Console(
+            outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
+            theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+        .WriteToOtlpIfConfigured("coding-agent-scheduler", ctx.HostingEnvironment.EnvironmentName);
+});
 
 // ── Port 8091 ─────────────────────────────────────────────────────────────
 builder.WebHost.UseUrls("http://+:8091"); // NOSONAR S1075
@@ -88,7 +106,11 @@ builder.Services.AddOpenTelemetry()
         .AddOtlpExporter())
     .WithMetrics(m => m.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
         .AddMeter(CodingAgentWebUI.Pipeline.Telemetry.WorkDistributionTelemetry.MeterName)
-        .AddOtlpExporter());
+        .AddMeter(CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.SourceName)
+        // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
+        // histograms and counters, which Grafana Cloud silently drops.
+        .AddOtlpExporter((_, readerOptions) =>
+            readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative));
 
 var app = builder.Build();
 

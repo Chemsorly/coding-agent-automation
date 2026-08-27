@@ -323,4 +323,134 @@ public class AdditionalMessagePackRoundtripPropertyTests
         deserialized.Title.Should().Be("Extract payment service");
         deserialized.Url.Should().Be("https://github.com/org/repo/issues/42");
     }
+
+    // ── ConsolidationJobMessage ──────────────────────────────────────────
+
+    [Property(MaxTest = 20)]
+    public Property ConsolidationJobMessage_RoundTrip_PreservesAllFields()
+    {
+        // Generator for PipelineConfiguration — include fields most likely to change across schema evolutions
+        var pipelineConfigGen =
+            from maxRetries in Gen.Choose(1, 10)
+            from agentTimeoutMin in Gen.Choose(5, 120)
+            from workspace in Gen.Elements("/tmp/ws-a", "/tmp/ws-b", null as string)
+            select new PipelineConfiguration
+            {
+                MaxRetries = maxRetries,
+                AgentTimeout = TimeSpan.FromMinutes(agentTimeoutMin),
+                WorkspaceBaseDirectory = workspace
+            };
+
+        // Generator for ProviderConfig list (1–3 entries)
+        var providerGen =
+            from kind in Gen.Elements(ProviderKind.Issue, ProviderKind.Repository, ProviderKind.Agent)
+            from id in Gen.Elements("p-1", "p-2", "p-3")
+            from providerType in Gen.Elements("GitHub", "GitLab", "KiroCli")
+            from displayName in Gen.Elements("Test Provider", "CI Provider", "Agent A")
+            select new ProviderConfig
+            {
+                Id = id,
+                Kind = kind,
+                ProviderType = providerType,
+                DisplayName = displayName,
+                Settings = new Dictionary<string, string>()
+            };
+
+        var gen =
+            from jobId in Gen.Elements("job-a", "job-b", "consolidation-xyz")
+            from runType in Gen.Elements(ConsolidationRunType.BrainConsolidation, ConsolidationRunType.HarnessSuggestions)
+            from hasTemplate in Gen.Elements(true, false)
+            from templateId in Gen.Elements("tmpl-1", "tmpl-2")
+            from templateName in Gen.Elements("Brain sync", "Harness")
+            from providerCount in Gen.Choose(1, 3)
+            from providers in Gen.ListOf(providerGen)
+            from pipelineConfig in pipelineConfigGen
+            from hasLastRun in Gen.Elements(true, false)
+            from hasFeedback in Gen.Elements(true, false)
+            from feedbackJson in Gen.Elements("[{\"type\":\"positive\"}]", "[]")
+            from hasWorkspace in Gen.Elements(true, false)
+            from workspacePath in Gen.Elements("/workspaces/run-1", "/workspaces/run-2")
+            from hasTrace in Gen.Elements(true, false)
+            from autoDispatch in Gen.Elements(true, false)
+            select new ConsolidationJobMessage
+            {
+                JobId = jobId,
+                Type = runType,
+                TemplateId = hasTemplate ? templateId : null,
+                TemplateName = hasTemplate ? templateName : null,
+                ProviderConfigs = providers.Take(providerCount).ToList(),
+                PipelineConfiguration = pipelineConfig,
+                LastSuccessfulRunUtc = hasLastRun ? new DateTime(2026, 1, 15, 10, 0, 0, DateTimeKind.Utc) : null,
+                FeedbackDataJson = hasFeedback ? feedbackJson : null,
+                WorkspacePath = hasWorkspace ? workspacePath : null,
+                TraceContext = hasTrace
+                    ? new Dictionary<string, string> { ["traceparent"] = "00-abc123-def456-01" }
+                    : null,
+                AutoDispatch = autoDispatch
+            };
+
+        return Prop.ForAll(gen.ToArbitrary(), original =>
+        {
+            var deserialized = RoundTrip(original);
+
+            deserialized.JobId.Should().Be(original.JobId);
+            deserialized.Type.Should().Be(original.Type);
+            deserialized.TemplateId.Should().Be(original.TemplateId);
+            deserialized.TemplateName.Should().Be(original.TemplateName);
+
+            // ProviderConfigs list preserved
+            deserialized.ProviderConfigs.Should().HaveCount(original.ProviderConfigs.Count,
+                because: "Key(4) ProviderConfigs list must survive MessagePack roundtrip");
+            for (var i = 0; i < original.ProviderConfigs.Count; i++)
+            {
+                deserialized.ProviderConfigs[i].Id.Should().Be(original.ProviderConfigs[i].Id);
+                deserialized.ProviderConfigs[i].Kind.Should().Be(original.ProviderConfigs[i].Kind);
+                deserialized.ProviderConfigs[i].ProviderType.Should().Be(original.ProviderConfigs[i].ProviderType);
+                deserialized.ProviderConfigs[i].DisplayName.Should().Be(original.ProviderConfigs[i].DisplayName);
+            }
+
+            // PipelineConfiguration nested object preserved
+            deserialized.PipelineConfiguration.MaxRetries.Should().Be(original.PipelineConfiguration.MaxRetries);
+            deserialized.PipelineConfiguration.AgentTimeout.Should().Be(original.PipelineConfiguration.AgentTimeout);
+            deserialized.PipelineConfiguration.WorkspaceBaseDirectory.Should()
+                .Be(original.PipelineConfiguration.WorkspaceBaseDirectory);
+
+            // Optional fields preserved (null or value)
+            deserialized.LastSuccessfulRunUtc.Should().Be(original.LastSuccessfulRunUtc);
+            deserialized.FeedbackDataJson.Should().Be(original.FeedbackDataJson);
+            deserialized.WorkspacePath.Should().Be(original.WorkspacePath);
+            deserialized.AutoDispatch.Should().Be(original.AutoDispatch,
+                because: "Key(10) AutoDispatch bool must survive MessagePack roundtrip");
+
+            // TraceContext dictionary preserved (null or populated)
+            if (original.TraceContext is null)
+                deserialized.TraceContext.Should().BeNull();
+            else
+                deserialized.TraceContext.Should().BeEquivalentTo(original.TraceContext,
+                    because: "Key(9) TraceContext Dictionary must survive MessagePack roundtrip");
+        });
+    }
+
+    [Fact]
+    public void ConsolidationJobMessage_MinimalRequired_SurvivesRoundTrip()
+    {
+        // Verifies that the required fields alone round-trip correctly (no optional fields).
+        var original = new ConsolidationJobMessage
+        {
+            JobId = "minimal-job",
+            Type = ConsolidationRunType.BrainConsolidation,
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration()
+        };
+
+        var deserialized = RoundTrip(original);
+
+        deserialized.JobId.Should().Be("minimal-job");
+        deserialized.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
+        deserialized.ProviderConfigs.Should().BeEmpty();
+        deserialized.TemplateId.Should().BeNull();
+        deserialized.FeedbackDataJson.Should().BeNull();
+        deserialized.TraceContext.Should().BeNull();
+        deserialized.AutoDispatch.Should().BeFalse();
+    }
 }

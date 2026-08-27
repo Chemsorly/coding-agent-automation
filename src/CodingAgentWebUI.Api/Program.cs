@@ -12,7 +12,9 @@ using Serilog.Enrichers.Span;
 // Bootstrap logger: captures log output before UseSerilog takes over
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
-    .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+    .WriteTo.Console(
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
+        theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);

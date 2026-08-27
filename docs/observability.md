@@ -185,7 +185,7 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `Reflection` | `pipeline.run_id` | Post-PR reflection prompt (child of FinalizePullRequest) |
 | `BrainSyncPostRun` | `pipeline.run_id` | Brain repository sync after run (child of FinalizePullRequest) |
 | `FeedbackCollection` | `pipeline.run_id` | Structured feedback collection (child of FinalizePullRequest) |
-| `DrainCycle` | `jobs_dispatched` | Single drain cycle in JobQueueDrainService (root span) |
+| `DrainCycle` | `jobs_dispatched` | Single drain cycle for consolidation dispatch (root span; `JobQueueDrainService` was removed in Spec 041) |
 | `Hub.ReportJobCompleted` | `job_id`, `success` | Hub business logic for job completion |
 | `TokenVending.GenerateToken` | — | Token generation HTTP call |
 | `Agent.ReceiveJob` | `job_id`, `run_type` | Agent job receipt and acceptance/rejection decision |
