@@ -137,9 +137,13 @@ Agent writes sub-issue files to `.agent/sub-issues/` as JSON.
 
 ### Path
 
+Decomposition runs use the same workspace path as all other run types:
+
 ```
-{WorkspaceBaseDirectory}/decomposition/{runId}/
+{WorkspaceBaseDirectory}/{runId}/
 ```
+
+There is no `decomposition/` subdirectory. (Consolidation runs are the exception — they use `{WorkspaceBaseDirectory}/consolidation/{runId}/` via `ConsolidationWorkspaceManager`.)
 
 ### Agent Workspace Paths
 

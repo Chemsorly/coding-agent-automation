@@ -314,6 +314,19 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     }
 
     /// <summary>
+    /// Gets the current status of a work item, or null if not found.
+    /// Used by <see cref="WorkItemFallbackTransitionService"/> for early-exit detection.
+    /// </summary>
+    public async Task<WorkItemStatus?> GetCurrentStatusAsync(Guid workItemId, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.WorkItems.AsNoTracking()
+            .Where(w => w.Id == workItemId)
+            .Select(w => (WorkItemStatus?)w.Status)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
     /// Gets the current RetryCount for a work item.
     /// </summary>
     public async Task<int> GetRetryCountAsync(Guid workItemId, CancellationToken ct)

@@ -3,6 +3,7 @@ using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -94,7 +95,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 IssueIdentifier = "owner/repo#100",
                 IssueProviderConfigId = "ip-1",
                 Status = WorkItemStatus.Dispatched,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 TaskType = WorkItemTaskType.Implementation
             });
             await db.SaveChangesAsync();
@@ -166,7 +167,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 IssueIdentifier = "owner/repo#200",
                 IssueProviderConfigId = "ip-2",
                 Status = WorkItemStatus.Dispatched,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 TaskType = WorkItemTaskType.Implementation
             });
             await db.SaveChangesAsync();
@@ -228,7 +229,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 IssueIdentifier = "owner/repo#300",
                 IssueProviderConfigId = "ip-3",
                 Status = WorkItemStatus.Running,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 TaskType = WorkItemTaskType.Implementation
             });
             await db.SaveChangesAsync();
@@ -305,7 +306,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 IssueIdentifier = "owner/repo#350",
                 IssueProviderConfigId = "ip-3b",
                 Status = WorkItemStatus.Running,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 TaskType = WorkItemTaskType.Implementation,
                 K8sJobName = k8sJobName
             });
@@ -380,7 +381,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 IssueIdentifier = "owner/repo#351",
                 IssueProviderConfigId = "ip-3c",
                 Status = WorkItemStatus.Running,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 TaskType = WorkItemTaskType.Implementation,
                 K8sJobName = null // No K8s job
             });
@@ -448,7 +449,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 IssueIdentifier = "owner/repo#352",
                 IssueProviderConfigId = "ip-3d",
                 Status = WorkItemStatus.Running,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 TaskType = WorkItemTaskType.Implementation,
                 K8sJobName = k8sJobName
             });
@@ -526,7 +527,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 IssueIdentifier = "owner/repo#353",
                 IssueProviderConfigId = "ip-3e",
                 Status = WorkItemStatus.Running,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 TaskType = WorkItemTaskType.Implementation,
                 K8sJobName = k8sJobName
             });
@@ -610,7 +611,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 IssueIdentifier = "owner/repo#400",
                 IssueProviderConfigId = "ip-4",
                 Status = WorkItemStatus.Running,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 TaskType = WorkItemTaskType.Implementation
             });
             await db.SaveChangesAsync();
@@ -764,7 +765,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
                 IssueIdentifier = "owner/repo#200",
                 IssueProviderConfigId = "ip-recovery",
                 Status = WorkItemStatus.Dispatched,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 DispatchedAt = DateTimeOffset.UtcNow,
                 TaskType = WorkItemTaskType.Implementation
             });
@@ -954,6 +955,114 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             var item = await db.WorkItems.FindAsync(workItemId);
             item!.Status.Should().Be(WorkItemStatus.Running); // unchanged
         }
+    }
+
+    #endregion
+
+    #region Test: FailRunAsync_DeletesK8sJob_WhenJobClientProvided
+
+    [Fact]
+    public async Task FailRunAsync_DeletesK8sJob_WhenJobClientProvided()
+    {
+        // Arrange
+        var runId = Guid.NewGuid();
+        const string k8sJobName = "caa-agent-abc12345678";
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = runId,
+                IssueIdentifier = "owner/repo#99",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Running,
+                K8sJobName = k8sJobName,
+                CreatedAt = DateTime.UtcNow,
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var pipelineRun = new PipelineRun
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "owner/repo#99",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTime.UtcNow
+        };
+        _runService.AddRun(pipelineRun);
+
+        var mockJobClient = new Moq.Mock<IKubernetesJobClient>();
+        mockJobClient.Setup(c => c.DeleteJobAsync(k8sJobName, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var fallbackService = new WorkItemFallbackTransitionService(
+            _transitionService, NullLogger<WorkItemFallbackTransitionService>.Instance);
+
+        var lifecycleWithK8s = new RunLifecycleManager(
+            new RunLifecycleManagerDependencies(
+                _runService,
+                _mockHistoryService.Object,
+                _registry,
+                _mockLabelService.Object,
+                _dispatcher,
+                _mockLogger.Object,
+                JobCleanup: new KubernetesJobCleanup(
+                    MockApiClientForJobCleanup(runId, k8sJobName),
+                    mockJobClient.Object,
+                    "coding-agent",
+                    _mockLogger.Object),
+                WorkItemFallbackTransition: fallbackService));
+
+        // Act
+        var result = await lifecycleWithK8s.FailRunAsync(
+            new RunId(runId.ToString()), "Test failure", CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        mockJobClient.Verify(c => c.DeleteJobAsync(k8sJobName, "coding-agent", It.IsAny<CancellationToken>()), Times.Once,
+            "FailRunAsync must delete the K8s Job to prevent pod retries");
+    }
+
+    [Fact]
+    public async Task FailRunAsync_NoJobCleanup_DoesNotThrow()
+    {
+        // Verifies the null _jobCleanup guard — FailRunAsync must succeed even without K8s
+        var runId = Guid.NewGuid();
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = runId,
+                IssueIdentifier = "owner/repo#99",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Running,
+                K8sJobName = null,
+                CreatedAt = DateTime.UtcNow,
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var pipelineRun = new PipelineRun
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "owner/repo#99",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTime.UtcNow
+        };
+        _runService.AddRun(pipelineRun);
+
+        // Act — _lifecycleManager has no IJobCleanupStrategy (null by default)
+        var result = await _lifecycleManager.FailRunAsync(
+            new RunId(runId.ToString()), "Test failure", CancellationToken.None);
+
+        result.Should().NotBeNull();
     }
 
     #endregion

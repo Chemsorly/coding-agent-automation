@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
@@ -171,7 +172,7 @@ public sealed partial class AgentHub
         // cannot currently be cancelled, giving callers a false impression that the full call chain
         // is cancellable. Requires updating the method signature to accept and propagate ct here.
         var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-        var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == run.IssueProviderConfigId);
+        var issueConfig = issueConfigs.TryGetProviderConfig(run.IssueProviderConfigId);
         if (issueConfig is null)
             throw new HubException($"Issue provider config '{run.IssueProviderConfigId}' not found for job {jobId}");
 

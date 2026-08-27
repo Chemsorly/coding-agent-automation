@@ -37,6 +37,27 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         string? errorMessage, FailureReason? failureReason,
         CancellationToken ct)
     {
+        // Early-exit: if the item is already in Succeeded or Cancelled and the caller requests
+        // a different terminal state, skip the chain entirely. These states have no recovery path
+        // to another terminal state — all three fallback steps would be rejected immediately,
+        // generating spurious "Invalid transition" Warning logs (3B-001 fix).
+        //
+        // NOTE: Failed is intentionally excluded from this check — it has a legitimate recovery
+        // path via TryInfrastructureRecoveryAsync (Failed+InfrastructureFailure → Succeeded/Running),
+        // and Cancelled/Failed → Pending is a valid requeue path handled by TryDirectAsync.
+        var currentStatus = await _workItemTransition.GetCurrentStatusAsync(workItemId, ct);
+        if (currentStatus is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled
+            && currentStatus != status)
+        {
+            if (_logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug(
+                    "WorkItem {WorkItemId} already in terminal state {Current}, skipping fallback chain for requested {Target}",
+                    workItemId, currentStatus, status);
+            }
+            return false;
+        }
+
         // Step 1: direct transition
         if (await TryDirectAsync(workItemId, status, errorMessage, failureReason, ct))
             return true;

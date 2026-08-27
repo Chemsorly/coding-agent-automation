@@ -545,6 +545,78 @@ public class GitHubIssueProviderTests
         ex.Which.InnerException.Should().BeOfType<Octokit.RateLimitExceededException>();
     }
 
+    // ── IsIssueClosedAsync ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task IsIssueClosedAsync_ClosedIssue_ReturnsTrue()
+    {
+        var closedIssue = CreateOctokitIssue(77, "Closed dep", body: null, labels: [], state: ItemState.Closed);
+        _mockIssues.Setup(i => i.Get("owner", "repo", 77)).ReturnsAsync(closedIssue);
+
+        var result = await _provider.IsIssueClosedAsync("77", CancellationToken.None);
+
+        result.Should().BeTrue("closed issue must be reported as closed");
+    }
+
+    [Fact]
+    public async Task IsIssueClosedAsync_OpenIssue_ReturnsFalse()
+    {
+        var openIssue = CreateOctokitIssue(78, "Open dep", body: null, labels: [], state: ItemState.Open);
+        _mockIssues.Setup(i => i.Get("owner", "repo", 78)).ReturnsAsync(openIssue);
+
+        var result = await _provider.IsIssueClosedAsync("78", CancellationToken.None);
+
+        result.Should().BeFalse("open issue must not be reported as closed");
+    }
+
+    [Fact]
+    public async Task IsIssueClosedAsync_NotFoundException_ReturnsFalse()
+    {
+        // Deleted or inaccessible issues should not block dependency resolution.
+        // NotFoundException is not retried by the resilience pipeline, so this exercises
+        // the dedicated catch branch in IsIssueClosedAsync (returns false rather than throwing).
+        _mockIssues.Setup(i => i.Get("owner", "repo", 999))
+            .ThrowsAsync(new NotFoundException("Issue not found", System.Net.HttpStatusCode.NotFound));
+
+        var result = await _provider.IsIssueClosedAsync("999", CancellationToken.None);
+
+        result.Should().BeFalse("a not-found issue is treated as unresolved (safe default)");
+    }
+
+    [Fact]
+    public async Task IsIssueClosedAsync_RateLimitExceeded_WrapsAsCustomException()
+    {
+        // Mirrors ListOpenIssuesAsync_RateLimitException_WrapsAsCustomException pattern.
+        // Use a reset time in the past so the resilience pipeline's retry delay falls through
+        // to default exponential backoff (~seconds) rather than waiting minutes.
+        var resetTime = DateTimeOffset.UtcNow.AddSeconds(-1);
+        var resetUnix = resetTime.ToUnixTimeSeconds().ToString();
+        var headers = new Dictionary<string, string>
+        {
+            { "X-RateLimit-Limit", "5000" },
+            { "X-RateLimit-Remaining", "0" },
+            { "X-RateLimit-Reset", resetUnix }
+        };
+        var rateLimit = new RateLimit(5000, 0, resetTime.ToUnixTimeSeconds());
+        var apiInfo = new ApiInfo(new Dictionary<string, Uri>(), new List<string>(), new List<string>(),
+            string.Empty, rateLimit);
+        var response = new Mock<Octokit.IResponse>();
+        response.Setup(r => r.StatusCode).Returns(System.Net.HttpStatusCode.Forbidden);
+        response.Setup(r => r.Headers).Returns(headers);
+        response.Setup(r => r.Body).Returns("");
+        response.Setup(r => r.ContentType).Returns("application/json");
+        response.Setup(r => r.ApiInfo).Returns(apiInfo);
+
+        _mockIssues.Setup(i => i.Get("owner", "repo", 42))
+            .ThrowsAsync(new Octokit.RateLimitExceededException(response.Object));
+
+        var act = () => _provider.IsIssueClosedAsync("42", CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<CodingAgentWebUI.Pipeline.Models.RateLimitExceededException>();
+        ex.Which.ResetAt.Should().BeCloseTo(resetTime, TimeSpan.FromSeconds(2));
+        ex.Which.InnerException.Should().BeOfType<Octokit.RateLimitExceededException>();
+    }
+
     // NOTE: [RES-03] Add tests for AbuseException wrapping — both RetryAfterSeconds.HasValue and fallback branches are untested (review finding #5)
 
     [Fact]
@@ -697,7 +769,8 @@ public class GitHubIssueProviderTests
         result.Items.Should().HaveCount(5);
     }
 
-    private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels)
+    private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels,
+        ItemState state = ItemState.Open)
     {
         var labelObjects = labels.Select(name =>
             new Label(0, string.Empty, name, "000000", string.Empty, "description", false)).ToList();
@@ -708,7 +781,7 @@ public class GitHubIssueProviderTests
             commentsUrl: string.Empty,
             eventsUrl: string.Empty,
             number: number,
-            state: ItemState.Open,
+            state: state,
             title: title,
             body: body,
             closedBy: null,

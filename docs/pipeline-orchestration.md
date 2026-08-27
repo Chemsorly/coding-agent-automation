@@ -17,20 +17,20 @@ The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService`
 
 - **Job Controller** (implementation, review, decomposition runs): `caa-agent-{11 hex chars}` — the first 21 characters of `"caa-agent-" + workItemId.ToString("N")` (e.g. `caa-agent-7f3a9b2e1c4`). The Job name also serves as the agent's `AGENT_ID`.
 - **Job Controller** (consolidation runs dispatched by `ConsolidationDispatchService`): `caa-cons-{12 hex chars}` — the first 21 characters of `"caa-cons-" + workItemId.ToString("N")` (e.g. `caa-cons-7f3a9b2e1c4d`). Distinguishes consolidation Jobs from regular agent Jobs.
-- **Pipeline API** (model-fetch runs dispatched by `DispatchLifecycleService`): `caa-{8 hex chars}` — the first 12 characters of `"caa-" + workItemId.ToString("N")` (e.g. `caa-7f3a9b2e`).
+- **Pipeline API** (model-fetch runs dispatched by `DispatchLifecycleService`): `caa-models-{hex chars}` — e.g. `caa-models-7f3a9b2e1c4d`. Uses the `caa-models-` prefix to distinguish model-fetch Jobs from agent work-item Jobs.
 
 ### Dispatch Priority
 
-When multiple WorkItems are pending and an agent becomes available, the Job Controller selects the highest-priority item first. Priority order (lowest number = dispatched first):
+When multiple WorkItems are pending and an agent becomes available, the Job Controller selects the highest-priority item first. The `DispatchScheduler` uses named queue flags — not integer ordinals — to implement this fixed priority order:
 
-| Priority | Run Type | Notes |
-|----------|----------|-------|
-| 0 (highest) | Review | PR review runs |
-| 1 | Decomposition / DecompositionAnalysis | Both epic decomposition phases |
-| 2 | Implementation | Standard issue implementation |
-| 3 (lowest) | Consolidation | Brain / refactoring / harness runs |
+| Dispatch Order | Run Type | Notes |
+|----------------|----------|-------|
+| 1st (highest) | Review | PR review runs |
+| 2nd | Decomposition / DecompositionAnalysis | Both epic decomposition phases |
+| 3rd | Implementation | Standard issue implementation |
+| 4th (lowest) | Consolidation | Brain / refactoring / harness runs |
 
-Within the same priority tier, FIFO order is preserved (oldest enqueue time dispatched first).
+This ordering matches the `WorkItemTaskType` enum values (`Implementation=0, Review=1, Decomposition=2, Consolidation=3`) but dispatch selection is driven by named queue checks in `DispatchScheduler`, not raw enum ordinals. Within the same priority tier, FIFO order is preserved (oldest enqueue time dispatched first).
 
 > **Note:** Consolidation `WorkItem` rows carry `PipelineRunType.Implementation` at the model level and are distinguished by `TaskType == Consolidation`. This is an internal data model detail — it has no effect on dispatch priority or querying from the UI.
 

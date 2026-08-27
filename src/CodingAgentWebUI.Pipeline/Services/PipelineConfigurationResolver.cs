@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 
@@ -215,7 +216,7 @@ public static class PipelineConfigurationResolver
         if (matchingTemplate is { BrainReadOnly: true })
             config = config with { BrainReadOnly = true };
 
-        return ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId.Value));
+        return ApplyBlacklistOverride(config, providerConfigs.TryGetProviderConfig(repoProviderId.Value));
     }
 
     /// <summary>
