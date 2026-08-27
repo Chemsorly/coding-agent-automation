@@ -64,37 +64,9 @@ public sealed class PullRequestOrchestrator
         }
 
         // Build PR info
-        var testsPassed = report.Tests.TestsPassed ?? 0;
-        var testsFailed = report.Tests.TestsFailed ?? 0;
-        var testsSkipped = report.Tests.TestsSkipped ?? 0;
-        var coverage = report.Coverage?.CoveragePercent;
-
-        var fileChanges = await repoProvider.GetFileChangesAsync(run.WorkspacePath!, ct);
-
-        var issueTitle = issue?.Title ?? run.IssueTitle;
-
         var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, effectiveIssueRef);
 
-        var codeReviewSummary = BuildCodeReviewSummary(run);
-
-        var prBody = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-        {
-            IssueReference = effectiveIssueRef,
-            TestsPassed = testsPassed,
-            TestsFailed = testsFailed,
-            TestsSkipped = testsSkipped,
-            CoveragePercent = coverage,
-            FileChanges = fileChanges,
-            IssueTitle = issueTitle,
-            IsDraft = isDraft,
-            Comments = issueComments,
-            BlacklistedFilesDetected = run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
-            ModelName = run.ModelName,
-            CodeReviewSummary = codeReviewSummary,
-            CloseReference = closeRef,
-            ComplianceReport = run.AcceptanceCriteriaReport,
-        });
-
+        var prBody = await BuildPrBodyAsync(run, report, isDraft, repoProvider, issue, issueComments, effectiveIssueRef, closeRef, ct);
         run.PullRequestBody = prBody;
 
         if (isRework || !string.IsNullOrEmpty(run.PullRequestNumber))
@@ -329,33 +301,7 @@ public sealed class PullRequestOrchestrator
         onOutputLine?.Invoke($"🔀 Pushed final changes to origin/{run.BranchName}");
 
         // Build the full PR body
-        var testsPassed = report.Tests.TestsPassed ?? 0;
-        var testsFailed = report.Tests.TestsFailed ?? 0;
-        var testsSkipped = report.Tests.TestsSkipped ?? 0;
-        var coverage = report.Coverage?.CoveragePercent;
-        var fileChanges = await repoProvider.GetFileChangesAsync(run.WorkspacePath!, ct);
-        var issueTitle = issue?.Title ?? run.IssueTitle;
-
-        var codeReviewSummary = BuildCodeReviewSummary(run);
-
-        var prBody = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-        {
-            IssueReference = effectiveIssueRef,
-            TestsPassed = testsPassed,
-            TestsFailed = testsFailed,
-            TestsSkipped = testsSkipped,
-            CoveragePercent = coverage,
-            FileChanges = fileChanges,
-            IssueTitle = issueTitle,
-            IsDraft = isDraft,
-            Comments = issueComments,
-            BlacklistedFilesDetected = run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
-            ModelName = run.ModelName,
-            CodeReviewSummary = codeReviewSummary,
-            CloseReference = closeRef,
-            ComplianceReport = run.AcceptanceCriteriaReport,
-        });
-
+        var prBody = await BuildPrBodyAsync(run, report, isDraft, repoProvider, issue, issueComments, effectiveIssueRef, closeRef, ct);
         run.PullRequestBody = prBody;
 
         // Update PR body and mark ready (or leave as draft)
@@ -376,6 +322,48 @@ public sealed class PullRequestOrchestrator
         }
 
         return run.PullRequestUrl;
+    }
+
+    /// <summary>
+    /// Constructs the PR body string from quality gate results, file changes, and run metadata.
+    /// Called by both CreatePullRequestAsync and FinalizePullRequestAsync.
+    /// </summary>
+    private async Task<string> BuildPrBodyAsync(
+        PipelineRun run,
+        QualityGateReport report,
+        bool isDraft,
+        IRepositoryProvider repoProvider,
+        IssueDetail? issue,
+        IReadOnlyList<IssueComment>? issueComments,
+        string effectiveIssueRef,
+        string? closeRef,
+        CancellationToken ct)
+    {
+        var testsPassed = report.Tests.TestsPassed ?? 0;
+        var testsFailed = report.Tests.TestsFailed ?? 0;
+        var testsSkipped = report.Tests.TestsSkipped ?? 0;
+        var coverage = report.Coverage?.CoveragePercent;
+        var fileChanges = await repoProvider.GetFileChangesAsync(run.WorkspacePath!, ct);
+        var issueTitle = issue?.Title ?? run.IssueTitle;
+        var codeReviewSummary = BuildCodeReviewSummary(run);
+
+        return PipelineFormatting.GeneratePrBody(new PrBodyParameters
+        {
+            IssueReference = effectiveIssueRef,
+            TestsPassed = testsPassed,
+            TestsFailed = testsFailed,
+            TestsSkipped = testsSkipped,
+            CoveragePercent = coverage,
+            FileChanges = fileChanges,
+            IssueTitle = issueTitle,
+            IsDraft = isDraft,
+            Comments = issueComments,
+            BlacklistedFilesDetected = run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
+            ModelName = run.ModelName,
+            CodeReviewSummary = codeReviewSummary,
+            CloseReference = closeRef,
+            ComplianceReport = run.AcceptanceCriteriaReport,
+        });
     }
 
     /// <summary>
