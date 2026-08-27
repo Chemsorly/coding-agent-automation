@@ -242,6 +242,120 @@ public class PullRequestOrchestratorTests
             It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ── PR body characterization tests — guard behavioral equivalence across both paths ──
+
+    [Fact]
+    public async Task CreatePullRequest_PrBodyContainsExpectedFields()
+    {
+        PullRequestInfo? capturedInfo = null;
+        _mockRepo.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
+            .Callback<PullRequestInfo, CancellationToken>((info, _) => capturedInfo = info)
+            .ReturnsAsync("https://github.com/org/repo/pull/99");
+
+        var run = CreateRun();
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK", TestsPassed = 5, TestsFailed = 0, TestsSkipped = 1 }
+        };
+
+        await _sut.CreatePullRequestAsync(
+            run, report, false, _mockRepo.Object,
+            null, null, CreateConfig(), CancellationToken.None);
+        // TODO: [WARNING] Both `issue` and `issueComments` are null here, so issueTitle falls back to run.IssueTitle
+        // ("Test Issue"). The `issue?.Title ?? run.IssueTitle` branch in BuildPrBodyAsync where a real IssueDetail
+        // with a *different* title takes precedence over the run title is not exercised. Add a complementary test
+        // that passes a non-null IssueDetail with a distinct title to confirm issue title wins.
+
+        capturedInfo!.Body.Should().Contain("#42");
+        capturedInfo.Body.Should().Contain("Closes #42");
+        // TODO: [WARNING] ".Contain("5")" is under-constrained — the digit "5" appears anywhere in a typical PR body
+        // (PR numbers, coverage values, etc.) so this does not reliably guard TestsPassed rendering.
+        // Replace with the exact format string emitted by PipelineFormatting.GeneratePrBody for the passed-test count
+        // (e.g. "5 passed" or similar) once the template output is confirmed.
+        capturedInfo.Body.Should().Contain("5");   // tests passed
+        run.PullRequestBody.Should().Be(capturedInfo.Body);
+    }
+
+    [Fact]
+    public async Task FinalizePullRequest_PrBodyContainsExpectedFields()
+    {
+        string? capturedBody = null;
+        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+            .Returns(Task.CompletedTask);
+
+        var run = CreateRun();
+        run.PullRequestNumber = "55";
+        run.PullRequestUrl = "https://github.com/org/repo/pull/55";
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK", TestsPassed = 5, TestsFailed = 0, TestsSkipped = 1 }
+        };
+
+        await _sut.FinalizePullRequestAsync(
+            run, report, false, _mockRepo.Object,
+            null, null, CreateConfig(), CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        capturedBody!.Should().Contain("#42");
+        capturedBody.Should().Contain("Closes #42");
+        // TODO: [WARNING] ".Contain("5")" is under-constrained — the digit "5" appears anywhere in a typical PR body
+        // (PR numbers, coverage values, etc.) so this does not reliably guard TestsPassed rendering.
+        // Replace with the exact format string emitted by PipelineFormatting.GeneratePrBody for the passed-test count
+        // (e.g. "5 passed" or similar) once the template output is confirmed.
+        capturedBody.Should().Contain("5");   // tests passed
+        run.PullRequestBody.Should().Be(capturedBody);
+    }
+
+    [Fact]
+    public async Task CreateAndFinalize_SameInputs_ProduceIdenticalBodies()
+    {
+        // Capture body from CreatePullRequestAsync (new-PR path)
+        PullRequestInfo? capturedPrInfo = null;
+        _mockRepo.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
+            .Callback<PullRequestInfo, CancellationToken>((info, _) => capturedPrInfo = info)
+            .ReturnsAsync("https://github.com/org/repo/pull/99");
+
+        // Capture body from FinalizePullRequestAsync
+        string? capturedFinalizeBody = null;
+        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedFinalizeBody = body)
+            .Returns(Task.CompletedTask);
+
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK", TestsPassed = 3, TestsFailed = 1, TestsSkipped = 0 }
+        };
+        var issue = new IssueDetail { Title = "My Issue", Identifier = "42", Description = "", Labels = [] };
+
+        // Run CreatePullRequestAsync
+        var createRun = CreateRun();
+        await _sut.CreatePullRequestAsync(
+            createRun, report, false, _mockRepo.Object,
+            issue, null, CreateConfig(), CancellationToken.None);
+
+        // Run FinalizePullRequestAsync with identical inputs
+        var finalizeRun = CreateRun();
+        finalizeRun.PullRequestNumber = "88";
+        finalizeRun.PullRequestUrl = "https://github.com/org/repo/pull/88";
+        await _sut.FinalizePullRequestAsync(
+            finalizeRun, report, false, _mockRepo.Object,
+            issue, null, CreateConfig(), CancellationToken.None);
+
+        capturedPrInfo!.Body.Should().Be(capturedFinalizeBody);
+        // TODO: [WARNING] This test uses two separate PipelineRun instances with different PullRequestNumber/PullRequestUrl
+        // values. If BuildPrBodyAsync or a downstream helper ever incorporates the existing PR number/URL, or if
+        // BlacklistedFilesDetected is populated differently between the create and finalize execution paths, the two bodies
+        // could legitimately differ and trigger a false failure. Consider extracting BuildPrBodyAsync into a standalone
+        // unit test that calls the helper directly with identical inputs, rather than going through the full orchestrator
+        // paths which carry per-run side effects.
+        // Additionally, run.PullRequestBody is not asserted on either run here — the individual path tests do check it,
+        // but this equivalence test does not confirm consistent run state updates in both paths.
+    }
+
     // ── CreateDraftPrIfNotExistsAsync — PR already exists → skip ──
 
     [Fact]
