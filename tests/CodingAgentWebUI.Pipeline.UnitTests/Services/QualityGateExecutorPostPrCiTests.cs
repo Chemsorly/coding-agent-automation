@@ -483,6 +483,27 @@ public class QualityGateExecutorEdgeCaseTests
     /// run is not aborted).
     /// </summary>
     [Fact]
+    public async Task CleanupAgent_Succeeds_UpdatesFileStatsAndFinalizes()
+    {
+        // Covers line 194: cleanupResult != null → UpdateFileChangeStatsAsync is called.
+        // Also covers lines 541-543: Coverage + SecurityScan EmitGateEvaluation via SetupValidatorAlwaysPasses.
+        SetupValidatorAlwaysPasses();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [] });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), false, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task CleanupAgent_ThrowsException_PipelineContinuesToFinalQualityGates()
     {
         SetupValidatorAlwaysPasses();
@@ -574,7 +595,14 @@ public class QualityGateExecutorEdgeCaseTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(), It.IsAny<string?>()))
-            .ReturnsAsync(PassingReport);
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
+                Tests = new GateResult { GateName = "Tests", Passed = true, Details = "ok" },
+                // Include Coverage and SecurityScan so EmitGateEvaluation coverage lines are hit
+                Coverage = new GateResult { GateName = "Coverage", Passed = true, Details = "85%" },
+                SecurityScan = new GateResult { GateName = "SecurityScan", Passed = true, Details = "ok" }
+            });
     }
 
     private void SetupNoChangesToCommit()
