@@ -272,3 +272,68 @@ public sealed class LeaderElectionServiceTests
             kubeClient: null);
     }
 }
+
+/// <summary>
+/// Unit tests for <see cref="LeaderElectionOptions.Validate"/> (IValidatableObject).
+/// Covers the RenewDeadline &lt; LeaseDuration invariant added in the validation fix.
+/// </summary>
+public sealed class LeaderElectionOptionsValidationTests
+{
+    private static IEnumerable<System.ComponentModel.DataAnnotations.ValidationResult> Validate(LeaderElectionOptions opts)
+    {
+        var ctx = new System.ComponentModel.DataAnnotations.ValidationContext(opts);
+        return opts.Validate(ctx);
+    }
+
+    [Fact]
+    public void Validate_DefaultOptions_NoErrors()
+    {
+        var opts = new LeaderElectionOptions(); // RenewDeadline=10s < LeaseDuration=15s
+
+        Validate(opts).Should().BeEmpty("default values satisfy RenewDeadline < LeaseDuration");
+    }
+
+    [Fact]
+    public void Validate_RenewDeadlineEqualsLeaseDuration_ReturnsError()
+    {
+        var opts = new LeaderElectionOptions
+        {
+            LeaseDuration = TimeSpan.FromSeconds(15),
+            RenewDeadline = TimeSpan.FromSeconds(15)  // equal — invalid
+        };
+
+        var errors = Validate(opts).ToList();
+
+        errors.Should().HaveCount(1);
+        errors[0].MemberNames.Should().Contain(nameof(LeaderElectionOptions.RenewDeadline));
+        errors[0].MemberNames.Should().Contain(nameof(LeaderElectionOptions.LeaseDuration));
+    }
+
+    [Fact]
+    public void Validate_RenewDeadlineExceedsLeaseDuration_ReturnsError()
+    {
+        var opts = new LeaderElectionOptions
+        {
+            LeaseDuration = TimeSpan.FromSeconds(10),
+            RenewDeadline = TimeSpan.FromSeconds(20)  // > LeaseDuration — invalid
+        };
+
+        var errors = Validate(opts).ToList();
+
+        errors.Should().HaveCount(1);
+        errors[0].ErrorMessage.Should().Contain("RenewDeadline");
+        errors[0].ErrorMessage.Should().Contain("LeaseDuration");
+    }
+
+    [Fact]
+    public void Validate_RenewDeadlineLessThanLeaseDuration_NoErrors()
+    {
+        var opts = new LeaderElectionOptions
+        {
+            LeaseDuration = TimeSpan.FromSeconds(30),
+            RenewDeadline = TimeSpan.FromSeconds(20)  // < LeaseDuration — valid
+        };
+
+        Validate(opts).Should().BeEmpty();
+    }
+}

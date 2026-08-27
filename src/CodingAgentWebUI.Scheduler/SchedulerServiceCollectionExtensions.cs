@@ -168,23 +168,7 @@ public static class SchedulerServiceCollectionExtensions
             Log.Logger));
 
         // ── Dispatch resolution ───────────────────────────────────────────────
-        services.AddSingleton<ProfileResolver>();
-        services.AddSingleton<QualityGateResolver>();
-        services.AddSingleton<ReviewerResolver>();
-
-        services.AddSingleton(sp => new DispatchResolutionService(
-            sp.GetRequiredService<ProfileResolver>(),
-            sp.GetRequiredService<QualityGateResolver>(),
-            sp.GetRequiredService<ReviewerResolver>(),
-            sp.GetRequiredService<IConfigurationStore>(),
-            Log.Logger));
-
-        services.AddSingleton(sp => new DispatchInfrastructure(
-            sp.GetRequiredService<ITokenVendingService>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<DispatchResolutionService>(),
-            sp.GetRequiredService<IPipelineApiWorkItemClient>()));
+        services.AddDispatchResolutionServices(includeWorkItemClient: true);
 
         // ── Work distributor (KubernetesWorkDistributor is already API-backed) ─
         services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(

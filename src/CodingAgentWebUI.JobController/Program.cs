@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Infrastructure.Telemetry;
 using CodingAgentWebUI.JobController;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using CodingAgentWebUI.Pipeline.Telemetry;
