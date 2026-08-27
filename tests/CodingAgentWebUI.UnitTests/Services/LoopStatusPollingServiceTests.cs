@@ -95,6 +95,11 @@ public sealed class LoopStatusPollingServiceTests
         completed.Should().BeSameAs(secondCallCompleted.Task, "second poll call should complete within 5s");
 
         // Small yield so the catch block in ExecuteAsync can finish setting _isSchedulerUnreachable
+        // TODO: This fixed 20 ms delay is a non-deterministic synchronization barrier. On a heavily
+        // loaded CI runner the OS scheduler can preempt the service task for longer than 20 ms between
+        // the TCS signal and the flag write, causing the assertion below to race. The original polling
+        // loop (while (!svc.IsSchedulerUnreachable) await Task.Yield()) was deterministic. Consider
+        // restoring a polling approach with a hard 5 s timeout to eliminate this potential flakiness.
         await Task.Delay(20);
 
         // Assert: unreachable set after failure; prior state preserved (not reset to defaults)
@@ -131,6 +136,10 @@ public sealed class LoopStatusPollingServiceTests
         completed.Should().BeSameAs(secondCallCompleted.Task, "second poll call should complete within 5s");
 
         // Small yield so the service loop can finish updating _isSchedulerUnreachable and _status
+        // TODO: Same non-deterministic 20 ms delay as in WhenPollFails_IsSchedulerUnreachableSet. On a
+        // busy CI runner this window may be insufficient for the continuation updating _isSchedulerUnreachable
+        // to complete after the second successful poll fires the TCS. Consider a deterministic polling
+        // approach with a hard timeout to avoid intermittent false failures on this assertion.
         await Task.Delay(20);
 
         // Assert: unreachable cleared after recovery; status updated from successful poll

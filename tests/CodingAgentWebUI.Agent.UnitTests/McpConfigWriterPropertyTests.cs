@@ -70,6 +70,10 @@ public class McpConfigWriterPropertyTests
                     // HTTP and SSE servers must have url property
                     Assert.True(entry.TryGetProperty("url", out _),
                         $"HTTP/SSE server '{name}' missing 'url' property");
+                    // TODO: The property test does not assert that the "type" field written to JSON matches
+                    // server.Type. A regression that hard-codes "http" back into the type field would not
+                    // be caught here (only by the targeted [Fact] tests). Consider adding:
+                    // Assert.Equal(server.Type.ToLowerInvariant(), entry.GetProperty("type").GetString())
                     // headers must appear iff non-empty
                     var hasHeaders = entry.TryGetProperty("headers", out _);
                     Assert.Equal(server.Headers.Count > 0, hasHeaders);
@@ -176,6 +180,11 @@ public class McpConfigWriterPropertyTests
                 "SSE entry must not contain 'command'");
             Assert.False(entry.TryGetProperty("args", out _),
                 "SSE entry must not contain 'args'");
+            // TODO: This test does not assert that "disabled" and "autoApprove" are present in the
+            // output entry. The production code serializes both fields for HTTP/SSE servers, but a
+            // future refactor that accidentally drops them from the anonymous object would not be caught
+            // here. Consider adding: Assert.True(entry.TryGetProperty("disabled", out _)) and
+            // Assert.True(entry.TryGetProperty("autoApprove", out _)) to fully cover the struct.
         }
         finally
         {
