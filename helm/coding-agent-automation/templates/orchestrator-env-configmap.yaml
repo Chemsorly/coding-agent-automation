@@ -7,11 +7,13 @@ metadata:
 data:
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
   OTEL_EXPORTER_OTLP_PROTOCOL: {{ .Values.otel.protocol | quote }}
-  OTEL_SERVICE_NAME: {{ .Values.otel.serviceName | quote }}
+  OTEL_SERVICE_NAME: {{ .Values.otel.orchestratorServiceName | quote }}
   OTEL_RESOURCE_ATTRIBUTES: {{ .Values.otel.resourceAttributes | quote }}
   PIPELINE_LOOP_STARTUP_DELAY_SECONDS: {{ .Values.orchestrator.env.pipelineLoopStartupDelaySeconds | quote }}
   READINESS_DRAIN_DELAY_SECONDS: {{ .Values.orchestrator.env.readinessDrainDelaySeconds | quote }}
   LOG_LEVEL: {{ .Values.orchestrator.env.logLevel | quote }}
+  # LeaderElection__Namespace is injected as a direct env var (fieldRef) in the deployment —
+  # it cannot be set here in a ConfigMap as fieldRef is not available in ConfigMap data.
   # WorkDistribution env vars — used by ChatJobDispatcher and KubernetesJobCleanup.
   # Namespace is a literal release namespace (fieldRef is not available in ConfigMaps).
   {{- include "coding-agent-automation.workDistributionConfigMapData" . | nindent 2 }}

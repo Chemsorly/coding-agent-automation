@@ -63,7 +63,9 @@ public static class JobControllerServiceCollectionExtensions
                     opts.LeaseName = dispatchLeaseName;
                 else if (string.IsNullOrEmpty(opts.LeaseName))
                     opts.LeaseName = "caa-dispatch-lock";
-            });
+            })
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
 
         services.AddSingleton<ILeaderElectionService, LeaderElectionService>(sp =>
             new LeaderElectionService(

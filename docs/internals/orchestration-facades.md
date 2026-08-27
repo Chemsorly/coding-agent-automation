@@ -4,7 +4,7 @@ Internal reference for the `IPipelineCancellationFacade` used by `PipelineOrches
 
 ## Motivation
 
-`PipelineOrchestrationService` originally had three facade dependencies: execution, completion, and cancellation facades. The execution and completion facades were removed in issue #1732 after the pipeline execution path was refactored — `PipelineOrchestrationService` no longer handles pipeline execution (that's delegated to `DispatchRunCreationService` and remote agents). The cancellation facade remains because the orchestrator's `CancelActiveAgentRunsAsync` method actively uses both `AgentCancellation` and `DedupGuard` members.
+`PipelineOrchestrationService` originally had three facade dependencies: execution, completion, and cancellation facades. The execution and completion facades were removed in issue #1732 after the pipeline execution path was refactored — `PipelineOrchestrationService` no longer handles pipeline execution (that's delegated to `DispatchRunCreationService` and remote agents). `JobQueueDrainService` was also deleted in that same refactor. The cancellation facade remains because the orchestrator's `CancelActiveAgentRunsAsync` method actively uses both `AgentCancellation` and `DedupGuard` members. `IPipelineCancellationFacade` and `PipelineCancellationFacade` are still present and active.
 
 ## Architecture
 

@@ -60,6 +60,16 @@ spec:
             - name: http
               containerPort: {{ .Values.orchestrator.service.port }}
               protocol: TCP
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+          startupProbe:
+            httpGet:
+              path: {{ .Values.orchestrator.probes.startup.path }}
+              port: {{ .Values.orchestrator.probes.startup.port }}
+            periodSeconds: {{ .Values.orchestrator.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.orchestrator.probes.startup.failureThreshold }}
           livenessProbe:
             httpGet:
               path: {{ .Values.orchestrator.probes.liveness.path }}
@@ -112,6 +122,10 @@ spec:
             # Helm releases share a namespace (Req 6.3/6.7). Overridable via values.yaml.
             - name: LeaderElection__PipelineLoopLeaseName
               value: {{ include "coding-agent-automation.leaseName" (dict "override" .Values.orchestrator.leaderElection.pipelineLoopLeaseName "suffix" "pipeline-loop-lock" "root" .) }}
+            - name: LeaderElection__Namespace
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           volumeMounts:
             - name: job-templates
               mountPath: /app/config/job-templates.yaml

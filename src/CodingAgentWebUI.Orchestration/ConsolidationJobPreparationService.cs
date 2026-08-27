@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -97,7 +98,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
 
         if (profile is not null)
         {
-            var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == profile.AgentProviderConfigId);
+            var agentConfig = agentConfigs.TryGetProviderConfig(profile.AgentProviderConfigId);
             if (agentConfig is not null)
             {
                 rawConfigs.Add(agentConfig);
@@ -136,14 +137,14 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
 
         repoProviderId = template.RepoProviderId;
         var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == template.RepoProviderId);
+        var repoConfig = repoConfigs.TryGetProviderConfig(template.RepoProviderId);
         if (repoConfig is not null)
             rawConfigs.Add(repoConfig);
 
         // Add brain provider if configured
         if (!string.IsNullOrEmpty(template.BrainProviderId))
         {
-            var brainConfig = repoConfigs.FirstOrDefault(c => c.Id == template.BrainProviderId);
+            var brainConfig = repoConfigs.TryGetProviderConfig(template.BrainProviderId);
             if (brainConfig is not null)
                 rawConfigs.Add(brainConfig);
         }

@@ -80,7 +80,7 @@ internal sealed class AgentProviderResolver
         if (string.IsNullOrEmpty(job.BrainProviderConfigId))
             return null;
 
-        var brainConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.BrainProviderConfigId);
+        var brainConfig = job.ProviderConfigs.TryGetProviderConfig(job.BrainProviderConfigId);
         if (brainConfig is null)
             return null;
 
@@ -106,7 +106,7 @@ internal sealed class AgentProviderResolver
         if (string.IsNullOrEmpty(job.PipelineProviderConfigId))
             return null;
 
-        var pipelineConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.PipelineProviderConfigId);
+        var pipelineConfig = job.ProviderConfigs.TryGetProviderConfig(job.PipelineProviderConfigId);
         if (pipelineConfig is null)
             return null;
 
@@ -128,7 +128,7 @@ internal sealed class AgentProviderResolver
                 repoTarget.RepoProviderId == job.RepoProviderConfigId)
                 continue;
 
-            var additionalConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == repoTarget.RepoProviderId);
+            var additionalConfig = job.ProviderConfigs.TryGetProviderConfig(repoTarget.RepoProviderId);
             if (additionalConfig is null)
             {
                 _logger.Warning("Additional repo provider config '{ProviderId}' for template '{Template}' not found in job assignment",

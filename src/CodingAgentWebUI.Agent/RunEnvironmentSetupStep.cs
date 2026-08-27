@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
@@ -28,7 +29,7 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
-        var repoConfig = _job.ProviderConfigs.FirstOrDefault(c => c.Id == _job.RepoProviderConfigId);
+        var repoConfig = _job.ProviderConfigs.TryGetProviderConfig(_job.RepoProviderConfigId);
 
         // Merge secrets: project-level as base, repo-level overlays (repo wins on key collision)
         var (effectiveSecrets, supersededKeys) = MergeSecrets(_job.ProjectSecrets, repoConfig?.Secrets);

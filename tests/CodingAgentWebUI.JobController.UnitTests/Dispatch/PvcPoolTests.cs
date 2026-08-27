@@ -180,7 +180,7 @@ public sealed class PvcPoolTests
     }
 
     [Fact]
-    public async Task RebuildFromLiveJobsAsync_K8sClientThrows_ClaimedSetUnchanged()
+    public async Task RebuildFromLiveJobsAsync_K8sClientThrows_ClaimedSetCleared()
     {
         var pool = new PvcPool(["pvc-1", "pvc-2"]);
         pool.TryClaim(Guid.NewGuid()); // claim one so available=1
@@ -195,7 +195,7 @@ public sealed class PvcPoolTests
         var act = async () => await pool.RebuildFromLiveJobsAsync(k8sClient.Object, opts, CancellationToken.None);
         await act.Should().NotThrowAsync();
 
-        pool.AvailableCount.Should().Be(1, "claimed set is unchanged when rebuild fails");
+        pool.AvailableCount.Should().Be(2, "claimed set is cleared on rebuild failure to unblock dispatch");
     }
 
     [Fact]

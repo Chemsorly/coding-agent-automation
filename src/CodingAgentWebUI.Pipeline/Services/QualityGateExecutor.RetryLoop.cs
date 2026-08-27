@@ -130,9 +130,137 @@ public partial class QualityGateExecutor
         if (run.CurrentStep == PipelineStep.Failed) return;
 
         if (report.AllPassed)
+        {
             await callbacks.FinalizePullRequest(run, report, false, linkedCt);
+
+            // Wait for post-PR CI: FinalizePullRequest promotes the PR to ready-for-review, which
+            // fires CI workflows (e.g. GitHub Actions on pull_request events). If the pre-PR CI
+            // check was skipped (skipCiIfNoChanges path — cleanup made no changes) or CI only
+            // triggers on pull_request (not on branch push), the earlier AppendExternalCiIfNeededAsync
+            // call never validated this commit against CI. We must wait here to ensure the PR is
+            // actually green before considering the run complete.
+            // Root-cause regression: run 563d3745 — CI only fires on pull_request, cleanup had no
+            // changes so pre-PR CI was skipped; post-PR CI was never waited on.
+            report = await WaitForPostPrCiAsync(context, report, linkedCt);
+            if (run.CurrentStep == PipelineStep.Failed) return;
+
+            // If post-PR CI failed, route the failure back through the retry loop.
+            if (!report.AllPassed)
+            {
+                report = await RunRetryLoopAsync(context, report, "Post-PR CI retry agent", linkedCt);
+                if (run.CurrentStep == PipelineStep.Failed) return;
+
+                if (!report.AllPassed)
+                    await FinalizeDraftPrAsync(context, run, report, "post-PR CI failed after retries", linkedCt);
+                // If retries fixed it, FinalizePullRequest(isDraft=false) is called inside RunRetryLoopAsync
+                // → AppendExternalCiIfNeededAsync which already validates CI. Run is complete.
+            }
+            // If post-PR CI passed: run.MarkCompleted() and run.CurrentStep=Completed were already set
+            // inside FinalizePullRequestAsync above. Nothing more to do.
+        }
         else
             await FinalizeDraftPrAsync(context, run, report, "exhausted after cleanup", linkedCt);
+    }
+
+    /// <summary>
+    /// Polls external CI after the PR has been promoted to ready-for-review. This validates
+    /// CI workflows that only trigger on <c>pull_request</c> events (not on branch pushes),
+    /// which would not have been caught by the pre-PR <see cref="AppendExternalCiIfNeededAsync"/>
+    /// call if that call exited early via the <c>skipCiIfNoChanges</c> path.
+    /// </summary>
+    /// <remarks>
+    /// Returns the original <paramref name="report"/> with <see cref="QualityGateReport.ExternalCi"/>
+    /// replaced by the post-PR CI result. Returns the unchanged report (with no <c>ExternalCi</c>
+    /// mutation) when <see cref="QualityGateContext.PipelineProvider"/> is null or
+    /// <see cref="PipelineRun.BranchName"/> is empty — both are treated as "CI not configured".
+    /// </remarks>
+    private async Task<QualityGateReport> WaitForPostPrCiAsync(
+        QualityGateContext context,
+        QualityGateReport report,
+        CancellationToken ct)
+    {
+        var run = context.Run;
+        var config = context.Config;
+        var callbacks = context.Callbacks;
+
+        if (context.PipelineProvider is null || string.IsNullOrEmpty(run.BranchName))
+            return report;
+
+        _logger.Information("Pipeline {RunId} waiting for post-PR CI on branch {BranchName}", run.RunId, run.BranchName);
+        callbacks.EmitOutputLine("⏳ Waiting for post-PR CI...");
+
+        string? commitSha = null;
+        try { commitSha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
+        catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD SHA for post-PR CI wait", run.RunId); }
+
+        // Snapshot and reset InfrastructureRetryCount so post-PR CI gets its own fresh budget.
+        // The pre-PR CI poll (AppendExternalCiIfNeededAsync) may have consumed some or all of
+        // MaxInfrastructureRetries. Without a reset, a single infra failure here would exhaust
+        // the remaining budget and skip retries, degrading to draft PR unnecessarily.
+        var priorInfraRetryCount = run.InfrastructureRetryCount;
+        run.InfrastructureRetryCount = 0;
+
+        GateResult ciGate;
+        try
+        {
+            var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
+
+            // TODO: ExternalCiDuration is recorded here AND in AppendExternalCiIfNeededAsync.
+            // On paths where both pre-PR and post-PR CI run, two histogram samples are emitted
+            // per pipeline run, inflating p50/p99 dashboards. Consider a separate metric
+            // (PostPrCiDuration) or aggregate at run level rather than per-poll.
+            PipelineTelemetry.ExternalCiDuration.Record(
+                ciPollStopwatch.Elapsed.TotalSeconds,
+                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+
+            ciGate = new GateResult
+            {
+                GateName = "External CI",
+                Passed = ciPassed,
+                Details = ciPassed
+                    ? $"Post-PR CI passed. {ciStatus.Jobs.Count} job(s) completed."
+                    : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
+            };
+
+            callbacks.EmitOutputLine(ciPassed
+                ? $"✅ Post-PR CI passed ({ciStatus.Jobs.Count} jobs)"
+                : $"❌ Post-PR CI failed: {ciGate.Details}");
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            ciGate = new GateResult
+            {
+                GateName = "External CI", Passed = false,
+                Details = $"Post-PR CI timed out after {config.ExternalCiTimeout}"
+            };
+            callbacks.EmitOutputLine($"❌ Post-PR CI timed out after {config.ExternalCiTimeout}");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
+            ciGate = new GateResult
+            {
+                GateName = "External CI", Passed = false,
+                Details = $"Post-PR CI error: {ex.Message}"
+            };
+        }
+        finally
+        {
+            // Restore the accumulated count so the run summary reflects the total infra retries
+            // across both pre-PR and post-PR CI polls.
+            run.InfrastructureRetryCount += priorInfraRetryCount;
+        }
+
+        return new QualityGateReport
+        {
+            Compilation = report.Compilation,
+            Tests = report.Tests,
+            Coverage = report.Coverage,
+            SecurityScan = report.SecurityScan,
+            ExternalCi = ciGate
+        };
     }
 
     /// <summary>

@@ -110,7 +110,11 @@ public sealed class PvcPool
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "PvcPool rebuild from live Jobs failed; current claimed-set unchanged");
+            Log.Warning(ex, "PvcPool rebuild from live Jobs failed; clearing claimed set to unblock dispatch (pool may briefly over-claim)");
+            lock (_lock)
+            {
+                _claimed.Clear();
+            }
         }
     }
 
