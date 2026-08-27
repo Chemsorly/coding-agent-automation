@@ -58,14 +58,17 @@ public static partial class WorkDistributionRegistration
         });
 
         // ── Leader election ───────────────────────────────────────────────────
-        services.Configure<LeaderElectionOptions>(configuration.GetSection(LeaderElectionOptions.SectionName));
-        // Map PipelineLoopLeaseName → LeaseName (Helm injects LeaderElection__PipelineLoopLeaseName)
-        services.PostConfigure<LeaderElectionOptions>(opts =>
-        {
-            var leaseName = configuration.GetValue<string>($"{LeaderElectionOptions.SectionName}:PipelineLoopLeaseName");
-            if (!string.IsNullOrEmpty(leaseName))
-                opts.LeaseName = leaseName;
-        });
+        services.AddOptions<LeaderElectionOptions>()
+            .Bind(configuration.GetSection(LeaderElectionOptions.SectionName))
+            .PostConfigure(opts =>
+            {
+                // Map PipelineLoopLeaseName → LeaseName (Helm injects LeaderElection__PipelineLoopLeaseName)
+                var leaseName = configuration.GetValue<string>($"{LeaderElectionOptions.SectionName}:PipelineLoopLeaseName");
+                if (!string.IsNullOrEmpty(leaseName))
+                    opts.LeaseName = leaseName;
+            })
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
         services.AddSingleton<LeaderElectionService>();
         services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
         services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());

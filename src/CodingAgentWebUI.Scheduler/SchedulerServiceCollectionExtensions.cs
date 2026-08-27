@@ -143,7 +143,9 @@ public static class SchedulerServiceCollectionExtensions
                 // Default to scheduler-specific lease name so it doesn't conflict with API's lease
                 if (string.IsNullOrEmpty(opts.LeaseName))
                     opts.LeaseName = "caa-scheduler-lock";
-            });
+            })
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
 
         services.AddSingleton<LeaderElectionService>(sp =>
             new LeaderElectionService(
@@ -181,7 +183,8 @@ public static class SchedulerServiceCollectionExtensions
             sp.GetRequiredService<ITokenVendingService>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<DispatchResolutionService>()));
+            sp.GetRequiredService<DispatchResolutionService>(),
+            sp.GetRequiredService<IPipelineApiWorkItemClient>()));
 
         // ── Work distributor (KubernetesWorkDistributor is already API-backed) ─
         services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(

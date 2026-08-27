@@ -37,15 +37,17 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         string? errorMessage, FailureReason? failureReason,
         CancellationToken ct)
     {
-        // Early-exit: if the item is already in a terminal state different from the requested target,
-        // all three fallback steps will be rejected (IsValidTransition returns false for every
-        // terminal→terminal pair except the Requeue paths). Skip the chain to avoid generating
-        // redundant "Invalid transition" Warning logs for each step (3B-001).
-        // This handles the common pattern where a late agent completion callback arrives after
-        // ReconciliationService has already timed out and terminated the WorkItem.
+        // Early-exit: if the item is already in Succeeded or Cancelled and the caller requests
+        // a different terminal state, skip the chain entirely. These states have no recovery path
+        // to another terminal state — all three fallback steps would be rejected immediately,
+        // generating spurious "Invalid transition" Warning logs (3B-001 fix).
+        //
+        // NOTE: Failed is intentionally excluded from this check — it has a legitimate recovery
+        // path via TryInfrastructureRecoveryAsync (Failed+InfrastructureFailure → Succeeded/Running),
+        // and Cancelled/Failed → Pending is a valid requeue path handled by TryDirectAsync.
         var currentStatus = await _workItemTransition.GetCurrentStatusAsync(workItemId, ct);
         if (currentStatus.HasValue
-            && currentStatus.Value is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled
+            && currentStatus.Value is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled
             && currentStatus.Value != status)
         {
             _logger.LogDebug(

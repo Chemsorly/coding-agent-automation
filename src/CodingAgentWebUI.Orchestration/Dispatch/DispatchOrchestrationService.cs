@@ -327,8 +327,55 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var jobRequest = MapToRequest(result, WorkItemTaskType.Decomposition, request.PhaseType);
         return jobRequest with
         {
-            DecompositionSource = request.DecompositionSource
+            DecompositionSource = request.DecompositionSource,
+            ProjectContext = await BuildDecompositionProjectContextAsync(request.Project, ct)
         };
+    }
+
+    /// <summary>
+    /// Builds a <see cref="DecompositionProjectContext"/> from the project's templates (1E-006).
+    /// Each enabled template becomes a <see cref="RepositoryTarget"/> entry so the agent knows
+    /// which repositories and issue providers are available for cross-repo sub-issue routing.
+    /// </summary>
+    private async Task<DecompositionProjectContext?> BuildDecompositionProjectContextAsync(
+        PipelineProject project, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(project.Id) || project.TemplateIds is not { Count: > 0 })
+            return null;
+
+        try
+        {
+            var allTemplates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+            var projectTemplates = allTemplates
+                .Where(t => project.TemplateIds.Contains(t.Id) && t.Enabled)
+                .ToList();
+
+            if (projectTemplates.Count == 0)
+                return null;
+
+            var repositories = projectTemplates.Select(t => new RepositoryTarget
+            {
+                TemplateName = t.Name,
+                IssueProviderId = t.IssueProviderId,
+                RepoProviderId = t.RepoProviderId,
+                Description = string.Empty,
+                DecompositionEnabled = t.DecompositionEnabled,
+                Labels = []
+            }).ToList();
+
+            return new DecompositionProjectContext
+            {
+                ProjectName = project.Name,
+                Repositories = repositories
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "DispatchOrchestrationService: failed to build DecompositionProjectContext for project {ProjectId}; proceeding without it",
+                project.Id);
+            return null;
+        }
     }
 
     /// <summary>
