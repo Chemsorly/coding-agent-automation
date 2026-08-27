@@ -551,6 +551,87 @@ public class QualityGateExecutorEdgeCaseTests
             Times.Once, "pipeline must finalize even if cleanup agent throws");
     }
 
+    /// <summary>
+    /// RunPostRetryCleanupAndFinalizeAsync line 194: when the cleanup agent returns a non-null
+    /// result, UpdateFileChangeStatsAsync must be called and update the run's file-change stats.
+    /// Covers line 194 (the <c>if (cleanupResult != null)</c> → UpdateFileChangeStatsAsync branch).
+    /// </summary>
+    [Fact]
+    public async Task CleanupAgentSucceeds_UpdatesFileChangeStats_OnNonNullCleanupResult()
+    {
+        // Validator always passes so the cleanup path is reached
+        SetupValidatorAlwaysPasses();
+
+        // Provide real file-change data so UpdateFileChangeStatsAsync sets FilesChangedCount
+        _mockRepoProvider
+            .Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<FileChangeSummary>
+            {
+                new("modified", "src/Foo.cs", LinesAdded: 10, LinesDeleted: 2)
+            } as IReadOnlyList<FileChangeSummary>);
+
+        // Post-PR CI passes so the run finishes normally
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [] });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+
+        // UpdateFileChangeStatsAsync ran → FilesChangedCount updated from mock data
+        _run.FilesChangedCount.Should().Be(1,
+            "UpdateFileChangeStatsAsync must run when cleanup agent returns a non-null result (line 194)");
+        _run.LinesAdded.Should().Be(10);
+    }
+
+    /// <summary>
+    /// RunPostRetryCleanupAndFinalizeAsync lines 149-157: when post-PR CI fails after the PR has
+    /// been promoted to ready-for-review, and MaxRetries > 0, the pipeline routes the failure
+    /// through RunRetryLoopAsync (line 151). If retries cannot fix it, FinalizeDraftPrAsync is
+    /// called at line 153.
+    ///
+    /// Setup: skipCiIfNoChanges path (cleanup commit throws "No changes to commit") so the pre-PR
+    /// AppendExternalCiIfNeededAsync skips CI. That makes the initial retry loop pass, entering
+    /// RunPostRetryCleanupAndFinalizeAsync. The cleanup QG pass also has no CI (second CommitAllAsync
+    /// also throws "No changes"). FinalizePullRequest fires, then WaitForPostPrCiAsync returns CI
+    /// failure → lines 149-157 execute. MaxRetries=1 so one retry fires but CI still fails → draft.
+    /// </summary>
+    [Fact]
+    public async Task WhenPostPrCiFails_WithRetries_ExhaustsLoopThenFinalizesDraftPr()
+    {
+        // Validator always passes (local gates never fail)
+        SetupValidatorAlwaysPasses();
+
+        // All CommitAllAsync calls throw "No changes to commit" → skipCiIfNoChanges path skips
+        // pre-PR and cleanup-path CI; still lets AppendExternalCiIfNeededAsync return early so
+        // WaitForPostPrCiAsync is the ONLY place CI is evaluated.
+        _mockRepoProvider
+            .Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("No changes to commit"));
+
+        // Post-PR CI (WaitForPostPrCiAsync + retry CI re-check): always returns failure
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [] });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = [new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "CI failure" }] });
+
+        // MaxRetries=1: one retry fires inside RunRetryLoopAsync at line 151, but CI still fails
+        var context = BuildContext(maxRetries: 1);
+        await _executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        // After retry loop exhausts with still-failing post-PR CI, must finalize as draft (line 153)
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "post-PR CI retry exhaustion must finalize run as draft PR (lines 149-157)");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private void SetupDefaultMocks()
@@ -614,13 +695,13 @@ public class QualityGateExecutorEdgeCaseTests
             .ThrowsAsync(new InvalidOperationException("No changes to commit"));
     }
 
-    private QualityGateContext BuildContext() => new()
+    private QualityGateContext BuildContext(int maxRetries = 0) => new()
     {
         Run = _run,
         Config = new PipelineConfiguration
         {
             AgentTimeout = TimeSpan.FromMinutes(10),
-            MaxRetries = 0,
+            MaxRetries = maxRetries,
             MaxInfrastructureRetries = 0,
             ExternalCiTimeout = TimeSpan.FromMinutes(5),
             CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
