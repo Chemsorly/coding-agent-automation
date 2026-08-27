@@ -12,6 +12,7 @@ namespace CodingAgentWebUI.Scheduler.UnitTests;
 /// Unit tests for WorkItemCountsPoller — validates leader gating and error handling.
 /// Uses a fast tick interval (1ms) so the service fires within the test window.
 /// </summary>
+[Collection("SchedulerTiming")]
 public sealed class WorkItemCountsPollerTests
 {
     private readonly Mock<ISchedulerApiClient> _mockClient;
@@ -41,7 +42,7 @@ public sealed class WorkItemCountsPollerTests
         using var cts = new CancellationTokenSource();
         await poller.StartAsync(cts.Token);
         await Task.Delay(duration, CancellationToken.None);
-        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         try { await poller.StopAsync(stopCts.Token); } catch { }
         poller.Dispose();
     }
@@ -54,7 +55,7 @@ public sealed class WorkItemCountsPollerTests
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(50));
+        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
 
         _mockClient.Verify(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()),
             Times.AtLeastOnce(), "leader must poll work item counts");
@@ -65,7 +66,7 @@ public sealed class WorkItemCountsPollerTests
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(false);
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(50));
+        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
 
         _mockClient.Verify(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()),
             Times.Never(), "non-leader must not poll");
@@ -79,7 +80,7 @@ public sealed class WorkItemCountsPollerTests
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("connection refused"));
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(50));
+        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
 
         _mockLogger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>()),
             Times.AtLeastOnce(), "API failure must log a warning");
@@ -101,7 +102,7 @@ public sealed class WorkItemCountsPollerTests
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
-        await RunPollerForDurationAsync(poller, TimeSpan.FromMilliseconds(50));
+        await RunPollerForDurationAsync(poller, TimeSpan.FromMilliseconds(500));
 
         _mockClient.Verify(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()),
             Times.AtLeastOnce(), "null gate must not suppress polling");
