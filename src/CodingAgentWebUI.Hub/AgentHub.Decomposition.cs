@@ -103,11 +103,28 @@ public sealed partial class AgentHub
     /// <summary>
     /// Gets full issue details by identifier via the run's configured <see cref="IIssueProvider"/>.
     /// Called by the agent's <c>OrchestratorProxy.GetIssueAsync</c>.
+    /// Scope check: agents may only read the issue they are working on (their own run's issue identifier).
+    /// This prevents an agent from enumerating issues it was not assigned to within the configured repository.
     /// </summary>
     [RequiresActiveJob]
     public Task<IssueDetail> RequestGetIssue(JobId jobId, string identifier)
     {
         ArgumentNullException.ThrowIfNull(identifier);
+
+        // Security scope check (1G-006): restrict identifier to the run's own issue.
+        // Agents should only read their assigned issue, not arbitrary issues in the repo.
+        var run = _facade.GetRun(jobId);
+        if (run is null)
+            throw new HubException($"No active run found for job {jobId.Value}");
+
+        if (!string.Equals(identifier, run.IssueIdentifier, StringComparison.Ordinal))
+        {
+            _logger.Warning(
+                "RequestGetIssue: agent {AgentId} attempted to read issue '{RequestedIdentifier}' " +
+                "but is only authorized for '{OwnIdentifier}' (job {JobId}). Ignoring.",
+                run.AgentId, SanitizeForLog(identifier), SanitizeForLog(run.IssueIdentifier), jobId.Value);
+            throw new HubException($"Not authorized to read issue '{identifier}': agent may only read its own assigned issue.");
+        }
 
         return ExecuteWithIssueProviderAsync<IssueDetail>(jobId.Value, $"get issue '{identifier}'",
             (provider, ct) => provider.GetIssueAsync(identifier, ct));

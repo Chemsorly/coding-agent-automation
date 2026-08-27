@@ -94,8 +94,14 @@ public sealed class LoopStatusPollingServiceTests
         var completed = await Task.WhenAny(secondCallCompleted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
         completed.Should().BeSameAs(secondCallCompleted.Task, "second poll call should complete within 5s");
 
-        // Small yield so the catch block in ExecuteAsync can finish setting _isSchedulerUnreachable
-        await Task.Delay(20);
+        // Wait for the catch block in ExecuteAsync to finish writing _isSchedulerUnreachable.
+        // The TCS fires inside the mock lambda before the throw propagates, so the catch has
+        // not yet run by the time secondCallCompleted is set. Poll the property instead of
+        // using a fixed Task.Delay so the test is deterministic on any machine speed.
+        var unreachableSet = await Task.WhenAny(
+            Task.Run(async () => { while (!svc.IsSchedulerUnreachable) await Task.Yield(); }),
+            Task.Delay(TimeSpan.FromSeconds(5)));
+        unreachableSet.IsCompletedSuccessfully.Should().BeTrue("IsSchedulerUnreachable must be set within 5s");
 
         // Assert: unreachable set after failure; prior state preserved (not reset to defaults)
         svc.IsSchedulerUnreachable.Should().BeTrue("poll failure must set IsSchedulerUnreachable");

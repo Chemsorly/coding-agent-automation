@@ -551,7 +551,11 @@ public static class WorkItemEndpoints
         var items = await db.WorkItems
             .AsNoTracking()
             .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-                     && w.DispatchedAt < cutoff)
+                     && (w.DispatchedAt < cutoff
+                         // Fallback for items where DispatchedAt is null (e.g., claim write failed):
+                         // use CreatedAt so they are not permanently invisible to timeout enforcement.
+                         // 1C-001: NULL < cutoff evaluates to NULL (falsy) in SQL, excluding these rows.
+                         || (w.DispatchedAt == null && w.CreatedAt < cutoff)))
             .Select(w => new ActiveWorkItemDto
             {
                 Id = w.Id,

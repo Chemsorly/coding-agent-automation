@@ -342,6 +342,37 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
         }
     }
 
+    // ── 3B-001: Early-exit when item is already in a different terminal state ─
+
+    [Theory]
+    [InlineData(WorkItemStatus.Succeeded, WorkItemStatus.Failed)]
+    [InlineData(WorkItemStatus.Succeeded, WorkItemStatus.Cancelled)]
+    [InlineData(WorkItemStatus.Failed, WorkItemStatus.Succeeded)]
+    [InlineData(WorkItemStatus.Failed, WorkItemStatus.Cancelled)]
+    [InlineData(WorkItemStatus.Cancelled, WorkItemStatus.Succeeded)]
+    [InlineData(WorkItemStatus.Cancelled, WorkItemStatus.Failed)]
+    public async Task TryFallbackChainAsync_WhenItemAlreadyTerminal_ReturnsFalse_WithoutAttemptingFallbackSteps(
+        WorkItemStatus terminalStatus, WorkItemStatus requestedStatus)
+    {
+        // A late completion callback arrives after ReconciliationService has already terminated
+        // the item. The fallback chain must detect the terminal state and return early without
+        // logging "Invalid transition" warnings for all 3 steps (the 3B-001 spam pattern).
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(id);
+            item!.Status = terminalStatus;
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _sut.TryFallbackChainAsync(id, requestedStatus, null, null, CancellationToken.None);
+
+        result.Should().BeFalse("item is in a different terminal state; transition is not allowed");
+        var finalItem = await ReadItem(id);
+        finalItem!.Status.Should().Be(terminalStatus, "terminal state must not be overwritten");
+    }
+
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
     {
         private readonly DbContextOptions<PipelineDbContext> _options;
