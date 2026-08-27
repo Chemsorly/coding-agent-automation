@@ -61,7 +61,7 @@ public static class ActiveJobStateFactory
     private static string? ResolveModelName(JobAssignmentMessage assignment)
     {
         var agentConfig = assignment.ProviderConfigs
-            .FirstOrDefault(c => c.Id == assignment.AgentProviderConfigId);
+            .TryGetProviderConfig(assignment.AgentProviderConfigId);
 
         return agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
     }
@@ -73,7 +73,7 @@ public static class ActiveJobStateFactory
     private static string? ResolveRepositoryName(JobAssignmentMessage assignment)
     {
         var repoConfig = assignment.ProviderConfigs
-            .FirstOrDefault(c => c.Id == assignment.RepoProviderConfigId);
+            .TryGetProviderConfig(assignment.RepoProviderConfigId);
 
         if (repoConfig is null)
             return null;

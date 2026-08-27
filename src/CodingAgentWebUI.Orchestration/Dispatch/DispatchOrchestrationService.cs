@@ -435,7 +435,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             RunId = result.CreatedRun.RunId,
             ProjectSteeringContent = result.Project.SteeringContent,
             RepoSteeringContent = result.ProviderConfigs
-                .FirstOrDefault(c => c.Id == result.CreatedRun.RepoProviderConfigId)?.SteeringContent,
+                .TryGetProviderConfig(result.CreatedRun.RepoProviderConfigId)?.SteeringContent,
         };
     }
 
