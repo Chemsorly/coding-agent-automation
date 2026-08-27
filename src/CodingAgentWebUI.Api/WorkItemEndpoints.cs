@@ -346,12 +346,21 @@ public static class WorkItemEndpoints
     /// POST /api/work-items/{id}/claim
     /// Atomic Pending → Dispatched compare-and-swap. Uses TransitionIfAsync (NOT TransitionAsync).
     /// 200 WorkItemClaimResponse, 409 Conflict (already claimed), 404 not found.
+    /// <para>
+    /// Also updates the in-memory <see cref="PipelineRun.StartedAtOffset"/> to
+    /// <see cref="ClaimWorkItemRequest.DispatchedAt"/> so the UI ELAPSED column reflects actual
+    /// run time rather than queue-wait + run time (issue #2106 / BUG-14 K8s path).
+    /// Uses ResetStartedAt + ReplaceRun so the mutation is persisted back to Redis in
+    /// distributed deployments — ResetStartedAt alone is insufficient because
+    /// DistributedRunService.GetRun deserialises a fresh copy on every call.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> ClaimWorkItem(
         Guid id,
         [FromBody] ClaimWorkItemRequest request,
         WorkItemTransitionService transitionService,
         IDbContextFactory<PipelineDbContext> dbFactory,
+        IOrchestratorRunService runService,
         IConfiguration configuration,
         CancellationToken ct)
     {
@@ -380,6 +389,27 @@ public static class WorkItemEndpoints
                 return TypedResults.NotFound();
 
             return TypedResults.Conflict("Work item is not in Pending state or was already claimed.");
+        }
+
+        // Update the in-memory PipelineRun's StartedAtOffset to the actual dispatch time.
+        // This fixes the ELAPSED column in the UI, which was showing queue-wait + run time
+        // instead of just run time (issue #2106 / BUG-14 recurrence in the K8s API path).
+        //
+        // ReplaceRun is required (not just ResetStartedAt) because DistributedRunService.GetRun
+        // returns a freshly deserialised copy — without ReplaceRun the mutation is discarded and
+        // the Redis hash retains the original enqueue-time StartedAtOffset.
+        //
+        // Null-safe: run is null when the API pod restarted between CreateWorkItem and ClaimWorkItem
+        // (no in-memory run exists). The DB-backed fallback (PostgresActiveRunQueryService) already
+        // uses DispatchedAt ?? CreatedAt for elapsed calculation, so that path is unaffected.
+        //
+        // Default guard: DispatchedAt is 'required DateTimeOffset' (non-nullable); a zero-epoch
+        // default value would produce a nonsensical StartedAtOffset, so skip the update in that case.
+        var run = runService.GetRun(new RunId(id.ToString()));
+        if (run is not null && request.DispatchedAt != default)
+        {
+            run.ResetStartedAt(request.DispatchedAt);
+            runService.ReplaceRun(run);
         }
 
         // Derive RunId from workItemId if not set in payload

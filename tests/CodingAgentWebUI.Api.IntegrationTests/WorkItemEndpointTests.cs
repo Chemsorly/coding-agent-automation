@@ -5,7 +5,9 @@ using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.Api.IntegrationTests;
 
@@ -711,5 +713,97 @@ public sealed class WorkItemEndpointTests
         updated.DispatchedAt.Should().BeNull("DispatchedAt must be cleared on requeue from Dispatched");
         updated.AssignedAgentId.Should().BeNull("AssignedAgentId must be cleared on requeue from Dispatched");
         updated.K8sJobName.Should().BeNull("K8sJobName must be cleared on requeue from Dispatched");
+    }
+
+    // ── ClaimWorkItem — ELAPSED bug fix (issue #2106) ─────────────────────────────
+
+    /// <summary>
+    /// Regression test for issue #2106: ClaimWorkItem must update the in-memory PipelineRun's
+    /// StartedAtOffset to DispatchedAt, not leave it at the enqueue-time UtcNow default.
+    /// Uses CreatePendingItemAsync (POST /api/work-items) to materialise the PipelineRun in
+    /// IOrchestratorRunService before claiming.
+    /// </summary>
+    [Fact]
+    public async Task ClaimWorkItem_UpdatesInMemoryRunStartedAtOffset_ToDispatchedAt()
+    {
+        // 1. Create work item via API — also materialises PipelineRun in IOrchestratorRunService
+        var id = await CreatePendingItemAsync();
+
+        // Simulate a 15-minute queue wait so dispatchedAt is well before enqueue time
+        var dispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-15);
+        var claim = new ClaimWorkItemRequest
+        {
+            AssignedAgentId = "agent-1",
+            DispatchedAt = dispatchedAt
+        };
+
+        // 2. Claim the item
+        var response = await _client.PostAsJsonAsync($"/api/work-items/{id}/claim", claim,
+            PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // 3. Assert in-memory run was updated to dispatch time, not enqueue time
+        var runService = _factory.Services.GetRequiredService<IOrchestratorRunService>();
+        var run = runService.GetRun(new RunId(id.ToString()));
+        run.Should().NotBeNull("PipelineRun must still be in the run service after claim");
+        run!.StartedAtOffset.Should().BeCloseTo(dispatchedAt, TimeSpan.FromSeconds(1),
+            "StartedAtOffset must reflect DispatchedAt, not enqueue time");
+        // Verify it is NOT enqueue time (enqueue time ≈ UtcNow, not 15 min ago)
+        run.StartedAtOffset.Should().BeBefore(DateTimeOffset.UtcNow.AddMinutes(-14),
+            "StartedAtOffset must not be the enqueue-time default (≈ UtcNow)");
+    }
+
+    /// <summary>
+    /// Regression guard for issue #2106 pod-restart scenario: when the API pod restarts
+    /// between CreateWorkItem and ClaimWorkItem, no PipelineRun exists in IOrchestratorRunService.
+    /// ClaimWorkItem must not throw in this case — the null-safe guard must be in place.
+    /// Uses SeedEntity (direct DB insert) to create the WorkItem without calling CreateWorkItem,
+    /// so no PipelineRun is materialised in the run service.
+    /// </summary>
+    [Fact]
+    public async Task ClaimWorkItem_Returns200_WhenNoInMemoryRunExists()
+    {
+        // Seed DB-only — no in-memory PipelineRun materialised (simulates API pod restart)
+        var entity = SeedEntity(WorkItemStatus.Pending);
+        var claim = new ClaimWorkItemRequest
+        {
+            AssignedAgentId = "agent-pod-restart",
+            DispatchedAt = DateTimeOffset.UtcNow
+        };
+
+        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/claim", claim,
+            PipelineJsonOptions.Default);
+
+        // Must not throw — null-safe guard (run is not null) must prevent NRE
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Regression guard for issue #2106: requeueing a claimed item must not interfere with
+    /// the claim endpoint or throw. Verifies the requeue path is unaffected by the new
+    /// ReplaceRun logic in ClaimWorkItem.
+    /// </summary>
+    [Fact]
+    public async Task RequeueWorkItem_Returns200_AfterClaim()
+    {
+        // Create, claim, then requeue
+        var id = await CreatePendingItemAsync();
+        var dispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+        var claimResponse = await _client.PostAsJsonAsync($"/api/work-items/{id}/claim",
+            new ClaimWorkItemRequest { AssignedAgentId = "agent-1", DispatchedAt = dispatchedAt },
+            PipelineJsonOptions.Default);
+        claimResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Requeue from Dispatched → Pending
+        var requeueResponse = await _client.PostAsync($"/api/work-items/{id}/requeue", null);
+        requeueResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Verify DB state — DispatchedAt nulled, RetryCount incremented
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(id);
+        updated!.Status.Should().Be(WorkItemStatus.Pending);
+        updated.DispatchedAt.Should().BeNull("DispatchedAt must be cleared on requeue");
+        updated.RetryCount.Should().Be(1, "RetryCount must be incremented by requeue");
     }
 }
