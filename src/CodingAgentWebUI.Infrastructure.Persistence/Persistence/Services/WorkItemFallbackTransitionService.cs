@@ -49,9 +49,12 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         if (currentStatus is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled
             && currentStatus != status)
         {
-            _logger.LogDebug(
-                "WorkItem {WorkItemId} already in terminal state {Current}, skipping fallback chain for requested {Target}",
-                workItemId, currentStatus, status);
+            if (_logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug(
+                    "WorkItem {WorkItemId} already in terminal state {Current}, skipping fallback chain for requested {Target}",
+                    workItemId, currentStatus, status);
+            }
             return false;
         }
 

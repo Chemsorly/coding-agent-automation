@@ -280,25 +280,27 @@ public sealed class DispatchInfrastructure
             }
             // Agent-error-since check (1F-001): if the agent errored since the last analysis,
             // force a fresh analysis run. Uses the work item client to query the DB via the API.
-            else if (!forceRefreshAnalysis && _workItemClient is not null)
+            // Note: checked after the if/else-if chain so forceRefreshAnalysis is guaranteed false here.
+        }
+
+        if (!forceRefreshAnalysis && _workItemClient is not null && analysisComment is not null)
+        {
+            try
             {
-                try
+                var staleness = await _workItemClient.GetStalenessAsync(
+                    issueIdentifier.Value, issueProviderId.Value, analysisComment.CreatedAt, ct);
+                if (staleness?.HasAgentErrorSince == true)
                 {
-                    var staleness = await _workItemClient.GetStalenessAsync(
-                        issueIdentifier.Value, issueProviderId.Value, analysisComment.CreatedAt, ct);
-                    if (staleness?.HasAgentErrorSince == true)
-                    {
-                        forceRefreshAnalysis = true;
-                        stalenessSignal = "agent_error_since";
-                    }
+                    forceRefreshAnalysis = true;
+                    stalenessSignal = "agent_error_since";
                 }
-                catch (Exception ex)
-                {
-                    // Non-fatal: if the staleness check fails, proceed without forcing refresh.
-                    Serilog.Log.Warning(ex,
-                        "DispatchInfrastructure: agent-error staleness check failed for {IssueIdentifier}; proceeding without refresh",
-                        issueIdentifier);
-                }
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal: if the staleness check fails, proceed without forcing refresh.
+                Serilog.Log.Warning(ex,
+                    "DispatchInfrastructure: agent-error staleness check failed for {IssueIdentifier}; proceeding without refresh",
+                    issueIdentifier);
             }
         }
 
