@@ -32,7 +32,7 @@ spec:
     spec:
       serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
       automountServiceAccountToken: true
-      terminationGracePeriodSeconds: {{ .Values.jobController.terminationGracePeriodSeconds | default 30 }}
+      terminationGracePeriodSeconds: {{ .Values.jobController.terminationGracePeriodSeconds }}
       containers:
         - name: jobcontroller
           image: "{{ .Values.jobController.image.repository }}:{{ .Values.jobController.image.tag | default .Chart.AppVersion }}"
@@ -41,6 +41,10 @@ spec:
             - name: http
               containerPort: {{ .Values.jobController.service.port }}
               protocol: TCP
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
           # Startup probe gives the Job Controller up to 150 seconds to initialise
           # (30 × 5 s) before liveness kicks in. Without this, liveness kills the pod
           # after 40 s (initialDelaySeconds=10 + 3×10 s), which is too short for cold

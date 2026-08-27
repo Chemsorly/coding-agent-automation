@@ -39,6 +39,11 @@ orchestrator:
       cpu: 500m
       memory: 512Mi
   probes:
+    startup:
+      path: /healthz
+      port: 8080
+      periodSeconds: 5
+      failureThreshold: 30
     liveness:
       path: /healthz
       port: 8080
@@ -317,6 +322,7 @@ jobController:
     # Empty (default) = release-scoped: caa-<release>-dispatch-lock
     # Set explicitly to use a fixed name across Helm releases (e.g. shared namespaces).
     dispatchLeaseName: ""
+  terminationGracePeriodSeconds: 30
 
 # =============================================================================
 # Scheduler microservice (Spec 047)
@@ -329,9 +335,11 @@ scheduler:
     repository: chemsorly/coding-agent
     # Tag is overridden at deploy time with the build SHA. Empty = fail fast on deploy.
     tag: ""
+  # Additional annotations on the Deployment metadata (e.g., reloader.stakater.com/auto: "true")
+  annotations: {}
   service:
     type: ClusterIP
-    port: 8091
+    port: 8092
   # URL the orchestrator uses to reach the Scheduler's loop control endpoints.
   # Empty (default) = computed in-cluster: http://{fullname}-scheduler.{namespace}.svc.cluster.local:{port}
   # Set when scheduler.enabled is false or the Scheduler is reachable via a non-default address.
@@ -348,5 +356,6 @@ scheduler:
     # Empty (default) = release-scoped: caa-<release>-scheduler-lock
     leaseName: ""
   terminationGracePeriodSeconds: 90
+  nodeSelector: {}
   env:
     logLevel: Information
