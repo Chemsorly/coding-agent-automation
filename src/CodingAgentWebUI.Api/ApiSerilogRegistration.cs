@@ -29,9 +29,13 @@ internal static class ApiSerilogRegistration
             .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", dbLogLevel)
             .MinimumLevel.Override("Npgsql", Serilog.Events.LogEventLevel.Warning)
             .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
+            // Suppress per-request auth handler Debug noise (fires on every authenticated request)
+            .MinimumLevel.Override("Microsoft.AspNetCore.Authentication", Serilog.Events.LogEventLevel.Warning)
             .Enrich.FromLogContext()
             .Enrich.WithSpan()
-            .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+            .WriteTo.Console(
+                outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
+                theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
             .WriteToOtlpIfConfigured("coding-agent-api", ctx.HostingEnvironment.EnvironmentName));
 
         return hostBuilder;

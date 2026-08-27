@@ -29,7 +29,7 @@ internal static class AgentSerilogConfiguration
             .Enrich.FromLogContext()
             .Enrich.WithSpan()
             .Enrich.WithProperty("AgentId", agentId)
-            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{AgentId}] {Message:lj}{NewLine}{Exception}")
+            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] [{AgentId}] {Message:lj}{NewLine}{Exception}")
             .WriteToOtlpIfConfigured(Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-worker")
             .CreateLogger();
     }

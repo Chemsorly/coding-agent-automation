@@ -10,7 +10,9 @@ using Serilog.Enrichers.Span;
 // Bootstrap logger: captures log output before UseSerilog takes over
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
-    .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+    .WriteTo.Console(
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
+        theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
@@ -64,14 +66,23 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSchedulerServices(pipelineApiBaseUrl, agentApiKey, builder.Configuration);
 
 // ── Serilog ───────────────────────────────────────────────────────────────
+var schedulerLogLevel = CodingAgentWebUI.Infrastructure.Telemetry.LogLevelParser.Parse(
+    Environment.GetEnvironmentVariable("LOG_LEVEL"),
+    Serilog.Events.LogEventLevel.Information);
+
 builder.Host.UseSerilog((ctx, services, loggerConfig) =>
 {
     loggerConfig
-        .ReadFrom.Configuration(ctx.Configuration)
+        .MinimumLevel.Is(schedulerLogLevel)
+        .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+        // Suppress per-request HttpClient trace logs (OTLP/trace exports fire at Debug)
+        .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
         .ReadFrom.Services(services)
         .Enrich.FromLogContext()
         .Enrich.WithSpan()
-        .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None);
+        .WriteTo.Console(
+            outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
+            theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None);
 }, preserveStaticLogger: true);
 
 // ── Port 8091 ─────────────────────────────────────────────────────────────

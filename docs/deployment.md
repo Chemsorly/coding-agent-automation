@@ -171,7 +171,7 @@ Three independent leases are used — one per relevant process (the Pipeline API
 
 **Pipeline API** — No leader election. All API replicas handle requests concurrently. `DatabaseMaintenanceService` is a singleton triggered by the Scheduler via HTTP (`POST /api/scheduler/maintenance/retention-sweep`); `ChatJobDispatcher` and consolidation dispatch use K8s double-dispatch guards instead of a lease. Set `signalr.redis.connectionString` when running more than one API replica.
 
-**Orchestrator** (`caa-{release}-pipeline-loop-lock` lease) — Deprecated: `PipelineLoopService` moved to the Scheduler in Spec 047. The Orchestrator now only polls `/loop/status` and dispatches individual runs via HTTP. The lease still exists but governs no background services in the Orchestrator.
+**Orchestrator** (`caa-{release}-pipeline-loop-lock` lease) — Deprecated: `PipelineLoopService` moved to the Scheduler in Spec 047. The Orchestrator now only polls `/loop/status` and dispatches individual runs via HTTP. The lease still exists in the Helm chart but governs no background services in the Orchestrator process. It can be ignored for operational purposes.
 
 **Scheduler** (`caa-{release}-scheduler-lock` lease):
 
