@@ -119,18 +119,25 @@ public sealed class LoopStatusPollingServiceTests
     {
         // Arrange: first call fails, second succeeds
         var callCount = 0;
+        var secondCallCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockClient.Setup(c => c.GetLoopStatusAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 callCount++;
                 if (callCount == 1) throw new HttpRequestException("first call fails");
-                return DefaultStatus;
+                var result = DefaultStatus;
+                secondCallCompleted.TrySetResult(); // signal that the second poll succeeded
+                return result;
             });
 
         var svc = CreateService(interval: TimeSpan.FromMilliseconds(1));
 
-        // Act: run long enough for at least 2 ticks
-        await RunServiceForDurationAsync(svc, TimeSpan.FromMilliseconds(100));
+        // Act: wait until the second poll has actually completed, then stop
+        await svc.StartAsync(CancellationToken.None);
+        await secondCallCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5)); // definitive signal, not a fixed delay
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try { await svc.StopAsync(stopCts.Token); } catch { }
+        svc.Dispose();
 
         // Assert: unreachable cleared after recovery
         svc.IsSchedulerUnreachable.Should().BeFalse("unreachable flag must be cleared on recovery");
