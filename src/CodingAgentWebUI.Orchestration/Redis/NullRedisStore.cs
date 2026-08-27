@@ -27,6 +27,7 @@ internal sealed class NullRedisStore : IRedisStore
     public Task ListTrimAsync(string key, long start, long stop) => Task.CompletedTask;
     public Task<string[]> ListRangeAsync(string key, long start, long stop) => Task.FromResult(Array.Empty<string>());
     public Task<bool> ExistsAsync(string key) => Task.FromResult(false);
+    public Task<string?> GetAsync(string key) => Task.FromResult<string?>(null);
     public Task<bool> PingAsync() => Task.FromResult(false);
     public Task<RedisResult> ScriptEvaluateAsync(string script, RedisKey[] keys, RedisValue[] values)
         => Task.FromResult(RedisResult.Create(RedisValue.Null));
