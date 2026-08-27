@@ -551,6 +551,187 @@ public class QualityGateExecutorEdgeCaseTests
             Times.Once, "pipeline must finalize even if cleanup agent throws");
     }
 
+    /// <summary>
+    /// RunPostRetryCleanupAndFinalizeAsync line 112: when the cleanup agent returns a non-null
+    /// result, UpdateFileChangeStatsAsync must be called and update the run's file-change stats.
+    ///
+    /// Setup: pre-PR CI passes (call #1), cleanup CI passes (call #2), post-PR CI also passes
+    /// (call #3). The cleanup agent mock returns a non-null result. We verify FilesChangedCount
+    /// is updated from the mocked GetFileChangesAsync result — proof that line 112 executed.
+    /// Without the fix, cleanupResult would be null and FilesChangedCount would stay at its
+    /// pre-test value.
+    /// </summary>
+    [Fact]
+    public async Task CleanupAgentSucceeds_UpdatesFileChangeStats_OnNonNullCleanupResult()
+    {
+        // Validator always passes (local gates never fail)
+        SetupValidatorAlwaysPasses();
+
+        // Provide real file-change data so UpdateFileChangeStatsAsync sets FilesChangedCount
+        _mockRepoProvider
+            .Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<FileChangeSummary>
+            {
+                new("modified", "src/Foo.cs", LinesAdded: 10, LinesDeleted: 2)
+            } as IReadOnlyList<FileChangeSummary>);
+
+        // All CI calls pass — pre-PR CI, cleanup-path CI, post-PR CI
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+
+        // UpdateFileChangeStatsAsync ran via the cleanup path (RetryLoop.cs line 112) →
+        // FilesChangedCount updated from the mocked GetFileChangesAsync response
+        _run.FilesChangedCount.Should().Be(1,
+            "UpdateFileChangeStatsAsync must run when cleanup agent returns a non-null result");
+        _run.LinesAdded.Should().Be(10);
+    }
+
+    /// <summary>
+    /// WaitForPostPrCiAsync lines 230-248: the inner-timeout OCE and generic exception catch blocks.
+    /// Pre-PR CI must PASS so the flow reaches FinalizePullRequest → WaitForPostPrCiAsync.
+    /// Then WaitForPostPrCiAsync's own PollAndHandleInfraRetryAsync throws, which is caught at
+    /// lines 230-238 (inner OCE timeout) or 240-248 (generic exception).
+    ///
+    /// Uses SetupSequence: first WaitForCompletionAsync call passes (pre-PR CI), second call
+    /// throws an inner OCE (post-PR CI, simulating ExternalCiTimeout firing).
+    /// </summary>
+    [Fact]
+    public async Task WaitForPostPrCiAsync_PostPrCiTimesOut_FinalizesDraftPr()
+    {
+        SetupValidatorAlwaysPasses();
+
+        // GetRunStatusAsync always returns Running (CI is running)
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        var innerCts = new CancellationTokenSource();
+        // SEQUENCE: call #1 (pre-PR CI) → pass; call #2 (cleanup-path CI) → pass;
+        //           call #3 (post-PR CI) → inner OCE timeout
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] }) // pre-PR CI passes
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] }) // cleanup-path CI passes
+            .ThrowsAsync(new OperationCanceledException(innerCts.Token)); // post-PR CI inner timeout
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+
+        // Post-PR CI timed out → ciGate.Passed=false → run finalized as draft (lines 230-238 covered)
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            Times.Once, "post-PR CI timeout must finalize as draft PR (lines 230-238)");
+    }
+
+    /// <summary>
+    /// WaitForPostPrCiAsync lines 240-248: the generic exception catch block.
+    /// Same sequence as above but WaitForCompletionAsync throws a non-cancellation exception.
+    /// </summary>
+    [Fact]
+    public async Task WaitForPostPrCiAsync_PostPrCiThrowsException_FinalizesDraftPr()
+    {
+        SetupValidatorAlwaysPasses();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        // SEQUENCE: call #1 (pre-PR CI) → pass; call #2 (cleanup-path CI) → pass;
+        //           call #3 (post-PR CI) → generic exception
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] })
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] })
+            .ThrowsAsync(new HttpRequestException("CI provider unavailable"));
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+
+        // Generic exception → ciGate.Passed=false → run finalized as draft (lines 240-248 covered)
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            Times.Once, "post-PR CI exception must finalize as draft PR (lines 240-248)");
+    }
+
+    /// <summary>
+    /// WaitForPostPrCiAsync line 194: GetHeadCommitShaAsync throws an exception. The catch
+    /// at line 194 swallows it (debug log) and continues with commitSha=null.
+    /// The run must still complete normally (post-PR CI passes with null SHA).
+    ///
+    /// Setup: pre-PR CI passes. GetHeadCommitShaAsync throws on the SECOND call (post-PR CI).
+    /// Post-PR CI then passes with null SHA → run finalized as non-draft.
+    /// </summary>
+    [Fact]
+    public async Task WaitForPostPrCiAsync_GetHeadShaThrows_ContinuesWithNullSha()
+    {
+        SetupValidatorAlwaysPasses();
+
+        // GetHeadCommitShaAsync: calls happen in pre-PR CI (#1), cleanup CI (#2), post-PR CI (#3 → throws)
+        _mockRepoProvider
+            .SetupSequence(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-pre-pr-abc")   // pre-PR CI SHA read succeeds
+            .ReturnsAsync("sha-cleanup-abc")  // cleanup-path CI SHA read succeeds
+            .ThrowsAsync(new IOException("git HEAD read failed")); // post-PR CI SHA read fails
+
+        // All CI calls pass
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+
+        // SHA read failed but run continued — post-PR CI passed → finalized as non-draft (line 194 covered)
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), false, It.IsAny<CancellationToken>()),
+            Times.Once, "SHA read failure must be swallowed (line 194) and run completes as non-draft");
+    }
+
+    /// <summary>
+    /// RunPostRetryCleanupAndFinalizeAsync lines 149-157: post-PR CI fails after
+    /// FinalizePullRequest, MaxRetries=1 routes through RunRetryLoopAsync (line 151),
+    /// retries exhausted with CI still failing → FinalizeDraftPrAsync fires (line 153).
+    ///
+    /// Setup: pre-PR CI passes (call #1), cleanup CI passes (call #2), post-PR CI fails (call #3+),
+    /// and any retry CI poll also fails.
+    /// </summary>
+    [Fact]
+    public async Task WhenPostPrCiFails_WithRetries_ExhaustsLoopThenFinalizesDraftPr()
+    {
+        SetupValidatorAlwaysPasses();
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        var ciFailure = new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = [new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "CI failure" }] };
+        var ciPassed = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] };
+
+        // SEQUENCE: call #1 (pre-PR CI) → pass; call #2 (cleanup CI) → pass;
+        //           call #3+ (post-PR CI + retry CI) → fail
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ciPassed)   // pre-PR CI passes
+            .ReturnsAsync(ciPassed)   // cleanup-path AppendExternalCiIfNeededAsync passes
+            .ReturnsAsync(ciFailure)  // WaitForPostPrCiAsync fails
+            .ReturnsAsync(ciFailure); // retry RunRetryLoopAsync's AppendExternalCiIfNeededAsync also fails
+
+        // MaxRetries=1: one post-PR CI retry fires but CI still fails → FinalizeDraftPrAsync
+        var context = BuildContext(maxRetries: 1);
+        await _executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
+
+        // Retry exhausted with still-failing CI → draft finalized (lines 149-157)
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, It.IsAny<QualityGateReport>(), true, It.IsAny<CancellationToken>()),
+            Times.Once, "post-PR CI retry exhaustion must finalize as draft PR (lines 149-157)");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private void SetupDefaultMocks()
@@ -614,13 +795,13 @@ public class QualityGateExecutorEdgeCaseTests
             .ThrowsAsync(new InvalidOperationException("No changes to commit"));
     }
 
-    private QualityGateContext BuildContext() => new()
+    private QualityGateContext BuildContext(int maxRetries = 0) => new()
     {
         Run = _run,
         Config = new PipelineConfiguration
         {
             AgentTimeout = TimeSpan.FromMinutes(10),
-            MaxRetries = 0,
+            MaxRetries = maxRetries,
             MaxInfrastructureRetries = 0,
             ExternalCiTimeout = TimeSpan.FromMinutes(5),
             CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
