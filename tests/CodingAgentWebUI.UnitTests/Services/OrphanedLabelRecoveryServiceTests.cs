@@ -20,6 +20,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     private static readonly string[] InProgressLabels = ["agent:in-progress"];
     private readonly Mock<IOrchestratorRunService> _mockRunService;
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient;
+    private readonly Mock<IPipelineApiWorkItemClient> _mockWorkItemClient;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
     private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<ILogger> _mockLogger;
@@ -29,6 +30,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     {
         _mockRunService = new Mock<IOrchestratorRunService>();
         _mockConfigClient = new Mock<IPipelineApiConfigClient>();
+        _mockWorkItemClient = new Mock<IPipelineApiWorkItemClient>();
         _mockProviderFactory = new Mock<IProviderFactory>(MockBehavior.Strict);
         _mockLabelService = new Mock<ILabelService>();
         _mockLogger = new Mock<ILogger>();
@@ -44,6 +46,11 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         _mockConfigClient
             .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+
+        // Default: no active work items (issue is not distributed — will reach GitHub checks)
+        _mockWorkItemClient
+            .Setup(w => w.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
 
         _cts = new CancellationTokenSource();
     }
@@ -523,6 +530,93 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Sweep_SkipsIssueWithActiveWorkItem_Defense3()
+    {
+        // Reproduces the false-positive: agent:in-progress issue has a live WorkItem in Postgres
+        // (agent connected and running), but SchedulerRunQueryService.IsIssueBeingProcessed always
+        // returns false. Without Defense 3, the recovery service would swap to agent:error.
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+        SetupIssueProvider("provider-1", new IssueSummary
+        {
+            Identifier = "2087",
+            Title = "Active issue with live agent",
+            Labels = InProgressLabels
+        });
+
+        _mockRunService
+            .Setup(r => r.IsIssueBeingProcessed("2087", "provider-1"))
+            .Returns(false); // always false in Scheduler
+
+        _mockRunService
+            .Setup(r => r.WasRecentlyCompleted("2087", "provider-1"))
+            .Returns(false);
+
+        // Defense 3: API confirms a non-terminal WorkItem exists — issue is NOT orphaned
+        _mockWorkItemClient
+            .Setup(w => w.IsIssueDistributedAsync("2087", "provider-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Act
+        using var service = CreateService();
+        await service.StartAsync(_cts.Token);
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Assert: SwapLabelAsync was NOT called — live WorkItem blocked the false-positive
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "Defense 3 must prevent swapping to agent:error when a live WorkItem exists");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Sweep_WhenDefense3ApiFails_SkipsIssueFailSafe()
+    {
+        // If IsIssueDistributedAsync throws (API unreachable), the service must NOT swap to
+        // agent:error — it should skip the issue to avoid false-positives.
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+        SetupIssueProvider("provider-1", new IssueSummary
+        {
+            Identifier = "2087",
+            Title = "Issue — API check unavailable",
+            Labels = InProgressLabels
+        });
+
+        _mockRunService
+            .Setup(r => r.IsIssueBeingProcessed("2087", "provider-1"))
+            .Returns(false);
+
+        _mockRunService
+            .Setup(r => r.WasRecentlyCompleted("2087", "provider-1"))
+            .Returns(false);
+
+        // Defense 3 fails — API unreachable
+        _mockWorkItemClient
+            .Setup(w => w.IsIssueDistributedAsync("2087", "provider-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("API unreachable"));
+
+        // Act
+        using var service = CreateService();
+        await service.StartAsync(_cts.Token);
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Assert: SwapLabelAsync was NOT called — fail-safe skips on API error
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "Defense 3 API failure must not cause a false-positive agent:error swap");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task Sweep_SkipsIssueWithTerminalLabel_DespiteStaleListResult()
     {
         // Acceptance criteria #1: verifies current labels before swapping — skips if already terminal.
@@ -812,6 +906,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     private OrphanedLabelRecoveryService CreateService() => new(
         _mockRunService.Object,
         _mockConfigClient.Object,
+        _mockWorkItemClient.Object,
         _mockProviderFactory.Object,
         _mockLabelService.Object,
         null,
@@ -821,6 +916,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     private OrphanedLabelRecoveryService CreateServiceWithGate(ILeaderGate? leaderGate) => new(
         _mockRunService.Object,
         _mockConfigClient.Object,
+        _mockWorkItemClient.Object,
         _mockProviderFactory.Object,
         _mockLabelService.Object,
         leaderGate,

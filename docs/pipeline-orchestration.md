@@ -13,10 +13,11 @@ The first three workflows share the same dispatch mechanism, label lifecycle, an
 
 The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService` prepares each request (resolves providers, vends tokens), then `KubernetesWorkDistributor` creates a `WorkItem` row. The Job Controller polls for pending WorkItems, claims each one, and creates a K8s Job — the resulting ephemeral agent pod picks up the full assignment via `GET /api/work-items/{id}/assignment` and reports terminal status via `POST /api/work-items/{id}/status`. The PipelineRun is created by the Pipeline API's `POST /api/work-items` handler.
 
-**K8s Job naming** uses two formats depending on the dispatch path:
+**K8s Job naming** uses three formats depending on the dispatch path:
 
 - **Job Controller** (implementation, review, decomposition runs): `caa-agent-{11 hex chars}` — the first 21 characters of `"caa-agent-" + workItemId.ToString("N")` (e.g. `caa-agent-7f3a9b2e1c4`). The Job name also serves as the agent's `AGENT_ID`.
-- **Pipeline API** (consolidation and model-fetch runs dispatched by `DispatchLifecycleService`): `caa-{8 hex chars}` — the first 12 characters of `"caa-" + workItemId.ToString("N")` (e.g. `caa-7f3a9b2e`).
+- **Job Controller** (consolidation runs dispatched by `ConsolidationDispatchService`): `caa-cons-{12 hex chars}` — the first 21 characters of `"caa-cons-" + workItemId.ToString("N")` (e.g. `caa-cons-7f3a9b2e1c4d`). Distinguishes consolidation Jobs from regular agent Jobs.
+- **Pipeline API** (model-fetch runs dispatched by `DispatchLifecycleService`): `caa-{8 hex chars}` — the first 12 characters of `"caa-" + workItemId.ToString("N")` (e.g. `caa-7f3a9b2e`).
 
 ### Dispatch Priority
 

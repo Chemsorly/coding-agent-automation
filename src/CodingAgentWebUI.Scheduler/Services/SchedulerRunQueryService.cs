@@ -18,8 +18,10 @@ namespace CodingAgentWebUI.Scheduler.Services;
 ///   </description></item>
 ///   <item><description>
 ///     <see cref="IsIssueBeingProcessed"/> always returns false for the same reason.
-///     <see cref="OrphanedLabelRecoveryService"/> relies on Defense 1 (re-fetch current labels)
-///     as its only active-run exclusion check.
+///     <see cref="OrphanedLabelRecoveryService"/> uses Defense 3 (<see cref="IPipelineApiWorkItemClient.IsIssueDistributedAsync"/>)
+///     as its primary active-run exclusion check, with Defense 1 (re-fetch current labels from GitHub)
+///     as the terminal-label guard. Defense 2 (recently-completed in-memory cache) is inoperative here
+///     since <c>MarkRecentlyCompleted</c> is only called by <c>RunLifecycleManager</c> in the API process.
 ///   </description></item>
 ///   <item><description>
 ///     <see cref="WasRecentlyCompleted"/> and <see cref="MarkRecentlyCompleted"/> use an
@@ -57,8 +59,9 @@ public sealed class SchedulerRunQueryService : IOrchestratorRunService
 
     /// <summary>
     /// Always returns false because <see cref="GetActiveRuns"/> returns empty.
-    /// OrphanedLabelRecoveryService falls through to Defense 1 (label re-fetch) as its
-    /// only exclusion check.
+    /// OrphanedLabelRecoveryService uses Defense 3 (IsIssueDistributedAsync API call)
+    /// as its primary active-run guard; this method is only reached when that check is
+    /// bypassed (e.g., in tests that mock the work-item client).
     /// </summary>
     public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => false;

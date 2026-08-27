@@ -118,6 +118,26 @@ await app.RunApiMigrationsAsync(builder.Configuration);
 
 app.MapApiHealthEndpoints();
 app.RegisterApiObservableGauges();
+
+// Log every 4xx/5xx response as a structured Serilog event. This runs under the Serilog
+// category (not Microsoft.AspNetCore), so it is NOT suppressed by the Warning override in
+// ApiSerilogRegistration. Captures hub negotiate failures (e.g. 404 on /hubs/agent/negotiate)
+// that would otherwise be invisible because Microsoft.AspNetCore is overridden to Warning.
+app.UseSerilogRequestLogging(opts =>
+{
+    opts.GetLevel = (ctx, _, ex) =>
+        ex is not null || ctx.Response.StatusCode >= 400
+            ? Serilog.Events.LogEventLevel.Warning
+            : Serilog.Events.LogEventLevel.Debug;
+    opts.EnrichDiagnosticContext = (diag, ctx) =>
+    {
+        diag.Set("RequestHost", ctx.Request.Host.Value);
+        diag.Set("RequestScheme", ctx.Request.Scheme);
+        if (ctx.Response.StatusCode >= 400)
+            diag.Set("ResponseStatusCode", ctx.Response.StatusCode);
+    };
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
 

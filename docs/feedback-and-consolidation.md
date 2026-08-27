@@ -117,5 +117,5 @@ The sidebar shows a "Consolidation" nav item with a badge count (new issues + su
 
 Consolidation run history is automatically pruned by `DatabaseMaintenanceService`. Two retention mechanisms apply:
 
-- **ConsolidationRun records:** Deleted when older than `WorkDistribution:Reconciliation:ConsolidationRunRetentionDays` (default: `90` days). Configured on the Job Controller — not a `PipelineConfiguration` property.
+- **ConsolidationRun records:** Deleted when older than `WorkDistribution:Reconciliation:ConsolidationRunRetentionDays` (default: `30` days). Configured on the Job Controller — not a `PipelineConfiguration` property.
 - **WorkItem rows (K8s mode):** Terminal consolidation `WorkItems` are deleted by `WorkDistribution:Reconciliation:StaleRetentionDays` (default: `7` days).

@@ -17,13 +17,12 @@ boundaries.
 │  Orchestrator  (CodingAgentWebUI)                                           │
 │  ─────────────                                                              │
 │  Blazor Server UI                                                           │
-│  PipelineLoopService  — polls API for config, dispatches via               │
-│                         DispatchOrchestrationService                        │
-│  OrphanedLabelRecoveryService                                               │
-│  LeaderElection (Lease: caa-{release}-pipeline-loop-lock)                  │
+│  Polls /loop/status on Scheduler for UI state                               │
+│  LeaderElection (Lease: caa-{release}-pipeline-loop-lock) — no loop svcs   │
 │                                                                             │
 │  No EF Core. No AgentHub. Connects to API via IPipelineApiConfigClient,    │
-│  IPipelineApiRunHistoryClient, IAgentHubConnection (scoped per circuit).   │
+│  IPipelineApiRunHistoryClient, IAgentHubConnection (from Api.Client,       │
+│  scoped per circuit).                                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
          │  REST calls (HTTP) + SignalR hub subscribe (IAgentHubConnection)
          ▼
@@ -36,26 +35,39 @@ boundaries.
 │  AgentReservationService ─┘  (JobDeduplicationGuardService is an alias)    │
 │  PipelineDbContext (EF Core)  — authoritative Postgres access               │
 │  WorkItemEndpoints, ConfigEndpoints, PipelineRunEndpoints                  │
-│  DatabaseMaintenanceService, WorkItemMetricsBackgroundService              │
-│  ConsolidationWorkItemDispatchService                                       │
-│  LeaderElection (Lease: caa-{release}-api-lock)                            │
+│  DatabaseMaintenanceService (triggered by Scheduler via HTTP)              │
+│  ChatJobDispatcher                                                          │
+│  No leader election lease                                                   │
 └─────────────────────────────────────────────────────────────────────────────┘
          │  POST /api/work-items (claim)   ▲ hub: ReportOutputLines etc.
          ▼                                 │
 ┌──────────────────────┐     ┌─────────────────────────────────────────────┐
 │  Job Controller      │     │  Agent Pod (CodingAgentWebUI.Agent)          │
 │  (CodingAgentWebUI.  │     │  ─────────────                              │
-│   JobController)     │     │  Ephemeral K8s Job  (caa-agent-{11 hex} or caa-{8 hex}) │
-│  ─────────────────── │     │  Connects to API hub as Bearer AGENT_API_KEY│
-│  K8s Job dispatch    │     │  GET /api/work-items/{id}/assignment         │
-│  Lease: caa-{rel}-   │     │  POST /api/work-items/{id}/status           │
-│    dispatch-lock     │     │  hub: ReportStepTransition, etc.            │
+│   JobController)     │     │  Ephemeral K8s Job                          │
+│  ─────────────────── │     │  caa-agent-{11 hex} (impl/review/decomp)   │
+│  K8s Job dispatch    │     │  caa-cons-{12 hex}  (consolidation)         │
+│  ConsolidationDispatchService                  │  Connects to API hub                        │
+│  Lease: caa-{rel}-   │     │  GET /api/work-items/{id}/assignment         │
+│    dispatch-lock     │     │  POST /api/work-items/{id}/status           │
 └──────────────────────┘     └─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Scheduler  (CodingAgentWebUI.Scheduler)                                    │
+│  ─────────────                                                              │
+│  PipelineLoopService  — dispatches impl/review/decomp runs                  │
+│  OrphanedLabelRecoveryService                                               │
+│  HousekeepingService                                                        │
+│  WorkItemCountsPoller  — emits WorkDistributionTelemetry gauges             │
+│  Lease: caa-{release}-scheduler-lock                                        │
+│                                                                             │
+│  No EF Core. All persistence via Pipeline API (HTTP).                       │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Where the Locking-Critical Singletons Live
 
-The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgentWebUI.Api`). The Orchestrator also registers local instances of `AgentRegistryService` and `OrchestratorRunService` — these are read-model replicas backed by `AgentRegistrySyncService` / `DistributedRunService` when Redis is configured, keeping the Blazor UI in sync without direct DB access. `AgentReservationService` (with `_selectionLock`) is registered in the Orchestrator as well, but dispatch decisions that actually reserve agents go through the API path.
+The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgentWebUI.Api`). The Orchestrator registers read-model replicas of `AgentRegistryService` and `OrchestratorRunService` — backed by `DistributedAgentRegistryService` / `DistributedRunService` when Redis is configured, keeping the Blazor UI in sync without direct DB access. `AgentReservationService` (with `_selectionLock`) is also registered in the Orchestrator but dispatch decisions that actually reserve agents go through the API path.
 
 The Job Controller and Agent pods do **not** hold these singletons. This is important: the guarantee that `_selectionLock` and `AgentEntry.SyncRoot` prevent races on the authoritative dispatch path holds only because all authoritative instances are in the same Pipeline API process.
 
