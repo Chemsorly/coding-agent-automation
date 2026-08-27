@@ -82,14 +82,13 @@ builder.Host.UseSerilog((ctx, services, loggerConfig) =>
         .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
         // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
         .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
-        .ReadFrom.Services(services)
         .Enrich.FromLogContext()
         .Enrich.WithSpan()
         .WriteTo.Console(
             outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
             theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
         .WriteToOtlpIfConfigured("coding-agent-scheduler", ctx.HostingEnvironment.EnvironmentName);
-}, preserveStaticLogger: true);
+});
 
 // ── Port 8091 ─────────────────────────────────────────────────────────────
 builder.WebHost.UseUrls("http://+:8091"); // NOSONAR S1075
