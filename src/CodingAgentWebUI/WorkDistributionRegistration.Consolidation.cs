@@ -98,6 +98,9 @@ public static partial class WorkDistributionRegistration
         Log.Information("WorkDistribution: Kubernetes infrastructure registered (LeaderElection, K8s client)");
     }
 
+    [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(
+        Justification = "DI bootstrapping — only registers or logs a warning; " +
+                        "no testable logic beyond environment variable reading.")]
     private static void RegisterPipelineApiClientFallback(IServiceCollection services, IConfiguration configuration)
     {
         var pipelineApiBaseUrl = configuration.GetValue<string>("PipelineApi:BaseUrl") ?? "";

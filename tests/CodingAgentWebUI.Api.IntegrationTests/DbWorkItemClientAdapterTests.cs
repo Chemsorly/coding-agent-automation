@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Api.IntegrationTests;
 public sealed class DbWorkItemClientAdapterTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
-    private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
+    private readonly InMemoryDbContextFactory _dbFactory;
 
     public DbWorkItemClientAdapterTests()
     {

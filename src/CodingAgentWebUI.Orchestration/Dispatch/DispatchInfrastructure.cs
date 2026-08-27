@@ -399,7 +399,7 @@ public sealed class DispatchInfrastructure
     /// Extracted from <see cref="PrepareDispatchCoreAsync"/> to reduce cognitive complexity (S3776).
     /// Returns the updated (forceRefresh, stalenessSignal) pair.
     /// </summary>
-    private async Task<(bool ForceRefresh, string? StalenessSignal)> CheckCommitCountStalenessAsync(
+    internal async Task<(bool ForceRefresh, string? StalenessSignal)> CheckCommitCountStalenessAsync(
         IssueContextResult issueContext,
         ProviderConfigId repoProviderId,
         IReadOnlyList<ProviderConfig> providerConfigs,
