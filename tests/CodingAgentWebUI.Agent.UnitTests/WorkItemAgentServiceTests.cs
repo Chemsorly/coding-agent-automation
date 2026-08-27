@@ -424,6 +424,145 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             "Grafana Cloud's OTLP receiver, leaving pipeline_decomposition_* metrics absent from Grafana.");
     }
 
+    // ── SignalR 404 branch ────────────────────────────────────────────────
+
+    /// <summary>
+    /// When ConnectAndRegisterAsync throws an exception whose message contains "404",
+    /// the service must log with the hub-route-unreachable wording (not the generic
+    /// "Failed to connect/register" message) and still post Failed + exit non-zero.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_SignalR404_LogsHubRouteUnreachableAndExitsNonZero()
+    {
+        // Arrange: assignment → 200 OK, POST Running → 200 OK, POST Failed → 200 OK
+        var assignmentJson = JsonSerializer.Serialize(
+            CreateMinimalAssignment("job-404", "owner/repo#2094"), PipelineJsonOptions.Default);
+
+        var handler = new FakeSequentialHandler([
+            (System.Net.HttpStatusCode.OK, assignmentJson), // GET assignment
+            (System.Net.HttpStatusCode.OK, "{}"),           // POST Running
+            (System.Net.HttpStatusCode.OK, "{}")            // POST Failed
+        ]);
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
+
+        // Connection manager throws HttpRequestException containing "404"
+        var mockConnectionManager = new Mock<IAgentConnectionManager>();
+        mockConnectionManager
+            .Setup(m => m.ConnectAndRegisterAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new System.Net.Http.HttpRequestException(
+                "Response status code does not indicate success: 404 (Not Found)."));
+
+        var stopCalled = new TaskCompletionSource<bool>();
+        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
+
+        var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
+            "job-404", client, mockConnectionManager.Object,
+            CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
+            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object));
+
+        // Act
+        var previousExitCode = Environment.ExitCode;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await service.StartAsync(cts.Token);
+
+            var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(20)));
+            completed.Should().Be(stopCalled.Task, "Service should call StopApplication on hub 404");
+
+            await service.StopAsync(CancellationToken.None);
+        }
+        finally
+        {
+            var actualExitCode = Environment.ExitCode;
+            Environment.ExitCode = previousExitCode;
+
+            actualExitCode.Should().NotBe(0,
+                "Hub 404 is a failure — pod must exit non-zero so K8s marks it as Failed");
+        }
+
+        // Assert: the 404-specific log message was emitted (not the generic one)
+        _mockLogger.Verify(
+            l => l.Error(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("404") && s.Contains("hub route unreachable")),
+                It.IsAny<string>(),
+                It.IsAny<string>()),
+            Times.AtLeastOnce,
+            "404 hub failures must log the hub-route-unreachable message");
+    }
+
+    /// <summary>
+    /// When ConnectAndRegisterAsync throws a non-404 exception, the generic
+    /// "Failed to connect/register" message must be used instead of the 404-specific one.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_SignalRNon404Failure_LogsGenericMessageAndExitsNonZero()
+    {
+        // Arrange
+        var assignmentJson = JsonSerializer.Serialize(
+            CreateMinimalAssignment("job-conn-fail", "owner/repo#999"), PipelineJsonOptions.Default);
+
+        var handler = new FakeSequentialHandler([
+            (System.Net.HttpStatusCode.OK, assignmentJson),
+            (System.Net.HttpStatusCode.OK, "{}"),
+            (System.Net.HttpStatusCode.OK, "{}")
+        ]);
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
+
+        var mockConnectionManager = new Mock<IAgentConnectionManager>();
+        mockConnectionManager
+            .Setup(m => m.ConnectAndRegisterAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection refused"));
+
+        var stopCalled = new TaskCompletionSource<bool>();
+        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
+
+        var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
+            "job-conn-fail", client, mockConnectionManager.Object,
+            CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
+            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object));
+
+        var previousExitCode = Environment.ExitCode;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await service.StartAsync(cts.Token);
+
+            var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(20)));
+            completed.Should().Be(stopCalled.Task, "Service should call StopApplication on connection failure");
+
+            await service.StopAsync(CancellationToken.None);
+        }
+        finally
+        {
+            Environment.ExitCode = previousExitCode;
+        }
+
+        // Assert: the generic message was used (Serilog Error<T> overload with single property)
+        _mockLogger.Verify(
+            l => l.Error(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("Failed to connect/register")),
+                It.IsAny<string>()),
+            Times.AtLeastOnce,
+            "Non-404 failures must use the generic connect/register error message");
+
+        // Assert: 404-specific message was NOT used
+        _mockLogger.Verify(
+            l => l.Error(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("hub route unreachable")),
+                It.IsAny<string>(),
+                It.IsAny<string>()),
+            Times.Never,
+            "404-specific message must not appear for non-404 failures");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private WorkItemAgentService CreateService(string workItemId)
