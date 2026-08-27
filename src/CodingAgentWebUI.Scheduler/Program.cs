@@ -71,9 +71,9 @@ var schedulerLogLevel = CodingAgentWebUI.Infrastructure.Telemetry.LogLevelParser
     Environment.GetEnvironmentVariable("LOG_LEVEL"),
     Serilog.Events.LogEventLevel.Information);
 
-builder.Host.UseSerilog((ctx, services, loggerConfig) =>
+builder.Host.UseSerilog((ctx, lc) =>
 {
-    loggerConfig
+    lc
         .MinimumLevel.Is(schedulerLogLevel)
         .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
         // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
@@ -82,6 +82,8 @@ builder.Host.UseSerilog((ctx, services, loggerConfig) =>
         .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
         // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
         .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
+        // Suppress OpenTelemetry SDK internal logs (chatty at Debug — export errors still pass at Warning+)
+        .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
         .Enrich.FromLogContext()
         .Enrich.WithSpan()
         .WriteTo.Console(

@@ -7,7 +7,7 @@ metadata:
 data:
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.otel.endpoint | quote }}
   OTEL_EXPORTER_OTLP_PROTOCOL: {{ .Values.otel.protocol | quote }}
-  OTEL_SERVICE_NAME: {{ .Values.otel.serviceName | quote }}
+  OTEL_SERVICE_NAME: {{ .Values.otel.orchestratorServiceName | quote }}
   OTEL_RESOURCE_ATTRIBUTES: {{ .Values.otel.resourceAttributes | quote }}
   PIPELINE_LOOP_STARTUP_DELAY_SECONDS: {{ .Values.orchestrator.env.pipelineLoopStartupDelaySeconds | quote }}
   READINESS_DRAIN_DELAY_SECONDS: {{ .Values.orchestrator.env.readinessDrainDelaySeconds | quote }}

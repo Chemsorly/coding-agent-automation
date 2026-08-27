@@ -77,6 +77,8 @@ builder.Host.UseSerilog((ctx, lc) => lc
     .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
     // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
     .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
+    // Suppress OpenTelemetry SDK internal logs (chatty at Debug — export errors still pass at Warning+)
+    .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.WithSpan()
     .WriteTo.Console(

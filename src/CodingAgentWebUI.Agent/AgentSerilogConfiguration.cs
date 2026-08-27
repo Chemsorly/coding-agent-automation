@@ -28,6 +28,8 @@ internal static class AgentSerilogConfiguration
             .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
             // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
             .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
+            // Suppress OpenTelemetry SDK internal logs (chatty at Debug — export errors still pass at Warning+)
+            .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
             .Enrich.FromLogContext()
             .Enrich.WithSpan()
             .Enrich.WithProperty("AgentId", agentId)

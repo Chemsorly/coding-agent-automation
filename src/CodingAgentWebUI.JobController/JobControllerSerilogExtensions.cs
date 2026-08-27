@@ -20,6 +20,8 @@ internal static class JobControllerSerilogExtensions
         string serviceName,
         string? environmentName = null)
     {
+        ArgumentNullException.ThrowIfNull(lc);
+        ArgumentNullException.ThrowIfNull(serviceName);
         var endpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
         if (string.IsNullOrWhiteSpace(endpoint))
             return lc;

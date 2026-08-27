@@ -111,7 +111,9 @@ existingSecret: ""
 otel:
   endpoint: ""
   protocol: grpc
-  serviceName: coding-agent-orchestrator
+  # OTEL_SERVICE_NAME for the orchestrator only. API, JobController and Scheduler have
+  # their own fixed service names (coding-agent-api, etc.) set in their deployment templates.
+  orchestratorServiceName: coding-agent-orchestrator
   resourceAttributes: ""
 
 # ── ServiceAccount ───────────────────────────────────────────────────────────
