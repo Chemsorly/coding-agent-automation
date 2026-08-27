@@ -142,6 +142,8 @@ Usage (inside an env: list, indented to 12):
   value: {{ .root.Values.otel.endpoint | quote }}
 - name: OTEL_EXPORTER_OTLP_PROTOCOL
   value: {{ .root.Values.otel.protocol | quote }}
+- name: OTEL_RESOURCE_ATTRIBUTES
+  value: {{ .root.Values.otel.resourceAttributes | quote }}
 {{- end }}
 
 {{/*

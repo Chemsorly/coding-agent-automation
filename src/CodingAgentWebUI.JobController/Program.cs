@@ -71,6 +71,12 @@ var logLevel = Enum.TryParse<Serilog.Events.LogEventLevel>(
 builder.Host.UseSerilog((ctx, lc) => lc
     .MinimumLevel.Is(logLevel)
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
+    .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
+    // Suppress per-request HttpClient trace logs (Start/End fire at Debug on every outbound call)
+    .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
+    // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
+    .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.WithSpan()
     .WriteTo.Console(
@@ -97,6 +103,9 @@ builder.Services.AddOpenTelemetry()
          // RecordDispatchLatency and LogTerminalStatus are all called from DispatchLoop/ReconciliationLoop.
          // Without this AddMeter, those measurements are taken but never exported.
          .AddMeter(WorkDistributionTelemetry.MeterName)
+         // PipelineTelemetry instruments (jobs.completed, jobs.failed, job duration, queue wait, etc.)
+         // are recorded via the pipeline library inside the Job Controller process.
+         .AddMeter(PipelineTelemetry.SourceName)
          // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
          // histograms and counters, which Grafana Cloud silently drops.
          .AddOtlpExporter((_, readerOptions) =>

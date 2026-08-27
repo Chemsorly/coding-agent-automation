@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Infrastructure.Telemetry;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Scheduler;
 using OpenTelemetry.Metrics;
@@ -75,14 +76,19 @@ builder.Host.UseSerilog((ctx, services, loggerConfig) =>
     loggerConfig
         .MinimumLevel.Is(schedulerLogLevel)
         .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-        // Suppress per-request HttpClient trace logs (OTLP/trace exports fire at Debug)
+        // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
+        .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
+        // Suppress per-request HttpClient trace logs (OTLP/trace exports fire at Debug on every call)
         .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
+        // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
+        .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
         .ReadFrom.Services(services)
         .Enrich.FromLogContext()
         .Enrich.WithSpan()
         .WriteTo.Console(
             outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
-            theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None);
+            theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+        .WriteToOtlpIfConfigured("coding-agent-scheduler", ctx.HostingEnvironment.EnvironmentName);
 }, preserveStaticLogger: true);
 
 // ── Port 8091 ─────────────────────────────────────────────────────────────
@@ -99,7 +105,11 @@ builder.Services.AddOpenTelemetry()
         .AddOtlpExporter())
     .WithMetrics(m => m.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation()
         .AddMeter(CodingAgentWebUI.Pipeline.Telemetry.WorkDistributionTelemetry.MeterName)
-        .AddOtlpExporter());
+        .AddMeter(CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.SourceName)
+        // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
+        // histograms and counters, which Grafana Cloud silently drops.
+        .AddOtlpExporter((_, readerOptions) =>
+            readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative));
 
 var app = builder.Build();
 

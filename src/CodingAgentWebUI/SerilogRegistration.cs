@@ -27,6 +27,8 @@ internal static class SerilogRegistration
             .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
             // Suppress per-request HttpClient trace logs (Start/End fire at Debug on every outbound call)
             .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
+            // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
+            .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
             .Enrich.FromLogContext()
             .Enrich.WithSpan()
             .WriteTo.Console(
