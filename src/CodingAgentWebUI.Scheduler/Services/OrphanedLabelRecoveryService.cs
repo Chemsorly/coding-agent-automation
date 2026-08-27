@@ -26,6 +26,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
     private readonly IOrchestratorRunService _runService;
     private readonly IPipelineApiConfigClient _configClient;
+    private readonly IPipelineApiWorkItemClient _workItemClient;
     private readonly IProviderFactory _providerFactory;
     private readonly ILabelService _labelService;
     private readonly ILeaderGate? _leaderGate;
@@ -35,11 +36,12 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     public OrphanedLabelRecoveryService(
         IOrchestratorRunService runService,
         IPipelineApiConfigClient configClient,
+        IPipelineApiWorkItemClient workItemClient,
         IProviderFactory providerFactory,
         ILabelService labelService,
         ILeaderGate? leaderGate,
         ILogger logger)
-        : this(runService, configClient, providerFactory, labelService, leaderGate, logger, DefaultGracePeriod)
+        : this(runService, configClient, workItemClient, providerFactory, labelService, leaderGate, logger, DefaultGracePeriod)
     {
     }
 
@@ -49,6 +51,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     internal OrphanedLabelRecoveryService(
         IOrchestratorRunService runService,
         IPipelineApiConfigClient configClient,
+        IPipelineApiWorkItemClient workItemClient,
         IProviderFactory providerFactory,
         ILabelService labelService,
         ILeaderGate? leaderGate,
@@ -57,6 +60,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     {
         _runService = runService;
         _configClient = configClient;
+        _workItemClient = workItemClient;
         _providerFactory = providerFactory;
         _labelService = labelService;
         _leaderGate = leaderGate;
@@ -251,6 +255,33 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         {
             _logger.Debug(
                 "Orphaned label recovery: issue {Identifier} completed recently, skipping",
+                issue.Identifier);
+            return false;
+        }
+
+        // Defense 3: Ask the API whether this issue has a non-terminal WorkItem right now.
+        // This is the authoritative check — the Scheduler's in-memory run tracking
+        // (SchedulerRunQueryService.IsIssueBeingProcessed) always returns false because
+        // the Scheduler doesn't own the run registry. A live agent connected to the hub
+        // owns a Running WorkItem in Postgres; IsIssueDistributedAsync returns true for
+        // any WorkItem in a non-terminal status (Pending, Running, etc.). This prevents
+        // the recovery service from misclassifying an actively-running issue as orphaned.
+        try
+        {
+            if (await _workItemClient.IsIssueDistributedAsync(issue.Identifier, providerConfigId, ct))
+            {
+                _logger.Debug(
+                    "Orphaned label recovery: issue {Identifier} has an active WorkItem, skipping",
+                    issue.Identifier);
+                return false;
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // API unreachable — fail safe: do NOT mark as orphaned.
+            _logger.Warning(ex,
+                "Orphaned label recovery: IsIssueDistributed check failed for issue {Identifier}, skipping to avoid false-positive",
                 issue.Identifier);
             return false;
         }

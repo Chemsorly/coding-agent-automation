@@ -109,6 +109,8 @@ public sealed class HubConnectionManager : IHubConnectionManager
         var derivedKey = DeriveKey(apiKey, agentId.Value);
         var hubUrl = $"{orchestratorUrl.TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString(agentId.Value)}";
 
+        _logger.Information("HubConnectionManager: target hub URL = {HubUrl}", hubUrl);
+
         _connection = new HubConnectionBuilder()
             .WithUrl(hubUrl, options =>
             {

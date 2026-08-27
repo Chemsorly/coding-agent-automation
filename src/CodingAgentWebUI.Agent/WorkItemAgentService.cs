@@ -242,7 +242,24 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            _logger.Error(ex, "Failed to connect/register for work item {WorkItemId}, posting Failed", _workItemId);
+            // A 404 on the SignalR negotiate endpoint means the hub route is unreachable —
+            // either the API pod is mid-rollout, the OrchestratorUrl is wrong, or the hub
+            // was never registered (startup ordering issue). Log the hub URL explicitly so
+            // the cause is visible in pod logs without needing to cross-reference other pods.
+            var is404 = ex.Message.Contains("404") || ex.Message.Contains("Not Found");
+            if (is404)
+            {
+                _logger.Error(ex,
+                    "SignalR hub negotiate returned 404 for work item {WorkItemId} — hub route unreachable. " +
+                    "Check that OrchestratorUrl ({OrchestratorUrl}) points to the API service (port 8090) " +
+                    "and that the API pod is fully ready. Posting Failed.",
+                    _workItemId,
+                    Environment.GetEnvironmentVariable("ORCHESTRATOR_URL") ?? "(not set)");
+            }
+            else
+            {
+                _logger.Error(ex, "Failed to connect/register for work item {WorkItemId}, posting Failed", _workItemId);
+            }
             await PostFailedStatusAsync($"Connection/registration failed: {ex.Message}");
             return 1;
         }

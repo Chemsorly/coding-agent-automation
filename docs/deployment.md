@@ -4,18 +4,18 @@
 
 The application runs on Kubernetes as five distinct processes:
 
-- **Orchestrator** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (scoped per circuit) subscribes to the API hub for live run streaming.
-- **Pipeline API** (`CodingAgentWebUI.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `JobDeduplicationGuardService`, `ConsolidationWorkItemDispatchService`, `DatabaseMaintenanceService`, and `ChatJobDispatcher`.
+- **Orchestrator** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (defined in `CodingAgentWebUI.Api.Client`, scoped per Blazor circuit) subscribes to the API hub for live run streaming.
+- **Pipeline API** (`CodingAgentWebUI.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `AgentReservationService` (`JobDeduplicationGuardService` is a backward-compat alias), `DatabaseMaintenanceService`, and `ChatJobDispatcher`.
 - **Job Controller** (`CodingAgentWebUI.JobController`) — Kubernetes Job dispatch. Claims `WorkItem` rows from the API and creates K8s Jobs. Leader-elected via `caa-{release}-dispatch-lock` Lease. Stateless between dispatches; all state lives in Postgres via the API.
 - **Scheduler** (`CodingAgentWebUI.Scheduler`) — Owns all scheduled/periodic background work: orphaned label recovery, housekeeping, work-item metrics polling, and periodic maintenance sweeps. No direct Postgres connection — all persistence goes through the Pipeline API. Leader-elected via `caa-{release}-scheduler-lock` Lease.
 - **Agent Host** (`CodingAgentWebUI.Agent`) — Ephemeral K8s Job pod. Connects to the Pipeline API hub using `AGENT_API_KEY` as a Bearer token. Picks up assignments via `GET /api/work-items/{id}/assignment`, reports progress and terminal status via hub methods and `POST /api/work-items/{id}/status`. Two execution modes: _work-item pods_ (spawned with `--work-item-id`) and _chat pods_.
 
 Supporting libraries (shared, not deployed independently):
 
-- **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API.
-- **Infrastructure.Persistence** (`CodingAgentWebUI.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Linked into the Pipeline API.
-- **Infrastructure.Providers** (`CodingAgentWebUI.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API and Agent. The Blazor Orchestrator (`CodingAgentWebUI`) and Job Controller have no direct reference.
-- **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline model, step execution, `PipelineLoopService`, interfaces, constants. Linked into the Orchestrator and Pipeline API.
+- **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API, Scheduler, and Orchestrator (transitively pulls in `Infrastructure.Persistence` and `Infrastructure.Providers`).
+- **Infrastructure.Persistence** (`CodingAgentWebUI.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Directly referenced by `CodingAgentWebUI.Api`, `CodingAgentWebUI.Orchestration`, and `CodingAgentWebUI.Hub`. The Scheduler and Orchestrator have no direct reference but use it transitively through Orchestration.
+- **Infrastructure.Providers** (`CodingAgentWebUI.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API, Agent, Scheduler, and Orchestration (transitive). The Job Controller has no direct or transitive reference.
+- **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline model, step execution, `HousekeepingService`, interfaces, constants. Linked into the Scheduler (which runs `PipelineLoopService`) and Pipeline API.
 - **Hub** (`CodingAgentWebUI.Hub`) — Full hub implementation: `AgentHub` (split across partial classes), authentication handlers (`AgentApiKeyAuthHandler`), `ChatJobDispatcher` (ephemeral chat pod dispatch), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), completion strategies, `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
 
 ### Agent API Keys
@@ -160,7 +160,7 @@ Dispatch and reconciliation are leader-elected across the system. Each process h
 
 #### Leader-Dependent Services
 
-Two independent leases are used — one per process:
+Three independent leases are used — one per relevant process (the Pipeline API has no leader election):
 
 **Job Controller** (`caa-{release}-dispatch-lock` lease):
 
@@ -169,23 +169,15 @@ Two independent leases are used — one per process:
 | `DispatchService` | Polls for pending WorkItems and dispatches K8s Jobs | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 | `ReconciliationService` | Runs startup reconciliation, watches K8s Jobs, enforces timeouts | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 
-**Pipeline API** (`caa-{release}-api-lock` lease):
+**Pipeline API** — No leader election. All API replicas handle requests concurrently. `DatabaseMaintenanceService` is a singleton triggered by the Scheduler via HTTP (`POST /api/scheduler/maintenance/retention-sweep`); `ChatJobDispatcher` and consolidation dispatch use K8s double-dispatch guards instead of a lease. Set `signalr.redis.connectionString` when running more than one API replica.
 
-| Service | Behavior When Leader | Behavior When Non-Leader |
-|---------|---------------------|--------------------------|
-| `ConsolidationWorkItemDispatchService` | Dispatches consolidation K8s Jobs | Waits |
-| `DatabaseMaintenanceService` | Runs retention sweep | Waits |
-
-**Orchestrator** (`caa-{release}-pipeline-loop-lock` lease):
-
-| Service | Behavior When Leader | Behavior When Non-Leader |
-|---------|---------------------|--------------------------|
-| `PipelineLoopService` | Dispatches pipeline runs | Pauses (leader gate blocks loop entry) |
+**Orchestrator** (`caa-{release}-pipeline-loop-lock` lease) — Deprecated: `PipelineLoopService` moved to the Scheduler in Spec 047. The Orchestrator now only polls `/loop/status` and dispatches individual runs via HTTP. The lease still exists but governs no background services in the Orchestrator.
 
 **Scheduler** (`caa-{release}-scheduler-lock` lease):
 
 | Service | Behavior When Leader | Behavior When Non-Leader |
 |---------|---------------------|--------------------------|
+| `PipelineLoopService` | Dispatches pipeline runs | Pauses (leader gate blocks loop entry) |
 | `OrphanedLabelRecoveryService` | Sweeps for issues with stale `agent:in-progress` labels | Waits |
 | `HousekeepingService` | Manages `agent:done` PRs, branch updates, and stale branch cleanup | Waits |
 | `WorkItemCountsPoller` | Emits work-item count metrics to `CodingAgent.WorkDistribution` | Waits |
@@ -204,7 +196,7 @@ Bound from the `LeaderElection` configuration section:
 | `Identity` | *(auto-detected)* | Pod identity. Auto-reads from `POD_NAME` → `HOSTNAME` → `MachineName` |
 | `FailOnNonKubernetesEnvironment` | false | If true, startup fails outside K8s. If false, logs a warning and remains non-leader (graceful degradation for local dev) |
 
-Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller, defaults to `caa-{release}-dispatch-lock`), `orchestrator.leaderElection.pipelineLoopLeaseName` (Orchestrator, defaults to `caa-{release}-pipeline-loop-lock`), `scheduler.leaderElection.leaseName` (Scheduler, defaults to `caa-{release}-scheduler-lock`), and the API lease (`caa-{release}-api-lock`) which is hardcoded in the API Helm template with no `values.yaml` override. The Orchestrator and API leases use different names to prevent competition.
+Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller, defaults to `caa-{release}-dispatch-lock`), `orchestrator.leaderElection.pipelineLoopLeaseName` (Orchestrator, defaults to `caa-{release}-pipeline-loop-lock`), and `scheduler.leaderElection.leaseName` (Scheduler, defaults to `caa-{release}-scheduler-lock`). The Pipeline API has no leader election lease.
 
 #### RBAC Requirements
 

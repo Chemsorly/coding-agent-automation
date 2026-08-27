@@ -78,6 +78,8 @@ spec:
             {{- include "coding-agent-automation.otelEnv" (dict "serviceName" "coding-agent-jobcontroller" "root" .) | nindent 12 }}
             # Leader election lease names — release-scoped to prevent collision
             # when multiple Helm releases share a namespace (e.g. staging vs prod).
+            - name: LOG_LEVEL
+              value: {{ .Values.jobController.env.logLevel | default "Information" | quote }}
             - name: LeaderElection__DispatchLeaseName
               value: {{ include "coding-agent-automation.leaseName" (dict "override" .Values.jobController.leaderElection.dispatchLeaseName "suffix" "dispatch-lock" "root" .) }}
             - name: LeaderElection__Namespace

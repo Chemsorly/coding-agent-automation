@@ -69,7 +69,10 @@ public sealed class DispatchLoop
         }
 
         if (pending.Count == 0)
+        {
+            Log.Debug("DispatchLoop: 0 pending work items — skipping cycle");
             return;
+        }
 
         Log.Debug("DispatchLoop: {Count} pending work item(s) found, building concurrency map", pending.Count);
 
@@ -235,7 +238,9 @@ public sealed class DispatchLoop
         try
         {
             await _k8sClient.CreateJobAsync(job, _options.Namespace, ct);
-            Log.Information("K8s Job {JobName} created for WorkItem {Id}", jobName, item.Id);
+            Log.Information(
+                "K8s Job {JobName} created for WorkItem {Id} (OrchestratorUrl={OrchestratorUrl})",
+                jobName, item.Id, _options.OrchestratorUrl);
         }
         catch (Exception ex)
         {

@@ -306,6 +306,10 @@ jobController:
     limits:
       cpu: 500m
       memory: 256Mi
+  env:
+    # Log level for the Job Controller and the agent pods it spawns.
+    # Agent pods inherit this value via JobSpecBuilder env propagation.
+    logLevel: Information
   leaderElection:
     # Override the dispatch lease name.
     # Empty (default) = release-scoped: caa-<release>-dispatch-lock

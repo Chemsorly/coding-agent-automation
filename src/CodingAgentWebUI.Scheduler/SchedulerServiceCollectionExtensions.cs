@@ -257,6 +257,7 @@ public static class SchedulerServiceCollectionExtensions
         services.AddHostedService(sp => new OrphanedLabelRecoveryService(
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<IPipelineApiConfigClient>(),
+            sp.GetRequiredService<IPipelineApiWorkItemClient>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
             sp.GetService<ILeaderElectionService>(),
