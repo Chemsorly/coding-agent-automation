@@ -15,9 +15,9 @@ public class McpConfigWriterPropertyTests
 {
     /// <summary>
     /// Feature: 018-encapsulation-improvements, Property 4: MCP config writer determinism
-    /// For any list of McpServerConfig instances (mixing stdio and HTTP types),
+    /// For any list of McpServerConfig instances (mixing stdio, HTTP, and SSE types),
     /// McpConfigWriter.WriteConfig produces valid JSON where every server entry contains
-    /// either (command + args) for stdio servers or (url) for HTTP servers.
+    /// either (command + args) for stdio servers or (url) for HTTP/SSE servers.
     /// **Validates: Requirements 34.1, 34.2, 34.5**
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = [typeof(McpServerConfigArbitrary)])]
@@ -59,11 +59,17 @@ public class McpConfigWriterPropertyTests
                 Assert.True(mcpServers.TryGetProperty(name, out var entry),
                     $"Server '{name}' missing from output");
 
-                if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase))
+                // TODO: This branch relies on the closed-world assumption that the generator only emits
+                // "stdio", "http", or "sse". If a future generator change introduces an unrecognised type,
+                // the else-branch would silently accept whatever the writer emits rather than failing.
+                // Consider adding Assert.Contains(new[]{"stdio","http","sse"}, server.Type) before this
+                // branch to make the invariant explicit and catch generator drift early.
+                if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(server.Type, "sse", StringComparison.OrdinalIgnoreCase))
                 {
-                    // HTTP servers must have url property
+                    // HTTP and SSE servers must have url property
                     Assert.True(entry.TryGetProperty("url", out _),
-                        $"HTTP server '{name}' missing 'url' property");
+                        $"HTTP/SSE server '{name}' missing 'url' property");
                     // headers must appear iff non-empty
                     var hasHeaders = entry.TryGetProperty("headers", out _);
                     Assert.Equal(server.Headers.Count > 0, hasHeaders);
@@ -119,10 +125,118 @@ public class McpConfigWriterPropertyTests
                 Directory.Delete(tempDir2, recursive: true);
         }
     }
+
+    /// <summary>
+    /// An SSE-type server with a URL and headers must produce a JSON entry with
+    /// "type": "sse", "url", and "headers" — not "command" or "args".
+    /// Verifies acceptance criterion: McpConfigWriter serializes Url and Headers for "sse" server types.
+    /// </summary>
+    // TODO: Case-insensitive matching is not covered by the tests below. The production condition uses
+    // StringComparison.OrdinalIgnoreCase, so "SSE" and "Sse" should also route to the URL branch.
+    // Consider adding a test with Type = "SSE" (uppercase) to guard against a future accidental removal
+    // of OrdinalIgnoreCase from the condition in McpConfigWriter.WriteConfig.
+    [Fact]
+    public void WriteConfig_SseType_WithHeaders_ProducesUrlAndHeadersEntry()
+    {
+        // Arrange
+        var server = new McpServerConfig
+        {
+            Name = "sse-server",
+            Type = "sse",
+            Url = "http://mcp-server:8080/sse",
+            Headers = new Dictionary<string, string>
+            {
+                ["Authorization"] = "Bearer token123"
+            }
+        };
+
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var tempFile = Path.Combine(tempDir, "mcp.json");
+
+        try
+        {
+            // Act
+            McpConfigWriter.WriteConfig(tempFile, [server]);
+
+            // Assert
+            var json = File.ReadAllText(tempFile);
+            var doc = JsonDocument.Parse(json);
+            var entry = doc.RootElement.GetProperty("mcpServers").GetProperty("sse-server");
+
+            // Must have type=sse (not "http")
+            Assert.Equal("sse", entry.GetProperty("type").GetString());
+            // Must have url
+            Assert.Equal("http://mcp-server:8080/sse", entry.GetProperty("url").GetString());
+            // Must have headers
+            Assert.True(entry.TryGetProperty("headers", out var headers),
+                "Expected 'headers' property to be present");
+            Assert.Equal("Bearer token123", headers.GetProperty("Authorization").GetString());
+            // Must NOT have command or args
+            Assert.False(entry.TryGetProperty("command", out _),
+                "SSE entry must not contain 'command'");
+            Assert.False(entry.TryGetProperty("args", out _),
+                "SSE entry must not contain 'args'");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// An SSE-type server with no headers must produce a JSON entry with
+    /// "type": "sse" and "url" but without a "headers" key — matching the behavior of HTTP servers
+    /// with empty headers.
+    /// </summary>
+    [Fact]
+    public void WriteConfig_SseType_NoHeaders_OmitsHeadersProperty()
+    {
+        // Arrange
+        var server = new McpServerConfig
+        {
+            Name = "sse-server-noheaders",
+            Type = "sse",
+            Url = "http://mcp-server:8080/sse"
+            // Headers defaults to empty dictionary
+        };
+
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var tempFile = Path.Combine(tempDir, "mcp.json");
+
+        try
+        {
+            // Act
+            McpConfigWriter.WriteConfig(tempFile, [server]);
+
+            // Assert
+            var json = File.ReadAllText(tempFile);
+            var doc = JsonDocument.Parse(json);
+            var entry = doc.RootElement.GetProperty("mcpServers").GetProperty("sse-server-noheaders");
+
+            // Must have type=sse
+            Assert.Equal("sse", entry.GetProperty("type").GetString());
+            // Must have url
+            Assert.Equal("http://mcp-server:8080/sse", entry.GetProperty("url").GetString());
+            // Must NOT have headers (empty headers are omitted)
+            Assert.False(entry.TryGetProperty("headers", out _),
+                "Expected 'headers' property to be absent when headers are empty");
+            // Must NOT have command or args
+            Assert.False(entry.TryGetProperty("command", out _),
+                "SSE entry must not contain 'command'");
+            Assert.False(entry.TryGetProperty("args", out _),
+                "SSE entry must not contain 'args'");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
 }
 
 /// <summary>
-/// FsCheck arbitrary that generates random McpServerConfig instances mixing stdio and HTTP types.
+/// FsCheck arbitrary that generates random McpServerConfig instances mixing stdio, HTTP, and SSE types.
 /// </summary>
 public static class McpServerConfigArbitrary
 {
@@ -197,7 +311,24 @@ public static class McpServerConfigArbitrary
                 Headers = headers
             };
 
-        var serverGen = Gen.OneOf(stdioGen, httpGen);
+        var sseGen =
+            from name in Gen.Elements(ServerNames)
+            from url in Gen.Elements(Urls)
+            from disabled in boolGen
+            from headerCount in Gen.Choose(0, 2)
+            from headerKeys in Gen.ArrayOf(Gen.Elements(HeaderKeys), headerCount)
+            from headerVals in Gen.ArrayOf(Gen.Elements(HeaderValues), headerCount)
+            let headers = headerKeys.Zip(headerVals).DistinctBy(p => p.First).ToDictionary(p => p.First, p => p.Second)
+            select new McpServerConfig
+            {
+                Name = name,
+                Type = "sse",
+                Url = url,
+                Disabled = disabled,
+                Headers = headers
+            };
+
+        var serverGen = Gen.OneOf(stdioGen, httpGen, sseGen);
         return serverGen.ToArbitrary();
     }
 
