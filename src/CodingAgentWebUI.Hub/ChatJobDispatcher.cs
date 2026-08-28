@@ -608,6 +608,11 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 entry.JobName, ex.Message);
         }
 
+        // Eagerly remove from registry before CleanupSession so the chat agent is not visible
+        // as Disconnected in the UI after the pod exits. Deregister is idempotent — if
+        // OnDisconnectedAsync fires first, the second call is a safe no-op.
+        _registry.Deregister(new AgentId(agentId));
+
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
         CleanupSession(agentId, entry, selectorEncoded, "force_deleted");
         ChatTelemetry.PodForceTerminations.Add(1,
