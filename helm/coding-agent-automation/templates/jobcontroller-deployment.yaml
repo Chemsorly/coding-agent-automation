@@ -33,6 +33,16 @@ spec:
       serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-jobcontroller
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: {{ .Values.jobController.terminationGracePeriodSeconds }}
+      {{- if gt (int .Values.jobController.replicas) 1 }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "coding-agent-automation.selectorLabels" . | nindent 18 }}
+                  app.kubernetes.io/component: jobcontroller
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
       containers:
         - name: jobcontroller
           image: "{{ .Values.jobController.image.repository }}:{{ .Values.jobController.image.tag | default .Chart.AppVersion }}"
