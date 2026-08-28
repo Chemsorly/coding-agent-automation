@@ -115,8 +115,8 @@ builder.Services.AddOpenTelemetry()
              readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative);
     });
 
-// ── ASPNETCORE_URLS defaults to port 8091 ────────────────────────────────────
-builder.WebHost.UseUrls("http://+:8091"); // NOSONAR S1075 — port is runtime infrastructure config, not a business URL
+// ── ASPNETCORE_URLS defaults to port 8080 ────────────────────────────────────
+builder.WebHost.UseUrls("http://+:8080"); // NOSONAR S1075 — port is runtime infrastructure config, not a business URL
 
 // ── Shutdown timeout ─────────────────────────────────────────────────────────
 builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(30));
