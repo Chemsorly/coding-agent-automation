@@ -407,20 +407,6 @@ public sealed class DispatchLoopTests
         await loop.RunOneCycleAsync(CancellationToken.None);
     }
 
-    // TODO: This test does not directly prove that the production fix is exercised. The mock
-    // returns Task.CompletedTask regardless of whether the production client silences 409 or not,
-    // so reverting the fix in PipelineApiWorkItemClient/PipelineApiConsolidationWorkItemClient
-    // would not cause this test to fail. The 409 no-throw guarantee is verified at the HTTP
-    // client level (RequeueAsync_Conflict_DoesNotThrow in Infrastructure.UnitTests and
-    // RequeueAsync_OnConflict_DoesNotThrow in Pipeline.UnitTests). Consider coupling this
-    // test to the real client behavior rather than a mock to close the gap.
-
-    // TODO: The acceptance criterion "no Error log is emitted by SafeRequeueAsync for a 409
-    // response" is not directly asserted. DispatchLoop uses a static Serilog.Log.ForContext<>()
-    // logger (not injected), making it impossible to verify Log.Error absence via Moq. To close
-    // this gap, either inject ILogger<DispatchLoop> instead of using the static accessor, or
-    // use a Serilog in-memory sink in tests and assert no Error-level events were written.
-
     /// <summary>
     /// When K8s fails and the real client receives a 409 from /requeue, it now returns
     /// normally (no throw). This test verifies that SafeRequeueAsync's catch block —

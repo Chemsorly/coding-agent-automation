@@ -385,12 +385,6 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
         _server.LogEntries.Should().HaveCount(1, "the request was sent and the 409 was received");
     }
 
-    // TODO: PipelineApiConsolidationWorkItemClient.RequeueAsync received the same 409 no-op fix
-    // but has no WireMock-level unit test covering the 409 path. Add a test analogous to
-    // RequeueAsync_Conflict_DoesNotThrow above for PipelineApiConsolidationWorkItemClient.
-    // The acceptance criterion is only partially satisfied: PipelineApiWorkItemClient is covered,
-    // PipelineApiConsolidationWorkItemClient is not.
-
     [Fact]
     public async Task PostLastProgressAsync_SendsToCorrectPath()
     {
