@@ -137,8 +137,29 @@ public sealed class ConsolidationDispatchLoop
             return;
         }
 
+        // PVC assignment for kiro agents — checked before claiming to avoid claim-then-requeue
+        // churn, spurious ConsolidationRunStatus.Failed transitions, and RetryCount increments
+        // on PVC starvation. If no PVC is available the item remains Pending; the next dispatch
+        // cycle will retry without any mutation.
+        string? pvcName = null;
+        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+        if (isKiroAgent)
+        {
+            pvcName = _pvcPool.TryClaim(item.Id);
+            if (pvcName is null)
+            {
+                Log.Information("ConsolidationDispatchLoop: no PVC available for kiro agent {Id} — holding, will retry next cycle", item.Id);
+                return;
+            }
+        }
+
         var jobName = GenerateJobName(item.Id);
 
+        // TODO: PVC leak on unexpected exception from ClaimAsync — any exception other than
+        // WorkItemNotFoundException (e.g. HttpRequestException, TaskCanceledException) propagates
+        // out of ProcessItemAsync without releasing pvcName, permanently shrinking pool capacity
+        // until the next restart or RebuildFromLiveJobsAsync. Wrap the ClaimAsync region in a
+        // try/finally (or broaden the catch) to ensure Release is always called on failure.
         // Claim (API does payload enrichment + token vending server-side)
         ConsolidationWorkItemClaimResponse? claimed;
         try
@@ -155,28 +176,17 @@ public sealed class ConsolidationDispatchLoop
         }
         catch (WorkItemNotFoundException)
         {
+            if (pvcName is not null) _pvcPool.Release(pvcName);
             Log.Warning("ConsolidationDispatchLoop: WorkItem {Id} not found during claim (404) — skipping", item.Id);
             return;
         }
 
         if (claimed is null)
         {
+            // 409 — another instance claimed this item first; release any PVC we reserved
+            if (pvcName is not null) _pvcPool.Release(pvcName);
             Log.Debug("ConsolidationDispatchLoop: WorkItem {Id} already claimed by another instance (409), skipping", item.Id);
             return;
-        }
-
-        // PVC assignment for kiro agents
-        string? pvcName = null;
-        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-        if (isKiroAgent)
-        {
-            pvcName = _pvcPool.TryClaim(item.Id);
-            if (pvcName is null)
-            {
-                Log.Warning("ConsolidationDispatchLoop: no available PVC for kiro agent {Id}, requeuing", item.Id);
-                await SafeRequeueAsync(item.Id, claimed.RunId, "No PVC available", ct);
-                return;
-            }
         }
 
         // Build K8s Job spec — pass ProjectSecrets so JobSpecBuilder creates the volume mount

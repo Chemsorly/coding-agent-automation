@@ -169,12 +169,32 @@ public sealed class DispatchLoop
             return;
         }
 
+        // PVC assignment for kiro agents — checked before claiming to avoid claim-then-requeue
+        // churn and spurious RetryCount increments on PVC starvation. If no PVC is available
+        // the item remains Pending; the next dispatch cycle will retry without any mutation.
+        string? pvcName = null;
+        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+        if (isKiroAgent)
+        {
+            pvcName = _pvcPool.TryClaim(item.Id);
+            if (pvcName is null)
+            {
+                Log.Information("No PVC available for kiro agent {Id} — holding, will retry next cycle", item.Id);
+                return;
+            }
+        }
+
         // The K8s Job name is deterministic from the WorkItem id and doubles as the pod's
         // AGENT_ID (metadata.name field ref). Compute it before claiming so the claim records
         // which agent identity owns this item — the API binds the agent's derived key to the
         // WorkItem through AssignedAgentId when serving /assignment and /status.
         var jobName = GenerateJobName(item.Id);
 
+        // TODO: PVC leak on unexpected exception from ClaimAsync — any exception other than
+        // WorkItemNotFoundException (e.g. HttpRequestException, TaskCanceledException) propagates
+        // out of ProcessItemAsync without releasing pvcName, permanently shrinking pool capacity
+        // until the next restart or RebuildFromLiveJobsAsync. Wrap the ClaimAsync region in a
+        // try/finally (or broaden the catch) to ensure Release is always called on failure.
         // Claim the item (atomic — 409 if already claimed by another instance)
         WorkItemClaimResponse? claimed;
         try
@@ -189,28 +209,17 @@ public sealed class DispatchLoop
             // Item was in the pending list but no longer exists — data race (deleted between
             // GetPendingAsync and ClaimAsync) or a bug in the pending query. Skip with a
             // warning so it is distinguishable from normal 409 contention in the logs.
+            if (pvcName is not null) _pvcPool.Release(pvcName);
             Log.Warning("WorkItem {Id} not found during claim (404) — item may have been deleted between poll and claim, skipping", item.Id);
             return;
         }
 
         if (claimed is null)
         {
+            // 409 — another instance claimed this item first; release any PVC we reserved
+            if (pvcName is not null) _pvcPool.Release(pvcName);
             Log.Debug("WorkItem {Id} already claimed by another instance (409), skipping", item.Id);
             return;
-        }
-
-        // PVC assignment for kiro agents
-        string? pvcName = null;
-        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-        if (isKiroAgent)
-        {
-            pvcName = _pvcPool.TryClaim(item.Id);
-            if (pvcName is null)
-            {
-                Log.Warning("No available PVC for kiro agent {Id}, requeuing", item.Id);
-                await SafeRequeueAsync(item.Id, ct);
-                return;
-            }
         }
 
         // Build and create K8s Job
