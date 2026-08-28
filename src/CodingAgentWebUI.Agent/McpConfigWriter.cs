@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Agent;
 /// Utility for writing MCP (Model Context Protocol) server configuration files.
 /// Consolidates the shared logic previously duplicated in <see cref="AgentWorkerService"/>
 /// and <see cref="LocalPipelineExecutor"/>.
-/// Supports both stdio (command-based) and HTTP (URL-based) server types.
+/// Supports stdio (command-based), HTTP (URL-based), and SSE (Server-Sent Events URL-based) server types.
 /// </summary>
 public static class McpConfigWriter
 {
@@ -30,17 +30,14 @@ public static class McpConfigWriter
         var serversDict = new Dictionary<string, object>();
         foreach (var server in servers)
         {
-            // TODO: SSE-type servers fall through to the stdio else-branch, so their `Headers` are silently
-            // dropped from the generated mcp.json. This is a pre-existing gap (SSE was always in the else
-            // branch), but the addition of Headers makes the omission user-visible. Fix by extending the
-            // condition to also match "sse" (consistent with OpenCodeAgentProvider's http/sse handling).
-            if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(server.Type, "sse", StringComparison.OrdinalIgnoreCase))
             {
                 if (server.Headers.Count > 0)
                 {
                     serversDict[server.Name] = new
                     {
-                        type = "http",
+                        type = server.Type,
                         url = server.Url,
                         headers = server.Headers,
                         disabled = server.Disabled,
@@ -51,7 +48,7 @@ public static class McpConfigWriter
                 {
                     serversDict[server.Name] = new
                     {
-                        type = "http",
+                        type = server.Type,
                         url = server.Url,
                         disabled = server.Disabled,
                         autoApprove = server.AutoApprove

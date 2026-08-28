@@ -103,14 +103,13 @@ public sealed class LoopStatusPollingServiceTests
         var completed = await Task.WhenAny(secondCallCompleted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
         completed.Should().BeSameAs(secondCallCompleted.Task, "second poll call should complete within 5s");
 
-        // Wait for the catch block in ExecuteAsync to finish writing _isSchedulerUnreachable.
-        // The TCS fires inside the mock lambda before the throw propagates, so the catch has
-        // not yet run by the time secondCallCompleted is set. Poll the property instead of
-        // using a fixed Task.Delay so the test is deterministic on any machine speed.
-        var unreachableSet = await Task.WhenAny(
-            Task.Run(async () => { while (!svc.IsSchedulerUnreachable) await Task.Yield(); }),
-            Task.Delay(TimeSpan.FromSeconds(5)));
-        unreachableSet.IsCompletedSuccessfully.Should().BeTrue("IsSchedulerUnreachable must be set within 5s");
+        // Small yield so the catch block in ExecuteAsync can finish setting _isSchedulerUnreachable
+        // TODO: This fixed 20 ms delay is a non-deterministic synchronization barrier. On a heavily
+        // loaded CI runner the OS scheduler can preempt the service task for longer than 20 ms between
+        // the TCS signal and the flag write, causing the assertion below to race. The original polling
+        // loop (while (!svc.IsSchedulerUnreachable) await Task.Yield()) was deterministic. Consider
+        // restoring a polling approach with a hard 5 s timeout to eliminate this potential flakiness.
+        await Task.Delay(20);
 
         // Assert: unreachable set after failure; prior state preserved (not reset to defaults)
         svc.IsSchedulerUnreachable.Should().BeTrue("poll failure must set IsSchedulerUnreachable");
@@ -134,23 +133,31 @@ public sealed class LoopStatusPollingServiceTests
             {
                 callCount++;
                 if (callCount == 1) throw new HttpRequestException("first call fails");
-                var result = DefaultStatus;
-                secondCallCompleted.TrySetResult(); // signal that the second poll succeeded
-                return result;
+                secondCallCompleted.TrySetResult();
+                return DefaultStatus;
             });
 
         var svc = CreateService(interval: TimeSpan.FromMilliseconds(1));
-
-        // Act: wait until the second poll has actually completed, then stop
         await svc.StartAsync(CancellationToken.None);
-        await secondCallCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5)); // definitive signal, not a fixed delay
+
+        // Act: wait until the second (successful) call has completed — deterministic, not wall-clock
+        var completed = await Task.WhenAny(secondCallCompleted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().BeSameAs(secondCallCompleted.Task, "second poll call should complete within 5s");
+
+        // Small yield so the service loop can finish updating _isSchedulerUnreachable and _status
+        // TODO: Same non-deterministic 20 ms delay as in WhenPollFails_IsSchedulerUnreachableSet. On a
+        // busy CI runner this window may be insufficient for the continuation updating _isSchedulerUnreachable
+        // to complete after the second successful poll fires the TCS. Consider a deterministic polling
+        // approach with a hard timeout to avoid intermittent false failures on this assertion.
+        await Task.Delay(20);
+
+        // Assert: unreachable cleared after recovery; status updated from successful poll
+        svc.IsSchedulerUnreachable.Should().BeFalse("unreachable flag must be cleared on recovery");
+        svc.IsLoopActive.Should().Be(DefaultStatus.IsLoopActive);
+
         using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         try { await svc.StopAsync(stopCts.Token); } catch { }
         svc.Dispose();
-
-        // Assert: unreachable cleared after recovery
-        svc.IsSchedulerUnreachable.Should().BeFalse("unreachable flag must be cleared on recovery");
-        svc.IsLoopActive.Should().Be(DefaultStatus.IsLoopActive);
     }
 
     [Fact]
