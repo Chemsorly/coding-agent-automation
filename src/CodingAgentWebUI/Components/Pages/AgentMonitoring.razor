@@ -193,13 +193,22 @@
                         </div>
 
                         <div class="modal-column-right">
-                            @* Spec 045: PipelineSidebar expects PipelineRun (in-memory type); replaced with
-                               a lightweight step + feedback display using PipelineRunSummary from the API.
-                               PipelineSidebar will be restored when a live PipelineRun representation is
-                               available from the API (follow-up task). *@
-                            <div class="monitoring-detail-grid" style="margin-bottom: 8px;">
-                                <div><strong>Current Step:</strong> @(_activeModalCurrentStep ?? modalRun.FinalStep)</div>
-                            </div>
+                            @* Spec 045 follow-up: PipelineSidebar restored via RunStateSnapshot hub event.
+                               _activeModalRunModel is seeded from RunStateSnapshot on SubscribeToRun (active runs)
+                               or from PipelineRunSummary directly (completed runs). Shows fallback while pending. *@
+                            @if (_activeModalRunModel != null)
+                            {
+                                <PipelineSidebar Run="@_activeModalRunModel"
+                                                 IsRunning="@IsActiveRun(modalRun)"
+                                                 MaxRetries="@_maxRetries" />
+                            }
+                            else
+                            {
+                                @* Fallback while RunStateSnapshot is pending for active runs *@
+                                <div class="monitoring-detail-grid" style="margin-bottom: 8px;">
+                                    <div><strong>Current Step:</strong> @(_activeModalCurrentStep ?? modalRun.FinalStep)</div>
+                                </div>
+                            }
 
                             @* ── Feedback Section ── *@
                             <CodingAgentWebUI.Components.Shared.FeedbackSection Feedback="modalRun.Feedback" />

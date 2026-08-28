@@ -52,10 +52,20 @@ public sealed class AgentHubConnection : IAgentHubConnection
             })
             .WithAutomaticReconnect(new InfiniteRetryPolicy())
             .Build();
+
+        // Forward the underlying reconnected event so consumers can re-subscribe to hub groups.
+        _connection.Reconnected += connectionId =>
+        {
+            var handler = Reconnected;
+            return handler is not null ? handler(connectionId) : Task.CompletedTask;
+        };
     }
 
     /// <inheritdoc/>
     public HubConnectionState State => _connection.State;
+
+    /// <inheritdoc/>
+    public event Func<string?, Task>? Reconnected;
 
     /// <inheritdoc/>
     public Task StartAsync(CancellationToken ct = default) => _connection.StartAsync(ct);
