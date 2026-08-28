@@ -156,8 +156,8 @@ public class FaroServiceTests
 
         var sut = new FaroService(js.Object);
 
-        // Must not throw
-        await sut.PushLogAsync("test");
+        var ex = await Record.ExceptionAsync(() => sut.PushLogAsync("test"));
+        Assert.Null(ex);
     }
 
     [Fact]
@@ -170,7 +170,8 @@ public class FaroServiceTests
 
         var sut = new FaroService(js.Object);
 
-        await sut.PushErrorAsync("test");
+        var ex = await Record.ExceptionAsync(() => sut.PushErrorAsync("test"));
+        Assert.Null(ex);
     }
 
     [Fact]
@@ -183,7 +184,8 @@ public class FaroServiceTests
 
         var sut = new FaroService(js.Object);
 
-        await sut.PushEventAsync("test");
+        var ex = await Record.ExceptionAsync(() => sut.PushEventAsync("test"));
+        Assert.Null(ex);
     }
 
     [Fact]
@@ -196,7 +198,8 @@ public class FaroServiceTests
 
         var sut = new FaroService(js.Object);
 
-        await sut.PushLogAsync("circuit gone");
+        var ex = await Record.ExceptionAsync(() => sut.PushLogAsync("circuit gone"));
+        Assert.Null(ex);
     }
 
     // ── NotificationService integration ──────────────────────────────────────
