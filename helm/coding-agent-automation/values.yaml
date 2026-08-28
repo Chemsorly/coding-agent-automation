@@ -162,9 +162,13 @@ workDistribution:
   dispatch:
     intervalSeconds: 10
     rateLimitPerSecond: 10
-    chatSessionMaxDurationSeconds: 7200
+    agentJobTimeoutSeconds: 7200
     chatPodConnectTimeoutSeconds: 120
     chatTerminationGracePeriodSeconds: 120
+    # Maximum seconds a chat pod may remain idle (no client keepalive) before automatic termination.
+    # The Blazor UI sends a heartbeat every 30s while the chat window is open; pods whose window
+    # has been closed or crashed are cleaned up within this window. Default: 90s. Minimum: 10s.
+    chatIdleTimeoutSeconds: 90
   # ReconciliationService settings
   reconciliation:
     intervalSeconds: 30

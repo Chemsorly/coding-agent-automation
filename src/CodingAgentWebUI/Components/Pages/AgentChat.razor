@@ -166,6 +166,9 @@
     private int _launchElapsedSeconds;
     private CancellationTokenSource? _cts;
     private System.Threading.Timer? _elapsedTimer;
+    // Sends a keepalive to the API every ~30s while the chat window is open so the server
+    // knows the circuit is still live and doesn't idle-kill the pod.
+    private System.Threading.Timer? _keepaliveTimer;
 
     // Connect-timeout shown in the counter — read from config in OnInitialized.
     private int _options_connectTimeout = 120;
@@ -396,6 +399,18 @@
         _messages.Clear();
         _streamingContent.Clear();
 
+        // Start sending keepalive heartbeats to the API so the server knows the chat window
+        // is still open. Interval is 30s — well within the 90s default idle timeout.
+        // The timer captures _selectedAgentId by value at creation time; if the field ever
+        // changes (it doesn't in the current flow) the timer would send to the old agent,
+        // which is harmless (server no-ops unknown agentIds).
+        var agentIdForKeepalive = _selectedAgentId;
+        _keepaliveTimer = new System.Threading.Timer(_ =>
+        {
+            if (!string.IsNullOrEmpty(agentIdForKeepalive))
+                ChatDispatcher.SendClientKeepalive(agentIdForKeepalive);
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+
         return Task.CompletedTask;
     }
 
@@ -484,6 +499,9 @@
         // Set inactive first to prevent concurrent DisposeAsync double-terminate
         _isChatActive = false;
 
+        // Stop keepalive timer — pod is about to be terminated
+        if (_keepaliveTimer is not null) { await _keepaliveTimer.DisposeAsync(); _keepaliveTimer = null; }
+
         // Unsubscribe from the hub group for the current session before terminating
         if (!string.IsNullOrEmpty(_activeSessionId) && HubConnection.State == HubConnectionState.Connected)
         {
@@ -553,6 +571,7 @@
         _chatCompletedSub?.Dispose();
 
         if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
+        if (_keepaliveTimer is not null) { await _keepaliveTimer.DisposeAsync(); _keepaliveTimer = null; }
         if (_cts is not null)
             await _cts.CancelAsync();
         _cts?.Dispose();

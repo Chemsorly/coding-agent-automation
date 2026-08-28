@@ -29,7 +29,7 @@ public interface IChatJobDispatcher
     Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Terminates the chat session for the given agent.
+    /// Terminates the active chat session for the given agent.
     ///
     /// <para>
     /// <b>agentId == jobName invariant:</b> the <c>ChatJobDispatcher</c> implementation
@@ -42,6 +42,13 @@ public interface IChatJobDispatcher
     /// </para>
     /// </summary>
     Task TerminateChatSessionAsync(AgentId agentId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records a client keepalive heartbeat for the chat session, resetting its idle clock.
+    /// Called by <c>POST /api/chat/{agentId}/keepalive</c> while the browser chat window is open.
+    /// No-op when the session is not found (already terminated or unknown agentId).
+    /// </summary>
+    void SendClientKeepalive(string agentId);
 }
 
 // ─── Null-object implementation (SignalR mode) ────────────────────────────────
@@ -65,4 +72,6 @@ public sealed class NullChatJobDispatcher : IChatJobDispatcher
 
     public Task TerminateChatSessionAsync(AgentId agentId, CancellationToken cancellationToken)
         => Task.CompletedTask; // nothing was started here, so there is nothing to terminate
+
+    public void SendClientKeepalive(string agentId) { } // no-op — nothing to keep alive
 }

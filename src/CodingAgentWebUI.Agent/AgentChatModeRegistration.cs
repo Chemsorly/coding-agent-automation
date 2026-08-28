@@ -111,10 +111,8 @@ internal static class AgentChatModeRegistration
             sp.GetRequiredService<AgentJobSlotManager>(),
             sp.GetRequiredService<ChatJobHandler>(),
             sp.GetRequiredService<ConsolidationJobHandler>(),
-            sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
-            sp.GetRequiredService<IHostApplicationLifetime>(),
             logger)));
         services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
         services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<AgentWorkerService>());

@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Models;
+using Moq;
 
 namespace CodingAgentWebUI.UnitTests.Dispatch;
 
@@ -58,6 +59,16 @@ public class IChatJobDispatcherTests
         task.IsCompletedSuccessfully.Should().BeTrue("NullChatJobDispatcher must be a safe no-op regardless of token state");
     }
 
+    // ─── NullChatJobDispatcher.SendClientKeepalive ────────────────────────────
+
+    [Fact]
+    public void NullChatJobDispatcher_SendClientKeepalive_IsNoOp()
+    {
+        // SendClientKeepalive must be a safe no-op — no exception, no side effects
+        var act = () => _sut.SendClientKeepalive("any-agent-id");
+        act.Should().NotThrow();
+    }
+
     // ─── NullChatJobDispatcher.DispatchChatPodAsync ───────────────────────────
 
     [Fact]
@@ -94,5 +105,42 @@ public class IChatJobDispatcherTests
         // Ensures the null-object can be used anywhere IChatJobDispatcher is expected
         IChatJobDispatcher dispatcher = _sut;
         dispatcher.Should().NotBeNull();
+    }
+}
+
+/// <summary>
+/// Tests for <see cref="ApiChatJobDispatcher"/> — the Blazor-side HTTP bridge.
+/// </summary>
+public sealed class ApiChatJobDispatcherTests
+{
+    // ─── SendClientKeepalive ──────────────────────────────────────────────────
+
+    [Fact]
+    public void SendClientKeepalive_FiresAndForgets_DoesNotThrow()
+    {
+        // SendClientKeepalive is fire-and-forget. A successful call must complete
+        // synchronously without throwing, even before the underlying HTTP call resolves.
+        var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiChatClient>();
+        // Return a completed task so there is no async work to await
+        mockClient.Setup(c => c.SendKeepaliveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = new CodingAgentWebUI.Services.ApiChatJobDispatcher(mockClient.Object);
+        var act = () => dispatcher.SendClientKeepalive("test-agent");
+        act.Should().NotThrow("SendClientKeepalive must not throw synchronously");
+    }
+
+    [Fact]
+    public void SendClientKeepalive_WhenClientThrows_DoesNotPropagate()
+    {
+        // Even when the HTTP client throws synchronously (bad state), SendClientKeepalive
+        // must not propagate the exception — it is fire-and-forget.
+        var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiChatClient>();
+        mockClient.Setup(c => c.SendKeepaliveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new System.Net.Http.HttpRequestException("network error"));
+
+        var dispatcher = new CodingAgentWebUI.Services.ApiChatJobDispatcher(mockClient.Object);
+        var act = () => dispatcher.SendClientKeepalive("test-agent");
+        act.Should().NotThrow("fire-and-forget failures must never surface synchronously");
     }
 }

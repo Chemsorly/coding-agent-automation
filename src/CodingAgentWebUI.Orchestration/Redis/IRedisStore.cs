@@ -12,6 +12,9 @@ public interface IRedisStore
     /// <summary>SET key value [EX seconds] — returns true on success.</summary>
     Task<bool> SetAsync(string key, string value, TimeSpan? expiry = null, When when = When.Always);
 
+    /// <summary>GET key — returns null if key does not exist or has expired.</summary>
+    Task<string?> GetAsync(string key);
+
     /// <summary>SET key value NX PX ms — returns true if key was set (did not already exist).</summary>
     Task<bool> SetIfNotExistsAsync(string key, string value, TimeSpan expiry);
 
@@ -53,9 +56,6 @@ public interface IRedisStore
 
     /// <summary>LRANGE key start stop — returns elements.</summary>
     Task<string[]> ListRangeAsync(string key, long start, long stop);
-
-    /// <summary>GET key — returns the string value, or null if the key does not exist.</summary>
-    Task<string?> GetAsync(string key);
 
     /// <summary>EXISTS key — returns true if key exists.</summary>
     Task<bool> ExistsAsync(string key);

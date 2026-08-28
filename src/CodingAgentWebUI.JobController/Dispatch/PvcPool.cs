@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Serilog;
 
 namespace CodingAgentWebUI.JobController.Dispatch;
@@ -52,6 +53,8 @@ public sealed class PvcPool
             if (available is null)
             {
                 Log.Warning("PVC pool exhausted for workItem {WorkItemId} — no PVCs available", workItemId);
+                WorkDistributionTelemetry.PvcPoolExhaustions.Add(1,
+                    new KeyValuePair<string, object?>("pool", "kiro"));
                 return null;
             }
             _claimed.Add(available);

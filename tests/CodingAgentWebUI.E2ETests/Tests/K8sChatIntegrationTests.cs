@@ -242,7 +242,7 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
             AgentApiKeySecretName = "agent-api-key",
             AgentServiceAccountName = "agent-sa",
             KiroPvcPool = new List<string> { "fake-pvc-0", "fake-pvc-1" },
-            ChatSessionMaxDurationSeconds = 7200,
+            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 2, // 2-second timeout for test
             ChatTerminationGracePeriodSeconds = 10
         };

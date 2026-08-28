@@ -47,6 +47,13 @@ public sealed class FakeRedisStore : IRedisStore
         return Task.FromResult(true);
     }
 
+    public Task<string?> GetAsync(string key)
+    {
+        if (_strings.TryGetValue(key, out var entry) && !IsExpired(key))
+            return Task.FromResult<string?>(entry.Value);
+        return Task.FromResult<string?>(null);
+    }
+
     public Task<bool> SetIfNotExistsAsync(string key, string value, TimeSpan expiry)
     {
         if (_strings.ContainsKey(key) && !IsExpired(key))
@@ -193,13 +200,6 @@ public sealed class FakeRedisStore : IRedisStore
         var exists = _strings.ContainsKey(key) || _hashes.ContainsKey(key)
                   || _sets.ContainsKey(key) || _lists.ContainsKey(key);
         return Task.FromResult(exists);
-    }
-
-    public Task<string?> GetAsync(string key)
-    {
-        if (IsExpired(key) || !_strings.TryGetValue(key, out var entry))
-            return Task.FromResult<string?>(null);
-        return Task.FromResult<string?>(entry.Value);
     }
 
     public Task<bool> PingAsync() => Task.FromResult(true);

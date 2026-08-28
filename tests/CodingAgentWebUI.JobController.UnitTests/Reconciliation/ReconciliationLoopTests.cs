@@ -22,7 +22,7 @@ public sealed class ReconciliationLoopTests
         _options = new DispatchServiceOptions
         {
             Namespace = "test-ns",
-            ChatSessionMaxDurationSeconds = 7200,
+            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120
         };
 
@@ -91,13 +91,13 @@ public sealed class ReconciliationLoopTests
         {
             Id = ItemId,
             Status = WorkItemStatus.Running,
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-_options.ChatSessionMaxDurationSeconds - 1),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-_options.AgentJobTimeoutSeconds - 1),
             AgentSelector = "dotnet10,opencode",
             IssueIdentifier = "owner/repo#1"
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatSessionMaxDurationSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
             .ReturnsAsync([timedOutItem]);
 
         var loop = CreateLoop();
@@ -366,7 +366,7 @@ public sealed class ReconciliationLoopErrorTests
     private readonly DispatchServiceOptions _options = new()
     {
         Namespace = "test-ns",
-        ChatSessionMaxDurationSeconds = 7200,
+        AgentJobTimeoutSeconds = 7200,
         ChatPodConnectTimeoutSeconds = 120
     };
 
@@ -635,7 +635,7 @@ public sealed class ReconciliationLoopErrorTests
         {
             Id = id1,
             Status = WorkItemStatus.Running,
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatSessionMaxDurationSeconds + 1)),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.AgentJobTimeoutSeconds + 1)),
             AgentSelector = "dotnet",
             IssueIdentifier = "owner/repo#1"
         };
@@ -643,13 +643,13 @@ public sealed class ReconciliationLoopErrorTests
         {
             Id = id2,
             Status = WorkItemStatus.Running,
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatSessionMaxDurationSeconds + 1)),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.AgentJobTimeoutSeconds + 1)),
             AgentSelector = "dotnet",
             IssueIdentifier = "owner/repo#2"
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatSessionMaxDurationSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item1, item2]);
 
         // First call throws, second should still be attempted
@@ -677,13 +677,13 @@ public sealed class ReconciliationLoopErrorTests
         {
             Id = id,
             Status = WorkItemStatus.Dispatched, // not Running
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatSessionMaxDurationSeconds + 1)),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.AgentJobTimeoutSeconds + 1)),
             AgentSelector = "dotnet",
             IssueIdentifier = "owner/repo#1"
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatSessionMaxDurationSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
         var loop = CreateLoop();

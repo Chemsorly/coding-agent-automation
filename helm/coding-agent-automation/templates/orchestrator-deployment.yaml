@@ -40,9 +40,18 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.orchestrator.affinity }}
+      {{- if .Values.orchestrator.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml .Values.orchestrator.affinity | nindent 8 }}
+      {{- else if gt (int .Values.orchestrator.replicas) 1 }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "coding-agent-automation.selectorLabels" . | nindent 18 }}
+                  app.kubernetes.io/component: orchestrator
+              topologyKey: kubernetes.io/hostname
       {{- end }}
       {{- with .Values.orchestrator.tolerations }}
       tolerations:
