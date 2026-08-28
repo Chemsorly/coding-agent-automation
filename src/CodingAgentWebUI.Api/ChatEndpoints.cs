@@ -38,6 +38,7 @@ public static class ChatEndpoints
 
         group.MapPost("/dispatch", DispatchChatPod);
         group.MapPost("/{agentId}/terminate", TerminateChatSession);
+        group.MapPost("/{agentId}/keepalive", ChatKeepalive);
     }
 
     // ── POST /api/chat/dispatch ────────────────────────────────────────────
@@ -92,6 +93,21 @@ public static class ChatEndpoints
         CancellationToken ct)
     {
         await dispatcher.TerminateChatSessionAsync(new AgentId(agentId), ct);
+        return TypedResults.Ok();
+    }
+
+    // ── POST /api/chat/{agentId}/keepalive ─────────────────────────────────
+
+    /// <summary>
+    /// POST /api/chat/{agentId}/keepalive
+    ///
+    /// Resets the idle clock for the chat session, preventing automatic termination.
+    /// Called by the Blazor UI every <c>ChatKeepaliveIntervalSeconds</c> while the chat
+    /// window is open. Always 200 — idempotent and no-op for unknown sessions.
+    /// </summary>
+    internal static Ok ChatKeepalive(string agentId, IChatJobDispatcher dispatcher)
+    {
+        dispatcher.SendClientKeepalive(agentId);
         return TypedResults.Ok();
     }
 }

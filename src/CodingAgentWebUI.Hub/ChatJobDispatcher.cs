@@ -5,6 +5,7 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Hub;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Redis;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -47,6 +48,10 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private readonly IAgentRegistryService _registry;
     private readonly DispatchServiceOptions _options;
     private readonly ILogger _logger;
+    // Optional — null in local dev without Redis. When non-null, heartbeat timestamps are
+    // written here so any API replica can check liveness regardless of which replica the
+    // keepalive POST lands on.
+    private readonly IRedisStore? _redis;
 
     private const string TagAgentSelector = "agent_selector";
     private const string LabelChatSessionId = "caa/chat-session-id";
@@ -71,6 +76,21 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         public readonly CancellationTokenSource WatcherCts; // disposed in CleanupSession
         public int Cleaned; // 0 = not yet cleaned; 1 = cleanup done. Used with Interlocked.
 
+        // Circuit-based lifecycle: tracks last client keepalive. Initialised to StartedAt so the
+        // idle clock starts from dispatch, not from an arbitrary epoch. Updated via
+        // RecordClientHeartbeat. Read by WatchJobUntilTerminalAsync to detect window-closed.
+        public long LastClientHeartbeatTicks; // written/read with Interlocked for thread safety
+
+        // Guard: 0 = not yet terminating; 1 = termination in progress or complete.
+        // Used by the idle-kill path to avoid launching a second TerminateChatSessionAsync
+        // when an explicit TerminateChatSessionAsync is already in flight.
+        public int Terminating;
+
+        // Guard: 0 = CancelChat not yet sent; 1 = already sent.
+        // Prevents double-CancelChat when an explicit TerminateChatSessionAsync races with an
+        // in-flight idle-kill that already called TrySendCancelChatAsync.
+        public int CancelSent;
+
         public WatcherEntry(string agentId, string jobName, string normalizedSelector, string? claimedPvc,
             DateTimeOffset startedAt, CancellationTokenSource watcherCts)
         {
@@ -80,6 +100,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             ClaimedPvc = claimedPvc;
             StartedAt = startedAt;
             WatcherCts = watcherCts;
+            LastClientHeartbeatTicks = startedAt.UtcTicks;
         }
     }
 
@@ -89,7 +110,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         JobTemplateStore templateStore,
         IAgentRegistryService registry,
         DispatchServiceOptions options,
-        ILogger logger)
+        ILogger logger,
+        IRedisStore? redis = null)
     {
         ArgumentNullException.ThrowIfNull(jobClient);
         ArgumentNullException.ThrowIfNull(hubContext);
@@ -103,6 +125,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _registry = registry;
         _options = options;
         _logger = logger;
+        _redis = redis;
     }
 
     // ─── DispatchChatPodAsync ──────────────────────────────────────────────────
@@ -195,7 +218,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         {
             WorkItemId = null,
             AgentSelector = normalized,
-            TimeoutSeconds = _options.ChatSessionMaxDurationSeconds,
+            TimeoutSeconds = _options.AgentJobTimeoutSeconds,
             JobName = jobName,
             ClaimedPvc = claimedPvc,
             OrchestratorUrl = _options.OrchestratorUrl,
@@ -236,7 +259,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             job.Metadata.Labels["caa/claimed-pvc"] = claimedPvc;
 
         job.Spec.BackoffLimit = 0;
-        job.Spec.ActiveDeadlineSeconds = _options.ChatSessionMaxDurationSeconds;
+        job.Spec.ActiveDeadlineSeconds = _options.AgentJobTimeoutSeconds;
         job.Spec.Template.Spec.TerminationGracePeriodSeconds = _options.ChatTerminationGracePeriodSeconds;
 
         await _jobClient.CreateJobAsync(job, _options.Namespace, cancellationToken);
@@ -348,15 +371,126 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _logger.Information("ChatJobDispatcher: watcher registered jobName={JobName}", jobName);
     }
 
+    // ─── Circuit-based keepalive ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Records a client keepalive heartbeat for the chat session identified by <paramref name="agentId"/>.
+    /// Called from <c>POST /api/chat/{agentId}/keepalive</c> whenever the Blazor UI ticks its
+    /// keepalive timer. If the session is not found (already terminated or unknown), the call is
+    /// a no-op so the endpoint can stay idempotent.
+    ///
+    /// <para>
+    /// Updates both the in-process <see cref="WatcherEntry.LastClientHeartbeatTicks"/> (used when
+    /// the keepalive lands on the same replica as the watcher) and a Redis key
+    /// <c>chat:heartbeat:{agentId}</c> (authoritative cross-replica source, read by
+    /// <see cref="WatchJobUntilTerminalAsync"/> when Redis is configured).
+    /// </para>
+    /// </summary>
+    public void RecordClientHeartbeat(string agentId)
+    {
+        var nowTicks = DateTimeOffset.UtcNow.UtcTicks;
+
+        // Update local in-process clock (fast path — same replica)
+        if (_activeWatchers.TryGetValue(agentId, out var entry))
+            Interlocked.Exchange(ref entry.LastClientHeartbeatTicks, nowTicks);
+
+        // Write to Redis so other replicas' watchers see the heartbeat.
+        // TTL = 2× idle timeout — ensures the key is present for the next check cycle even if
+        // a heartbeat is delayed by one cycle. Fire-and-forget; failures are non-fatal because
+        // the watcher falls back to local ticks when Redis is unavailable.
+        if (_redis is not null)
+        {
+            var ttl = TimeSpan.FromSeconds(_options.ChatIdleTimeoutSeconds * 2);
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            _ = _redis.SetAsync(HeartbeatKey(agentId), nowMs.ToString(), ttl)
+                .ContinueWith(t => _logger.Warning(t.Exception,
+                    "ChatJobDispatcher: Redis heartbeat write failed for {AgentId}", agentId),
+                    TaskContinuationOptions.OnlyOnFaulted);
+        }
+    }
+
+    // IChatJobDispatcher bridge — routes the interface method to the internal implementation.
+    void IChatJobDispatcher.SendClientKeepalive(string agentId) => RecordClientHeartbeat(agentId);
+
+    private static string HeartbeatKey(string agentId) => $"chat:heartbeat:{agentId}";
+
+    /// <summary>
+    /// Reads the cross-replica heartbeat timestamp from Redis.
+    /// Returns null on Redis failure (watcher falls back to local ticks).
+    /// </summary>
+    private async Task<DateTimeOffset?> TryGetRedisHeartbeatAsync(string jobName, WatcherEntry entry)
+    {
+        try
+        {
+            var raw = await _redis!.GetAsync(HeartbeatKey(entry.AgentId));
+            if (raw is not null && long.TryParse(raw, out var ms))
+                return DateTimeOffset.FromUnixTimeMilliseconds(ms);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "ChatJobDispatcher: Redis heartbeat read failed for {JobName} — falling back to local ticks",
+                jobName);
+        }
+        return null;
+    }
+
     // ─── Background watcher ───────────────────────────────────────────────────
 
     private async Task WatchJobUntilTerminalAsync(
         string jobName, WatcherEntry entry, CancellationToken ct)
     {
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
+        var idleTimeout = TimeSpan.FromSeconds(_options.ChatIdleTimeoutSeconds);
+        // Compute once — constant for the watcher's lifetime.
+        // Wake up no later than idleTimeout/3 so we react promptly to window-close.
+        var pollInterval = TimeSpan.FromSeconds(Math.Min(10, Math.Max(1, _options.ChatIdleTimeoutSeconds / 3)));
 
         while (!ct.IsCancellationRequested)
         {
+            // ── Circuit-based idle-kill check ──────────────────────────────────
+            // If the client has not sent a keepalive within ChatIdleTimeoutSeconds, the
+            // chat window is presumed closed (navigate-away, tab crash, browser close).
+            // When Redis is configured: read the cross-replica authoritative timestamp so
+            // a keepalive that landed on a different replica is visible here. Fall back to
+            // the local in-process ticks when Redis is absent (local dev, single replica).
+            DateTimeOffset lastHeartbeat;
+            if (_redis is not null)
+            {
+                var raw = await TryGetRedisHeartbeatAsync(jobName, entry);
+                lastHeartbeat = raw ?? new DateTimeOffset(
+                    Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
+            }
+            else
+            {
+                lastHeartbeat = new DateTimeOffset(
+                    Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
+            }
+
+            var idleSince = DateTimeOffset.UtcNow - lastHeartbeat;
+            if (idleSince > idleTimeout)
+            {
+                // Only fire idle-kill if TerminateChatSessionAsync hasn't already been called.
+                // Interlocked.CompareExchange: set Terminating from 0 → 1; if it was already 1,
+                // someone else is handling termination — back off and let the watcher drain.
+                if (Interlocked.CompareExchange(ref entry.Terminating, 1, 0) != 0)
+                {
+                    _logger.Debug(
+                        "ChatJobDispatcher: idle-kill skipped for {JobName} — termination already in progress",
+                        jobName);
+                    // Let the watcher loop continue; the in-flight termination will clean up.
+                    try { await Task.Delay(pollInterval, ct); } catch (OperationCanceledException) { }
+                    continue;
+                }
+
+                _logger.Warning(
+                    "ChatJobDispatcher: chat pod {JobName} idle for {IdleSeconds:F0}s (threshold={Threshold}s) — terminating",
+                    jobName, idleSince.TotalSeconds, _options.ChatIdleTimeoutSeconds);
+                // Run termination asynchronously but wait for it to complete before exiting.
+                await TerminateChatSessionAsync(new AgentId(entry.AgentId), CancellationToken.None);
+                return;
+            }
+
             var (job, readError) = await TryReadJobAsync(jobName);
 
             if (!readError && (job is null || IsTerminal(job)))
@@ -368,7 +502,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(10), ct);
+                await Task.Delay(pollInterval, ct);
             }
             catch (OperationCanceledException)
             {
@@ -461,6 +595,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         try { entry.WatcherCts.Dispose(); }
         catch { /* already disposed — safe to ignore */ }
+
+        // Best-effort Redis cleanup — remove the heartbeat key so it doesn't accumulate
+        if (_redis is not null)
+            _ = _redis.DeleteAsync(HeartbeatKey(agentId))
+                .ContinueWith(t => _logger.Warning(t.Exception,
+                    "ChatJobDispatcher: Redis heartbeat key delete failed for {AgentId}", agentId),
+                    TaskContinuationOptions.OnlyOnFaulted);
     }
 
     // ─── IHostedService ───────────────────────────────────────────────────────
@@ -536,9 +677,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             return;
         }
 
+        // Mark as terminating atomically — prevents the idle-kill path in WatchJobUntilTerminalAsync
+        // from launching a concurrent TerminateChatSessionAsync when an explicit one is already
+        // in flight, which would call CancelChat twice and confuse tests that assert Times.Once.
+        Interlocked.Exchange(ref entry.Terminating, 1);
+
         activity?.SetTag("job_name", entry.JobName);
 
-        // 1. Send CancelChat — best-effort
+        // 1. Send CancelChat — best-effort, guarded by CancelSent so concurrent calls are no-ops
         await TrySendCancelChatAsync(agentId.Value, entry);
 
         // 2. Wait up to grace period for the watcher to confirm terminal
@@ -560,6 +706,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     private async Task TrySendCancelChatAsync(string agentId, WatcherEntry entry)
     {
+        // CAS gate: only the first caller sends CancelChat. Concurrent explicit terminate +
+        // idle-kill paths both call this method; the gate ensures the agent receives exactly one
+        // CancelChat even when both paths race (e.g., user clicks EndChat while idle-kill fires).
+        if (Interlocked.CompareExchange(ref entry.CancelSent, 1, 0) != 0)
+            return;
+
         // For chat pods, jobName == agentId in production (AGENT_ID field ref to metadata.name).
         // In tests agentId may differ — always look up by agentId from the registry.
         var agentEntry = _registry.GetByAgentId(agentId);

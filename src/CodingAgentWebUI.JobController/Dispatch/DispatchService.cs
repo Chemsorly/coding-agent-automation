@@ -44,6 +44,14 @@ public sealed class DispatchService : LeaderElectedPollingService
     protected override async Task RunLeadershipTermAsync(CancellationToken ct)
     {
         Log.Information("DispatchService: rebuilding PVC pool from live K8s Jobs");
+        Log.Debug("DispatchService config: AgentJobTimeoutSeconds={Timeout}s, ChatPodConnectTimeoutSeconds={ConnectTimeout}s, " +
+                  "ChatTerminationGracePeriodSeconds={TerminationGrace}s, PollIntervalSeconds={PollInterval}s, " +
+                  "KiroPvcPool=[{PvcPool}]",
+            _options.AgentJobTimeoutSeconds,
+            _options.ChatPodConnectTimeoutSeconds,
+            _options.ChatTerminationGracePeriodSeconds,
+            _options.PollIntervalSeconds,
+            string.Join(", ", _options.KiroPvcPool));
         await _pvcPool.RebuildFromLiveJobsAsync(_k8sClient, _options, ct);
         await base.RunLeadershipTermAsync(ct);
     }

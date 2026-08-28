@@ -93,7 +93,7 @@ These settings control the lifetime of ephemeral chat session pods dispatched by
 
 | values.yaml key / env var | Default | Description |
 |---------------------------|---------|-------------|
-| `workDistribution.dispatch.chatSessionMaxDurationSeconds` | 7200 | Maximum lifetime (seconds) of a chat pod K8s Job. Sets `activeDeadlineSeconds` on the Job spec — the pod is forcibly terminated by Kubernetes when this deadline passes. Minimum: 60s. |
+| `workDistribution.dispatch.agentJobTimeoutSeconds` | 7200 | Maximum lifetime (seconds) of any agent K8s Job (work-item agents, consolidation jobs, chat pods). Sets `activeDeadlineSeconds` on the Job spec — the pod is forcibly terminated by Kubernetes when this deadline passes. Minimum: 60s. |
 | `workDistribution.dispatch.chatPodConnectTimeoutSeconds` | 120 | Maximum time (seconds) the dispatcher waits for a chat pod to connect to the hub after the Job is created before aborting and returning an error to the caller. Minimum: 5s. |
 | `workDistribution.dispatch.chatTerminationGracePeriodSeconds` | 120 | `terminationGracePeriodSeconds` on the chat pod spec — time Kubernetes allows for graceful shutdown before SIGKILL. Minimum: 5s. |
 

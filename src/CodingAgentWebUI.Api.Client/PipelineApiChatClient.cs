@@ -46,6 +46,16 @@ internal sealed class PipelineApiChatClient : IPipelineApiChatClient
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task SendKeepaliveAsync(string agentId, CancellationToken ct = default)
+    {
+        var response = await _http.PostAsync(
+            $"/api/chat/{Uri.EscapeDataString(agentId)}/keepalive",
+            content: null,
+            ct);
+
+        response.EnsureSuccessStatusCode();
+    }
+
     // Local mirror of the API's response record — avoids a project reference to CodingAgentWebUI.Api.
     private sealed record DispatchChatPodResponse(string AgentId);
 }
