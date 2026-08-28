@@ -76,14 +76,14 @@ public sealed class ReconciliationLoop
 
     /// <summary>
     /// Enforces the session timeout: marks Running items older than
-    /// <see cref="DispatchServiceOptions.ChatSessionMaxDurationSeconds"/> as Failed.
+    /// <see cref="DispatchServiceOptions.AgentJobTimeoutSeconds"/> as Failed.
     /// </summary>
     public async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
         IReadOnlyList<ActiveWorkItemDto> timedOut;
         try
         {
-            timedOut = await _workItemClient.GetActiveAsync(_options.ChatSessionMaxDurationSeconds, ct);
+            timedOut = await _workItemClient.GetActiveAsync(_options.AgentJobTimeoutSeconds, ct);
         }
         catch (Exception ex)
         {
@@ -99,14 +99,14 @@ public sealed class ReconciliationLoop
             if (item.Status != WorkItemStatus.Running) continue;
 
             Log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}) after {Seconds}s — marking Failed",
-                item.Id, item.Status, item.K8sJobName ?? "none", _options.ChatSessionMaxDurationSeconds);
+                item.Id, item.Status, item.K8sJobName ?? "none", _options.AgentJobTimeoutSeconds);
 
             try
             {
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
                     Status = nameof(WorkItemStatus.Failed),
-                    ErrorMessage = $"Agent timeout after {_options.ChatSessionMaxDurationSeconds}s",
+                    ErrorMessage = $"Agent timeout after {_options.AgentJobTimeoutSeconds}s",
                     FailureReason = "Timeout"
                 }, ct);
 
@@ -120,6 +120,9 @@ public sealed class ReconciliationLoop
                     item.Id, WorkItemStatus.Failed,
                     duration: null, agentId: jobName,
                     failureReason: FailureReason.Timeout);
+
+                WorkDistributionTelemetry.AgentTimeouts.Add(1,
+                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
 
                 await SafeDeleteJobAsync(jobName, ct);
             }

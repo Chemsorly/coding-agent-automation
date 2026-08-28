@@ -424,13 +424,18 @@ public static class ApiServiceCollectionExtensions
         {
             var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
             options.ValidateAndClamp(Log.Logger);
+            var mux = sp.GetService<StackExchange.Redis.IConnectionMultiplexer>();
+            CodingAgentWebUI.Orchestration.Redis.IRedisStore? redisStore = mux is not null
+                ? new CodingAgentWebUI.Orchestration.Redis.RedisStore(mux.GetDatabase())
+                : null;
             return new ChatJobDispatcher(
                 sp.GetRequiredService<IKubernetesJobClient>(),
                 sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub, IAgentHubClient>>(),
                 sp.GetRequiredService<JobTemplateStore>(),
                 sp.GetRequiredService<IAgentRegistryService>(),
                 options,
-                Log.Logger);
+                Log.Logger,
+                redisStore);
         });
         services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());
         services.AddSingleton<IChatJobDispatcher>(sp => sp.GetRequiredService<ChatJobDispatcher>());

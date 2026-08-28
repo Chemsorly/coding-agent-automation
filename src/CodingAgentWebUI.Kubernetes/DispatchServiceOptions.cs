@@ -30,8 +30,11 @@ public sealed class DispatchServiceOptions
     /// <summary>K8s Secret name containing opencode config file (mounted for opencode agents).</summary>
     public string OpencodeConfigSecretName { get; set; } = "";
 
-    /// <summary>Maximum chat session lifetime in seconds. Sets activeDeadlineSeconds on the K8s Job. Default: 7200.</summary>
-    public int ChatSessionMaxDurationSeconds { get; set; } = 7200;
+    /// <summary>
+    /// Maximum agent job lifetime in seconds. Sets <c>activeDeadlineSeconds</c> on every K8s Job pod
+    /// (work-item agent jobs, consolidation jobs, and chat session pods). Default: 7200.
+    /// </summary>
+    public int AgentJobTimeoutSeconds { get; set; } = 7200;
 
     /// <summary>Time to wait for chat pod to connect before aborting. Default: 120s.</summary>
     public int ChatPodConnectTimeoutSeconds { get; set; } = 120;
@@ -39,22 +42,31 @@ public sealed class DispatchServiceOptions
     /// <summary>terminationGracePeriodSeconds on chat Job pod spec. Default: 120s.</summary>
     public int ChatTerminationGracePeriodSeconds { get; set; } = 120;
 
-    private const int MinChatSessionMaxDurationSeconds = 60;
+    /// <summary>
+    /// Maximum seconds a chat pod may remain idle (no client keepalive heartbeat) before the
+    /// watcher terminates it automatically. The Blazor UI sends a heartbeat every
+    /// <c>ChatKeepaliveIntervalSeconds</c> while the chat window is open; pods whose window has
+    /// been closed or crashed are cleaned up within this window. Default: 90s.
+    /// </summary>
+    public int ChatIdleTimeoutSeconds { get; set; } = 90;
+
+    private const int MinAgentJobTimeoutSeconds = 60;
     private const int MinChatPodConnectTimeoutSeconds = 5;
     private const int MinChatTerminationGracePeriodSeconds = 5;
+    private const int MinChatIdleTimeoutSeconds = 10;
 
     /// <summary>
-    /// Validates chat-related config values and clamps them to safe minimums.
+    /// Validates job timeout and chat-related config values, clamping to safe minimums.
     /// Called after options binding to prevent zero/negative values that would
-    /// immediately kill or never start chat pods.
+    /// immediately kill or never start agent pods.
     /// </summary>
     public void ValidateAndClamp(Serilog.ILogger? logger = null)
     {
-        if (ChatSessionMaxDurationSeconds < MinChatSessionMaxDurationSeconds)
+        if (AgentJobTimeoutSeconds < MinAgentJobTimeoutSeconds)
         {
-            logger?.Warning("ChatSessionMaxDurationSeconds ({Value}) is below minimum ({Min}), clamping",
-                ChatSessionMaxDurationSeconds, MinChatSessionMaxDurationSeconds);
-            ChatSessionMaxDurationSeconds = MinChatSessionMaxDurationSeconds;
+            logger?.Warning("AgentJobTimeoutSeconds ({Value}) is below minimum ({Min}), clamping",
+                AgentJobTimeoutSeconds, MinAgentJobTimeoutSeconds);
+            AgentJobTimeoutSeconds = MinAgentJobTimeoutSeconds;
         }
         if (ChatPodConnectTimeoutSeconds < MinChatPodConnectTimeoutSeconds)
         {
@@ -67,6 +79,12 @@ public sealed class DispatchServiceOptions
             logger?.Warning("ChatTerminationGracePeriodSeconds ({Value}) is below minimum ({Min}), clamping",
                 ChatTerminationGracePeriodSeconds, MinChatTerminationGracePeriodSeconds);
             ChatTerminationGracePeriodSeconds = MinChatTerminationGracePeriodSeconds;
+        }
+        if (ChatIdleTimeoutSeconds < MinChatIdleTimeoutSeconds)
+        {
+            logger?.Warning("ChatIdleTimeoutSeconds ({Value}) is below minimum ({Min}), clamping",
+                ChatIdleTimeoutSeconds, MinChatIdleTimeoutSeconds);
+            ChatIdleTimeoutSeconds = MinChatIdleTimeoutSeconds;
         }
     }
 }
