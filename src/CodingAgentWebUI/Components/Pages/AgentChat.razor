@@ -348,6 +348,9 @@
     {
         _resolvedPodModel = null;
         _resolvedPodEffort = null;
+        // Reset to safe default so stale state from a previous session never leaks into this one.
+        // Mirrors the _resolvedPodModel = null / _resolvedPodEffort = null pattern above.
+        _resolvedMcpConfigPath = "/home/ubuntu/.kiro/settings/mcp.json";
 
         var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
         var labelParts = _selectedTemplateLabels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -368,7 +371,27 @@
             {
                 _resolvedMcpConfigPath = path;
             }
+            else
+            {
+                // Derive the default MCP config path from the provider type.
+                // ToLowerInvariant() is load-bearing: ProviderConfig.ProviderType is stored as
+                // "OpenCode" (PascalCase) by the UI, so normalisation is required for the match.
+                // This mirrors OpenCodeAgentProvider.McpConfigPath / KiroCliAgentProvider.McpConfigPath
+                // which WriteMcpConfigStep already uses correctly in the pipeline job path.
+                // TODO: If agentConfig is non-null but ProviderType is null or empty, the switch
+                // silently falls back to the Kiro default path. This can mask a misconfiguration for
+                // an OpenCode agent (pod launches, MCP servers are silently unavailable). Consider
+                // logging a warning or surfacing a UI error when ProviderType is null/empty and
+                // agentConfig is non-null, so the user is alerted to the missing configuration.
+                _resolvedMcpConfigPath = agentConfig?.ProviderType?.ToLowerInvariant() switch
+                {
+                    "opencode" => "/home/ubuntu/.opencode/mcp.json",
+                    _ => "/home/ubuntu/.kiro/settings/mcp.json"
+                };
+            }
         }
+        // If _resolvedProfile is null: _resolvedMcpConfigPath was already reset to the
+        // Kiro default above, so no further action is needed.
     }
 
     private string? ClassifyLaunchError(Exception ex) => ex switch
