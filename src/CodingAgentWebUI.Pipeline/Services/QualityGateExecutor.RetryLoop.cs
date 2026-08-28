@@ -390,6 +390,9 @@ public partial class QualityGateExecutor
         var callbacks = context.Callbacks;
         var report = initialReport;
 
+        const int MaxConsecutiveTransientRetries = 10;
+        var consecutiveTransientRetries = 0;
+
         // TODO: [WARNING] run.RetryErrors accumulates one entry per loop iteration (including transient
         // provider-error iterations where no fix was attempted). On repeated 429/503 responses, this
         // produces stale entries in the failure-feedback prompt and draft PR summary that were never
@@ -449,26 +452,42 @@ public partial class QualityGateExecutor
                 if (agentResult?.ErrorCategory is AgentErrorCategory.ProviderRateLimit
                     or AgentErrorCategory.ProviderOverload)
                 {
+                    // TODO: [WARNING] run.RetryCount-- can produce RetryCount == -1 if this branch is
+                    // entered on the very first loop iteration (RetryCount starts at 0 then increments
+                    // to 1 at the loop top, so this decrement brings it back to 0 — in practice no
+                    // underflow occurs). However, if the entry condition ever changes so RetryCount is
+                    // 0 when this branch is entered, the decrement would produce -1 and that value
+                    // would appear in log messages. Consider adding an underflow guard:
+                    //   if (run.RetryCount > 0) run.RetryCount--;
+                    run.RetryCount--; // Undo the increment at the top of the loop
+                    consecutiveTransientRetries++;
+
+                    if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
+                    {
+                        // TODO: [WARNING] run.RetryCount is logged here after the decrement above, so
+                        // the displayed value reflects the corrected (pre-increment) count. If RetryCount
+                        // ever reaches this branch as 0 (see underflow note above), the log will show -1
+                        // which is misleading. Capture the corrected value before the log call if legibility
+                        // becomes an issue.
+                        _logger.Warning(
+                            "Pipeline {RunId} retry {RetryCount}: reached consecutive transient error cap " +
+                            "({Cap} consecutive {Category} responses), breaking retry loop",
+                            run.RunId, run.RetryCount, MaxConsecutiveTransientRetries, agentResult.ErrorCategory);
+                        break;
+                    }
+
                     _logger.Warning(
                         "Pipeline {RunId} retry {RetryCount}: provider transient error ({Category}), " +
-                        "not consuming retry budget, waiting before next attempt",
-                        run.RunId, run.RetryCount, agentResult.ErrorCategory);
-                    run.RetryCount--; // Undo the increment at the top of the loop
-                    // TODO: [WARNING] No local cap on consecutive transient retries. If the provider returns
-                    // 429/503 persistently and pipeline-level timeouts (OrchestratorCts, job timeout) are
-                    // absent or misconfigured, this loop runs indefinitely (30s delay per iteration). Consider
-                    // adding a dedicated max-transient-retries counter (e.g. 10) as a local safety bound.
-                    // TODO: [WARNING] run.RetryCount-- has no underflow guard. Under current code paths
-                    // RetryCount cannot go below 0 here, but `Math.Max(0, run.RetryCount - 1)` would be
-                    // more defensive against future bugs that corrupt RetryCount before this point.
-                    // TODO: [WARNING] The continue below skips UpdateFileChangeStatsAsync. This is correct
-                    // today because transient provider errors produce no file changes. However, if ErrorCategory
-                    // is ever set on a result that also has non-empty OutputLines (e.g. a partial response),
-                    // file-change stats would be silently skipped. Consider explicitly checking OutputLines
-                    // before skipping the stats update, or moving UpdateFileChangeStatsAsync above this branch.
-                    await Task.Delay(TimeSpan.FromSeconds(30), ct);
+                        "not consuming retry budget, waiting before next attempt " +
+                        "({Consecutive}/{Cap} consecutive transient retries)",
+                        run.RunId, run.RetryCount, agentResult.ErrorCategory,
+                        consecutiveTransientRetries, MaxConsecutiveTransientRetries);
+                    await Task.Delay(config.TransientRetryDelay, ct);
                     continue;
                 }
+
+                // Non-transient iteration: reset consecutive transient counter.
+                consecutiveTransientRetries = 0;
 
                 // Permanent auth failures cannot be fixed by retrying — abort immediately.
                 // RetryCount is intentionally NOT decremented: one real agent call was attempted,
@@ -499,6 +518,17 @@ public partial class QualityGateExecutor
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
+                // TODO: [WARNING] When ExecuteAgentAndRecordAsync absorbs a non-cancellation exception
+                // and returns null, the transient-category check (agentResult?.ErrorCategory) evaluates
+                // to null, skipping both the transient branch and the consecutive-counter increment.
+                // The null path falls through to the non-transient reset (consecutiveTransientRetries = 0)
+                // only if it reaches the bottom of the try block — but when agentResult is null the try
+                // body does not reach the reset line (the catch fires instead). So for the absorbed-exception
+                // path: transient counter is neither incremented nor reset. If the provider is consistently
+                // returning errors that are absorbed as exceptions (rather than surfaced as
+                // AgentErrorCategory.ProviderRateLimit/ProviderOverload), the transient cap never fires
+                // and the loop drains the standard retry budget instead. This is a behavioural gap: the
+                // cap only protects against errors surfaced via the ErrorCategory enum, not via exceptions.
                 _logger.Warning(ex, "Pipeline {RunId} retry fix agent call failed", run.RunId);
                 run.ChatHistory.Enqueue(new ChatEntry
                 {

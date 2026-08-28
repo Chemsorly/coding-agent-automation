@@ -56,7 +56,7 @@ public class AgentWorkerServiceTests : IDisposable
     {
         var mockLogger = new Mock<Serilog.ILogger>();
 
-        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), null!, null!, new AgentId("test-agent"), CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object));
+        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), null!, null!, CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), mockLogger.Object));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.ConnectionLifecycle");
     }
 
@@ -68,7 +68,7 @@ public class AgentWorkerServiceTests : IDisposable
         var (chatHandler, consolidationHandler) = CreateHandlersForLifecycle(lifecycle, slotManager, mockLogger.Object);
 
         var act = () => new AgentWorkerService(
-            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, consolidationHandler, new AgentId("test-agent"), null!, Mock.Of<IJobCompletionReporter>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object));
+            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, consolidationHandler, null!, Mock.Of<IJobCompletionReporter>(), mockLogger.Object));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Executor");
     }
 
@@ -80,7 +80,7 @@ public class AgentWorkerServiceTests : IDisposable
         var (chatHandler, consolidationHandler) = CreateHandlersForLifecycle(lifecycle, slotManager, logger);
 
         var act = () => new AgentWorkerService(
-            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, consolidationHandler, new AgentId("test-agent"), CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), Mock.Of<IHostApplicationLifetime>(), null!));
+            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, consolidationHandler, CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), null!));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
     }
 
