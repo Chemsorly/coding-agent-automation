@@ -56,6 +56,14 @@ public sealed class DispatchServiceOptionsTests
     }
 
     [Fact]
+    public void ValidateAndClamp_ChatIdleTimeout_BelowMinimum_ClampsTo10()
+    {
+        var opts = new DispatchServiceOptions { ChatIdleTimeoutSeconds = 3 };
+        opts.ValidateAndClamp();
+        opts.ChatIdleTimeoutSeconds.Should().Be(10);
+    }
+
+    [Fact]
     public void ValidateAndClamp_AtExactMinimum_Unchanged()
     {
         var opts = new DispatchServiceOptions

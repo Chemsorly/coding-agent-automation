@@ -7,6 +7,7 @@ namespace CodingAgentWebUI.Api.Client;
 /// <see cref="IPipelineApiChatClient"/> backed by <see cref="HttpClient"/> registered
 /// via <see cref="IHttpClientFactory"/>.
 /// </summary>
+[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Thin HttpClient wrapper — runtime-only, no unit-testable logic.")]
 internal sealed class PipelineApiChatClient : IPipelineApiChatClient
 {
     private readonly HttpClient _http;

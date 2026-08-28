@@ -984,7 +984,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            ChatSessionMaxDurationSeconds = 7200,
+            AgentJobTimeoutSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1
         };
 
