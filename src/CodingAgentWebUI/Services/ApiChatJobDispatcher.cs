@@ -53,4 +53,14 @@ internal sealed class ApiChatJobDispatcher(IPipelineApiChatClient chatClient) : 
     {
         await chatClient.TerminateChatSessionAsync(agentId.Value, cancellationToken);
     }
+
+    public void SendClientKeepalive(string agentId)
+    {
+        // Fire-and-forget — keepalive failures are non-fatal; the pod will eventually be
+        // idle-killed by the server if heartbeats stop arriving. Log silently on failure.
+        _ = chatClient.SendKeepaliveAsync(agentId, CancellationToken.None)
+            .ContinueWith(
+                t => Serilog.Log.Warning(t.Exception, "ApiChatJobDispatcher: keepalive POST failed for {AgentId}", agentId),
+                System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted);
+    }
 }

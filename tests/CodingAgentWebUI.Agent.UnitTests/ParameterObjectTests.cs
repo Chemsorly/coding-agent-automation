@@ -29,10 +29,8 @@ public class ParameterObjectTests
         AgentJobSlotManager slotManager = null!;
         ChatJobHandler chatHandler = null!;
         ConsolidationJobHandler consolidationHandler = null!;
-        var agentId = new AgentId("test-agent");
         var executor = Mock.Of<IPipelineExecutor>();
         var completionReporter = Mock.Of<IJobCompletionReporter>();
-        var hostLifetime = Mock.Of<IHostApplicationLifetime>();
         var logger = Mock.Of<Serilog.ILogger>();
 
         var deps = new AgentWorkerServiceDependencies(
@@ -40,20 +38,16 @@ public class ParameterObjectTests
             slotManager,
             chatHandler,
             consolidationHandler,
-            agentId,
             executor,
             completionReporter,
-            hostLifetime,
             logger);
 
         deps.ConnectionLifecycle.Should().BeNull();
         deps.SlotManager.Should().BeNull();
         deps.ChatHandler.Should().BeNull();
         deps.ConsolidationHandler.Should().BeNull();
-        deps.AgentId.Should().Be(agentId);
         deps.Executor.Should().BeSameAs(executor);
         deps.CompletionReporter.Should().BeSameAs(completionReporter);
-        deps.HostApplicationLifetime.Should().BeSameAs(hostLifetime);
         deps.Logger.Should().BeSameAs(logger);
     }
 

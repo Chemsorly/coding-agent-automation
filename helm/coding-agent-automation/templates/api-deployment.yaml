@@ -36,6 +36,16 @@ spec:
       serviceAccountName: {{ include "coding-agent-automation.fullname" . }}-api
       automountServiceAccountToken: true
       terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
+      {{- if gt (int .Values.api.replicas) 1 }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "coding-agent-automation.selectorLabels" . | nindent 18 }}
+                  app.kubernetes.io/component: api
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
       containers:
         - name: api
           image: "{{ .Values.api.image.repository }}:{{ required "api.image.tag is required" .Values.api.image.tag }}"
