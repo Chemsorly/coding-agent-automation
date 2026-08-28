@@ -7,9 +7,9 @@ namespace CodingAgentWebUI.Api.Client;
 /// <see cref="ISchedulerApiClient"/> backed by <see cref="HttpClient"/>.
 /// Base URL configured by consumer via IHttpClientFactory named client or typed registration.
 ///
-/// Loop control endpoints (/loop/*) are served by the Scheduler on port 8091 (SchedulerApi__BaseUrl).
+/// Loop control endpoints (/loop/*) are served by the Scheduler on port 8080 (SchedulerApi__BaseUrl).
 /// Maintenance and metrics endpoints (/api/scheduler/* and /api/work-items/*) are served by the
-/// API on port 8090 (PipelineApi__BaseUrl). Callers should register two separate typed clients
+/// API on port 8080 (PipelineApi__BaseUrl). Callers should register two separate typed clients
 /// or use the appropriate base URL for each group. For now, the base URL is set by the DI
 /// registration — the Scheduler uses the API's base URL for maintenance/metrics, and the WebUI
 /// uses the Scheduler's base URL for loop controls.

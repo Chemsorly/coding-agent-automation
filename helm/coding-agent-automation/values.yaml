@@ -260,7 +260,7 @@ api:
   annotations: {}
   service:
     type: ClusterIP
-    port: 8090
+    port: 8080
   # serviceUrl is the in-cluster URL that agent pods use to reach the API hub and HTTP
   # endpoints (ORCHESTRATOR_URL). Both work-item pods and chat pods share this single config
   # key (WorkDistribution__OrchestratorUrl) — changing it re-points both shapes simultaneously
@@ -274,7 +274,7 @@ api:
   # fails at render time — the orchestrator would otherwise compute an in-cluster URL
   # (http://{fullname}-api.{namespace}.svc.cluster.local:{port}) pointing to a service
   # that does not exist, causing silent runtime failures on the first HTTP call.
-  # Set to the URL of the externally deployed Pipeline API (e.g. http://api.example.com:8090).
+  # Set to the URL of the externally deployed Pipeline API (e.g. http://api.example.com:8080).
   baseUrl: ""    # override if API is not in same cluster/namespace
   hubUrl: ""     # override for hub URL (defaults to baseUrl + /hubs/agent)
   resources:
@@ -306,7 +306,7 @@ jobController:
   annotations: {}
   service:
     type: ClusterIP
-    port: 8091
+    port: 8080
   resources:
     requests:
       cpu: 100m
@@ -340,7 +340,7 @@ scheduler:
   annotations: {}
   service:
     type: ClusterIP
-    port: 8092
+    port: 8080
   # URL the orchestrator uses to reach the Scheduler's loop control endpoints.
   # Empty (default) = computed in-cluster: http://{fullname}-scheduler.{namespace}.svc.cluster.local:{port}
   # Set when scheduler.enabled is false or the Scheduler is reachable via a non-default address.

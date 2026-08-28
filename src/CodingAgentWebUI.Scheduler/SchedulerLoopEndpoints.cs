@@ -11,7 +11,7 @@ using ILeaderGate = CodingAgentWebUI.Pipeline.Interfaces.ILeaderGate;
 namespace CodingAgentWebUI.Scheduler;
 
 /// <summary>
-/// Minimal API endpoints for loop control, hosted by the Scheduler on port 8091.
+/// Minimal API endpoints for loop control, hosted by the Scheduler on port 8080.
 /// Called by the WebUI to start/stop/resume the loop and poll status.
 ///
 /// Authentication: X-Api-Key header must match AGENT_API_KEY env var — same key as the API.
