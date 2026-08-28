@@ -1,6 +1,6 @@
 # =============================================================================
 # CodingAgentWebUI Scheduler Dockerfile
-# Runs the Scheduler microservice on port 8091.
+# Runs the Scheduler microservice on port 8080.
 # Owns all scheduled/periodic background work (poll loop, maintenance sweeps,
 # orphaned-label recovery, metrics polling, Redis cleanup).
 # No EF Core, no Postgres — all persistence goes through the Pipeline API.
@@ -49,10 +49,10 @@ RUN test ! -e /home/ubuntu/.kube/config && \
     test ! -e /root/.kube/config && \
     echo "OK: no kubeconfig in runtime image"
 
-# Configure ASP.NET to listen on port 8091
-ENV ASPNETCORE_URLS=http://+:8091
+# Configure ASP.NET to listen on port 8080
+ENV ASPNETCORE_URLS=http://+:8080
 
-EXPOSE 8091
+EXPOSE 8080
 
 COPY --from=build --chown=ubuntu:ubuntu /app/publish .
 
@@ -66,6 +66,6 @@ ARG BUILD_REPOSITORY_URL=
 RUN echo "{\"commitSha\":\"${BUILD_COMMIT_SHA}\",\"branch\":\"${BUILD_BRANCH}\",\"buildTimestamp\":\"${BUILD_TIMESTAMP}\",\"runId\":\"${BUILD_RUN_ID}\",\"runNumber\":\"${BUILD_RUN_NUMBER}\",\"imageTag\":\"${BUILD_IMAGE_TAG}\",\"repositoryUrl\":\"${BUILD_REPOSITORY_URL}\"}" > build-info.json
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:8091/health || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["dotnet", "CodingAgentWebUI.Scheduler.dll"]

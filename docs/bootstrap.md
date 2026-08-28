@@ -2,7 +2,7 @@
 
 How to set up a fresh Kubernetes deployment or migrate configuration from an existing instance.
 
-<!-- Spec 045 Task 8b: config import/export endpoints moved to the API service (port :8090). -->
+<!-- Spec 045 Task 8b: config import/export endpoints moved to the API service (port :8080). -->
 
 ## Scenario A — Fresh Install
 
@@ -40,7 +40,7 @@ Use the HTTP API to export configuration from the old instance and import it int
 ```bash
 curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
   -o pipeline-config-export.json \
-  https://old-instance:8090/api/config/export
+  https://old-instance:8080/api/config/export
 ```
 
 The response is a JSON file download (`pipeline-config-export.json`) containing all configuration as a single bundle. **Provider secrets (Settings and Secrets dictionary values) are exported unredacted** — the bundle contains live credentials. This is intentional: the import endpoint writes the bundle verbatim, so a redacted export would restore every credential as `"****"` and silently break every provider. The endpoint is operator-tier gated; the UI warns before download.
@@ -55,7 +55,7 @@ The import endpoint accepts a `multipart/form-data` POST with a single form fiel
 curl -X POST \
   -H "Authorization: Bearer $OPERATOR_API_KEY" \
   -F "file=@pipeline-config-export.json" \
-  https://new-instance:8090/api/config/import
+  https://new-instance:8080/api/config/import
 ```
 
 On success, the response body is:
