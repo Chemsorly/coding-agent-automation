@@ -8,6 +8,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 12 | Last run: 2026-08-14 | Decisions captured: 64 -->
 <!-- Session: 14 | Last run: 2026-08-22 | Updates: T12 audit — marked #2027/#2028/#2025/#1058/#1059 resolved; fixed ConsolidationDispatchHandler→ConsolidationWorkItemDispatchService; T10 decision added; T11 decisions added -->
 <!-- Session: 15 | Last run: 2026-08-22 | Updates: T22 — AgentSelectorKey.From() extracted; ScanPagedAsync private helper extracted in PostgresPipelineRunHistoryService; T6/T15/T16/T20 closed; LabelStateMachine.cs stale path fixed -->
+<!-- Session: 16 | Last run: 2026-08-28 | Decisions added: 4 (soft anti-affinity, AgentJobTimeoutSeconds backstop, Redis required for multi-replica keepalive, ExternalCiDuration split); issue created: #2133; helm templates fixed (required→preferred anti-affinity, all 4 deployments) -->
 <!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition -->
 
 ---
@@ -1265,6 +1266,68 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 **Reassess when:** If the terminal output is rarely useful during a run (operators only check post-hoc), consider making it collapsible. Currently, seeing real-time agent output is part of the trust model — the operator knows the agent is actually working.
 
+### Pod anti-affinity: soft (preferred) spreading, not hard (required)
+
+**Date:** 2026-08-28
+**Category:** architecture
+
+**Decision:** All control-plane Deployments (api, orchestrator, jobcontroller, scheduler) use `preferredDuringSchedulingIgnoredDuringExecution` for pod anti-affinity when `replicas > 1`. The previously committed `requiredDuringSchedulingIgnoredDuringExecution` was incorrect — it blocks pod scheduling when the cluster has fewer nodes than replicas (e.g., 2 replicas on a 1-node dev cluster → `Pending` forever). Soft spreading achieves HA in production without preventing scheduling on constrained clusters.
+
+**Context:** Hard anti-affinity is appropriate for stateful services (databases, Kafka) where co-location causes data corruption. These are stateless HTTP services; co-location reduces HA but does not corrupt state. All four templates now use weight=100 `preferred` spreading on `kubernetes.io/hostname`. The `orchestrator.affinity` override (user-provided) still takes precedence when set.
+
+**Alternatives considered:** Hard anti-affinity (rejected — blocks dev single-node clusters), no anti-affinity (less HA in prod).
+
+**Reassess when:** Never for the soft/hard choice on stateless services. If a specific deployment requires hard node isolation (regulatory requirement), the `affinity:` values override handles it.
+
+---
+
+### AgentJobTimeoutSeconds: unified wall-clock ceiling for all job types — backstop semantics for chat pods
+
+**Date:** 2026-08-28
+**Category:** configuration
+
+**Decision:** `AgentJobTimeoutSeconds` (renamed from `ChatSessionMaxDurationSeconds`, default 7200s) governs `activeDeadlineSeconds` for all K8s Job types: work-item agents, consolidation agents, and chat pods. The rename makes the semantics correct — the previous name was misleading because the field always applied to all jobs, not only chat. For chat pods, the circuit-based idle-kill mechanism (`ChatIdleTimeoutSeconds=90s`) terminates the pod when the browser window closes; `AgentJobTimeoutSeconds` is a last-resort backstop for orphaned resources (e.g., browser crash with no idle-kill firing, Redis unavailable for heartbeat cross-replica delivery).
+
+**Context:** The idle-kill circuit is the primary chat lifecycle mechanism. The 2h wall clock only fires if the circuit fails. Keeping a single unified timeout value simplifies operations: operators only need to reason about one "max job lifetime" per agent type, not separate interactive vs batch limits.
+
+**Alternatives considered:** Separate `ChatSessionMaxDurationSeconds` for interactive vs batch jobs — rejected because the idle-kill circuit makes the distinction unnecessary for normal operation; edge cases (orphaned pods) benefit from the same backstop regardless of job type.
+
+**Reassess when:** If users routinely need chat sessions >2h, add a separate `ChatSessionMaxDurationSeconds` that defaults to longer than `AgentJobTimeoutSeconds`. Track via: how often chat pods hit `activeDeadlineSeconds` vs idle-kill.
+
+---
+
+### Chat keepalive Redis: required for multi-replica deployments
+
+**Date:** 2026-08-28
+**Category:** architecture
+
+**Decision:** Redis is required when `api.replicas > 1` OR `orchestrator.replicas > 1` for correct chat keepalive behavior. When keepalive POSTs land on a different API replica than the one hosting the watcher, the in-process `LastClientHeartbeatTicks` fallback does NOT see the heartbeat — the pod is idle-killed after `ChatIdleTimeoutSeconds` (90s) even though the browser is active. Redis is the cross-replica authoritative heartbeat store (`chat:heartbeat:{agentId}`, TTL=2× idle timeout). The in-process fallback is only correct for single-replica local dev.
+
+A startup warning must be added when `ChatJobDispatcher` is instantiated with `_redis == null` and `api.replicas > 1`. This is tracked in #2133.
+
+**Context:** The current code silently falls back to local ticks when Redis is absent — no warning is emitted. In a 2-replica deployment without Redis configured, a user whose keepalive POST happens to land on the non-watcher replica will see their chat pod killed after 90s of inactivity on the watcher side. This is a silent incorrect behavior, not a loud failure.
+
+**Alternatives considered:** Make Redis unconditionally required (breaks local dev without Redis), configurable `requireRedisForHeartbeat: true/false` (unnecessary complexity when the rule is simply `replicas > 1`). See #2131 for implementation.
+
+**Reassess when:** Never for the principle. Redis is already required for multi-replica SignalR backplane — this is consistent with that existing requirement.
+
+---
+
+### ExternalCiDuration vs PostPrCiDuration: two separate histograms for two distinct CI poll phases
+
+**Date:** 2026-08-28
+**Category:** architecture
+
+**Decision:** `ExternalCiDuration` (existing) measures the pre-PR CI poll in `AppendExternalCiIfNeededAsync` — triggered on branch push. A new `PostPrCiDuration` histogram must be added to measure the post-PR CI poll in `WaitForPostPrCiAsync` — triggered on the pull_request event after PR promotion. The two are semantically distinct: pre-PR CI validates the branch commit; post-PR CI validates CI workflows that only trigger on `pull_request` events. Emitting both into `ExternalCiDuration` inflates p50/p99 dashboards on runs that execute both phases.
+
+**Context:** The TODO in `WaitForPostPrCiAsync` documents this gap. On paths where both pre-PR and post-PR CI run (e.g., cleanup made no changes → skipCiIfNoChanges → post-PR CI fires), two histogram samples land in `ExternalCiDuration`, making the p99 appear 2× higher than actual worst-case single-phase duration.
+
+**Alternatives considered:** Keep single metric with a phase tag (`phase=pre_pr|post_pr`) — equally valid but requires a Grafana filter to disaggregate; separate histograms are more natural for Grafana dashboard panels that show one thing per panel. Run-level aggregation (`TotalCiWaitDuration` emitted once at end) — accurate but loses per-phase granularity needed for debugging.
+
+**Reassess when:** Never for the separation principle. If a third CI poll phase is added, follow the same pattern.
+
+---
+
 ## Decision Map
 
 ### Relationships
@@ -1327,6 +1390,12 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 - "LoopStatePersistenceService: no leader guard needed" scoped by "PipelineLoopService: full loop leader-gated" (the loop gate makes eager activation on all replicas safe — all sit in leader-wait until promoted)
 - "LoopStatePersistenceService: no leader guard needed" correlates with "Agent lifetime: pull→push evolution" (90s delay is a rolling-deploy drain guard, not a multi-replica coordination mechanism)
 
+- "Pod anti-affinity: soft spreading" scoped by "Monolithic orchestrator is intentional" (stateless services; co-location reduces HA but doesn't corrupt state)
+- "AgentJobTimeoutSeconds: unified backstop" scoped by "Agent lifetime: pull→push evolution" (K8s-only; both work-item and chat pods are ephemeral K8s Jobs)
+- "AgentJobTimeoutSeconds: unified backstop" enables "Chat keepalive Redis required for multi-replica" (the backstop fires when the idle-kill circuit fails, which happens when Redis is absent in multi-replica)
+- "Chat keepalive Redis required for multi-replica" scoped by "HMAC key derivation for agent auth" (Redis is already in the dependency stack for multi-replica SignalR; this adds one more reason it's required)
+- "ExternalCiDuration vs PostPrCiDuration" scoped by "Telemetry philosophy: instrument every decision point" (the split follows from the principle that each observable event gets its own instrument)
+
 ### Coverage Gaps (auto-detected)
 - Automated calibration design remains explicitly deferred
 - Housekeeping feature calibration data — no empirical data yet; revisit after 50+ housekeeping cycles
@@ -1337,6 +1406,7 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 - Automated calibration design — when a clear mechanism emerges, revisit
 - Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct?
 - AgentCodingPageService decomposition: after extraction, was the per-drawer split the right granularity?
+- PostPrCiDuration: after #2133 and the metric split are implemented, verify Grafana panels updated
 
 ---
 
