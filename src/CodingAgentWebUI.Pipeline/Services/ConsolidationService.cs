@@ -141,9 +141,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             _logger.Error(ex,
                 "Failed to persist consolidation run {RunId} for {Type}/{TemplateName} — rolling back in-memory state",
                 run.RunId, type, templateName);
-            _runningRuns.TryRemove(key, out _);
-            if (type == ConsolidationRunType.HarnessSuggestions)
-                _feedbackCache.ClearFeedbackDataForRun(run.RunId);
+            await RollbackRunAsync(key, run.RunId);
             return null;
         }
 
@@ -185,6 +183,10 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             {
                 run.Status = ConsolidationRunStatus.Queued;
                 await PersistRunAsync(run, ct);
+                // Cache-only clear: the run remains active (in _runningRuns and in the DB as Queued).
+                // Full rollback is not appropriate here — the dispatcher will pick it up when an
+                // agent becomes available. The feedback data is no longer needed in memory since
+                // the payload was already serialized and handed to the dispatcher queue.
                 _feedbackCache.ClearFeedbackDataForRun(run.RunId);
                 _logger.Information(
                     "Consolidation run {RunId} queued: {Type} for {TemplateName} — waiting for idle agent",
@@ -196,12 +198,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             if (result == ConsolidationDispatchResult.Failed)
             {
                 _logger.Warning("Consolidation run {RunId} dispatch failed for {Type}/{TemplateName}", run.RunId, type, templateName);
-                _runningRuns.TryRemove(key, out _);
-                await DeletePersistedRunAsync(run.RunId);
-                _feedbackCache.ClearFeedbackDataForRun(run.RunId);
+                await RollbackRunAsync(key, run.RunId);
                 return DispatchOutcome.Failed;
             }
 
+            // Cache-only clear: dispatch succeeded — the run is live and will be tracked via
+            // SignalR/UpdateRunAsync. The feedback payload was consumed by the dispatcher;
+            // no rollback of _runningRuns or the persisted record is needed.
             _feedbackCache.ClearFeedbackDataForRun(run.RunId);
             return DispatchOutcome.Success;
         }
@@ -209,9 +212,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         {
             // Exception is propagated to the caller (TriggerAsync); logging here would cause
             // duplicate log entries. Cleanup is done before rethrowing.
-            _runningRuns.TryRemove(key, out _);
-            await DeletePersistedRunAsync(run.RunId);
-            _feedbackCache.ClearFeedbackDataForRun(run.RunId);
+            await RollbackRunAsync(key, run.RunId);
             throw;
         }
     }
@@ -415,6 +416,19 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         {
             _logger.Warning(ex, "Failed to delete consolidation run {RunId}", runId.Value);
         }
+    }
+
+    /// <summary>
+    /// Rolls back a run that failed to dispatch or persist by removing it from the in-memory
+    /// concurrency tracker, deleting the persisted record, and clearing any cached feedback data.
+    /// Safe to call even when the run was never persisted (DeletePersistedRunAsync is a no-op
+    /// for non-existent records).
+    /// </summary>
+    private async Task RollbackRunAsync((ConsolidationRunType, string?) key, string runId)
+    {
+        _runningRuns.TryRemove(key, out _);
+        await DeletePersistedRunAsync(runId);
+        _feedbackCache.ClearFeedbackDataForRun(runId);
     }
 
     /// <summary>Deletes a persisted run (used when dispatch fails and the run must be rolled back).</summary>
