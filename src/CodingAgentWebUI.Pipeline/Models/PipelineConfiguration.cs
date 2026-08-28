@@ -648,4 +648,12 @@ public sealed record PipelineConfiguration
         }
     } = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// Delay between retry loop iterations when a transient provider error
+    /// (ProviderRateLimit or ProviderOverload) is encountered. Default: 30 seconds.
+    /// Tests can set this to <see cref="TimeSpan.Zero"/> to avoid blocking.
+    /// </summary>
+    [Key(78)]
+    public TimeSpan TransientRetryDelay { get; init; } = TimeSpan.FromSeconds(30);
+
 }
