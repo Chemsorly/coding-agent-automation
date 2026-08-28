@@ -74,18 +74,18 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 ---
 
-### DatabaseMaintenanceService: migrate to LeaderElectedPollingService
+### DatabaseMaintenanceService: Spec 047 superseded the LeaderElectedPollingService migration
 
-**Date:** 2026-08-14
+**Date:** 2026-08-14 · **Closed:** 2026-08-28 (superseded by Spec 047, not migrated as originally planned)
 **Category:** architecture
 
-**Decision:** `DatabaseMaintenanceService` should be migrated to extend `LeaderElectedPollingService` (the shared base class used by `DispatchService`, `ConsolidationWorkItemDispatchService`, and `ReconciliationService`). The current ad-hoc pattern — resolving `ILeaderElectionService` once at startup via `IServiceProvider.GetService()` then checking `IsLeader` per cycle — has a documented race: if the service resolves before `ILeaderElectionService` is registered, all subsequent maintenance cycles run without leader gating. The ad-hoc pattern also lacks `LeaderToken` integration, meaning the service does not stop mid-term on leadership loss (it only checks at the next cycle boundary). Migrating removes the race and makes the gating consistent with all other leader-gated services.
+**Decision:** The planned migration of `DatabaseMaintenanceService` to extend `LeaderElectedPollingService` was superseded by Spec 047. Instead of migrating to a BackgroundService pattern, `DatabaseMaintenanceService` was converted to a **plain singleton with no `ExecuteAsync`**. Sweeps are triggered exclusively by the Scheduler via `POST /api/scheduler/maintenance/retention-sweep`. The leader-gate moved to the Scheduler's `RetentionSweepSchedulerService`, which holds the lease before calling the endpoint.
 
-**Context:** The TODO comment in `DatabaseMaintenanceService` explicitly documents the DI resolution race. `LeaderElectedPollingService` already supports the simple `PeriodicTimer`-equivalent pattern via `OnPollCycleAsync` + `PollIntervalSeconds`. Maintenance runs hourly — double-execution risk is low but the DI race is a real correctness gap.
+**Why this approach was chosen over the migration:** The Scheduler microservice (Spec 047) was introduced as the designated owner of all scheduled/periodic background work. Migrating `DatabaseMaintenanceService` to `LeaderElectedPollingService` would have put periodic logic in the API service, which contradicts the Scheduler's role. The plain-singleton + HTTP-trigger pattern is simpler, more testable, and keeps scheduling concerns exclusively in the Scheduler. The original DI resolution race and missing `LeaderToken` integration are both moot — the service has no background loop at all.
 
-**Alternatives considered:** Fix only the DI race (resolve per-cycle) while keeping `PeriodicTimer` structure — partial fix, still no `LeaderToken` integration; inconsistent with the rest of the dispatch infrastructure.
+**Context:** The original decision documented two correctness defects: (1) DI resolution race when resolving `ILeaderElectionService` at startup, (2) missing `LeaderToken` integration. Both are resolved by Spec 047's approach without requiring any changes to the service itself.
 
-**Reassess when:** Never — once migrated, this decision is stable.
+**Reassess when:** Never — the Spec 047 plain-singleton approach is the stable final form. If sweeps ever need to run on a schedule without the Scheduler, the correct path is extending the Scheduler, not reverting to a BackgroundService.
 
 ---
 
@@ -104,18 +104,26 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 ---
 
-### Monolithic orchestrator is intentional (for now)
+### Monolithic orchestrator was intentional — now split into 4 services (specs 041–045)
 
-**Date:** 2026-07-04
+**Date:** 2026-07-04 · **Updated:** 2026-08-28 (post-041–045 service split)
 **Category:** architecture
 
-**Decision:** We keep all dispatch logic, reconciliation, leader election, and lifecycle management inside the single web application process (Blazor UI + orchestration + dispatch in one binary). Splitting into a standalone operator/controller is on the roadmap but not yet justified by scale.
+**Decision:** We kept all dispatch logic, reconciliation, leader election, and lifecycle management inside the single web application process (Blazor UI + orchestration + dispatch in one binary). Splitting into a standalone operator/controller was on the roadmap but was not justified by scale at the time.
 
-**Context:** Spec 036 explored a standalone CRD controller, but spec 035 (Postgres-based work distribution) was implemented instead, keeping everything in-process. Comparable systems (Argo Workflows, Tekton, Flux) separate controllers from UIs, but this system isn't at a scale where independent scaling of the orchestration layer is needed. Leader election handles multi-replica safety today.
+**Status (2026-08-28 — Reassess-when condition met and resolved):** The monolith was split into **4 separate services** in specs 041–045:
+- `CodingAgentWebUI` (orchestrator) — Blazor UI + pipeline orchestration. **No direct DB access.** Connects to API via HTTP/SignalR for all state reads and writes.
+- `CodingAgentWebUI.Api` — sole owner of the Postgres database, `/hubs/agent`, `/api/work-items/*`, and all agent-facing endpoints.
+- `CodingAgentWebUI.JobController` — owns dispatch and reconciliation loops. Leader-elected; one leader runs them, others idle as hot standbys.
+- `CodingAgentWebUI.Scheduler` — owns all scheduled/periodic background work (retention sweeps, maintenance). No direct DB access; triggers work via HTTP.
 
-**Alternatives considered:** Standalone K8s operator (spec 036), sidecar extraction, microservice split. All add deployment complexity without proportional benefit at current scale.
+Leader election continues to handle multi-replica safety. The split was driven by: (a) the orchestrator needing to be a UI-only consumer of the API rather than the source of truth, (b) dispatch/reconciliation needing a separate leader lease from the pipeline loop, and (c) scheduled maintenance needing isolation from both.
 
-**Reassess when:** Orchestration load exceeds what a single leader replica can sustain, or when the CRD-based dispatch model (spec 036 Phase 3) is implemented.
+**Context:** Spec 036 explored a standalone CRD controller, but spec 035 (Postgres-based work distribution) was implemented instead. Specs 041–045 delivered the actual split — not via CRDs but via separate microservices each with their own leader election. Comparable systems (Argo Workflows, Tekton, Flux) separate controllers from UIs; this system now follows that pattern.
+
+**Alternatives considered at the time:** Standalone K8s operator (spec 036), sidecar extraction, microservice split. All were deferred for deployment complexity reasons. Specs 041–045 eventually delivered the microservice split.
+
+**Reassess when:** Independent scaling of the dispatch or API layer is needed (scale-out now possible — each service scales independently). Or if the JobController and Scheduler should be merged back for operational simplicity.
 
 ---
 
@@ -287,7 +295,7 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 **Decision:** SignalR hub communication uses MessagePack with integer ordinal enum serialization. This means enum member ordering is an implicit wire contract. This is acceptable because deployment is homogeneous — orchestrator and agents are always deployed together from the same build. No multi-version scenario exists. Enum members in hub-transmitted types should not be reordered, but no explicit compile-time enforcement exists beyond the `HubMessageSerializationTests` test class.
 
-**Context:** gRPC and Protobuf use explicit numbering to avoid ordinal coupling. Kubernetes handles multi-version compat. This system's simpler approach reflects its deployment model (single Docker Compose or Helm release upgrades all components simultaneously).
+**Context:** gRPC and Protobuf use explicit numbering to avoid ordinal coupling. Kubernetes handles multi-version compat. This system's simpler approach reflects its deployment model (single Helm release upgrades all components simultaneously). All images are built from the same git SHA in CI.
 
 **Alternatives considered:** String-based MessagePack enum serialization (safer for multi-version, increases payload size), explicit ordinal value annotations.
 
@@ -551,7 +559,7 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 **Alternatives considered:** Self-termination after N minutes (appropriate for K8s, harmful for docker-compose), configurable per deployment mode (adds complexity for a non-issue today).
 
-**Reassess when:** K8s-only mode becomes the default. At that point, add a configurable `MaxReconnectionDuration` that defaults to infinite for docker-compose and 5 minutes for K8s (let liveness probes handle recovery).
+**Reassess when:** If chat pods need a bounded reconnection window (e.g., for resource efficiency when the API is down for extended periods). Currently the idle-kill circuit terminates idle chat pods within 90s regardless of SignalR state, so infinite reconnect only keeps a browser tab waiting — it doesn't leak K8s resources. If chat pod resource cost during reconnect becomes measurable, add `MaxReconnectionDuration` for chat pods specifically.
 
 ---
 
