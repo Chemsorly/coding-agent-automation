@@ -1,6 +1,6 @@
 # HTTP API Reference
 
-The Pipeline API (`CodingAgentWebUI.Api`, port **8090**) exposes HTTP API endpoints for programmatic access to work item management, configuration, run history, and health probes.
+The Pipeline API (`CodingAgentWebUI.Api`, port **8080**) exposes HTTP API endpoints for programmatic access to work item management, configuration, run history, and health probes.
 
 ## Availability
 
@@ -68,7 +68,7 @@ Retrieve the job assignment details for a work item. Agents call this after bein
 
 ```bash
 curl -H "Authorization: Bearer $AGENT_API_KEY" \
-  http://localhost:8090/api/work-items/550e8400-e29b-41d4-a716-446655440000/assignment
+  http://localhost:8080/api/work-items/550e8400-e29b-41d4-a716-446655440000/assignment
 ```
 
 **Example response (200):**
@@ -163,7 +163,7 @@ curl -X POST \
   -H "Authorization: Bearer $AGENT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"status": "Succeeded", "agentId": "agent-dotnet-1", "result": "{\"prUrl\": \"https://github.com/org/repo/pull/123\"}"}' \
-  http://localhost:8090/api/work-items/550e8400-e29b-41d4-a716-446655440000/status
+  http://localhost:8080/api/work-items/550e8400-e29b-41d4-a716-446655440000/status
 ```
 
 ---
@@ -187,7 +187,7 @@ Download the full pipeline configuration as a JSON file.
 ```bash
 curl -H "Authorization: Bearer $AGENT_API_KEY" \
   -o pipeline-config-export.json \
-  http://localhost:8090/api/config/export
+  http://localhost:8080/api/config/export
 ```
 
 **Example response (200):**
@@ -269,7 +269,7 @@ Upload a configuration bundle to replace all existing pipeline configuration.
 curl -X POST \
   -H "Authorization: Bearer $AGENT_API_KEY" \
   -F "file=@pipeline-config-export.json" \
-  http://localhost:8090/api/config/import
+  http://localhost:8080/api/config/import
 ```
 
 **Example response (200 — success):**
@@ -326,10 +326,10 @@ Download pipeline run history as a JSON file.
 
 ```bash
 # Download all runs
-curl -o runs.json http://localhost:8090/api/export/runs.json
+curl -o runs.json http://localhost:8080/api/export/runs.json
 
 # Download only runs with feedback
-curl -o feedback-runs.json "http://localhost:8090/api/export/runs.json?feedbackOnly=true"
+curl -o feedback-runs.json "http://localhost:8080/api/export/runs.json?feedbackOnly=true"
 ```
 
 **Example response (200):**
