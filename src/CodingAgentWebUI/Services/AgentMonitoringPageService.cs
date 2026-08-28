@@ -11,8 +11,6 @@ namespace CodingAgentWebUI.Services;
 
 /// <summary>
 /// Encapsulates the business logic for the AgentMonitoring page — data refresh, cancellation
-/// <summary>
-/// Encapsulates the business logic for the AgentMonitoring page — data refresh, cancellation
 /// orchestration, and state management. The Blazor component delegates to this service
 /// and retains only UI state (modals, timers, JS interop, StateHasChanged).
 /// Registered as Scoped because it holds per-page mutable state.
@@ -153,6 +151,51 @@ public class AgentMonitoringPageService
 
         if (includeConsolidation)
             await RefreshConsolidationAsync();
+
+        // After consolidation data is refreshed, augment Agents with any agents that are
+        // handling active consolidation runs but might not yet appear in the registry snapshot.
+        // This ensures Connected/Busy counters and the Registered Agents list include consolidation
+        // agents, especially in split-process deployments where the snapshot may briefly lag.
+        // TODO: AugmentAgentsWithConsolidationRunners is called unconditionally even when
+        // includeConsolidation=false (e.g. cancel operations). When called without refreshing
+        // consolidation data, ActiveConsolidationRuns holds stale values from the previous cycle.
+        // A completed/cancelled run's agent could be re-added with a stale Busy status, inflating
+        // counters. Guard this call with `if (includeConsolidation)` or clear ActiveConsolidationRuns
+        // at the start of RefreshDataAsync to avoid reading stale data.
+        AugmentAgentsWithConsolidationRunners();
+    }
+
+    /// <summary>
+    /// Merges agents referenced by active consolidation runs into the <see cref="Agents"/> list.
+    /// An agent handling a consolidation run is looked up by <see cref="ConsolidationRun.AgentId"/>
+    /// and added to <see cref="Agents"/> if it is already in the registry but missing from the
+    /// current snapshot (e.g., due to snapshot lag in <c>ApiAgentRegistryService</c>).
+    /// This ensures the Connected/Busy counters reflect consolidation agents.
+    /// </summary>
+    private void AugmentAgentsWithConsolidationRunners()
+    {
+        if (ActiveConsolidationRuns.Count == 0) return;
+
+        var existingAgentIds = new HashSet<string>(
+            Agents.Select(a => a.AgentId.Value),
+            StringComparer.Ordinal);
+
+        List<AgentEntry>? extras = null;
+        foreach (var run in ActiveConsolidationRuns)
+        {
+            if (run.AgentId is null) continue;
+            if (existingAgentIds.Contains(run.AgentId)) continue;
+
+            var entry = _registry.GetByAgentId(run.AgentId);
+            if (entry is null) continue;
+
+            extras ??= [];
+            extras.Add(entry);
+            existingAgentIds.Add(run.AgentId);
+        }
+
+        if (extras is { Count: > 0 })
+            Agents = [.. Agents, .. extras];
     }
 
     /// <summary>

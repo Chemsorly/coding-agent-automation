@@ -145,6 +145,11 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             await DispatchToAgentAsync(
                 new ConsolidationDispatchContext(run, type, templateId, feedbackDataJson, workspacePath, liveConfig),
                 agent, ct);
+            // TODO: AgentId is set in-memory by DispatchToAgentAsync but not persisted here (unlike
+            // TryDispatchToAgentAsync which calls _runStore.SaveRunAsync after dispatch). If the caller
+            // (ConsolidationService.TriggerAsync) does not re-save the run after dispatch, AgentId will
+            // be lost on orchestrator restart, causing the Agent column to revert to "—". Consider adding
+            // _runStore.SaveRunAsync(run, ct) here for symmetry with the queued-drain path.
             return ConsolidationDispatchResult.Dispatched;
         }
         catch (Exception ex)
@@ -157,6 +162,9 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             agent.ActiveJobId = null;
             _ = _registry.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null);
             _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            // TODO: run.AgentId is set in DispatchToAgentAsync before AssignConsolidationJobAsync is called.
+            // If AssignConsolidationJobAsync throws, run.AgentId is left pointing at the agent that never
+            // received the job. Reset run.AgentId = null here if/when this path also persists to the store.
 
             return ConsolidationDispatchResult.Failed;
         }
@@ -228,6 +236,11 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             await DispatchToAgentAsync(
                 new ConsolidationDispatchContext(run, type, templateId, feedbackDataJson, workspacePath, liveConfig),
                 agent, ct);
+
+            // Persist AgentId back to the run store so the UI and restart rehydration can read it.
+            // DispatchToAgentAsync sets run.AgentId in-memory; we save it here before TransitionRunToRunningAsync
+            // reloads the run from disk (which would otherwise lose the in-memory update).
+            await _runStore.SaveRunAsync(run, ct);
 
             // Transition run from Queued → Running after successful dispatch
             // (previously done in the deleted DrainConsolidationJobsAsync)
@@ -305,6 +318,9 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         agent.ActiveJobId = ctx.Run.RunId;
         _ = _registry.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", ctx.Run.RunId);
         _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+
+        // Record which agent is handling this run so the UI can display it in the Agent column
+        ctx.Run.AgentId = agent.AgentId.Value;
 
         await _agentComm.AssignConsolidationJobAsync(agent.ConnectionId, agent.AgentId, message, ct);
 

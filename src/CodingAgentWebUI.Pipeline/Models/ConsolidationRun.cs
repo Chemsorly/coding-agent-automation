@@ -68,4 +68,14 @@ public sealed class ConsolidationRun
     /// Defaults to <c>false</c> for backward compatibility with old persisted runs.
     /// </summary>
     public bool AutoDispatch { get; init; }
+
+    /// <summary>
+    /// The ID of the agent assigned to execute this consolidation run.
+    /// Populated at dispatch time by <c>ConsolidationDispatchService.DispatchToAgentAsync</c>.
+    /// Null for queued runs and runs dispatched before this field was introduced.
+    /// </summary>
+    // TODO: Consider narrowing to `internal set` — the public setter allows any deserializer
+    // (including crafted JSON payloads via consolidation run endpoints) to overwrite AgentId.
+    // If external mutation is never intentional, restrict the setter for defence-in-depth.
+    public string? AgentId { get; set; }
 }

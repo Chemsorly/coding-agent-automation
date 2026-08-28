@@ -59,11 +59,11 @@ public static partial class ServiceCollectionExtensions
             var cfg = sp.GetRequiredService<IConfiguration>();
             var baseUrl = cfg.GetValue<string>("SchedulerApi__BaseUrl")
                 ?? cfg.GetValue<string>("SchedulerApi:BaseUrl")
-                ?? "http://localhost:8091";
+                ?? "http://localhost:8080";
 
-            if (baseUrl == "http://localhost:8091")
+            if (baseUrl == "http://localhost:8080")
                 Serilog.Log.Warning(
-                    "SchedulerApi__BaseUrl is not configured — using localhost:8091 fallback. " +
+                    "SchedulerApi__BaseUrl is not configured — using localhost:8080 fallback. " +
                     "This is unreachable from WebUI pods in a Kubernetes deployment. " +
                     "Set SchedulerApi__BaseUrl to the Scheduler service URL.");
 
