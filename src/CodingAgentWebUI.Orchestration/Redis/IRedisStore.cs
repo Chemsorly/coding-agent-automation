@@ -54,6 +54,9 @@ public interface IRedisStore
     /// <summary>LRANGE key start stop — returns elements.</summary>
     Task<string[]> ListRangeAsync(string key, long start, long stop);
 
+    /// <summary>GET key — returns the string value, or null if the key does not exist.</summary>
+    Task<string?> GetAsync(string key);
+
     /// <summary>EXISTS key — returns true if key exists.</summary>
     Task<bool> ExistsAsync(string key);
 

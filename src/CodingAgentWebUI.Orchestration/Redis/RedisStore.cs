@@ -70,6 +70,12 @@ public sealed class RedisStore : IRedisStore
     public async Task<bool> ExistsAsync(string key)
         => await _db.KeyExistsAsync(key);
 
+    public async Task<string?> GetAsync(string key)
+    {
+        var value = await _db.StringGetAsync(key);
+        return value.IsNull ? null : (string?)value;
+    }
+
     public async Task<bool> PingAsync()
     {
         var result = await _db.PingAsync();

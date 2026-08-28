@@ -92,7 +92,8 @@
                     @foreach (var cRun in ActiveConsolidationRuns)
                     {
                         var cElapsed = DateTime.UtcNow - cRun.StartedAtUtc;
-                        var cAgent = Agents.FirstOrDefault(a => a.ActiveJobId == cRun.RunId);
+                        var cAgent = cRun.AgentId != null ? Agents.FirstOrDefault(a => a.AgentId.Value == cRun.AgentId) : Agents.FirstOrDefault(a => a.ActiveJobId == cRun.RunId);
+                        var cAgentDisplay = cRun.AgentId ?? cAgent?.AgentId.Value;
                         <tr>
                             <td class="monitoring-mono" title="@cRun.RunId">@cRun.RunId</td>
                             <td>
@@ -102,7 +103,7 @@
                             </td>
                             <td>@(string.IsNullOrEmpty(cRun.ProjectName) ? "—" : cRun.ProjectName)</td>
                             <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
-                            <td title="@(cAgent?.AgentId.Value ?? "—")">@(cAgent?.AgentId.Value ?? "—")</td>
+                            <td title="@(cAgentDisplay ?? "—")">@(cAgentDisplay ?? "—")</td>
                             <td>
                                 <span class="monitoring-step monitoring-step-running">Running</span>
                             </td>

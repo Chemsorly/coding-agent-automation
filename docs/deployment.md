@@ -327,15 +327,15 @@ dotnet run --project src/CodingAgentWebUI/
 
 > `Database__Host` must be set — the orchestrator requires PostgreSQL on startup.
 
-For the agent project (work-item mode, connecting to the Pipeline API hub on port 8090):
+For the agent project (work-item mode, connecting to the Pipeline API hub on port 8080):
 ```bash
-ORCHESTRATOR_URL=http://localhost:8090 AGENT_ID=local-agent-1 AGENT_API_KEY=<key> \
+ORCHESTRATOR_URL=http://localhost:8080 AGENT_ID=local-agent-1 AGENT_API_KEY=<key> \
   dotnet run --project src/CodingAgentWebUI.Agent/ -- --mode=workitem --work-item-id=<guid>
 ```
 
 For chat mode (no `--work-item-id`):
 ```bash
-ORCHESTRATOR_URL=http://localhost:8090 AGENT_ID=local-chat-1 AGENT_API_KEY=<key> \
+ORCHESTRATOR_URL=http://localhost:8080 AGENT_ID=local-chat-1 AGENT_API_KEY=<key> \
   dotnet run --project src/CodingAgentWebUI.Agent/ -- --mode=chat
 ```
 

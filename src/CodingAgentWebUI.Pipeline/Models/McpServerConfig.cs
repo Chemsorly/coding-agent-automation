@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// <summary>
 /// Configuration for a single MCP (Model Context Protocol) server that can be
 /// attached to an agent profile and written to the workspace at runtime.
-/// Supports two transport types: stdio (command-based) and HTTP (URL-based).
+/// Supports three transport types: stdio (command-based), HTTP (URL-based), and SSE (Server-Sent Events URL-based).
 /// </summary>
 [MessagePackObject]
 public sealed record McpServerConfig
@@ -14,9 +14,9 @@ public sealed record McpServerConfig
     [Key(0)] public required string Name { get; init; }
 
     /// <summary>
-    /// Transport type: "stdio" (default, command-based) or "http" (URL-based).
+    /// Transport type: "stdio" (default, command-based), "http" (URL-based), or "sse" (Server-Sent Events URL-based).
     /// When "stdio": Command + Args are used to start the server process.
-    /// When "http": Url is used to connect to a remote MCP server.
+    /// When "http" or "sse": Url is used to connect to a remote MCP server.
     /// </summary>
     [Key(1)] public string Type { get; init; } = "stdio";
 
@@ -26,7 +26,7 @@ public sealed record McpServerConfig
     /// <summary>Arguments for the command. Only used for stdio servers.</summary>
     [Key(3)] public IReadOnlyList<string> Args { get; init; } = [];
 
-    /// <summary>URL for HTTP-based MCP servers (e.g., "https://mcp.context7.com/mcp"). Null for stdio servers.</summary>
+    /// <summary>URL for HTTP-based or SSE-based MCP servers (e.g., "https://mcp.context7.com/mcp"). Null for stdio servers.</summary>
     [Key(4)] public string? Url { get; init; }
 
     /// <summary>Environment variables passed to stdio server processes.</summary>
@@ -38,7 +38,7 @@ public sealed record McpServerConfig
     /// <summary>Tool names to auto-approve (redundant when --trust-all-tools is used, kept for schema compat).</summary>
     [Key(7)] public IReadOnlyList<string> AutoApprove { get; init; } = [];
 
-    /// <summary>HTTP request headers for HTTP-type servers (e.g., Authorization, custom org headers).
-    /// Only used for http transport; ignored for stdio servers.</summary>
+    /// <summary>HTTP request headers for HTTP-type and SSE-type servers (e.g., Authorization, custom org headers).
+    /// Only used for http and sse transports; ignored for stdio servers.</summary>
     [Key(8)] public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();
 }
