@@ -69,7 +69,9 @@ public class IChatJobDispatcherTests
         act.Should().NotThrow();
     }
 
-    // ─── NullChatJobDispatcher.DispatchChatPodAsync ───────────────────────────    [Fact]
+    // ─── NullChatJobDispatcher.DispatchChatPodAsync ───────────────────────────
+
+    [Fact]
     public async Task NullChatJobDispatcher_DispatchChatPodAsync_ThrowsNotSupportedException()
     {
         var act = () => _sut.DispatchChatPodAsync("kiro,dotnet", null, null, CancellationToken.None);
