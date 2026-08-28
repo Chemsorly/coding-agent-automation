@@ -951,6 +951,69 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task PrepareDistributionRequestAsync_PropagatesPipelineProviderId_ToPipelineProviderConfigId()
+    {
+        // Arrange — mirrors PrepareDistributionRequestAsync_ReturnsJobDistributionRequest_WithCorrectFields
+        // but passes a non-null PipelineProviderId and asserts it reaches JobDistributionRequest.
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        // Pipeline provider config — needed because BuildAgentProviderConfigsAsync loads all
+        // Pipeline-kind configs when pipelineProviderId is non-null.
+        // TODO: Do NOT remove this mock setup. Without it, LoadProviderConfigsAsync(Pipeline) returns
+        // null/throws and PrepareDistributionRequestAsync returns null before reaching the
+        // PipelineProviderConfigId assignment — meaning the test would fail for the wrong reason
+        // (provider-resolution failure) rather than catching the propagation bug this test exists
+        // to detect. If the setup is removed, the test still fails but silently stops covering
+        // the acceptance criterion. The request.Should().NotBeNull() assertion below will surface
+        // this: a null request means the mock is missing, not that PipelineProviderConfigId is unset.
+        var pipelineConfig = new ProviderConfig
+        {
+            Id = "pipeline-provider-1",
+            DisplayName = "Pipeline Provider",
+            ProviderType = "github_actions",
+            Kind = ProviderKind.Pipeline
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Pipeline, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { pipelineConfig });
+
+        var service = CreateService();
+        DispatchOrchestrationService iface = service;
+
+        // Act
+        var request = await iface.PrepareDistributionRequestAsync(
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = "pipeline-provider-1",
+                InitiatedBy = "loop",
+                Project = TestProject,
+                TaskType = WorkItemTaskType.Implementation,
+                RunType = PipelineRunType.Implementation
+            },
+            CancellationToken.None);
+
+        // Assert — PipelineProviderId must flow through PrepareCoreAsync onto PipelineRun and then
+        // into JobDistributionRequest.PipelineProviderConfigId via MapToRequest.
+        request.Should().NotBeNull();
+        request!.PipelineProviderConfigId.Should().Be("pipeline-provider-1");
+    }
+
+    [Fact]
     public async Task PrepareDistributionRequestAsync_ResolvesLabelsFromRepoConfig()
     {
         SetupStandardMocks();

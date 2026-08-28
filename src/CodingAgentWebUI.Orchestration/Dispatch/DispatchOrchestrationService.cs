@@ -125,6 +125,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         run.ProjectId = project.Id;
         run.ProjectName = project.Name;
         run.ResolvedProfileId = profile.Id;
+        run.PipelineProviderConfigId = pipelineProviderId;
         run.ResolvedQualityGateConfigIds = resolvedQgcs
             .Select(q => q.Id).ToList().AsReadOnly();
         run.ResolvedReviewerConfigIds = resolvedReviewerConfigs
