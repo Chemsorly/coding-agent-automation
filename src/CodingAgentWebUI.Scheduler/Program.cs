@@ -92,8 +92,8 @@ builder.Host.UseSerilog((ctx, lc) =>
         .WriteToOtlpIfConfigured("coding-agent-scheduler", ctx.HostingEnvironment.EnvironmentName);
 });
 
-// ── Port 8091 ─────────────────────────────────────────────────────────────
-builder.WebHost.UseUrls("http://+:8091"); // NOSONAR S1075
+// ── Port 8080 ─────────────────────────────────────────────────────────────
+builder.WebHost.UseUrls("http://+:8080"); // NOSONAR S1075
 
 // ── OpenTelemetry ─────────────────────────────────────────────────────────
 var otelServiceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-scheduler";

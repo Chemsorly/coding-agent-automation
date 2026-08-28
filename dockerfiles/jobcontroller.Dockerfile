@@ -1,6 +1,6 @@
 # =============================================================================
 # CodingAgentWebUI Job Controller Dockerfile
-# Runs the Job Controller service on port 8091.
+# Runs the Job Controller service on port 8080.
 # No Kiro CLI, Node.js, uv, or SDK in the runtime layer.
 # =============================================================================
 
@@ -54,11 +54,11 @@ RUN test ! -e /home/ubuntu/.kube/config && \
     test ! -e /root/.kube/config && \
     echo "OK: no kubeconfig in runtime image"
 
-# Configure ASP.NET to listen on port 8091
-ENV ASPNETCORE_URLS=http://+:8091
+# Configure ASP.NET to listen on port 8080
+ENV ASPNETCORE_URLS=http://+:8080
 ENV OTEL_SERVICE_NAME=coding-agent-jobcontroller
 
-EXPOSE 8091
+EXPOSE 8080
 
 # Copy published app (owned by ubuntu user)
 COPY --from=build --chown=ubuntu:ubuntu /app/publish .
@@ -74,6 +74,6 @@ ARG BUILD_REPOSITORY_URL=
 RUN echo "{\"commitSha\":\"${BUILD_COMMIT_SHA}\",\"branch\":\"${BUILD_BRANCH}\",\"buildTimestamp\":\"${BUILD_TIMESTAMP}\",\"runId\":\"${BUILD_RUN_ID}\",\"runNumber\":\"${BUILD_RUN_NUMBER}\",\"imageTag\":\"${BUILD_IMAGE_TAG}\",\"repositoryUrl\":\"${BUILD_REPOSITORY_URL}\"}" > build-info.json
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:8091/healthz || exit 1
+    CMD curl -f http://localhost:8080/healthz || exit 1
 
 ENTRYPOINT ["dotnet", "CodingAgentWebUI.JobController.dll"]

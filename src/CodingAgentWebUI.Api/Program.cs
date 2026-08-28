@@ -66,8 +66,8 @@ builder.Services.AddApiAuthentication(agentApiKey, Log.Logger);
 // ── Serilog ──────────────────────────────────────────────────────────────────
 builder.Host.ConfigureApiSerilog();
 
-// ── ASPNETCORE_URLS defaults to port 8090 (avoids monolith's 8080) ──────────
-builder.WebHost.UseUrls("http://+:8090"); // NOSONAR S1075 — port is runtime infrastructure config, not a business URL
+// ── ASPNETCORE_URLS defaults to port 8080 ────────────────────────────────────
+builder.WebHost.UseUrls("http://+:8080"); // NOSONAR S1075 — port is runtime infrastructure config, not a business URL
 
 // ── OpenTelemetry ─────────────────────────────────────────────────────────────
 var otelServiceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-api";

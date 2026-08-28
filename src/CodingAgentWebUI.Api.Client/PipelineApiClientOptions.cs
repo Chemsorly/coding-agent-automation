@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Api.Client;
 /// </summary>
 public sealed class PipelineApiClientOptions
 {
-    /// <summary>Base URL of the Pipeline API service, e.g. "https://api:8090".</summary>
+    /// <summary>Base URL of the Pipeline API service, e.g. "https://api:8080".</summary>
     public required string BaseUrl { get; init; }
 
     /// <summary>
