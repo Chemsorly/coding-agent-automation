@@ -276,6 +276,14 @@ public sealed class FakeRedisStore : IRedisStore
     }
 
     /// <summary>
+    /// Returns the expiry timestamp set for a key via <see cref="ExpireAsync"/> or
+    /// <see cref="ExpireAtAsync"/>, or <c>null</c> if no expiry is set.
+    /// Use this in tests to assert that TTL was refreshed by a write operation.
+    /// </summary>
+    public DateTimeOffset? GetExpiry(string key)
+        => _expiries.TryGetValue(key, out var expiry) ? expiry : null;
+
+    /// <summary>
     /// Wipes all state. Use in <c>IAsyncLifetime.InitializeAsync</c> of fixtures that share this
     /// store across tests (e.g. multi-replica fixtures).
     /// </summary>
