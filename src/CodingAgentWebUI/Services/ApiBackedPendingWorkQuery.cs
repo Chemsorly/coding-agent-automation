@@ -33,10 +33,17 @@ internal sealed class ApiBackedPendingWorkQuery : IPendingWorkQuery
         {
             WorkItemId = item.Id.ToString(),
             IssueIdentifier = new IssueIdentifier(item.IssueIdentifier),
+            IssueTitle = item.IssueTitle,
             IssueProviderId = new ProviderConfigId(item.IssueProviderConfigId),
             RepoProviderId = new ProviderConfigId(""),  // not available from DTO; UI doesn't render it
             EnqueuedAt = item.CreatedAt,
-            InitiatedBy = "",
+            // item.InitiatedBy is string? — null when Payload is absent or the key is missing in JSON
+            // (System.Text.Json does not enforce `required` at runtime; missing keys produce null).
+            // PendingJob.InitiatedBy is required string, so we fall back to "" for legacy/edge-case items.
+            InitiatedBy = item.InitiatedBy ?? "",
+            Project = (!string.IsNullOrEmpty(item.ProjectName) || !string.IsNullOrEmpty(item.ProjectId))
+                ? new PipelineProject { Id = item.ProjectId ?? "", Name = item.ProjectName ?? item.ProjectId ?? "" }
+                : null,
             RequiredLabels = item.AgentSelector
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             TaskType = item.TaskType,
