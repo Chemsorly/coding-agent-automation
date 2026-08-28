@@ -460,7 +460,8 @@ public sealed class DispatchLoopTests
             .ThrowsAsync(new HttpRequestException("API unreachable"));
 
         var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
+        var ex = await Record.ExceptionAsync(() => loop.RunOneCycleAsync(CancellationToken.None));
+        Assert.Null(ex);
     }
 
     // ─── Label swap failure (non-fatal) ──────────────────────────────────────
@@ -497,6 +498,7 @@ public sealed class DispatchLoopTests
             .ThrowsAsync(new HttpRequestException("requeue also failed"));
 
         var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
+        var ex = await Record.ExceptionAsync(() => loop.RunOneCycleAsync(CancellationToken.None));
+        Assert.Null(ex);
     }
 }
