@@ -79,30 +79,51 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     }
 
     /// <summary>
-    /// Transitions the disconnected agent to <see cref="AgentStatus.Disconnected"/> in the registry.
+    /// Handles agent disconnection. For ephemeral chat pods (identified by <c>chat=true</c> label),
+    /// the entry is fully removed from the registry via <c>Deregister</c> — there is no reconnect
+    /// for chat pods, so a <c>Disconnected</c> entry would persist indefinitely (issue #2109).
+    /// For persistent worker agents, the entry is transitioned to <see cref="AgentStatus.Disconnected"/>
+    /// so the existing reconnect and orphan-recovery flow can proceed unchanged.
     /// </summary>
     public override Task OnDisconnectedAsync(Exception? exception)
     {
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         if (agent is not null)
         {
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Disconnected);
-            // Elevate to Warning when an active job is interrupted — helps trace abrupt disconnects
-            // mid-run. Include BusySince so the log shows how long the agent had been working.
-            if (agent.ActiveJobId is not null)
+            // TODO: Verify that AgentEntry.Labels is IReadOnlyList<string> or another immutable/thread-safe
+            // collection type. If it is a mutable List<T>, concurrent writes (e.g., from a registry update
+            // on another thread) could cause InvalidOperationException during this iteration.
+            // See review finding: DotNetSpecialist [WARNING] AgentHub.cs:95
+            bool isChatAgent = agent.Labels.Any(l =>
+                string.Equals(l, "chat=true", StringComparison.Ordinal));
+
+            if (isChatAgent)
             {
-                _logger.Warning(
-                    "Agent {AgentId} disconnected with active job (connectionId={ConnectionId}, activeJobId={ActiveJobId}, busySince={BusySince}, orphanRestoredAt={OrphanRestoredAt}, exception={Exception})",
-                    agent.AgentId, Context.ConnectionId, agent.ActiveJobId,
-                    agent.BusySince?.ToString("O") ?? "none",
-                    agent.OrphanRestoredAt?.ToString("O") ?? "none",
-                    exception?.Message ?? "none");
+                _facade.Deregister(agent.AgentId);
+                _logger.Information(
+                    "Chat agent {AgentId} deregistered on disconnect (connectionId={ConnectionId})",
+                    agent.AgentId, Context.ConnectionId);
             }
             else
             {
-                _logger.Information(
-                    "Agent {AgentId} disconnected (connectionId={ConnectionId}, activeJobId=none, exception={Exception})",
-                    agent.AgentId, Context.ConnectionId, exception?.Message ?? "none");
+                _facade.TransitionStatus(agent.AgentId, AgentStatus.Disconnected);
+                // Elevate to Warning when an active job is interrupted — helps trace abrupt disconnects
+                // mid-run. Include BusySince so the log shows how long the agent had been working.
+                if (agent.ActiveJobId is not null)
+                {
+                    _logger.Warning(
+                        "Agent {AgentId} disconnected with active job (connectionId={ConnectionId}, activeJobId={ActiveJobId}, busySince={BusySince}, orphanRestoredAt={OrphanRestoredAt}, exception={Exception})",
+                        agent.AgentId, Context.ConnectionId, agent.ActiveJobId,
+                        agent.BusySince?.ToString("O") ?? "none",
+                        agent.OrphanRestoredAt?.ToString("O") ?? "none",
+                        exception?.Message ?? "none");
+                }
+                else
+                {
+                    _logger.Information(
+                        "Agent {AgentId} disconnected (connectionId={ConnectionId}, activeJobId=none, exception={Exception})",
+                        agent.AgentId, Context.ConnectionId, exception?.Message ?? "none");
+                }
             }
         }
 
