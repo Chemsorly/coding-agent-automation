@@ -135,8 +135,8 @@ public sealed class AgentWorkerServiceShutdownTests : IDisposable
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
             chatHandler, consolidationHandler,
-            new AgentId("test"), executor,
-            signalRReporter, lifetime, logger));
+            executor,
+            signalRReporter, logger));
 
         // Seed a message into the buffer BEFORE FinalizeJobAsync so HasPendingMessages = true
         // (simulates a previous failed delivery where hub was unavailable)
@@ -178,8 +178,8 @@ public sealed class AgentWorkerServiceShutdownTests : IDisposable
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
             chatHandler, consolidationHandler,
-            new AgentId("test"), executor,
-            signalRReporter, lifetime, logger));
+            executor,
+            signalRReporter, logger));
 
         slotManager.TryAcquireJobSlot("clean-job", out _);
 

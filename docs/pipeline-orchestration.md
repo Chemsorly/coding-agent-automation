@@ -191,7 +191,7 @@ External CI is only evaluated after local gates (compilation, tests, coverage) p
 
 The retry prompt includes the full gate failure details and points the agent to diagnostic output files. Each retry attempt is a `--resume` call, so the agent has full conversation history.
 
-If all retries are exhausted, a **draft PR** is created with the failing code. The issue label is **not** changed to `agent:error` on normal retry exhaustion — the pipeline completes with `FailureCategory = QualityGateExhausted` and the PR is left as a draft. `agent:error` is only applied when an unexpected exception escapes the pipeline's error boundary (e.g., unhandled infrastructure failure), not when retries run out cleanly.
+If all retries are exhausted, a **draft PR** is created with the failing code and the issue label is set to `agent:error`. The pipeline completes with `FailureCategory = QualityGateExhausted`. `agent:error` is applied both when retries are exhausted (draft PR path) and when an unexpected exception escapes the pipeline's error boundary (e.g., unhandled infrastructure failure) — in both cases the issue requires human attention before the next run.
 
 ## Label Transitions
 
