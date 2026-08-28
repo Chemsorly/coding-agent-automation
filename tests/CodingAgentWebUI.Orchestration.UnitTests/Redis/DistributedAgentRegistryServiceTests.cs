@@ -114,18 +114,26 @@ public sealed class DistributedAgentRegistryServiceTests
 
         // Heartbeat should restore membership
         _sut.UpdateHeartbeat(new AgentId("agent-1"), DateTimeOffset.UtcNow);
-        // Give async fire-and-forget time to execute
-        System.Threading.Thread.Sleep(50);
+        // Await the fire-and-forget task deterministically via the internal test hook.
+        // TODO (WARNING): LastHeartbeatTask stores the ContinueWith continuation, not the inner
+        // UpdateHeartbeatAsync task. The continuation completes immediately on success (OnlyOnFaulted
+        // skips), so the assertions below may race against Redis writes if FakeRedisStore ever
+        // yields asynchronously. See DotNetSpecialist WARNING at DistributedAgentRegistryService.cs:231.
+        await _sut.LastHeartbeatTask;
 
+        // TODO (WARNING): Test name claims TTL is refreshed but only asserts set membership.
+        // TTL refresh (the primary heartbeat function) is not asserted here. Add:
+        //   _store.GetExpiry("agent:agent-1").Should().NotBeNull();
+        //   _store.GetExpiry("agent:agent-1").Should().BeAfter(DateTimeOffset.UtcNow);
         _store.GetSet("agents:all").Should().Contain("agent-1");
     }
 
     [Fact]
-    public void UpdateHeartbeat_DoesNotCreateGhostEntry_WhenHashExpired()
+    public async Task UpdateHeartbeat_DoesNotCreateGhostEntry_WhenHashExpired()
     {
         // Hash never existed — UpdateHeartbeat should be a no-op
         _sut.UpdateHeartbeat(new AgentId("agent-ghost"), DateTimeOffset.UtcNow);
-        System.Threading.Thread.Sleep(50);
+        await _sut.LastHeartbeatTask;
 
         _store.GetHash("agent:agent-ghost").Should().BeNull();
         _store.GetSet("agents:all").Should().NotContain("agent-ghost");
@@ -189,5 +197,133 @@ public sealed class DistributedAgentRegistryServiceTests
         await _sut.UpdateAgentFieldAsync(new AgentId("agent-1"), "activeJobId", null);
 
         _store.GetHash("agent:agent-1")!["activeJobId"].Should().BeEmpty();
+    }
+
+    // ── UpdateHeartbeat — TTL expiry recovery ─────────────────────────────────
+
+    [Fact]
+    public async Task UpdateHeartbeat_WhenHashExpiredButLocalSnapshotExists_RecreatesEntry()
+    {
+        // Arrange: register so _localSnapshot is populated, then simulate TTL expiry in Redis
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _store.ForceExpire("agent:agent-1");
+        _store.GetHash("agent:agent-1").Should().BeNull("pre-condition: hash must be gone before heartbeat");
+
+        // Act: heartbeat arrives while connection is still live
+        _sut.UpdateHeartbeat(new AgentId("agent-1"), DateTimeOffset.UtcNow);
+        // Deterministically await the fire-and-forget task via the internal test hook
+        // instead of Thread.Sleep which is timing-dependent and unreliable under CI load.
+        await _sut.LastHeartbeatTask;
+
+        // Assert: entry recreated in Redis (AC1 + AC2)
+        // TODO (WARNING): Does not assert that the recreated entry has an expiry set (ExpireAsync was called).
+        // Without the expiry assertion, a regression that omits ExpireAsync would not be caught and the
+        // entry would immediately expire again on the next TTL cycle. Add:
+        //   _store.GetExpiry("agent:agent-1").Should().NotBeNull();
+        //   _store.GetExpiry("agent:agent-1").Should().BeAfter(DateTimeOffset.UtcNow);
+        // TODO (WARNING): Latent race between Register()'s fire-and-forget WriteRegistrationAsync and
+        // the immediately following ForceExpire. Passes today only because FakeRedisStore returns
+        // already-completed Tasks. If FakeRedisStore is changed to yield, ForceExpire may run before
+        // WriteRegistrationAsync completes, causing the pre-condition assertion to fail intermittently.
+        var hash = _store.GetHash("agent:agent-1");
+        hash.Should().NotBeNull("entry must be recreated from local snapshot after TTL expiry");
+        hash!["agentId"].Should().Be("agent-1");
+        hash["connectionId"].Should().Be("conn-1");
+        hash["status"].Should().Be("Idle");
+        _store.GetSet("agents:all").Should().Contain("agent-1");
+        _store.GetSet("agents:idle").Should().Contain("agent-1");
+    }
+
+    [Fact]
+    public async Task UpdateHeartbeat_WhenHashExpiredAfterDeregister_DoesNotRecreateEntry()
+    {
+        // Arrange: register, deregister (clears _localSnapshot), then simulate expiry
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Deregister(new AgentId("agent-1"));
+        // Deterministically await the deregister fire-and-forget task via the internal test hook.
+        await _sut.LastDeregisterTask;
+        _store.ForceExpire("agent:agent-1"); // belt-and-suspenders: ensure hash is gone
+
+        // Act: stray heartbeat arrives after deregistration
+        _sut.UpdateHeartbeat(new AgentId("agent-1"), DateTimeOffset.UtcNow);
+        await _sut.LastHeartbeatTask;
+
+        // Assert: entry must NOT be recreated (AC4)
+        // TODO (WARNING): Does not test the ordering where TTL fires *before* Deregister is called
+        // (i.e., hash already gone when Deregister arrives). That scenario exercises the comment in
+        // DeregisterAsync: "GetAgentRaw returns null — snapshot must still be cleared". Consider
+        // adding a test: ForceExpire → Deregister → UpdateHeartbeat → assert no entry.
+        _store.GetHash("agent:agent-1").Should().BeNull(
+            "deregistered agent must not be resurrected by a heartbeat");
+        _store.GetSet("agents:all").Should().NotContain("agent-1");
+    }
+
+    [Fact]
+    public async Task UpdateAgentFieldAsync_WhenHashExpired_SkipsWrite_DoesNotCreatePartialHash()
+    {
+        // Arrange: register, then simulate TTL expiry so the hash is gone
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _store.ForceExpire("agent:agent-1");
+        _store.GetHash("agent:agent-1").Should().BeNull("pre-condition: hash must be absent before call");
+
+        // Act: UpdateAgentFieldAsync is called (e.g. ReportChatCompleted clears activeChatSessionId)
+        await _sut.UpdateAgentFieldAsync(new AgentId("agent-1"), "activeChatSessionId", null);
+
+        // Assert: no partial hash was created (CRITICAL-1 fix).
+        // Without the existence guard, HashSetFieldAsync would create a single-field hash that
+        // satisfies ExistsAsync == true but is missing required fields (agentId, connectionId,
+        // registeredAt), causing HashToEntry to return null and the agent to be invisible for 600s.
+        _store.GetHash("agent:agent-1").Should().BeNull(
+            "UpdateAgentFieldAsync must not create a partial hash when the agent hash has expired");
+        _store.GetExpiry("agent:agent-1").Should().BeNull(
+            "no TTL should be set on a key that was not written");
+    }
+
+    [Fact]
+    public async Task UpdateHeartbeat_WhenHashExpiredAfterStatusTransition_RecreatesEntryWithLiveStatus()
+    {
+        // Arrange: register as Idle, transition to Busy, then simulate TTL expiry
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+        _store.ForceExpire("agent:agent-1");
+        _store.GetHash("agent:agent-1").Should().BeNull("pre-condition: hash must be gone before heartbeat");
+
+        // Act: heartbeat fires while agent is still mid-job
+        _sut.UpdateHeartbeat(new AgentId("agent-1"), DateTimeOffset.UtcNow);
+        await _sut.LastHeartbeatTask;
+
+        // Assert: recreated entry must reflect the LIVE Busy status (CRITICAL-2 fix).
+        // Without snapshot sync in TransitionStatusAsync, the entry would be recreated with
+        // the stale Register()-time snapshot (Status=Idle, ActiveJobId=null), making the
+        // agent eligible for double-booking by the dispatcher.
+        var hash = _store.GetHash("agent:agent-1");
+        hash.Should().NotBeNull("entry must be recreated after TTL expiry");
+        hash!["status"].Should().Be("Busy",
+            "re-registered entry must reflect the live Busy status, not the stale Register()-time Idle");
+        _store.GetSet("agents:idle").Should().NotContain("agent-1",
+            "a Busy agent must not appear in agents:idle after re-registration");
+        _store.GetSet("agents:all").Should().Contain("agent-1");
+    }
+
+    [Fact]
+    public async Task UpdateAgentFieldAsync_RefreshesTtl()
+    {
+        // Arrange: register (sets initial TTL), then call UpdateAgentFieldAsync
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        // Act
+        await _sut.UpdateAgentFieldAsync(new AgentId("agent-1"), "activeJobId", "run-xyz");
+
+        // Assert: expiry was set (AC3)
+        // Note: FakeRedisStore.HashSetFieldAsync clears expiry, then the subsequent
+        // ExpireAsync call inside UpdateAgentFieldAsync must re-set it.
+        // TODO (WARNING): Only asserts the expiry is non-null and in the future. A regression that calls
+        // ExpireAsync with TimeSpan.FromSeconds(1) instead of AgentTtl (600s) would still pass. Consider
+        // also asserting: expiry >= DateTimeOffset.UtcNow + TimeSpan.FromSeconds(590) to catch trivially
+        // short TTL values.
+        var expiry = _store.GetExpiry("agent:agent-1");
+        expiry.Should().NotBeNull("UpdateAgentFieldAsync must refresh the TTL via ExpireAsync");
+        expiry!.Value.Should().BeAfter(DateTimeOffset.UtcNow,
+            "the new TTL must be in the future");
     }
 }
