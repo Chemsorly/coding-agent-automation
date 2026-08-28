@@ -114,9 +114,11 @@ builder.Services.AddOpenTelemetry()
 
 var app = builder.Build();
 
-// ── Health endpoint ───────────────────────────────────────────────────────
-app.MapGet("/health", () => Results.Ok(new { status = "healthy" }))
-   .WithName("SchedulerHealth").AllowAnonymous();
+// ── Health probes ─────────────────────────────────────────────────────────
+// /healthz — startup/liveness, /readyz — readiness, /health — Dockerfile HEALTHCHECK compat.
+// Endpoint lambdas live in SchedulerHealthEndpoints so tests can call the same method
+// instead of re-declaring inline copies (which would test routing, not production code).
+app.MapSchedulerHealthEndpoints();
 
 // ── Loop control endpoints ────────────────────────────────────────────────
 app.MapSchedulerLoopEndpoints();
