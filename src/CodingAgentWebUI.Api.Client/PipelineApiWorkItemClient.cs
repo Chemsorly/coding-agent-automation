@@ -74,6 +74,10 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
     public async Task RequeueAsync(Guid workItemId, CancellationToken ct = default)
     {
         var response = await _http.PostAsync($"/api/work-items/{workItemId}/requeue", null, ct);
+        // 409 Conflict — expected: item already in Pending, Running, or terminal state.
+        // The requeue intent is satisfied; treat as success (no-op).
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            return;
         response.EnsureSuccessStatusCode();
     }
 
