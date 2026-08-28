@@ -363,10 +363,8 @@ public class DiResolutionSmokeTests
                 sp.GetRequiredService<AgentJobSlotManager>(),
                 sp.GetRequiredService<IConsolidationExecutor>(),
                 Log.Logger),
-            sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
-            sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger)));
 
         return services.BuildServiceProvider(new ServiceProviderOptions
