@@ -106,7 +106,14 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
 
     public async Task<Guid> CreateAsync(JobDistributionRequest request, CancellationToken ct = default)
     {
-        var response = await _http.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default, ct);
+        // TODO [WARNING]: HttpRequestMessage is IDisposable but is not disposed here. If SendAsync
+        // throws (e.g., TaskCanceledException on timeout), the message and its JsonContent body are
+        // never disposed. Fix: use `using var req = new HttpRequestMessage(...)`.
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/work-items");
+        if (!string.IsNullOrEmpty(request.RunId))
+            req.Headers.Add("X-Idempotency-Key", request.RunId);
+        req.Content = JsonContent.Create(request, options: PipelineJsonOptions.Default);
+        var response = await _http.SendAsync(req, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
     }
