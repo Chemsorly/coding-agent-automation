@@ -18,6 +18,13 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <!-- Required for UseTestServer() / in-memory test host (pulled in via TestHost) -->
+    <!-- TODO [WARNING]: Microsoft.AspNetCore.Mvc.Testing is referenced without a pinned version.
+         All other PackageReferences in this project specify explicit versions. An unpinned reference
+         resolves to the latest available at restore time, which can produce non-reproducible builds
+         across environments and CI runs. Pin this to the .NET 10 release version (e.g. Version="10.0.x")
+         matching the other Microsoft.AspNetCore.* references used in the solution. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Moq" />
