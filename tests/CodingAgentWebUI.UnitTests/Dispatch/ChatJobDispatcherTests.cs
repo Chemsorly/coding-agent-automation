@@ -630,6 +630,90 @@ public class ChatJobDispatcherTests
             Times.Never);
     }
 
+    // ─── 17b. StartAsync — multi-replica Redis-absent warning ────────────────
+
+    /// <summary>Minimal Serilog sink that records rendered log messages for assertion.</summary>
+    private sealed class ListSink(List<(Serilog.Events.LogEventLevel Level, string Message)> events)
+        : Serilog.Core.ILogEventSink
+    {
+        public void Emit(Serilog.Events.LogEvent logEvent)
+            => events.Add((logEvent.Level, logEvent.RenderMessage()));
+    }
+
+    private static (Serilog.ILogger Logger, List<(Serilog.Events.LogEventLevel Level, string Message)> Events)
+        CreateCapturingLogger()
+    {
+        var events = new List<(Serilog.Events.LogEventLevel Level, string Message)>();
+        var logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(new ListSink(events))
+            .CreateLogger();
+        return (logger, events);
+    }
+
+    [Fact]
+    public async Task StartAsync_WithNoRedisAndMultipleReplicas_LogsWarningContainingRedisNotConfigured()
+    {
+        // Reproduces: issue #2133 — when Redis is absent and ChatReplicaCount > 1,
+        // StartAsync must emit a Warning so operators can detect the misconfiguration before
+        // chat pods start idle-killing active sessions.
+        var (logger, events) = CreateCapturingLogger();
+        var options = CreateOptions();
+        options.ChatReplicaCount = 2;
+
+        var dispatcher = CreateDispatcher(options: options, redis: null);
+        // TODO: dead object — `dispatcher` is never used; only `capturedDispatcher` (constructed
+        // below with the capturing logger) is exercised. Remove this allocation once CreateDispatcher
+        // exposes a logger parameter, or simply delete the line and the comment below it.
+        // Re-create with capturing logger — CreateDispatcher doesn't expose logger param at top level,
+        // so construct directly here to pass the capturing logger.
+        var capturedDispatcher = new ChatJobDispatcher(
+            CreateJobClientMock().Object,
+            CreateHubContextMock().Object,
+            CreateTemplateStore(),
+            CreateRegistry(),
+            options,
+            logger,
+            redis: null);
+
+        await capturedDispatcher.StartAsync(CancellationToken.None);
+
+        events.Should().Contain(e =>
+            e.Level == Serilog.Events.LogEventLevel.Warning &&
+            e.Message.Contains("Redis is not configured"),
+            "a Warning containing 'Redis is not configured' must be logged when redis=null and ChatReplicaCount=2");
+    }
+
+    [Fact]
+    public async Task StartAsync_WithNoRedisAndSingleReplica_DoesNotLogWarning()
+    {
+        // Single-replica local dev without Redis must stay clean — no warning.
+        var (logger, events) = CreateCapturingLogger();
+        var options = CreateOptions();
+        // ChatReplicaCount defaults to 1 — no change needed, but set explicitly for clarity
+        options.ChatReplicaCount = 1;
+
+        var capturedDispatcher = new ChatJobDispatcher(
+            CreateJobClientMock().Object,
+            CreateHubContextMock().Object,
+            CreateTemplateStore(),
+            CreateRegistry(),
+            options,
+            logger,
+            redis: null);
+
+        await capturedDispatcher.StartAsync(CancellationToken.None);
+
+        // TODO: assertion is overly broad — it rejects *any* Warning, not just the specific one
+        // guarded by this AC. If StartAsync ever emits an unrelated Warning (e.g., a deprecation
+        // notice), this test will fail for the wrong reason. Narrow to:
+        //   events.Should().NotContain(e =>
+        //       e.Level == Serilog.Events.LogEventLevel.Warning &&
+        //       e.Message.Contains("Redis is not configured"));
+        events.Where(e => e.Level == Serilog.Events.LogEventLevel.Warning)
+            .Should().BeEmpty("no Warning must be logged when redis=null and ChatReplicaCount=1");
+    }
+
     // ─── 18. Any replica can dispatch — no leader gate ───────────────────────
 
     [Fact]

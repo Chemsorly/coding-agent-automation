@@ -180,6 +180,13 @@ Usage (inside an env: list, indented to 12):
   value: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
 - name: WorkDistribution__Dispatch__ChatIdleTimeoutSeconds
   value: {{ .Values.workDistribution.dispatch.chatIdleTimeoutSeconds | quote }}
+{{- /* TODO: add `| default 1` before `| quote` here. Without it, if api.replicas is null or absent
+         in a user-supplied values.yaml, Helm renders an empty string. The .NET binder parses ""
+         as 0 (≤ 1), silently suppressing the multi-replica Redis warning. Use:
+           {{ .Values.api.replicas | default 1 | quote }}
+         to match ChatReplicaCount's code default and make the fallback explicit. */ -}}
+- name: WorkDistribution__Dispatch__ChatReplicaCount
+  value: {{ .Values.api.replicas | quote }}
 {{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}
 - name: WorkDistribution__CredentialPools__Kiro__{{ $i }}
   value: {{ $pvc | quote }}

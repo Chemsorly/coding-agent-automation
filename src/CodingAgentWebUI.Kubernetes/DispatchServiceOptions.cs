@@ -50,6 +50,14 @@ public sealed class DispatchServiceOptions
     /// </summary>
     public int ChatIdleTimeoutSeconds { get; set; } = 90;
 
+    /// <summary>
+    /// Number of API replicas. Used by <c>ChatJobDispatcher</c> to emit a startup warning
+    /// when Redis is not configured and a multi-replica deployment is detected. Default: 1.
+    /// A value ≤ 1 suppresses the warning (single-replica local dev stays clean).
+    /// Wired from <c>api.replicas</c> via <c>WorkDistribution__Dispatch__ChatReplicaCount</c>.
+    /// </summary>
+    public int ChatReplicaCount { get; set; } = 1;
+
     private const int MinAgentJobTimeoutSeconds = 60;
     private const int MinChatPodConnectTimeoutSeconds = 5;
     private const int MinChatTerminationGracePeriodSeconds = 5;

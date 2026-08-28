@@ -101,7 +101,7 @@ public partial class SonarGateBugConditionTests
             ("tests/CodingAgentWebUI.UnitTests/Components/UndoSnackbarComponentTests.cs",      61,  "UndoSnackbarComponentTests line 61 (UndoSnackbar_Dispose_CancelsPendingDismiss)"),
             ("tests/CodingAgentWebUI.UnitTests/Components/UndoSnackbarComponentTests.cs",      97,  "UndoSnackbarComponentTests line 97 (UndoSnackbar_Dispose_WhenNeverShown)"),
             ("tests/CodingAgentWebUI.E2ETests/Tests/K8sChatIntegrationTests.cs",              124,  "K8sChatIntegrationTests line 124"),
-            ("tests/CodingAgentWebUI.UnitTests/Dispatch/ChatJobDispatcherTests.cs",           637,  "ChatJobDispatcherTests line 637"),
+            ("tests/CodingAgentWebUI.UnitTests/Dispatch/ChatJobDispatcherTests.cs",           719,  "ChatJobDispatcherTests line 719 (DispatchChatPodAsync_NoLeaderCheck_AnyReplicaCanDispatch)"),
             ("tests/CodingAgentWebUI.Infrastructure.UnitTests/Telemetry/SerilogOtlpExtensionsTests.cs", 170, "SerilogOtlpExtensionsTests line 170"),
             ("tests/CodingAgentWebUI.Agent.UnitTests/PipelineCleanupTests.cs",                196,  "PipelineCleanupTests line 196"),
 
