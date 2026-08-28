@@ -61,10 +61,8 @@ internal static class TestAgentWorkerServiceFactory
             lifecycle, slotManager,
             chatHandler,
             consolidationHandler,
-            new AgentId("test-agent"),
             CreateMockExecutor(mockOrchestrator),
             reporter,
-            lifetime,
             mockLogger));
 
         return (service, slotManager, lifecycle, chatHandler);
