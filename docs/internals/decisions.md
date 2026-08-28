@@ -8,7 +8,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 12 | Last run: 2026-08-14 | Decisions captured: 64 -->
 <!-- Session: 14 | Last run: 2026-08-22 | Updates: T12 audit — marked #2027/#2028/#2025/#1058/#1059 resolved; fixed ConsolidationDispatchHandler→ConsolidationWorkItemDispatchService; T10 decision added; T11 decisions added -->
 <!-- Session: 15 | Last run: 2026-08-22 | Updates: T22 — AgentSelectorKey.From() extracted; ScanPagedAsync private helper extracted in PostgresPipelineRunHistoryService; T6/T15/T16/T20 closed; LabelStateMachine.cs stale path fixed -->
-<!-- Session: 16 | Last run: 2026-08-28 | Decisions added: 4 (soft anti-affinity, AgentJobTimeoutSeconds backstop, Redis required for multi-replica keepalive, ExternalCiDuration split); issue created: #2133; helm templates fixed (required→preferred anti-affinity, all 4 deployments) -->
+<!-- Session: 16 | Last run: 2026-08-28 | Decisions added: 4 (soft anti-affinity, AgentJobTimeoutSeconds backstop, Redis required for multi-replica keepalive, ExternalCiDuration split); issue created: #2133; helm templates fixed (required→preferred anti-affinity, all 4 deployments); stale audit: monolith decision updated (4-service split), DatabaseMaintenanceService migration closed (Spec 047 superseded), SignalR reconnect Reassess-when updated, MessagePack/MaxRunsPerCycle docker-compose refs removed, Decision Map cleaned -->
 <!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition -->
 
 ---
@@ -677,7 +677,7 @@ Leader election continues to handle multi-replica safety. The split was driven b
 **Date:** 2026-07-04
 **Category:** configuration
 
-**Decision:** `ClosedLoopMaxRunsPerCycle=0` means unlimited dispatch per cycle. This is safe because concurrency is bounded by: agent count (docker-compose), `MaxConcurrentPods` per-selector (K8s), rate limiter (10 Jobs/s in DispatchService), and `MaxConcurrentDecompositions`. The `0=unlimited` default avoids artificial throttling for the common case. Users who need a cap set it explicitly.
+**Decision:** `ClosedLoopMaxRunsPerCycle=0` means unlimited dispatch per cycle. This is safe because concurrency is bounded by: `MaxConcurrentPods` per-selector (K8s), rate limiter (10 Jobs/s in DispatchService), and `MaxConcurrentDecompositions`. The `0=unlimited` default avoids artificial throttling for the common case. Users who need a cap set it explicitly.
 
 **Context:** GitHub Actions has 20-256 concurrent jobs per org. Argo defaults to 500 concurrent workflows. This system's layered concurrency controls make a global per-cycle cap redundant for most deployments.
 
@@ -1342,18 +1342,18 @@ A startup warning must be added when `ChatJobDispatcher` is instantiated with `_
 - "Dual JSON options (Default/Lenient)" enables "Snake_case JsonStringEnumMemberName for LLM-produced enums"
 - "Dual JSON options (Default/Lenient)" enables "No schema versioning — append-only evolution"
 - "Enum roundtrip test is mandatory" constrains "Enum serialization: self-annotation is flexible"
-- "MessagePack int ordinals for SignalR" scoped by "Monolithic orchestrator is intentional (homogeneous deployment)"
-- "No schema versioning" scoped by "Three deployment modes (homogeneous deployment assumption)"
+- "MessagePack int ordinals for SignalR" scoped by "Monolithic orchestrator — now split into 4 services (homogeneous deployment still holds: single Helm release)"
+- "No schema versioning" scoped by "Monolithic orchestrator — now split into 4 services (same SHA homogeneous deployment assumption)"
 - "Token vending: private keys never leave orchestrator" constrains "MessagePack int ordinals for SignalR" (both assume trusted orchestrator↔agent channel)
 - "Circuit breaker is infrastructure safeguard" scoped by "Partial failure contract (enrichment non-fatal, critical path fatal)"
-- "Agent lifetime: pull→push evolution" constrains "Three deployment modes" (K8s-only future would collapse to single mode)
-- "MaxRunsPerCycle=0 unlimited" scoped by "Agent lifetime dual model" (bounded by agent count in docker-compose, MaxConcurrentPods in K8s)
+- "Agent lifetime: pull→push evolution" constrains "Three deployment modes" (K8s-only is now the only mode — condition met and resolved in spec 041)
+- "MaxRunsPerCycle=0 unlimited" scoped by "Agent lifetime: pull→push evolution" (bounded by MaxConcurrentPods per-selector in K8s; docker-compose removed)
 - "Cleanup step before PR" enables "Confidence gate is fail-closed" (cleanup reduces false negatives from cosmetic issues)
 - "MaxRetries=3 arbitrary default" scoped by "Draft PR is the retry-exhausted fallback" (exhausted retries → draft PR, not failure)
 - "Label swap: add-first ordering" scoped by "Token vending: private keys never leave orchestrator" (both assume imperfect external APIs)
 - "External CI re-push" scoped by "Partial failure contract" (CI is on the critical path — failure is retried, not ignored)
 - "Project overrides: deep-merge (#1044 resolved)" constrains "No schema versioning" (merge requires distinguishing "not set" from "set to default")
-- "LocalPipelineExecutor: accidental monolith" correlates with "Agent lifetime dual model" (executor grew as both modes added features)
+- "LocalPipelineExecutor: decomposition complete" — lives in CodingAgentWebUI.Agent (K8s-only agent binary); prior "agent lifetime dual model" correlation is no longer relevant
 - "AgentCoding component ↔ PageService boundary" scoped by "PipelineService event handling" (event state transitions should migrate to PageService per the boundary principle)
 - "Undo snackbar: always show" correlates with "Error messages: sticky with dismiss" (both are feedback pattern decisions — success/undo are transient, errors are persistent)
 - "Drawer tabs: three-component approach" scoped by "AgentCoding component ↔ PageService boundary" (drawer state lives in PageService, rendering in components)
@@ -1388,8 +1388,8 @@ A startup warning must be added when `ChatJobDispatcher` is instantiated with `_
 
 - "PipelineLoopService: full loop leader-gated" scoped by "Agent lifetime: pull→push evolution" (all deployments are K8s; the loop runs unconditionally only in test environments without leader election)
 - "PipelineLoopService: full loop leader-gated" enables "Housekeeping auto-update concurrency: 1 is permanent default" (concurrency gate only works correctly when a single leader runs the poll loop)
-- "DatabaseMaintenanceService: migrate to LeaderElectedPollingService" scoped by "PipelineLoopService: full loop leader-gated" (same principle: all background loops with side-effects must be leader-gated in multi-replica)
-- "DatabaseMaintenanceService: migrate to LeaderElectedPollingService" correlates with "LeaderElectedPollingService: two correctness defects (#2027)" (migration can now proceed — #2027 is resolved; both the null-check and OCE filter are fixed)
+- "DatabaseMaintenanceService: Spec 047 superseded migration" scoped by "PipelineLoopService: full loop leader-gated" (leader-gate now lives in Scheduler's RetentionSweepSchedulerService; plain-singleton pattern removes BackgroundService concerns entirely)
+- ~~"DatabaseMaintenanceService: migrate to LeaderElectedPollingService" correlates with "LeaderElectedPollingService: two correctness defects (#2027)"~~ — superseded; migration never executed; Spec 047 resolved both concerns via a different approach
 - "AgentCodingPageService: extract per-drawer orchestrators" scoped by "AgentCoding component ↔ PageService boundary" (drawer orchestration is the next extraction target after the component boundary was established)
 - "DrawerCancellationToken: wrong-token bug (#2028)" scoped by "AgentCodingPageService: extract per-drawer orchestrators" (bug is a symptom of the tight coupling; extraction removes the need for the property entirely)
 - "LeaderElectedPollingService: two correctness defects (#2027)" — resolved; constraint on PipelineLoopService migration lifted
