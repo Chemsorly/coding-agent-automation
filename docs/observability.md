@@ -254,9 +254,9 @@ Agent pods emit telemetry with `service.name` derived from the agent image and l
 | `service.name` | Component | Port |
 |----------------|-----------|------|
 | `coding-agent-orchestrator` | Orchestrator | — |
-| `coding-agent-api` | REST/WebSocket API | Port 8090 |
-| `coding-agent-jobcontroller` | Job Controller | Port 8091 |
-| `coding-agent-scheduler` | Scheduler | Port 8091 |
+| `coding-agent-api` | REST/WebSocket API | Port 8080 |
+| `coding-agent-jobcontroller` | Job Controller | Port 8080 |
+| `coding-agent-scheduler` | Scheduler | Port 8080 |
 
 ### Example: Grafana Cloud
 
