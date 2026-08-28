@@ -94,11 +94,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         var config = job.PipelineConfiguration;
         var issueOps = new OrchestratorProxy(connection, job.JobId);
 
-        // Construct a per-job provider factory with the OrchestratorProxy for token refresh
-        // TODO: Factory captures config before blacklist override below. Move construction after
-        // the override block if AgentProviderFactory ever needs blacklist settings.
-        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
-
         // Resolve provider configs from the job assignment
         // TODO: These two mandatory lookups use TryGetProviderConfig + manual null-check-and-throw rather than
         // GetRequiredProviderConfig, because GetRequiredProviderConfig skips the structured _logger.Error call that
@@ -119,6 +114,13 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
         // Override blacklist settings from repo provider config (per-repo takes precedence)
         config = PipelineConfigurationResolver.ApplyBlacklistOverride(config, repoConfig);
+
+        // Construct a per-job provider factory with the OrchestratorProxy for token refresh.
+        // Construction is intentionally placed after all config overrides (including blacklist)
+        // so the factory always receives the final config state.
+        // TODO: Add a test that sets a repo-level blacklist override and asserts the factory receives the
+        // overridden config, to permanently protect the ordering invariant against future refactors.
+        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
 
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;
