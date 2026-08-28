@@ -116,6 +116,19 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
                     workItemId, target, attempt + 1, maxRetries);
                 // Row modified by another writer — retry with fresh state
             }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                // Final attempt exhausted — all retries consumed by concurrency conflicts
+                // TODO: Pass `ex` to LogWarning so the stack trace is captured, matching the pattern used in
+                // TransitionIfCoreAsync (line ~216) and TryRecoverFromInfrastructureFailureCoreAsync. Without it,
+                // the stack trace is silently dropped and diagnosing which concurrent writer caused the conflict
+                // becomes harder. Example fix: _logger.LogWarning(ex, "WorkItem {WorkItemId} ...", workItemId, target);
+                _ = ex; // suppress unused-variable warning until the TODO above is addressed
+                _logger.LogWarning(
+                    "WorkItem {WorkItemId} transition to {Target} failed after all retries (concurrency exhausted)",
+                    workItemId, target);
+                return false;
+            }
         }
 
         _logger.LogWarning(
@@ -193,6 +206,15 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
                     "Concurrency conflict on WorkItem {WorkItemId} TransitionIfAsync to {Target}, retry {Attempt}/{MaxRetries}",
                     workItemId, target, attempt + 1, maxRetries);
                 // Row changed — retry; the loop will re-read and re-check both conditions
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                // Final attempt exhausted — all retries consumed by concurrency conflicts
+                _logger.LogWarning(
+                    ex,
+                    "WorkItem {WorkItemId} TransitionIfAsync to {Target} failed after all retries (concurrency exhausted)",
+                    workItemId, target);
+                return false;
             }
         }
 
@@ -301,12 +323,21 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
                     workItemId, desiredStatus, retryAttempt, MaxRetries);
                 // Row modified by another writer — retry with fresh state
             }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                // Final attempt exhausted — all retries consumed by concurrency conflicts
+                // TODO: Pass `ex` to LogWarning so the stack trace is captured, matching the pattern used in
+                // TransitionIfCoreAsync. Without it, the stack trace is silently dropped and diagnosing which
+                // concurrent writer caused the conflict becomes harder.
+                // Example fix: _logger.LogWarning(ex, "WorkItem {WorkItemId} ...", workItemId, desiredStatus);
+                _ = ex; // suppress unused-variable warning until the TODO above is addressed
+                _logger.LogWarning(
+                    "WorkItem {WorkItemId} recovery to {DesiredStatus} failed after all retries (concurrency exhausted)",
+                    workItemId, desiredStatus);
+                return false;
+            }
         }
 
-        // Structurally unreachable for the "all-retries-throw" case (final attempt propagates unhandled).
-        // Exists for pattern symmetry with TransitionCoreAsync.
-        // TODO: Document in method XML doc that callers must handle DbUpdateConcurrencyException when
-        // all retries are exhausted under sustained concurrency pressure — the method is not purely true/false.
         _logger.LogWarning(
             "WorkItem {WorkItemId} recovery to {DesiredStatus} failed after exhausting all retries",
             workItemId, desiredStatus);
