@@ -373,6 +373,25 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
     }
 
     [Fact]
+    public async Task RequeueAsync_Conflict_DoesNotThrow()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/requeue").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(409));
+
+        // 409 means item is already Pending/Running/terminal — the requeue intent is satisfied.
+        await _sut.RequeueAsync(workItemId); // must not throw
+
+        _server.LogEntries.Should().HaveCount(1, "the request was sent and the 409 was received");
+    }
+
+    // TODO: PipelineApiConsolidationWorkItemClient.RequeueAsync received the same 409 no-op fix
+    // but has no WireMock-level unit test covering the 409 path. Add a test analogous to
+    // RequeueAsync_Conflict_DoesNotThrow above for PipelineApiConsolidationWorkItemClient.
+    // The acceptance criterion is only partially satisfied: PipelineApiWorkItemClient is covered,
+    // PipelineApiConsolidationWorkItemClient is not.
+
+    [Fact]
     public async Task PostLastProgressAsync_SendsToCorrectPath()
     {
         var workItemId = Guid.NewGuid();
