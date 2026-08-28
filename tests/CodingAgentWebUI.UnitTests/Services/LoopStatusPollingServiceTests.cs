@@ -37,29 +37,38 @@ public sealed class LoopStatusPollingServiceTests
             _mockLogger.Object,
             interval ?? TimeSpan.FromMilliseconds(1));
 
-    private static async Task RunServiceForDurationAsync(LoopStatusPollingService svc, TimeSpan duration)
-    {
-        using var startCts = new CancellationTokenSource();
-        await svc.StartAsync(startCts.Token);
-        await Task.Delay(duration, CancellationToken.None);
-        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        try { await svc.StopAsync(stopCts.Token); } catch { }
-        svc.Dispose();
-    }
 
     [Fact]
     public async Task WhenPollSucceeds_PropertiesUpdatedAndOnChangeFiredAndUnreachableFalse()
     {
         // Arrange
+        var firstPollCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockClient.Setup(c => c.GetLoopStatusAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DefaultStatus);
+            .ReturnsAsync(() =>
+            {
+                firstPollCompleted.TrySetResult();
+                return DefaultStatus;
+            });
 
         var svc = CreateService();
         var onChangeFired = false;
         svc.OnChange += () => onChangeFired = true;
 
-        // Act
-        await RunServiceForDurationAsync(svc, TimeSpan.FromMilliseconds(50));
+        // Act: start, wait deterministically for the first poll to complete, then stop
+        await svc.StartAsync(CancellationToken.None);
+        await firstPollCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Wait for the OnChange subscribers to finish — they run synchronously after the poll,
+        // so by the time the mock lambda returns, OnChange has already fired. But to be safe
+        // against any future async changes, poll the flag rather than sleeping.
+        var onChangeSeen = await Task.WhenAny(
+            Task.Run(async () => { while (!onChangeFired) await Task.Yield(); }),
+            Task.Delay(TimeSpan.FromSeconds(5)));
+        onChangeSeen.IsCompletedSuccessfully.Should().BeTrue("OnChange must fire within 5s");
+
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try { await svc.StopAsync(stopCts.Token); } catch { }
+        svc.Dispose();
 
         // Assert: properties match the DTO
         svc.IsLoopActive.Should().Be(DefaultStatus.IsLoopActive);
@@ -154,15 +163,34 @@ public sealed class LoopStatusPollingServiceTests
     [Fact]
     public async Task WhenOnChangeSubscriberThrows_OtherSubscribersStillFire()
     {
+        var firstPollCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockClient.Setup(c => c.GetLoopStatusAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(DefaultStatus);
+            .ReturnsAsync(() =>
+            {
+                firstPollCompleted.TrySetResult();
+                return DefaultStatus;
+            });
 
         var svc = CreateService();
         var secondFired = false;
         svc.OnChange += () => throw new InvalidOperationException("bad subscriber");
         svc.OnChange += () => { secondFired = true; };
 
-        await RunServiceForDurationAsync(svc, TimeSpan.FromMilliseconds(50));
+        // Act: wait deterministically for the first poll (and its OnChange invocations) to complete
+        await svc.StartAsync(CancellationToken.None);
+        await firstPollCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // OnChange fires synchronously inside the poll loop after the mock returns,
+        // so by the time firstPollCompleted is set both subscribers have already been called.
+        // Poll the flag anyway for robustness.
+        var secondFiredSeen = await Task.WhenAny(
+            Task.Run(async () => { while (!secondFired) await Task.Yield(); }),
+            Task.Delay(TimeSpan.FromSeconds(5)));
+        secondFiredSeen.IsCompletedSuccessfully.Should().BeTrue("second subscriber must fire within 5s");
+
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try { await svc.StopAsync(stopCts.Token); } catch { }
+        svc.Dispose();
 
         // The throwing subscriber must not prevent the second subscriber from firing
         secondFired.Should().BeTrue("subscriber exception must be caught per-subscriber, not abort the loop");

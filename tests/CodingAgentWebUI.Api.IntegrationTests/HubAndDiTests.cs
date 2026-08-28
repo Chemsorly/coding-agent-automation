@@ -168,7 +168,7 @@ public sealed class HubAndDiTests
         services.AddHttpClient();
         services.AddPipelineApiClient(new PipelineApiClientOptions
         {
-            BaseUrl = "http://localhost:8090",
+            BaseUrl = "http://localhost:8080",
             AgentApiKey = "test-key"
         });
 

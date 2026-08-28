@@ -148,6 +148,130 @@ public sealed class ApiBackedServicesTests
         sut.PendingCount.Should().Be(0, "no calls made yet — count starts at 0");
     }
 
+    [Fact]
+    public async Task GetPendingJobsAsync_WithInitiatedByAndIssueTitle_MapsFields()
+    {
+        // Arrange: DTO with all display fields populated
+        var client = new Mock<IPipelineApiWorkItemClient>();
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingWorkItemDto>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    IssueIdentifier = "org/repo#10",
+                    IssueProviderConfigId = "p1",
+                    TaskType = WorkItemTaskType.Implementation,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    AgentSelector = "kiro",
+                    RetryCount = 0,
+                    InitiatedBy = "manual",
+                    IssueTitle = "Fix the bug",
+                    ProjectName = "MyProject",
+                    ProjectId = "proj-42"
+                }
+            });
+
+        var sut = new ApiBackedPendingWorkQuery(client.Object);
+        var result = await sut.GetPendingJobsAsync();
+
+        result.Should().HaveCount(1);
+        var job = result[0];
+        job.InitiatedBy.Should().Be("manual");
+        job.IssueTitle.Should().Be("Fix the bug");
+        job.Project.Should().NotBeNull();
+        job.Project!.Name.Should().Be("MyProject");
+        job.Project.Id.Should().Be("proj-42");
+    }
+
+    [Fact]
+    public async Task GetPendingJobsAsync_WithNullInitiatedBy_FallsBackToEmptyString()
+    {
+        // Arrange: null InitiatedBy simulates a payload where the key is absent.
+        // System.Text.Json does not enforce `required` at runtime — missing keys produce null.
+        var client = new Mock<IPipelineApiWorkItemClient>();
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingWorkItemDto>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    IssueIdentifier = "a#1",
+                    IssueProviderConfigId = "p1",
+                    TaskType = WorkItemTaskType.Implementation,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    AgentSelector = "kiro",
+                    RetryCount = 0,
+                    InitiatedBy = null  // legacy/edge-case item — payload absent or key missing
+                }
+            });
+
+        var sut = new ApiBackedPendingWorkQuery(client.Object);
+        var result = await sut.GetPendingJobsAsync();
+
+        // PendingJob.InitiatedBy is required string — must not be null
+        result[0].InitiatedBy.Should().Be("", "null InitiatedBy must fall back to empty string");
+    }
+
+    [Fact]
+    public async Task GetPendingJobsAsync_WithProjectIdButNoProjectName_UsesProjectIdAsName()
+    {
+        // Arrange: ProjectName is null but ProjectId is set — Name falls back to ProjectId
+        var client = new Mock<IPipelineApiWorkItemClient>();
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingWorkItemDto>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    IssueIdentifier = "a#1",
+                    IssueProviderConfigId = "p1",
+                    TaskType = WorkItemTaskType.Implementation,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    AgentSelector = "kiro",
+                    RetryCount = 0,
+                    ProjectName = null,
+                    ProjectId = "abc-123"
+                }
+            });
+
+        var sut = new ApiBackedPendingWorkQuery(client.Object);
+        var result = await sut.GetPendingJobsAsync();
+
+        var job = result[0];
+        job.Project.Should().NotBeNull("ProjectId is set so Project must be non-null");
+        job.Project!.Id.Should().Be("abc-123");
+        job.Project.Name.Should().Be("abc-123", "ProjectId is used as fallback Name when ProjectName is null");
+    }
+
+    [Fact]
+    public async Task GetPendingJobsAsync_WithNoProjectFields_LeavesProjectNull()
+    {
+        // Arrange: both ProjectName and ProjectId are null — Project must remain null
+        var client = new Mock<IPipelineApiWorkItemClient>();
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingWorkItemDto>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    IssueIdentifier = "a#1",
+                    IssueProviderConfigId = "p1",
+                    TaskType = WorkItemTaskType.Implementation,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    AgentSelector = "kiro",
+                    RetryCount = 0,
+                    ProjectName = null,
+                    ProjectId = null
+                }
+            });
+
+        var sut = new ApiBackedPendingWorkQuery(client.Object);
+        var result = await sut.GetPendingJobsAsync();
+
+        result[0].Project.Should().BeNull("when both ProjectName and ProjectId are null the Razor renders '—'");
+    }
+
     // ── ApiChatJobDispatcher ──────────────────────────────────────────────
 
     [Fact]

@@ -6,7 +6,7 @@ namespace CodingAgentWebUI.Api;
 /// <summary>
 /// Minimal API endpoints called by the Scheduler microservice.
 /// These are API-side endpoints — distinct from the Scheduler's own loop-control endpoints
-/// which are served from port 8091.
+/// which are served from port 8080.
 ///
 /// Authentication: operator key (Bearer token via existing ApiAuthPolicies.Operator policy).
 /// </summary>
