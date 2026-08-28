@@ -400,9 +400,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
             chatHandler, consolidationHandler,
-            new AgentId("test"),
             throwingExecutor.Object,
-            mockReporter.Object, lifetime, logger));
+            mockReporter.Object, logger));
 
         slotManager.TryAcquireJobSlot("throw-job", out _);
 
@@ -500,9 +499,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
             chatHandler, consolidationHandler,
-            new AgentId("test"),
             pipelineExecutor,
-            signalRReporter, lifetime, logger));
+            signalRReporter, logger));
 
         slotManager.TryAcquireJobSlot("consolidation-throw-job", out _);
 
