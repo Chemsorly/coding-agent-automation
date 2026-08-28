@@ -345,6 +345,106 @@ public sealed class WorkItemEndpointTests
         items!.Count.Should().BeLessThanOrEqualTo(2);
     }
 
+    [Fact]
+    public async Task GetPendingWorkItems_WithPayload_ProjectsNewFields()
+    {
+        // Arrange: directly insert a WorkItemEntity with a full Payload containing
+        // IssueDetail.Title, InitiatedBy, ProjectName, and ProjectId.
+        var issueId = $"display-fields-test-{Guid.NewGuid():N}";
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier(issueId),
+            IssueProviderConfigId = "prov-display",
+            RepoProviderConfigId = "repo-display",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "kiro",
+            TimeoutSeconds = 3600,
+            ProjectId = "proj-123",
+            ProjectName = "Default",
+            IssueDetail = new IssueDetail
+            {
+                Identifier = issueId,
+                Title = "My issue title",
+                Description = "Some description",
+                Labels = []
+            }
+        };
+
+        using (var db = _factory.CreateDbContext())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = issueId,
+                IssueProviderConfigId = "prov-display",
+                Status = WorkItemStatus.Pending,
+                Payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default),
+                AgentSelector = "kiro",
+                TimeoutSeconds = 3600,
+                ProjectId = "proj-123",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            db.SaveChanges();
+        }
+
+        // Act — use maxResults=500 so the freshly-seeded item is never pushed out of the window
+        // by other Pending rows accumulated in the shared integration-test database.
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=500");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+
+        // Assert: the matching DTO has all display fields populated from Payload
+        var dto = items!.FirstOrDefault(i => i.Id == workItemId);
+        dto.Should().NotBeNull("the seeded work item must appear in /pending");
+        dto!.InitiatedBy.Should().Be("loop");
+        dto.IssueTitle.Should().Be("My issue title");
+        dto.ProjectName.Should().Be("Default");
+        dto.ProjectId.Should().Be("proj-123");
+    }
+
+    [Fact]
+    public async Task GetPendingWorkItems_WithNullPayload_ReturnsNullForNewFields()
+    {
+        // Arrange: directly insert a WorkItemEntity with Payload = null.
+        // SeedEntity always sets Payload, so we must insert directly here.
+        var workItemId = Guid.NewGuid();
+        using (var db = _factory.CreateDbContext())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = $"null-payload-test-{Guid.NewGuid():N}",
+                IssueProviderConfigId = "prov-null",
+                Status = WorkItemStatus.Pending,
+                Payload = null,   // legacy row — no payload
+                AgentSelector = "kiro",
+                TimeoutSeconds = 3600,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            db.SaveChanges();
+        }
+
+        // Act — use maxResults=500 so the freshly-seeded item is never pushed out of the window
+        // by other Pending rows accumulated in the shared integration-test database.
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=500");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+
+        // Assert: new display fields are null (backward-compat for legacy rows)
+        var dto = items!.FirstOrDefault(i => i.Id == workItemId);
+        dto.Should().NotBeNull("the seeded work item must appear in /pending");
+        dto!.IssueTitle.Should().BeNull();
+        dto.InitiatedBy.Should().BeNull();
+        dto.ProjectName.Should().BeNull();
+        dto.ProjectId.Should().BeNull();
+    }
+
     // ── Requeue ───────────────────────────────────────────────────────────────────
 
     [Fact]
