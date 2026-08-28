@@ -312,6 +312,8 @@ public static class WorkItemEndpoints
     /// GET /api/work-items/pending
     /// Returns Pending work items excluding Consolidation task type, ordered by CreatedAt ASC.
     /// Query param: maxResults (default 50).
+    /// Includes display fields (IssueTitle, InitiatedBy, ProjectName, ProjectId) extracted from
+    /// the Payload JSONB column for the Agent Monitoring Job Queue UI.
     /// </summary>
     internal static async Task<IResult> GetPendingWorkItems(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -319,13 +321,49 @@ public static class WorkItemEndpoints
         CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var items = await db.WorkItems
+
+        // Phase 1: SQL projection — include Payload and ProjectId alongside the 7 scalar fields.
+        // Payload is fetched here so we can extract display fields in-memory (Phase 2).
+        var raw = await db.WorkItems
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending
                      && w.TaskType != WorkItemTaskType.Consolidation)
             .OrderBy(w => w.CreatedAt)
             .Take(maxResults)
-            .Select(w => new PendingWorkItemDto
+            .Select(w => new
+            {
+                w.Id,
+                w.IssueIdentifier,
+                w.IssueProviderConfigId,
+                w.TaskType,
+                w.CreatedAt,
+                w.AgentSelector,
+                w.RetryCount,
+                w.Payload,
+                w.ProjectId
+            })
+            .ToListAsync(ct);
+
+        // Phase 2: in-memory deserialization to extract display fields from Payload.
+        // Uses PipelineJsonOptions.Lenient (PropertyNameCaseInsensitive=true) for robustness against
+        // payloads written by older serializer configs or with PascalCase keys.
+        // A malformed payload produces null display fields rather than a 500 — same defensive pattern
+        // used in GetAssignment and PostLabelSwap.
+        var items = raw.Select(w =>
+        {
+            JobDistributionRequest? req = null;
+            if (w.Payload is not null)
+            {
+                try
+                {
+                    req = JsonSerializer.Deserialize<JobDistributionRequest>(w.Payload, PipelineJsonOptions.Lenient);
+                }
+                catch (JsonException)
+                {
+                    // Corrupt or legacy payload — fall back to null display fields for this row.
+                }
+            }
+            return new PendingWorkItemDto
             {
                 Id = w.Id,
                 IssueIdentifier = w.IssueIdentifier,
@@ -333,9 +371,13 @@ public static class WorkItemEndpoints
                 TaskType = w.TaskType,
                 CreatedAt = w.CreatedAt,
                 AgentSelector = w.AgentSelector,
-                RetryCount = w.RetryCount
-            })
-            .ToListAsync(ct);
+                RetryCount = w.RetryCount,
+                IssueTitle = req?.IssueDetail?.Title,
+                InitiatedBy = req?.InitiatedBy,
+                ProjectName = req?.ProjectName,
+                ProjectId = w.ProjectId
+            };
+        }).ToList();
 
         return TypedResults.Ok((IReadOnlyList<PendingWorkItemDto>)items);
     }
