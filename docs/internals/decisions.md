@@ -8,6 +8,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 12 | Last run: 2026-08-14 | Decisions captured: 64 -->
 <!-- Session: 14 | Last run: 2026-08-22 | Updates: T12 audit — marked #2027/#2028/#2025/#1058/#1059 resolved; fixed ConsolidationDispatchHandler→ConsolidationWorkItemDispatchService; T10 decision added; T11 decisions added -->
 <!-- Session: 15 | Last run: 2026-08-22 | Updates: T22 — AgentSelectorKey.From() extracted; ScanPagedAsync private helper extracted in PostgresPipelineRunHistoryService; T6/T15/T16/T20 closed; LabelStateMachine.cs stale path fixed -->
+<!-- Session: 16 | Last run: 2026-08-28 | Decisions added: 4 (soft anti-affinity, AgentJobTimeoutSeconds backstop, Redis required for multi-replica keepalive, ExternalCiDuration split); issue created: #2133; helm templates fixed (required→preferred anti-affinity, all 4 deployments); stale audit: monolith decision updated (4-service split), DatabaseMaintenanceService migration closed (Spec 047 superseded), SignalR reconnect Reassess-when updated, MessagePack/MaxRunsPerCycle docker-compose refs removed, Decision Map cleaned -->
 <!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition -->
 
 ---
@@ -73,18 +74,18 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 ---
 
-### DatabaseMaintenanceService: migrate to LeaderElectedPollingService
+### DatabaseMaintenanceService: Spec 047 superseded the LeaderElectedPollingService migration
 
-**Date:** 2026-08-14
+**Date:** 2026-08-14 · **Closed:** 2026-08-28 (superseded by Spec 047, not migrated as originally planned)
 **Category:** architecture
 
-**Decision:** `DatabaseMaintenanceService` should be migrated to extend `LeaderElectedPollingService` (the shared base class used by `DispatchService`, `ConsolidationWorkItemDispatchService`, and `ReconciliationService`). The current ad-hoc pattern — resolving `ILeaderElectionService` once at startup via `IServiceProvider.GetService()` then checking `IsLeader` per cycle — has a documented race: if the service resolves before `ILeaderElectionService` is registered, all subsequent maintenance cycles run without leader gating. The ad-hoc pattern also lacks `LeaderToken` integration, meaning the service does not stop mid-term on leadership loss (it only checks at the next cycle boundary). Migrating removes the race and makes the gating consistent with all other leader-gated services.
+**Decision:** The planned migration of `DatabaseMaintenanceService` to extend `LeaderElectedPollingService` was superseded by Spec 047. Instead of migrating to a BackgroundService pattern, `DatabaseMaintenanceService` was converted to a **plain singleton with no `ExecuteAsync`**. Sweeps are triggered exclusively by the Scheduler via `POST /api/scheduler/maintenance/retention-sweep`. The leader-gate moved to the Scheduler's `RetentionSweepSchedulerService`, which holds the lease before calling the endpoint.
 
-**Context:** The TODO comment in `DatabaseMaintenanceService` explicitly documents the DI resolution race. `LeaderElectedPollingService` already supports the simple `PeriodicTimer`-equivalent pattern via `OnPollCycleAsync` + `PollIntervalSeconds`. Maintenance runs hourly — double-execution risk is low but the DI race is a real correctness gap.
+**Why this approach was chosen over the migration:** The Scheduler microservice (Spec 047) was introduced as the designated owner of all scheduled/periodic background work. Migrating `DatabaseMaintenanceService` to `LeaderElectedPollingService` would have put periodic logic in the API service, which contradicts the Scheduler's role. The plain-singleton + HTTP-trigger pattern is simpler, more testable, and keeps scheduling concerns exclusively in the Scheduler. The original DI resolution race and missing `LeaderToken` integration are both moot — the service has no background loop at all.
 
-**Alternatives considered:** Fix only the DI race (resolve per-cycle) while keeping `PeriodicTimer` structure — partial fix, still no `LeaderToken` integration; inconsistent with the rest of the dispatch infrastructure.
+**Context:** The original decision documented two correctness defects: (1) DI resolution race when resolving `ILeaderElectionService` at startup, (2) missing `LeaderToken` integration. Both are resolved by Spec 047's approach without requiring any changes to the service itself.
 
-**Reassess when:** Never — once migrated, this decision is stable.
+**Reassess when:** Never — the Spec 047 plain-singleton approach is the stable final form. If sweeps ever need to run on a schedule without the Scheduler, the correct path is extending the Scheduler, not reverting to a BackgroundService.
 
 ---
 
@@ -103,18 +104,26 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 ---
 
-### Monolithic orchestrator is intentional (for now)
+### Monolithic orchestrator was intentional — now split into 4 services (specs 041–045)
 
-**Date:** 2026-07-04
+**Date:** 2026-07-04 · **Updated:** 2026-08-28 (post-041–045 service split)
 **Category:** architecture
 
-**Decision:** We keep all dispatch logic, reconciliation, leader election, and lifecycle management inside the single web application process (Blazor UI + orchestration + dispatch in one binary). Splitting into a standalone operator/controller is on the roadmap but not yet justified by scale.
+**Decision:** We kept all dispatch logic, reconciliation, leader election, and lifecycle management inside the single web application process (Blazor UI + orchestration + dispatch in one binary). Splitting into a standalone operator/controller was on the roadmap but was not justified by scale at the time.
 
-**Context:** Spec 036 explored a standalone CRD controller, but spec 035 (Postgres-based work distribution) was implemented instead, keeping everything in-process. Comparable systems (Argo Workflows, Tekton, Flux) separate controllers from UIs, but this system isn't at a scale where independent scaling of the orchestration layer is needed. Leader election handles multi-replica safety today.
+**Status (2026-08-28 — Reassess-when condition met and resolved):** The monolith was split into **4 separate services** in specs 041–045:
+- `CodingAgentWebUI` (orchestrator) — Blazor UI + pipeline orchestration. **No direct DB access.** Connects to API via HTTP/SignalR for all state reads and writes.
+- `CodingAgentWebUI.Api` — sole owner of the Postgres database, `/hubs/agent`, `/api/work-items/*`, and all agent-facing endpoints.
+- `CodingAgentWebUI.JobController` — owns dispatch and reconciliation loops. Leader-elected; one leader runs them, others idle as hot standbys.
+- `CodingAgentWebUI.Scheduler` — owns all scheduled/periodic background work (retention sweeps, maintenance). No direct DB access; triggers work via HTTP.
 
-**Alternatives considered:** Standalone K8s operator (spec 036), sidecar extraction, microservice split. All add deployment complexity without proportional benefit at current scale.
+Leader election continues to handle multi-replica safety. The split was driven by: (a) the orchestrator needing to be a UI-only consumer of the API rather than the source of truth, (b) dispatch/reconciliation needing a separate leader lease from the pipeline loop, and (c) scheduled maintenance needing isolation from both.
 
-**Reassess when:** Orchestration load exceeds what a single leader replica can sustain, or when the CRD-based dispatch model (spec 036 Phase 3) is implemented.
+**Context:** Spec 036 explored a standalone CRD controller, but spec 035 (Postgres-based work distribution) was implemented instead. Specs 041–045 delivered the actual split — not via CRDs but via separate microservices each with their own leader election. Comparable systems (Argo Workflows, Tekton, Flux) separate controllers from UIs; this system now follows that pattern.
+
+**Alternatives considered at the time:** Standalone K8s operator (spec 036), sidecar extraction, microservice split. All were deferred for deployment complexity reasons. Specs 041–045 eventually delivered the microservice split.
+
+**Reassess when:** Independent scaling of the dispatch or API layer is needed (scale-out now possible — each service scales independently). Or if the JobController and Scheduler should be merged back for operational simplicity.
 
 ---
 
@@ -286,7 +295,7 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 **Decision:** SignalR hub communication uses MessagePack with integer ordinal enum serialization. This means enum member ordering is an implicit wire contract. This is acceptable because deployment is homogeneous — orchestrator and agents are always deployed together from the same build. No multi-version scenario exists. Enum members in hub-transmitted types should not be reordered, but no explicit compile-time enforcement exists beyond the `HubMessageSerializationTests` test class.
 
-**Context:** gRPC and Protobuf use explicit numbering to avoid ordinal coupling. Kubernetes handles multi-version compat. This system's simpler approach reflects its deployment model (single Docker Compose or Helm release upgrades all components simultaneously).
+**Context:** gRPC and Protobuf use explicit numbering to avoid ordinal coupling. Kubernetes handles multi-version compat. This system's simpler approach reflects its deployment model (single Helm release upgrades all components simultaneously). All images are built from the same git SHA in CI.
 
 **Alternatives considered:** String-based MessagePack enum serialization (safer for multi-version, increases payload size), explicit ordinal value annotations.
 
@@ -550,7 +559,7 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 **Alternatives considered:** Self-termination after N minutes (appropriate for K8s, harmful for docker-compose), configurable per deployment mode (adds complexity for a non-issue today).
 
-**Reassess when:** K8s-only mode becomes the default. At that point, add a configurable `MaxReconnectionDuration` that defaults to infinite for docker-compose and 5 minutes for K8s (let liveness probes handle recovery).
+**Reassess when:** If chat pods need a bounded reconnection window (e.g., for resource efficiency when the API is down for extended periods). Currently the idle-kill circuit terminates idle chat pods within 90s regardless of SignalR state, so infinite reconnect only keeps a browser tab waiting — it doesn't leak K8s resources. If chat pod resource cost during reconnect becomes measurable, add `MaxReconnectionDuration` for chat pods specifically.
 
 ---
 
@@ -668,7 +677,7 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 **Date:** 2026-07-04
 **Category:** configuration
 
-**Decision:** `ClosedLoopMaxRunsPerCycle=0` means unlimited dispatch per cycle. This is safe because concurrency is bounded by: agent count (docker-compose), `MaxConcurrentPods` per-selector (K8s), rate limiter (10 Jobs/s in DispatchService), and `MaxConcurrentDecompositions`. The `0=unlimited` default avoids artificial throttling for the common case. Users who need a cap set it explicitly.
+**Decision:** `ClosedLoopMaxRunsPerCycle=0` means unlimited dispatch per cycle. This is safe because concurrency is bounded by: `MaxConcurrentPods` per-selector (K8s), rate limiter (10 Jobs/s in DispatchService), and `MaxConcurrentDecompositions`. The `0=unlimited` default avoids artificial throttling for the common case. Users who need a cap set it explicitly.
 
 **Context:** GitHub Actions has 20-256 concurrent jobs per org. Argo defaults to 500 concurrent workflows. This system's layered concurrency controls make a global per-cycle cap redundant for most deployments.
 
@@ -1265,24 +1274,86 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 **Reassess when:** If the terminal output is rarely useful during a run (operators only check post-hoc), consider making it collapsible. Currently, seeing real-time agent output is part of the trust model — the operator knows the agent is actually working.
 
+### Pod anti-affinity: soft (preferred) spreading, not hard (required)
+
+**Date:** 2026-08-28
+**Category:** architecture
+
+**Decision:** All control-plane Deployments (api, orchestrator, jobcontroller, scheduler) use `preferredDuringSchedulingIgnoredDuringExecution` for pod anti-affinity when `replicas > 1`. The previously committed `requiredDuringSchedulingIgnoredDuringExecution` was incorrect — it blocks pod scheduling when the cluster has fewer nodes than replicas (e.g., 2 replicas on a 1-node dev cluster → `Pending` forever). Soft spreading achieves HA in production without preventing scheduling on constrained clusters.
+
+**Context:** Hard anti-affinity is appropriate for stateful services (databases, Kafka) where co-location causes data corruption. These are stateless HTTP services; co-location reduces HA but does not corrupt state. All four templates now use weight=100 `preferred` spreading on `kubernetes.io/hostname`. The `orchestrator.affinity` override (user-provided) still takes precedence when set.
+
+**Alternatives considered:** Hard anti-affinity (rejected — blocks dev single-node clusters), no anti-affinity (less HA in prod).
+
+**Reassess when:** Never for the soft/hard choice on stateless services. If a specific deployment requires hard node isolation (regulatory requirement), the `affinity:` values override handles it.
+
+---
+
+### AgentJobTimeoutSeconds: unified wall-clock ceiling for all job types — backstop semantics for chat pods
+
+**Date:** 2026-08-28
+**Category:** configuration
+
+**Decision:** `AgentJobTimeoutSeconds` (renamed from `ChatSessionMaxDurationSeconds`, default 7200s) governs `activeDeadlineSeconds` for all K8s Job types: work-item agents, consolidation agents, and chat pods. The rename makes the semantics correct — the previous name was misleading because the field always applied to all jobs, not only chat. For chat pods, the circuit-based idle-kill mechanism (`ChatIdleTimeoutSeconds=90s`) terminates the pod when the browser window closes; `AgentJobTimeoutSeconds` is a last-resort backstop for orphaned resources (e.g., browser crash with no idle-kill firing, Redis unavailable for heartbeat cross-replica delivery).
+
+**Context:** The idle-kill circuit is the primary chat lifecycle mechanism. The 2h wall clock only fires if the circuit fails. Keeping a single unified timeout value simplifies operations: operators only need to reason about one "max job lifetime" per agent type, not separate interactive vs batch limits.
+
+**Alternatives considered:** Separate `ChatSessionMaxDurationSeconds` for interactive vs batch jobs — rejected because the idle-kill circuit makes the distinction unnecessary for normal operation; edge cases (orphaned pods) benefit from the same backstop regardless of job type.
+
+**Reassess when:** If users routinely need chat sessions >2h, add a separate `ChatSessionMaxDurationSeconds` that defaults to longer than `AgentJobTimeoutSeconds`. Track via: how often chat pods hit `activeDeadlineSeconds` vs idle-kill.
+
+---
+
+### Chat keepalive Redis: required for multi-replica deployments
+
+**Date:** 2026-08-28
+**Category:** architecture
+
+**Decision:** Redis is required when `api.replicas > 1` OR `orchestrator.replicas > 1` for correct chat keepalive behavior. When keepalive POSTs land on a different API replica than the one hosting the watcher, the in-process `LastClientHeartbeatTicks` fallback does NOT see the heartbeat — the pod is idle-killed after `ChatIdleTimeoutSeconds` (90s) even though the browser is active. Redis is the cross-replica authoritative heartbeat store (`chat:heartbeat:{agentId}`, TTL=2× idle timeout). The in-process fallback is only correct for single-replica local dev.
+
+A startup warning must be added when `ChatJobDispatcher` is instantiated with `_redis == null` and `api.replicas > 1`. This is tracked in #2133.
+
+**Context:** The current code silently falls back to local ticks when Redis is absent — no warning is emitted. In a 2-replica deployment without Redis configured, a user whose keepalive POST happens to land on the non-watcher replica will see their chat pod killed after 90s of inactivity on the watcher side. This is a silent incorrect behavior, not a loud failure.
+
+**Alternatives considered:** Make Redis unconditionally required (breaks local dev without Redis), configurable `requireRedisForHeartbeat: true/false` (unnecessary complexity when the rule is simply `replicas > 1`). See #2131 for implementation.
+
+**Reassess when:** Never for the principle. Redis is already required for multi-replica SignalR backplane — this is consistent with that existing requirement.
+
+---
+
+### ExternalCiDuration vs PostPrCiDuration: two separate histograms for two distinct CI poll phases
+
+**Date:** 2026-08-28
+**Category:** architecture
+
+**Decision:** `ExternalCiDuration` (existing) measures the pre-PR CI poll in `AppendExternalCiIfNeededAsync` — triggered on branch push. A new `PostPrCiDuration` histogram must be added to measure the post-PR CI poll in `WaitForPostPrCiAsync` — triggered on the pull_request event after PR promotion. The two are semantically distinct: pre-PR CI validates the branch commit; post-PR CI validates CI workflows that only trigger on `pull_request` events. Emitting both into `ExternalCiDuration` inflates p50/p99 dashboards on runs that execute both phases.
+
+**Context:** The TODO in `WaitForPostPrCiAsync` documents this gap. On paths where both pre-PR and post-PR CI run (e.g., cleanup made no changes → skipCiIfNoChanges → post-PR CI fires), two histogram samples land in `ExternalCiDuration`, making the p99 appear 2× higher than actual worst-case single-phase duration.
+
+**Alternatives considered:** Keep single metric with a phase tag (`phase=pre_pr|post_pr`) — equally valid but requires a Grafana filter to disaggregate; separate histograms are more natural for Grafana dashboard panels that show one thing per panel. Run-level aggregation (`TotalCiWaitDuration` emitted once at end) — accurate but loses per-phase granularity needed for debugging.
+
+**Reassess when:** Never for the separation principle. If a third CI poll phase is added, follow the same pattern.
+
+---
+
 ## Decision Map
 
 ### Relationships
 - "Dual JSON options (Default/Lenient)" enables "Snake_case JsonStringEnumMemberName for LLM-produced enums"
 - "Dual JSON options (Default/Lenient)" enables "No schema versioning — append-only evolution"
 - "Enum roundtrip test is mandatory" constrains "Enum serialization: self-annotation is flexible"
-- "MessagePack int ordinals for SignalR" scoped by "Monolithic orchestrator is intentional (homogeneous deployment)"
-- "No schema versioning" scoped by "Three deployment modes (homogeneous deployment assumption)"
+- "MessagePack int ordinals for SignalR" scoped by "Monolithic orchestrator — now split into 4 services (homogeneous deployment still holds: single Helm release)"
+- "No schema versioning" scoped by "Monolithic orchestrator — now split into 4 services (same SHA homogeneous deployment assumption)"
 - "Token vending: private keys never leave orchestrator" constrains "MessagePack int ordinals for SignalR" (both assume trusted orchestrator↔agent channel)
 - "Circuit breaker is infrastructure safeguard" scoped by "Partial failure contract (enrichment non-fatal, critical path fatal)"
-- "Agent lifetime: pull→push evolution" constrains "Three deployment modes" (K8s-only future would collapse to single mode)
-- "MaxRunsPerCycle=0 unlimited" scoped by "Agent lifetime dual model" (bounded by agent count in docker-compose, MaxConcurrentPods in K8s)
+- "Agent lifetime: pull→push evolution" constrains "Three deployment modes" (K8s-only is now the only mode — condition met and resolved in spec 041)
+- "MaxRunsPerCycle=0 unlimited" scoped by "Agent lifetime: pull→push evolution" (bounded by MaxConcurrentPods per-selector in K8s; docker-compose removed)
 - "Cleanup step before PR" enables "Confidence gate is fail-closed" (cleanup reduces false negatives from cosmetic issues)
 - "MaxRetries=3 arbitrary default" scoped by "Draft PR is the retry-exhausted fallback" (exhausted retries → draft PR, not failure)
 - "Label swap: add-first ordering" scoped by "Token vending: private keys never leave orchestrator" (both assume imperfect external APIs)
 - "External CI re-push" scoped by "Partial failure contract" (CI is on the critical path — failure is retried, not ignored)
 - "Project overrides: deep-merge (#1044 resolved)" constrains "No schema versioning" (merge requires distinguishing "not set" from "set to default")
-- "LocalPipelineExecutor: accidental monolith" correlates with "Agent lifetime dual model" (executor grew as both modes added features)
+- "LocalPipelineExecutor: decomposition complete" — lives in CodingAgentWebUI.Agent (K8s-only agent binary); prior "agent lifetime dual model" correlation is no longer relevant
 - "AgentCoding component ↔ PageService boundary" scoped by "PipelineService event handling" (event state transitions should migrate to PageService per the boundary principle)
 - "Undo snackbar: always show" correlates with "Error messages: sticky with dismiss" (both are feedback pattern decisions — success/undo are transient, errors are persistent)
 - "Drawer tabs: three-component approach" scoped by "AgentCoding component ↔ PageService boundary" (drawer state lives in PageService, rendering in components)
@@ -1317,8 +1388,8 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 - "PipelineLoopService: full loop leader-gated" scoped by "Agent lifetime: pull→push evolution" (all deployments are K8s; the loop runs unconditionally only in test environments without leader election)
 - "PipelineLoopService: full loop leader-gated" enables "Housekeeping auto-update concurrency: 1 is permanent default" (concurrency gate only works correctly when a single leader runs the poll loop)
-- "DatabaseMaintenanceService: migrate to LeaderElectedPollingService" scoped by "PipelineLoopService: full loop leader-gated" (same principle: all background loops with side-effects must be leader-gated in multi-replica)
-- "DatabaseMaintenanceService: migrate to LeaderElectedPollingService" correlates with "LeaderElectedPollingService: two correctness defects (#2027)" (migration can now proceed — #2027 is resolved; both the null-check and OCE filter are fixed)
+- "DatabaseMaintenanceService: Spec 047 superseded migration" scoped by "PipelineLoopService: full loop leader-gated" (leader-gate now lives in Scheduler's RetentionSweepSchedulerService; plain-singleton pattern removes BackgroundService concerns entirely)
+- ~~"DatabaseMaintenanceService: migrate to LeaderElectedPollingService" correlates with "LeaderElectedPollingService: two correctness defects (#2027)"~~ — superseded; migration never executed; Spec 047 resolved both concerns via a different approach
 - "AgentCodingPageService: extract per-drawer orchestrators" scoped by "AgentCoding component ↔ PageService boundary" (drawer orchestration is the next extraction target after the component boundary was established)
 - "DrawerCancellationToken: wrong-token bug (#2028)" scoped by "AgentCodingPageService: extract per-drawer orchestrators" (bug is a symptom of the tight coupling; extraction removes the need for the property entirely)
 - "LeaderElectedPollingService: two correctness defects (#2027)" — resolved; constraint on PipelineLoopService migration lifted
@@ -1326,6 +1397,12 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 
 - "LoopStatePersistenceService: no leader guard needed" scoped by "PipelineLoopService: full loop leader-gated" (the loop gate makes eager activation on all replicas safe — all sit in leader-wait until promoted)
 - "LoopStatePersistenceService: no leader guard needed" correlates with "Agent lifetime: pull→push evolution" (90s delay is a rolling-deploy drain guard, not a multi-replica coordination mechanism)
+
+- "Pod anti-affinity: soft spreading" scoped by "Monolithic orchestrator is intentional" (stateless services; co-location reduces HA but doesn't corrupt state)
+- "AgentJobTimeoutSeconds: unified backstop" scoped by "Agent lifetime: pull→push evolution" (K8s-only; both work-item and chat pods are ephemeral K8s Jobs)
+- "AgentJobTimeoutSeconds: unified backstop" enables "Chat keepalive Redis required for multi-replica" (the backstop fires when the idle-kill circuit fails, which happens when Redis is absent in multi-replica)
+- "Chat keepalive Redis required for multi-replica" scoped by "HMAC key derivation for agent auth" (Redis is already in the dependency stack for multi-replica SignalR; this adds one more reason it's required)
+- "ExternalCiDuration vs PostPrCiDuration" scoped by "Telemetry philosophy: instrument every decision point" (the split follows from the principle that each observable event gets its own instrument)
 
 ### Coverage Gaps (auto-detected)
 - Automated calibration design remains explicitly deferred
@@ -1337,6 +1414,7 @@ Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LO
 - Automated calibration design — when a clear mechanism emerges, revisit
 - Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct?
 - AgentCodingPageService decomposition: after extraction, was the per-drawer split the right granularity?
+- PostPrCiDuration: after #2133 and the metric split are implemented, verify Grafana panels updated
 
 ---
 
