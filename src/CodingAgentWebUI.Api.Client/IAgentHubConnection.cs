@@ -12,6 +12,13 @@ public interface IAgentHubConnection : IAsyncDisposable
     /// <summary>Current state of the underlying hub connection.</summary>
     HubConnectionState State { get; }
 
+    /// <summary>
+    /// Raised when the connection successfully reconnects after a disconnection.
+    /// The argument is the new connection ID (may be null if unavailable).
+    /// Register handlers here to re-subscribe to hub groups after reconnect.
+    /// </summary>
+    event Func<string?, Task>? Reconnected;
+
     /// <summary>Start the connection.</summary>
     Task StartAsync(CancellationToken ct = default);
 
