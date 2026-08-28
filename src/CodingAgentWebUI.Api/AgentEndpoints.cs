@@ -53,9 +53,10 @@ public static class AgentEndpoints
     /// mapping layer. Its one non-serializable member, <c>SyncRoot</c>, is already
     /// <c>[JsonIgnore]</c>d on the model.
     /// </remarks>
-    internal static Ok<IReadOnlyList<AgentEntry>> GetAllAgents(IAgentRegistryService registry)
+    internal static async Task<Ok<IReadOnlyList<AgentEntry>>> GetAllAgents(IAgentRegistryService registry)
     {
-        return TypedResults.Ok(registry.GetAllAgents());
+        var agents = await registry.GetAllAgentsAsync();
+        return TypedResults.Ok(agents);
     }
 
     // ── POST /api/agents/{agentId}/chat-prompt ─────────────────────────────

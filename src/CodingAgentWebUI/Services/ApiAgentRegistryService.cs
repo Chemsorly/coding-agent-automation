@@ -85,11 +85,22 @@ public sealed class ApiAgentRegistryService : IAgentRegistryService
     public IReadOnlyList<AgentEntry> GetAllAgents() => Current.Agents;
 
     /// <inheritdoc />
+    public Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync(CancellationToken ct = default)
+        => Task.FromResult(GetAllAgents());
+
+    /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetIdleAgents() =>
         Current.Agents.Where(a => a.Status == AgentStatus.Idle).ToList().AsReadOnly();
 
     /// <inheritdoc />
+    public Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync(CancellationToken ct = default)
+        => Task.FromResult(GetIdleAgents());
+
+    /// <inheritdoc />
     public int GetBusyAgentCount() => Current.Agents.Count(a => a.Status == AgentStatus.Busy);
+
+    /// <inheritdoc />
+    public int GetTotalAgentCount() => Current.Agents.Count;
 
     /// <inheritdoc />
     public AgentEntry? GetByAgentId(AgentId agentId)
@@ -97,6 +108,10 @@ public sealed class ApiAgentRegistryService : IAgentRegistryService
         ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
         return Current.ById.GetValueOrDefault(agentId.Value);
     }
+
+    /// <inheritdoc />
+    public Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default)
+        => Task.FromResult(GetByAgentId(agentId));
 
     /// <inheritdoc />
     public AgentEntry? GetByConnectionId(string connectionId)

@@ -142,17 +142,26 @@ public sealed class DistributedAgentRegistryServiceTests
     // ── GetIdleAgents ─────────────────────────────────────────────────────────
 
     [Fact]
-    public void GetIdleAgents_SkipsMembersWhoseHashExpired()
+    public async Task GetIdleAgents_SkipsMembersWhoseHashExpired()
     {
+        // The sync GetIdleAgents() reads from per-replica _localSnapshot — it does not
+        // contact Redis and therefore cannot detect TTL expiry. Use GetIdleAgentsAsync()
+        // for TTL-aware cross-replica queries (it issues HGETALL per member and skips
+        // entries with empty responses).
         _sut.Register(Msg("agent-1"), "conn-1");
         _sut.Register(Msg("agent-2"), "conn-2");
 
-        // Simulate agent-1 hash expiry
+        // Simulate agent-1 hash expiry in Redis
         _store.ForceExpire("agent:agent-1");
 
-        var idle = _sut.GetIdleAgents();
-        idle.Should().HaveCount(1);
-        idle[0].AgentId.Value.Should().Be("agent-2");
+        // Async path: reads from Redis, skips TTL-expired member
+        var idleAsync = await _sut.GetIdleAgentsAsync();
+        idleAsync.Should().HaveCount(1);
+        idleAsync[0].AgentId.Value.Should().Be("agent-2");
+
+        // Sync path: reads from _localSnapshot, not aware of TTL expiry
+        var idleSync = _sut.GetIdleAgents();
+        idleSync.Should().HaveCount(2, "sync path reads local snapshot and is not aware of Redis TTL expiry");
     }
 
     // ── GetByConnectionId ─────────────────────────────────────────────────────
@@ -325,5 +334,176 @@ public sealed class DistributedAgentRegistryServiceTests
         expiry.Should().NotBeNull("UpdateAgentFieldAsync must refresh the TTL via ExpireAsync");
         expiry!.Value.Should().BeAfter(DateTimeOffset.UtcNow,
             "the new TTL must be in the future");
+    }
+
+    // ── GetIdleAgentsAsync ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_ReturnsOnlyIdleAgents()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.Register(Msg("agent-3"), "conn-3");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+
+        var idle = await _sut.GetIdleAgentsAsync();
+
+        idle.Should().HaveCount(2);
+        idle.Select(a => a.AgentId.Value).Should().NotContain("agent-1");
+        idle.Select(a => a.AgentId.Value).Should().Contain("agent-2");
+        idle.Select(a => a.AgentId.Value).Should().Contain("agent-3");
+    }
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_SkipsMembersWhoseHashExpired()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+
+        // Simulate agent-1 hash expiry
+        _store.ForceExpire("agent:agent-1");
+
+        var idle = await _sut.GetIdleAgentsAsync();
+        idle.Should().HaveCount(1);
+        idle[0].AgentId.Value.Should().Be("agent-2");
+    }
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_ReturnsEmpty_WhenNoIdleAgents()
+    {
+        var idle = await _sut.GetIdleAgentsAsync();
+        idle.Should().BeEmpty();
+    }
+
+    // ── GetAllAgentsAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetAllAgentsAsync_ReturnsAllAgentsRegardlessOfStatus()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.Register(Msg("agent-3"), "conn-3");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+        _sut.TransitionStatus(new AgentId("agent-2"), AgentStatus.Disconnected);
+
+        var all = await _sut.GetAllAgentsAsync();
+
+        all.Should().HaveCount(3);
+        all.Select(a => a.AgentId.Value).Should().BeEquivalentTo(["agent-1", "agent-2", "agent-3"]);
+    }
+
+    [Fact]
+    public async Task GetAllAgentsAsync_SkipsMembersWhoseHashExpired()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _store.ForceExpire("agent:agent-1");
+
+        var all = await _sut.GetAllAgentsAsync();
+
+        all.Should().HaveCount(1);
+        all[0].AgentId.Value.Should().Be("agent-2");
+    }
+
+    // ── GetByAgentIdAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsEntry_WhenExists()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        var entry = await _sut.GetByAgentIdAsync(new AgentId("agent-1"));
+
+        entry.Should().NotBeNull();
+        entry!.AgentId.Value.Should().Be("agent-1");
+        entry.ConnectionId.Should().Be("conn-1");
+        entry.Hostname.Should().Be("host-1");
+    }
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsNull_WhenHashExpired()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _store.ForceExpire("agent:agent-1");
+
+        var entry = await _sut.GetByAgentIdAsync(new AgentId("agent-1"));
+
+        entry.Should().BeNull("hash TTL expired and the set member should be skipped");
+    }
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsNull_WhenNotRegistered()
+    {
+        var entry = await _sut.GetByAgentIdAsync(new AgentId("agent-unknown"));
+        entry.Should().BeNull();
+    }
+
+    // ── GetBusyAgentCount / GetTotalAgentCount — cached counter tests ──────────
+
+    [Fact]
+    public void GetBusyAgentCount_ReflectsTransitions_WithoutRedisCall()
+    {
+        // No agents yet — busy count is zero
+        _sut.GetBusyAgentCount().Should().Be(0);
+
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+
+        _sut.GetBusyAgentCount().Should().Be(0, "both agents are Idle after registration");
+
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+        _sut.GetBusyAgentCount().Should().Be(1);
+
+        _sut.TransitionStatus(new AgentId("agent-2"), AgentStatus.Busy);
+        _sut.GetBusyAgentCount().Should().Be(2);
+
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Idle);
+        _sut.GetBusyAgentCount().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetTotalAgentCount_ReflectsRegisterAndDeregister()
+    {
+        _sut.GetTotalAgentCount().Should().Be(0);
+
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.GetTotalAgentCount().Should().Be(1);
+
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.GetTotalAgentCount().Should().Be(2);
+
+        _sut.Deregister(new AgentId("agent-1"));
+        // Deregister is fire-and-forget so wait for it deterministically
+        await _sut.LastDeregisterTask;
+        _sut.GetTotalAgentCount().Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetBusyAgentCount_ReRegistration_DoesNotDoubleCount()
+    {
+        // Re-registering a Busy agent (e.g. after container restart with active job)
+        // should not double-increment the busy counter.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+        _sut.GetBusyAgentCount().Should().Be(1);
+
+        // Re-register while still Busy (active job preserved)
+        // Manually set activeJobId in store to simulate re-registration with active job
+        await _store.HashSetFieldAsync("agent:agent-1", "activeJobId", "run-abc");
+        _sut.Register(Msg("agent-1"), "conn-2");
+
+        // Should still be 1 — re-registration of an existing Busy agent must not double-count
+        _sut.GetBusyAgentCount().Should().Be(1);
+    }
+
+    [Fact]
+    public void GetTotalAgentCount_ReRegistration_DoesNotDoubleCount()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.GetTotalAgentCount().Should().Be(1);
+
+        // Re-register same agent
+        _sut.Register(Msg("agent-1"), "conn-2");
+        _sut.GetTotalAgentCount().Should().Be(1, "re-registration of an existing agent must not increment total count");
     }
 }

@@ -66,8 +66,10 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         // but belt-and-suspenders given the async interface)
         await Task.Delay(50);
 
-        // Act: query Replica2's registry — the shared FakeRedisStore is the source of truth
-        var idleAgents = Fixture.Registry2.GetIdleAgents();
+        // Act: query Replica2's registry via the async path — the shared FakeRedisStore is
+        // the cross-replica source of truth. The sync GetIdleAgents() overload now reads from
+        // the per-replica _localSnapshot and would not see agents registered on another replica.
+        var idleAgents = await Fixture.Registry2.GetIdleAgentsAsync();
 
         // Assert: the specific agent registered on Replica1 appears in Replica2's idle list
         // with its labels intact after the hash round-trip.
@@ -85,7 +87,8 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
 
         await Task.Delay(50);
 
-        var all = Fixture.Registry2.GetAllAgents();
+        // Use async path for cross-replica visibility (sync reads from local snapshot only).
+        var all = await Fixture.Registry2.GetAllAgentsAsync();
         Assert.Contains(all, a => a.AgentId.Value == agentId);
     }
 
@@ -102,8 +105,8 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         // Field name must match the camelCase key used in AgentEntryToHashEntries / HashToEntry.
         await Fixture.Registry1.UpdateAgentFieldAsync(new AgentId(agentId), "activeJobId", jobId);
 
-        // Act: read back from Replica2
-        var entry = Fixture.Registry2.GetByAgentId(new AgentId(agentId));
+        // Act: read back from Replica2 via async path (sync reads from local snapshot only).
+        var entry = await Fixture.Registry2.GetByAgentIdAsync(new AgentId(agentId));
 
         // Assert
         Assert.NotNull(entry);

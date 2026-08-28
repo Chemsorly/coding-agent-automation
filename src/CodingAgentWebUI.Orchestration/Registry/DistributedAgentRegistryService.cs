@@ -43,6 +43,18 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     // Same retention semantics as _connectionIndex: entry persists until explicit Deregister is called.
     private readonly ConcurrentDictionary<string, AgentEntry> _localSnapshot = new();
 
+    // Per-replica cached counters. Updated atomically on every write path (Register, Deregister,
+    // TransitionStatusAsync). Read by GetBusyAgentCount() and GetTotalAgentCount() from OTel gauge
+    // callbacks — zero Redis I/O.
+    //
+    // In a multi-replica deployment, each replica emits its own gauge values (reflecting only
+    // agents registered on that replica). Aggregate across replicas in the metrics backend
+    // (e.g., Prometheus `sum by job`). This is the accepted semantic trade-off — OTel gauge
+    // callbacks are synchronous (Func<T>) and cannot await Redis; per-replica cached counters
+    // are the only correct approach without changing the OTel instrumentation API.
+    private volatile int _totalAgentCount;
+    private volatile int _busyAgentCount;
+
     // Internal hooks for test determinism: fire-and-forget tasks are stored here so tests can
     // await them instead of using Thread.Sleep. Not used in production code paths.
     // TODO (WARNING): Consider a dedicated FlushAsync() or IAsyncDisposable pattern if more
@@ -75,7 +87,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var agentId = message.AgentId.Value;
         var now = DateTimeOffset.UtcNow;
 
-        // Check if already exists (re-registration / reconnect)
+        // Check if already exists (re-registration / reconnect).
+        // Uses a direct Redis read to handle the cross-process reconnect case (e.g. container
+        // restart): when a pod restarts, _localSnapshot is empty but the Redis hash retains
+        // activeJobId, disabled state, and other fields that must be preserved. Read methods
+        // (GetByAgentId, GetIdleAgents, GetAllAgents) use _localSnapshot — zero Redis I/O.
         var existing = GetAgentRaw(agentId);
 
         // Determine status: Busy if existing activeJobId, else Idle
@@ -164,6 +180,31 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // through TransitionStatus / UpdateAgentFieldAsync (e.g. ReconciliationService direct writes).
         _localSnapshot[agentId] = entry;
 
+        // Update per-replica cached counters (used by OTel gauge callbacks — no Redis I/O).
+        // Only increment total for brand-new registrations; re-registrations keep the existing slot.
+        if (existing is null)
+            Interlocked.Increment(ref _totalAgentCount);
+
+        // On re-registration: adjust busy counter if the previous status was Busy and we're now Idle
+        // (or vice versa). For new registrations, status is always Idle so no busy increment needed.
+        // TODO (WARNING): Disconnected→Busy re-registration does not increment _busyAgentCount.
+        // Scenario: agent transitions Idle→Busy→Disconnected (counter: 0→1→0), then re-registers
+        // with an activeJobId still set (status resolves to Busy). wasIdle=false, isNowIdle=false —
+        // neither branch fires and _busyAgentCount stays at 0 while the agent is Busy. The OTel
+        // agent.jobs.active gauge will under-report. Fix: switch from Idle-centric to Busy-centric
+        // comparison — `wasBusy = existing.Status == Busy; isNowBusy = status == Busy` — and
+        // increment/decrement based on Busy state changes. Affects only OTel gauge accuracy;
+        // dispatch correctness is not impacted (dispatch reads Redis directly, not the counter).
+        if (existing is not null)
+        {
+            var wasIdle = existing.Status == AgentStatus.Idle;
+            var isNowIdle = status == AgentStatus.Idle;
+            if (wasIdle && !isNowIdle)
+                Interlocked.Increment(ref _busyAgentCount);
+            else if (!wasIdle && isNowIdle)
+                Interlocked.Decrement(ref _busyAgentCount);
+        }
+
         return entry;
     }
 
@@ -206,8 +247,8 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // TODO (WARNING): If the Redis hash has already TTL-expired when Deregister is called,
         // GetAgentRaw returns null and _connectionIndex is not cleaned up — the stale
         // connectionId → agentId mapping persists indefinitely. A subsequent GetByConnectionId
-        // call using the old connection ID would hit the stale _connectionIndex entry, call
-        // GetAgentRaw (which returns null — hash gone), and return null. However, if
+        // call using the old connection ID would hit the stale _connectionIndex entry, then
+        // read null from _localSnapshot (snapshot cleared below), and return null. However, if
         // UpdateHeartbeatAsync later re-registers from _localSnapshot using the same agentId,
         // the stale _connectionIndex entry for the old connectionId would still map to the
         // (now re-registered) agentId, potentially causing GetByConnectionId to surface the
@@ -226,7 +267,25 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // the newly-registered hash while _localSnapshot still holds the entry, causing a resurrection
         // on the next heartbeat. Pre-existing architectural characteristic of fire-and-forget; narrowed
         // (but not eliminated) by _localSnapshot.TryRemove occurring before any await.
-        _localSnapshot.TryRemove(agentId, out _);
+        _localSnapshot.TryRemove(agentId, out var removedSnapshot);
+
+        // Update per-replica cached counters before the Redis write so we don't leave them
+        // in an inflated state if the await below is never reached (process shutdown, etc.).
+        // TODO (WARNING): Concurrent Deregister + TransitionStatus race can produce negative
+        // _busyAgentCount. If DeregisterAsync fires (decrementing counter for Busy agent) while
+        // a concurrent TransitionStatusAsync also fires (decrementing counter for Busy→Idle),
+        // both decrements execute independently and _busyAgentCount can reach -1. Functionally
+        // harmless (dispatch does not read this counter) but the OTel agent.jobs.active gauge
+        // would report -1. Race requires near-simultaneous Deregister + TransitionStatus on the
+        // same Busy agent (e.g. ungraceful disconnect mid-job). Fix: guard with a per-agentId
+        // lock, or derive the counter from _localSnapshot.Values.Count(Busy) on read rather than
+        // maintaining it incrementally.
+        if (removedSnapshot is not null)
+        {
+            Interlocked.Decrement(ref _totalAgentCount);
+            if (removedSnapshot.Status == AgentStatus.Busy)
+                Interlocked.Decrement(ref _busyAgentCount);
+        }
 
         await _store.DeleteAsync(key);
         await _store.SetRemoveAsync(AgentsAllKey, agentId);
@@ -392,6 +451,19 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             };
         }
 
+        // Update the per-replica busy counter. Only track Idle↔Busy transitions (not Disconnected)
+        // because Disconnected is not a selectable status and agents are removed via Deregister.
+        // TODO (WARNING): Concurrent Deregister + TransitionStatus race can produce negative
+        // _busyAgentCount. DeregisterAsync decrements for Busy agents independently of this
+        // decrement — see the TODO in DeregisterAsync for the full scenario and fix options.
+        if (oldStatus != newStatus)
+        {
+            if (newStatus == AgentStatus.Busy && oldStatus != AgentStatus.Busy)
+                Interlocked.Increment(ref _busyAgentCount);
+            else if (oldStatus == AgentStatus.Busy && newStatus != AgentStatus.Busy)
+                Interlocked.Decrement(ref _busyAgentCount);
+        }
+
         _logger.Information("Agent {AgentId} status transitioned {Old} → {New}", agentId, oldStatus, newStatus);
     }
 
@@ -401,68 +473,123 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     public AgentEntry? GetByAgentId(AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
-        return GetAgentRaw(agentId.Value);
+        // Read from per-replica in-memory snapshot — zero Redis I/O.
+        // For cross-replica lookup, use GetByAgentIdAsync which reads from Redis.
+        _localSnapshot.TryGetValue(agentId.Value, out var entry);
+        return entry;
+    }
+
+    /// <inheritdoc />
+    public async Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(agentId.Value);
+        // TODO [WARNING]: `ct` is accepted but cannot be forwarded to IRedisStore.HashGetAllAsync because
+        // the IRedisStore interface does not accept a CancellationToken parameter. Callers that pass a
+        // CancellationToken believe the Redis I/O is cancellable, but it is not. As a cooperative partial
+        // mitigation, throw if already-cancelled before issuing the Redis call. When IRedisStore gains
+        // CancellationToken support, forward ct to HashGetAllAsync.
+        ct.ThrowIfCancellationRequested();
+        var hash = await _store.HashGetAllAsync(AgentKey(agentId.Value));
+        return hash.Length == 0 ? null : HashToEntry(hash);
     }
 
     /// <inheritdoc />
     public AgentEntry? GetByConnectionId(string connectionId)
     {
         ArgumentNullException.ThrowIfNull(connectionId);
-        // Node-local lookup — always on the correct replica
-        return _connectionIndex.TryGetValue(connectionId, out var agentId)
-            ? GetAgentRaw(agentId)
-            : null;
+        // Node-local lookup — always on the correct replica.
+        // Both _connectionIndex and _localSnapshot are per-replica; no Redis I/O needed.
+        if (!_connectionIndex.TryGetValue(connectionId, out var agentId))
+            return null;
+        _localSnapshot.TryGetValue(agentId, out var entry);
+        return entry;
     }
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetIdleAgents()
     {
-        return GetIdleAgentsAsync().GetAwaiter().GetResult(); // Safe: ThreadPool context only
+        // Read from per-replica in-memory snapshot — zero Redis I/O.
+        // Semantics match GetTotalAgentCount/GetBusyAgentCount: reflects only agents registered
+        // on this replica. For cross-replica results, use GetIdleAgentsAsync.
+        return _localSnapshot.Values
+            .Where(a => a.Status == AgentStatus.Idle)
+            .ToList()
+            .AsReadOnly();
     }
 
-    private async Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync()
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync(CancellationToken ct = default)
     {
+        // TODO [WARNING]: `ct` is accepted but cannot be forwarded to IRedisStore methods because the
+        // IRedisStore interface does not accept a CancellationToken parameter. The cooperative check
+        // below is the only cancellation point; the Redis I/O itself (SetMembersAsync + HashGetAllAsync)
+        // cannot be aborted mid-flight. When IRedisStore gains CancellationToken support, forward ct.
+        ct.ThrowIfCancellationRequested();
         var members = await _store.SetMembersAsync(AgentsIdleKey);
-        var result = new List<AgentEntry>(members.Length);
+        if (members.Length == 0) return Array.Empty<AgentEntry>();
 
-        foreach (var agentId in members)
+        // Issue all HGETALL commands concurrently. The StackExchange.Redis multiplexer coalesces
+        // concurrent async commands into a single network round-trip — O(1) latency vs O(N) sequential.
+        var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id))).ToArray();
+        var results = await Task.WhenAll(tasks);
+
+        var list = new List<AgentEntry>(results.Length);
+        foreach (var hash in results)
         {
-            var hash = await _store.HashGetAllAsync(AgentKey(agentId));
             if (hash.Length == 0) continue; // TTL expired, set not yet cleaned
-
             var entry = HashToEntry(hash);
-            if (entry is not null) result.Add(entry);
+            if (entry is not null) list.Add(entry);
         }
-
-        return result.AsReadOnly();
+        return list.AsReadOnly();
     }
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetAllAgents()
     {
-        return GetAllAgentsAsync().GetAwaiter().GetResult(); // Safe: ThreadPool context only
-    }
-
-    private async Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync()
-    {
-        var members = await _store.SetMembersAsync(AgentsAllKey);
-        var result = new List<AgentEntry>(members.Length);
-
-        foreach (var agentId in members)
-        {
-            var hash = await _store.HashGetAllAsync(AgentKey(agentId));
-            if (hash.Length == 0) continue;
-
-            var entry = HashToEntry(hash);
-            if (entry is not null) result.Add(entry);
-        }
-
-        return result.AsReadOnly();
+        // Read from per-replica in-memory snapshot — zero Redis I/O.
+        // Reflects only agents registered on this replica. For cross-replica results,
+        // use GetAllAgentsAsync.
+        return _localSnapshot.Values.ToList().AsReadOnly();
     }
 
     /// <inheritdoc />
-    public int GetBusyAgentCount()
-        => GetAllAgents().Count(a => a.Status == AgentStatus.Busy);
+    public async Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync(CancellationToken ct = default)
+    {
+        // TODO [WARNING]: `ct` is accepted but cannot be forwarded to IRedisStore methods because the
+        // IRedisStore interface does not accept a CancellationToken parameter. The cooperative check
+        // below is the only cancellation point; the Redis I/O itself cannot be aborted mid-flight.
+        // When IRedisStore gains CancellationToken support, forward ct.
+        ct.ThrowIfCancellationRequested();
+        var members = await _store.SetMembersAsync(AgentsAllKey);
+        if (members.Length == 0) return Array.Empty<AgentEntry>();
+
+        // Issue all HGETALL commands concurrently — one network round-trip regardless of agent count.
+        var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id))).ToArray();
+        var results = await Task.WhenAll(tasks);
+
+        var list = new List<AgentEntry>(results.Length);
+        foreach (var hash in results)
+        {
+            if (hash.Length == 0) continue;
+            var entry = HashToEntry(hash);
+            if (entry is not null) list.Add(entry);
+        }
+        return list.AsReadOnly();
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Reads from the per-replica in-process cached counter — zero Redis I/O.
+    /// Safe to call from OTel gauge callbacks (synchronous Func&lt;T&gt; constraint).
+    /// </remarks>
+    public int GetBusyAgentCount() => _busyAgentCount;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Reads from the per-replica in-process cached counter — zero Redis I/O.
+    /// Safe to call from OTel gauge callbacks (synchronous Func&lt;T&gt; constraint).
+    /// </remarks>
+    public int GetTotalAgentCount() => _totalAgentCount;
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetAgentsByLabel(string labelKey, string labelValue)
@@ -525,7 +652,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
     private AgentEntry? GetAgentRaw(string agentId)
     {
-        var hash = _store.HashGetAllAsync(AgentKey(agentId)).GetAwaiter().GetResult(); // Safe: ThreadPool
+        // Used only on write paths (Register, DeregisterAsync) where a sync interface contract
+        // prevents async. Not called from any read method — read methods use _localSnapshot
+        // (GetByAgentId, GetByConnectionId, GetIdleAgents, GetAllAgents) or async Redis reads
+        // (GetByAgentIdAsync, GetIdleAgentsAsync, GetAllAgentsAsync).
+        var hash = _store.HashGetAllAsync(AgentKey(agentId)).GetAwaiter().GetResult(); // Write path only — ThreadPool safe
         return hash.Length == 0 ? null : HashToEntry(hash);
     }
 

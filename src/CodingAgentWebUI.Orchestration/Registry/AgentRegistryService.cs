@@ -141,6 +141,10 @@ public sealed class AgentRegistryService : IAgentRegistryService
         return _agents.TryGetValue(agentId.Value, out var entry) ? entry : null;
     }
 
+    /// <inheritdoc />
+    public Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default)
+        => Task.FromResult(GetByAgentId(agentId));
+
     /// <summary>
     /// Looks up an agent by its current SignalR connection ID.
     /// Uses an O(1) reverse-lookup index maintained by Register/Deregister.
@@ -238,6 +242,10 @@ public sealed class AgentRegistryService : IAgentRegistryService
             .AsReadOnly();
     }
 
+    /// <inheritdoc />
+    public Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync(CancellationToken ct = default)
+        => Task.FromResult(GetIdleAgents());
+
     /// <summary>
     /// Returns all registered agents regardless of status.
     /// </summary>
@@ -246,6 +254,10 @@ public sealed class AgentRegistryService : IAgentRegistryService
         return _agents.Values.ToList().AsReadOnly();
     }
 
+    /// <inheritdoc />
+    public Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync(CancellationToken ct = default)
+        => Task.FromResult(GetAllAgents());
+
     /// <summary>
     /// Returns the count of agents currently in <see cref="AgentStatus.Busy"/> status.
     /// </summary>
@@ -253,6 +265,9 @@ public sealed class AgentRegistryService : IAgentRegistryService
     {
         return _agents.Values.Count(a => a.Status == AgentStatus.Busy);
     }
+
+    /// <inheritdoc />
+    public int GetTotalAgentCount() => _agents.Count;
 
     /// <summary>
     /// Returns all registered agents whose <see cref="AgentEntry.Labels"/> array contains

@@ -206,7 +206,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             return false;
         }
 
-        var agent = _registry.GetByAgentId(agentId);
+        var agent = await _registry.GetByAgentIdAsync(agentId, ct);
         if (agent is null)
             return false;
 

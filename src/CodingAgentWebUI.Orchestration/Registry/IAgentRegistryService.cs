@@ -28,6 +28,13 @@ public interface IAgentRegistryService
     AgentEntry? GetByAgentId(AgentId agentId);
 
     /// <summary>
+    /// Asynchronously looks up an agent by its unique agent identifier.
+    /// Prefer this over <see cref="GetByAgentId"/> in async contexts to avoid
+    /// blocking a ThreadPool thread on Redis I/O in the distributed implementation.
+    /// </summary>
+    Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default);
+
+    /// <summary>
     /// Looks up an agent by its current SignalR connection ID.
     /// </summary>
     AgentEntry? GetByConnectionId(string connectionId);
@@ -48,14 +55,42 @@ public interface IAgentRegistryService
     IReadOnlyList<AgentEntry> GetIdleAgents();
 
     /// <summary>
+    /// Asynchronously returns all agents currently in <see cref="AgentStatus.Idle"/> status.
+    /// All HGETALL commands are issued in a single pipelined batch (no sequential awaits).
+    /// Prefer this over <see cref="GetIdleAgents"/> in async dispatch hot paths.
+    /// </summary>
+    Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Returns all registered agents regardless of status.
     /// </summary>
     IReadOnlyList<AgentEntry> GetAllAgents();
 
     /// <summary>
+    /// Asynchronously returns all registered agents regardless of status.
+    /// All HGETALL commands are issued in a single pipelined batch (no sequential awaits).
+    /// Prefer this over <see cref="GetAllAgents"/> in async contexts.
+    /// </summary>
+    Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Returns the count of agents currently in <see cref="AgentStatus.Busy"/> status.
+    /// In the distributed implementation, reads from an in-process cached counter
+    /// (updated on write paths) — no Redis I/O. Safe to call from OTel gauge callbacks.
     /// </summary>
     int GetBusyAgentCount();
+
+    /// <summary>
+    /// Returns the total count of all registered agents.
+    /// In the distributed implementation, reads from an in-process cached counter
+    /// (updated on write paths) — no Redis I/O. Safe to call from OTel gauge callbacks.
+    /// <para>
+    /// In a multi-replica deployment, each replica emits its own gauge value reflecting
+    /// only agents registered on that replica. Aggregate across replicas in the metrics
+    /// backend (e.g., Prometheus <c>sum by job</c>).
+    /// </para>
+    /// </summary>
+    int GetTotalAgentCount();
 
     /// <summary>
     /// Returns all agents whose labels contain <c>{labelKey}={labelValue}</c>.

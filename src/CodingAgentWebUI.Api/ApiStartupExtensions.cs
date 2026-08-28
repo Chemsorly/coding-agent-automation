@@ -116,7 +116,7 @@ internal static class ApiStartupExtensions
         _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",
             () => agentRegistry.GetBusyAgentCount(), "{job}", "Currently executing agent jobs");
         _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
-            () => agentRegistry.GetAllAgents().Count, "{connection}", "Total registered agents");
+            () => agentRegistry.GetTotalAgentCount(), "{connection}", "Total registered agents");
 
         return app;
     }

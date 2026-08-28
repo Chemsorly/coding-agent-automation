@@ -69,7 +69,10 @@ public sealed class AgentReservationService
     {
         lock (_selectionLock)
         {
-            var compatible = GetCompatibleCandidates(requiredLabels);
+            // C# does not allow `await` inside a `lock` block (CS1996), so we use the sync
+            // candidate lookup here. The in-memory AgentRegistryService path is synchronous
+            // by design (ConcurrentDictionary), so there is no ThreadPool blocking concern.
+            var compatible = GetCompatibleCandidatesSync(requiredLabels);
             if (compatible is null) return null;
 
             foreach (var candidate in compatible)
@@ -100,7 +103,7 @@ public sealed class AgentReservationService
 
     private async Task<AgentEntry?> SelectAgentDistributed(IReadOnlyList<string> requiredLabels)
     {
-        var compatible = GetCompatibleCandidates(requiredLabels);
+        var compatible = await GetCompatibleCandidatesAsync(requiredLabels);
         if (compatible is null) return null;
 
         foreach (var candidate in compatible)
@@ -124,7 +127,7 @@ public sealed class AgentReservationService
                 // NOTE: TransitionStatus does NOT acquire this lock, so there is a tiny race window
                 // where an agent disconnects between HGETALL and HSET Busy. This is accepted:
                 // ReconciliationService recovers the wasted dispatch within its interval.
-                var fresh = _registry.GetByAgentId(candidate.AgentId);
+                var fresh = await _registry.GetByAgentIdAsync(candidate.AgentId);
                 if (fresh is null || fresh.Status != AgentStatus.Idle || fresh.Disabled)
                 {
                     _logger.Debug("SelectAgent: agent {AgentId} status changed to {Status} between lock and double-check — skipping",
@@ -138,6 +141,13 @@ public sealed class AgentReservationService
 
                 _logger.Debug("SelectAgent(distributed): reserved agent {AgentId} for requiredLabels=[{Labels}]",
                     agentId, string.Join(", ", requiredLabels));
+                // TODO [WARNING]: `fresh` was read before TransitionStatus was called, so the returned
+                // entry's Status is still Idle and BusySince is null even though the agent was just
+                // transitioned to Busy. Any caller that inspects the returned entry's Status (e.g.
+                // logging, assertions, or conditional dispatch logic) will see stale data.
+                // Fix: return `fresh with { Status = AgentStatus.Busy, BusySince = DateTimeOffset.UtcNow }`
+                // to give callers an accurate snapshot, consistent with the in-memory path which mutates
+                // candidate.Status before returning.
                 return fresh;
             }
             finally
@@ -152,9 +162,46 @@ public sealed class AgentReservationService
         return null;
     }
 
-    private List<AgentEntry>? GetCompatibleCandidates(IReadOnlyList<string> requiredLabels)
+    /// <summary>
+    /// Synchronous candidate lookup — called only by <see cref="SelectAgentInMemory"/> inside
+    /// <c>lock (_selectionLock)</c>. C# does not allow <c>await</c> inside a <c>lock</c> block
+    /// (CS1996), so the in-memory path must use the sync registry read.
+    /// </summary>
+    private List<AgentEntry>? GetCompatibleCandidatesSync(IReadOnlyList<string> requiredLabels)
     {
         var idleAgents = _registry.GetIdleAgents();
+
+        if (idleAgents.Count == 0)
+        {
+            _logger.Debug("SelectAgent: no idle agents available (requiredLabels=[{Labels}])",
+                string.Join(", ", requiredLabels));
+            return null;
+        }
+
+        var compatible = idleAgents
+            .Where(agent => !agent.Disabled)
+            .Where(agent => LabelMatchHelper.IsLabelMatch(agent.Labels, requiredLabels))
+            .OrderBy(agent => agent.LastJobCompletedAt ?? agent.RegisteredAt)
+            .ToList();
+
+        if (compatible.Count == 0)
+        {
+            _logger.Debug("SelectAgent: {IdleCount} idle agent(s) but none match requiredLabels=[{Labels}]",
+                idleAgents.Count, string.Join(", ", requiredLabels));
+            return null;
+        }
+
+        return compatible;
+    }
+
+    /// <summary>
+    /// Asynchronous candidate lookup — called only by <see cref="SelectAgentDistributed"/>.
+    /// Issues the SMEMBERS + pipelined HGETALL batch via <see cref="IAgentRegistryService.GetIdleAgentsAsync"/>,
+    /// avoiding a blocking ThreadPool wait on the distributed Redis-backed path.
+    /// </summary>
+    private async Task<List<AgentEntry>?> GetCompatibleCandidatesAsync(IReadOnlyList<string> requiredLabels)
+    {
+        var idleAgents = await _registry.GetIdleAgentsAsync();
 
         if (idleAgents.Count == 0)
         {
