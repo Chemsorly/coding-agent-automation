@@ -193,6 +193,19 @@ public sealed class PipelineApiWorkItemClientTests
         handler.LastRequest.RequestUri!.PathAndQuery.Should().Be($"/api/work-items/{id}/requeue");
     }
 
+    [Fact]
+    public async Task RequeueAsync_OnConflict_DoesNotThrow()
+    {
+        var (client, handler) = Create();
+        handler.Respond = _ => Empty(HttpStatusCode.Conflict);
+        var id = Guid.NewGuid();
+
+        // 409 Conflict means the item is already Pending/Running/terminal — the requeue
+        // intent is satisfied. Must not throw.
+        var act = () => client.RequeueAsync(id);
+        await act.Should().NotThrowAsync();
+    }
+
     // ── GetRetryCountAsync ────────────────────────────────────────────────
 
     [Fact]

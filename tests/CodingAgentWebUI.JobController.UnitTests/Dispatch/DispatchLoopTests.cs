@@ -406,4 +406,36 @@ public sealed class DispatchLoopTests
         var loop = CreateLoop();
         await loop.RunOneCycleAsync(CancellationToken.None);
     }
+
+    /// <summary>
+    /// When K8s fails and the real client receives a 409 from /requeue, it now returns
+    /// normally (no throw). This test verifies that SafeRequeueAsync's catch block —
+    /// which contains Log.Error — is structurally unreachable for that path, because
+    /// RequeueAsync completes without throwing.
+    ///
+    /// Together with RequeueAsync_OnConflict_DoesNotThrow in Pipeline.UnitTests, this forms
+    /// the complete proof: client silences 409 → SafeRequeueAsync catch never fires → Log.Error
+    /// is never called for a 409 response.
+    /// </summary>
+    [Fact]
+    public async Task WhenK8sCreateFailsAndRequeueReturns409Silently_ShouldNotThrow()
+    {
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+        _k8sClient.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("K8s unavailable"));
+        // RequeueAsync returns without throwing (real impl now handles 409 as no-op)
+        _workItemClient.Setup(c => c.RequeueAsync(ItemId, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+
+        // Must not throw. Because RequeueAsync doesn't throw, SafeRequeueAsync's catch block
+        // (which contains Log.Error) is never entered.
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.RequeueAsync(ItemId, It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

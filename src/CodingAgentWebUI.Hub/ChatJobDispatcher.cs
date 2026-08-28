@@ -354,14 +354,21 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var watcherCts = CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token);
 
         var entry = new WatcherEntry(agentId, jobName, selector, claimedPvc, DateTimeOffset.UtcNow, watcherCts);
-        entry.WatcherTask = Task.Run(
-            () => WatchJobUntilTerminalAsync(jobName, entry, watcherCts.Token),
-            CancellationToken.None);
 
         // Key by agentId (not jobName) so TerminateChatSessionAsync can look up by the value
         // returned from DispatchChatPodAsync. In production agentId == jobName (AGENT_ID is set
         // to metadata.name via field ref), but tests may use a custom agentId.
+        //
+        // IMPORTANT: store in the dictionary BEFORE Task.Run so that if WatchJobUntilTerminalAsync
+        // completes synchronously (e.g. immediate 404), CleanupSession's TryRemove runs against
+        // an entry that is already present. If we stored after Task.Run, a fast-completing watcher
+        // could TryRemove a missing key and then the dictionary write below would re-insert a stale
+        // entry, causing HasActiveSession to return true after the session has ended.
         _activeWatchers[agentId] = entry;
+
+        entry.WatcherTask = Task.Run(
+            () => WatchJobUntilTerminalAsync(jobName, entry, watcherCts.Token),
+            CancellationToken.None);
 
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selector.Replace(',', '_'));
         ChatTelemetry.SessionsActive.Add(1, selectorTag);
