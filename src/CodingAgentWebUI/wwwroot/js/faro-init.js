@@ -19,8 +19,8 @@
  *   5. On successful init → replace stub with real Faro API calls.
  *   6. On CDN failure → stub remains. App unaffected.
  *
- * CDN bundles: @grafana/faro-web-sdk and @grafana/faro-web-tracing v2.8.0
- * SRI hashes are pinned for the exact v2.8.0 artifacts — update both when upgrading.
+ * CDN bundles: @grafana/faro-web-sdk and @grafana/faro-web-tracing v2.8.1
+ * SRI hashes are pinned for the exact v2.8.1 artifacts — update both when upgrading.
  * To upgrade: download new bundles, compute sha384 via:
  *   openssl dgst -sha384 -binary <file> | openssl base64 -A
  *
@@ -34,9 +34,9 @@
 (function () {
     'use strict';
 
-    var FARO_VERSION = '2.8.0';
+    var FARO_VERSION = '2.8.1';
     var SDK_URL = 'https://unpkg.com/@grafana/faro-web-sdk@' + FARO_VERSION + '/dist/bundle/faro-web-sdk.iife.js';
-    var SDK_SRI = 'sha384-91m8cQg5BrX/IKjC3m4o1iP3Pa7GQOUO6IZWr8otn1BhyZXe4wZJzuNfXZMnUNQj';
+    var SDK_SRI = 'sha384-0/sWgM/TFc/aOBqTojW76TtBMJsJToUZI50mii3mcjHi1yv9A+jUDVCwV5BRQ4Wm';
     var TRACING_URL = 'https://unpkg.com/@grafana/faro-web-tracing@' + FARO_VERSION + '/dist/bundle/faro-web-tracing.iife.js';
     var TRACING_SRI = 'sha384-NauzUHGvjWH/QWyybFlULb68c5158zq+w5qTdxvMklLJeLrmTkq9Q6xouTYJGsrK';
 
