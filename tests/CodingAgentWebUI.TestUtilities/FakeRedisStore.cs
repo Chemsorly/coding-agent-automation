@@ -195,6 +195,13 @@ public sealed class FakeRedisStore : IRedisStore
         return Task.FromResult(exists);
     }
 
+    public Task<string?> GetAsync(string key)
+    {
+        if (IsExpired(key) || !_strings.TryGetValue(key, out var entry))
+            return Task.FromResult<string?>(null);
+        return Task.FromResult<string?>(entry.Value);
+    }
+
     public Task<bool> PingAsync() => Task.FromResult(true);
 
     // ── Lua script ────────────────────────────────────────────────────

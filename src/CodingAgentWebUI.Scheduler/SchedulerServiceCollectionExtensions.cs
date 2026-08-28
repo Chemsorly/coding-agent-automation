@@ -238,7 +238,11 @@ public static class SchedulerServiceCollectionExtensions
 
         // Cache singleton for the /loop/status handler — scoped to this DI container rather than
         // a static field, so integration tests with multiple WebApplication instances don't share state.
-        services.AddSingleton<LoopStatusCache>();
+        // Inject IRedisStore (null when Redis is not configured) so the leader pod publishes each
+        // LoopStatusDto snapshot to Redis and non-leader pods can read it on GetLoopStatus.
+        // Inject ILeaderElectionService so non-leader pods skip the stale local fast-path in ReadAsync.
+        services.AddSingleton<LoopStatusCache>(sp =>
+            new LoopStatusCache(sp.GetService<IRedisStore>(), sp.GetService<ILeaderElectionService>(), Log.Logger));
 
         // ── OrphanedLabelRecoveryService ──────────────────────────────────────
         services.AddHostedService(sp => new OrphanedLabelRecoveryService(
