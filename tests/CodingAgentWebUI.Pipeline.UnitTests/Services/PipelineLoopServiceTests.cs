@@ -1642,10 +1642,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             EnabledTemplates: pollableTemplates,
             PollableTemplates: pollableTemplates,
             TemplateLookup: pollableTemplates.ToDictionary(t => t.Id).AsReadOnly(),
-            PollInterval: TimeSpan.FromSeconds(60),
-            MaxRunsPerCycle: 0,
-            MaxConsecutiveFailures: 5,
-            MaxPagesToFetch: 10,
             ActiveIssueIdentifiers: new HashSet<(IssueIdentifier, ProviderConfigId)>());
     }
 

@@ -22,7 +22,7 @@ public sealed partial class PipelineLoopService
 
         while (!_stopRequested && !ct.IsCancellationRequested)
         {
-            var snapshot = await SnapshotAndReconcileAsync(ct);
+            var snapshot = await SnapshotCycleConfigAsync(ct);
             if (snapshot is null)
             {
                 PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", "failure"));
@@ -44,7 +44,7 @@ public sealed partial class PipelineLoopService
         var failuresBefore = BuildTemplateFailureBaseline(snapshot.PollableTemplates);
 
         var (issueQueues, prQueues, decompositionQueues, agentDonePrQueues) = await _poller.PollTemplateQueuesAsync(
-            snapshot.PollableTemplates, snapshot.MaxPagesToFetch, _templateStatuses,
+            snapshot.PollableTemplates, snapshot.Config.ClosedLoopMaxPagesToFetch, _templateStatuses,
             i => CurrentCycleTemplateIndex = i,
             msg => { lock (_lock) { StatusMessage = msg; } },
             NotifyChange,
@@ -53,13 +53,13 @@ public sealed partial class PipelineLoopService
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
         var projectLevelDecompositionQueues = await _poller.PollProjectLevelEpicsAsync(
-            snapshot.Projects, snapshot.TemplateLookup, snapshot.MaxPagesToFetch, ct);
+            snapshot.Projects, snapshot.TemplateLookup, snapshot.Config.ClosedLoopMaxPagesToFetch, ct);
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
         EmitCyclePollMetrics(snapshot, failuresBefore, issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues);
 
-        if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, snapshot.Config.ClosedLoopCircuitBreakerCooldown, ct))
+        if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.Config.ClosedLoopMaxConsecutivePollFailures, snapshot.Config.ClosedLoopCircuitBreakerCooldown, ct))
             return true;
 
         // _dispatcher is null when IDispatchOrchestrationService was not registered (e.g. test environments
@@ -73,7 +73,7 @@ public sealed partial class PipelineLoopService
                 PollableTemplates = snapshot.PollableTemplates,
                 FlattenedTemplates = snapshot.FlattenedTemplates,
                 Config = snapshot.Config,
-                MaxRunsPerCycle = snapshot.MaxRunsPerCycle,
+                MaxRunsPerCycle = snapshot.Config.ClosedLoopMaxRunsPerCycle,
                 ActiveIssueIdentifiers = snapshot.ActiveIssueIdentifiers,
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
@@ -93,9 +93,9 @@ public sealed partial class PipelineLoopService
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
-        lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.PollInterval.TotalSeconds}s."; }
+        lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.Config.ClosedLoopPollInterval.TotalSeconds}s."; }
         NotifyChange();
-        await DelayOrStop(snapshot.PollInterval, ct);
+        await DelayOrStop(snapshot.Config.ClosedLoopPollInterval, ct);
         return true;
     }
 
@@ -179,7 +179,9 @@ public sealed partial class PipelineLoopService
     }
 
     /// <summary>
-    /// Snapshot record bundling all cycle-immutable state from Steps 1–2.
+    /// Snapshot record bundling all cycle-immutable state.
+    /// Config-derived values (PollInterval, MaxRunsPerCycle, MaxConsecutiveFailures, MaxPagesToFetch)
+    /// are accessed via <see cref="Config"/> rather than copied as separate fields.
     /// </summary>
     internal sealed record CycleSnapshot(
         PipelineConfiguration Config,
@@ -188,19 +190,18 @@ public sealed partial class PipelineLoopService
         IReadOnlyList<PipelineJobTemplate> EnabledTemplates,
         IReadOnlyList<PipelineJobTemplate> PollableTemplates,
         IReadOnlyDictionary<string, PipelineJobTemplate> TemplateLookup,
-        TimeSpan PollInterval,
-        int MaxRunsPerCycle,
-        int MaxConsecutiveFailures,
-        int MaxPagesToFetch,
         HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssueIdentifiers);
 
     /// <summary>
-    /// Step 1–2: Reads config snapshot, loads projects, flattens templates, filters rate-limited,
-    /// and reconciles provider caches. Returns null if no templates are available.
+    /// Loads config and templates, reconciles provider caches, then loads active issue identifiers.
+    /// Operations execute in the same order as the original SnapshotAndReconcileAsync:
+    /// LoadConfig → LoadTemplates → ReconcileIssueCache → ReconcileRepoCache
+    ///   → LoadActiveIssueIdentifiers → ReconcileStuckWorkItems.
+    /// Always returns a non-null CycleSnapshot (even when template lists are empty).
     /// </summary>
-    private async Task<CycleSnapshot?> SnapshotAndReconcileAsync(CancellationToken ct)
+    private async Task<CycleSnapshot?> SnapshotCycleConfigAsync(CancellationToken ct)
     {
-        // Step 1: Snapshot — read config at cycle start (immutable for cycle duration)
+        // Step 1: Load config and templates (pure query)
         var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
 
         var (projects, flattenedTemplates, enabledTemplates, pollableTemplates, templateLookup) =
@@ -208,20 +209,35 @@ public sealed partial class PipelineLoopService
 
         CurrentCycleTemplateCount = enabledTemplates.Count;
 
-        // Step 2: Provider cache reconciliation
-        await ReconcileIssueProviderCacheAsync(enabledTemplates, projects, ct);
-        await ReconcileRepoProviderCacheAsync(enabledTemplates, ct);
+        // Step 2: Reconcile provider caches (side effects — order preserved from original)
+        await ReconcileCachesAsync(enabledTemplates, projects, ct);
 
-        // Step 2b: Batch-load active issue identifiers and reconcile stuck work items
+        // Step 2b: Load active issue identifiers (after cache reconciliation, per original order)
         var activeIssueIdentifiers = await LoadActiveIssueIdentifiersAsync(ct);
+
+        // Step 2c: Reconcile stuck work items (after active issue identifier load, per original order)
         await ReconcileStuckWorkItemsAsync(ct);
 
         return new CycleSnapshot(
             config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
             templateLookup.AsReadOnly(),
-            config.ClosedLoopPollInterval, config.ClosedLoopMaxRunsPerCycle,
-            config.ClosedLoopMaxConsecutivePollFailures, config.ClosedLoopMaxPagesToFetch,
             activeIssueIdentifiers);
+    }
+
+    /// <summary>
+    /// Reconciles provider caches for the current cycle (issue + repo).
+    /// Note: <see cref="ReconcileIssueProviderCacheAsync"/> exceptions propagate (no try/catch);
+    /// <see cref="ReconcileRepoProviderCacheAsync"/> swallows non-cancellation exceptions and logs a warning.
+    /// <see cref="ReconcileStuckWorkItemsAsync"/> is called separately after
+    /// <see cref="LoadActiveIssueIdentifiersAsync"/> to preserve the original execution order.
+    /// </summary>
+    private async Task ReconcileCachesAsync(
+        IReadOnlyList<PipelineJobTemplate> enabledTemplates,
+        IReadOnlyList<PipelineProject> projects,
+        CancellationToken ct)
+    {
+        await ReconcileIssueProviderCacheAsync(enabledTemplates, projects, ct);
+        await ReconcileRepoProviderCacheAsync(enabledTemplates, ct);
     }
 
     /// <summary>Loads projects and templates, deduplicates, flattens, and filters rate-limited templates.</summary>
@@ -257,7 +273,7 @@ public sealed partial class PipelineLoopService
 
     /// <summary>Reconciles the issue provider cache, including project-level epic providers.</summary>
     private async Task ReconcileIssueProviderCacheAsync(
-        List<PipelineJobTemplate> enabledTemplates,
+        IReadOnlyList<PipelineJobTemplate> enabledTemplates,
         IReadOnlyList<PipelineProject> projects,
         CancellationToken ct)
     {
@@ -272,7 +288,7 @@ public sealed partial class PipelineLoopService
     }
 
     /// <summary>Reconciles the repo provider cache for templates with ReviewEnabled or DecompositionEnabled.</summary>
-    private async Task ReconcileRepoProviderCacheAsync(List<PipelineJobTemplate> enabledTemplates, CancellationToken ct)
+    private async Task ReconcileRepoProviderCacheAsync(IReadOnlyList<PipelineJobTemplate> enabledTemplates, CancellationToken ct)
     {
         var neededRepoIds = enabledTemplates
             .Where(t => t.ReviewEnabled || t.DecompositionEnabled || t.HousekeepingEnabled)

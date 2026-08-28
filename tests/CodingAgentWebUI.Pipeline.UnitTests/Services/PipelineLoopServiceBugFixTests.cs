@@ -399,9 +399,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Covers line 280: <c>_logger.Error(ex, "Pipeline loop encountered an unexpected error")</c>.
     /// Configuring <c>LoadPipelineConfigAsync</c> to throw after the first call (which passes
-    /// validation) causes <c>SnapshotAndReconcileAsync</c> to propagate the exception out of
+    /// validation) causes <c>SnapshotCycleConfigAsync</c> to propagate the exception out of
     /// <c>RunMultiTemplateLoopAsync</c>, hitting the <c>catch (Exception ex) when (!_stopRequested)</c>
     /// branch in <c>ExecuteAsync</c>, which logs it at Error level.
     /// </summary>
@@ -409,7 +408,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     public async Task WhenUnexpectedExceptionThrown_ShouldLogError()
     {
         // First call (during StartLoopAsync validation) succeeds; second call (first cycle in
-        // SnapshotAndReconcileAsync) throws, escaping RunMultiTemplateLoopAsync to ExecuteAsync.
+        // SnapshotCycleConfigAsync) throws, escaping RunMultiTemplateLoopAsync to ExecuteAsync.
         var callCount = 0;
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
@@ -444,7 +443,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         _mockLogger.Verify(
             l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
             Times.AtLeastOnce(),
-            "unexpected exception from SnapshotAndReconcileAsync must be logged at Error level (line 280)");
+            "unexpected exception from SnapshotCycleConfigAsync must be logged at Error level");
 
         hostCts.Cancel();
     }
