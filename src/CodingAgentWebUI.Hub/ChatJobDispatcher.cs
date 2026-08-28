@@ -64,6 +64,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     // and double-calling DeleteJobAsync when both paths race to see a terminal job.
     private readonly ConcurrentDictionary<string, WatcherEntry> _activeWatchers = new();
     private readonly CancellationTokenSource _shutdownCts = new();
+    private int _stopped; // 0 = running, 1 = stopped; guarded with Interlocked
 
     private sealed class WatcherEntry
     {
@@ -614,6 +615,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        if (Interlocked.Exchange(ref _stopped, 1) != 0)
+            return; // idempotent — second call is a no-op
+
         _logger.Information("ChatJobDispatcher: stopping — cancelling {Count} active watcher(s)",
             _activeWatchers.Count);
 
@@ -773,6 +777,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     // ─── IAsyncDisposable ─────────────────────────────────────────────────────
 
+    // TODO: DisposeAsync is not guarded against concurrent calls. If two threads call DisposeAsync
+    // simultaneously (e.g. via DI container teardown races), both will proceed past StopAsync (one
+    // returns early due to _stopped) and both will then reach _shutdownCts.Dispose(). The second
+    // Dispose() is a BCL no-op, but the first caller's StopAsync may not have completed before the
+    // second caller disposes the CTS, creating a narrow window where _shutdownCts.Token could be
+    // used (e.g. in CreateLinkedTokenSource) while already disposed. In practice this is extremely
+    // unlikely given sealed + singleton IHostedService registration, but consider adding a
+    // SemaphoreSlim(1,1) guard or Lazy<Task> pattern if concurrent disposal ever becomes possible.
     public async ValueTask DisposeAsync()
     {
         await StopAsync(CancellationToken.None);
