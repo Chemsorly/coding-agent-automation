@@ -24,6 +24,12 @@ public static class HubMethodNames
     public const string OnQualityGateResult = nameof(IAgentHubUiClient.OnQualityGateResult);
     public const string OnBrainSyncResult = nameof(IAgentHubUiClient.OnBrainSyncResult);
 
+    /// <summary>
+    /// Sent point-to-point (caller only) in SubscribeToRun with the full live run state snapshot.
+    /// Used to seed the PipelineSidebar on modal open, including HighWaterMark and IssueLabels.
+    /// </summary>
+    public const string OnRunStateSnapshot = nameof(IAgentHubUiClient.OnRunStateSnapshot);
+
     // Job lifecycle
     public const string JobAccepted = nameof(IAgentHub.JobAccepted);
     public const string JobRejected = nameof(IAgentHub.JobRejected);

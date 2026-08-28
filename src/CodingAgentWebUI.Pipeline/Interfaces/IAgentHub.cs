@@ -76,6 +76,13 @@ public interface IAgentHubUiClient
     Task OnBrainSyncResult(string jobId, bool contextLoaded, int fileCount);
     Task OnChatResponse(string sessionId, IReadOnlyList<string> lines);
     Task OnChatCompleted(string sessionId, int exitCode, string? error);
+
+    /// <summary>
+    /// Sent to the connecting UI client (not the whole group) immediately after SubscribeToRun,
+    /// carrying the full live run state needed to seed the PipelineSidebar view model.
+    /// Includes CurrentStep, HighWaterMark, IssueLabels, and all sidebar detail fields.
+    /// </summary>
+    Task OnRunStateSnapshot(string jobId, RunStateSnapshot snapshot);
 }
 
 /// <summary>

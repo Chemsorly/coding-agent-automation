@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
 
 namespace CodingAgentWebUI.Hub;
@@ -17,6 +18,11 @@ public sealed partial class AgentHub
     ///
     /// Immediately pushes the current output backlog to the new subscriber
     /// so navigating to a mid-run page shows existing output without a separate fetch.
+    ///
+    /// Also pushes a <see cref="RunStateSnapshot"/> to the caller if the run is currently
+    /// active (in-memory). This seeds the PipelineSidebar view model with HighWaterMark,
+    /// IssueLabels, and all sidebar detail fields, including state for steps that completed
+    /// before the subscriber connected.
     /// </summary>
     public async Task SubscribeToRun(string jobId)
     {
@@ -62,6 +68,19 @@ public sealed partial class AgentHub
             _logger.Debug("Pushed {LineCount} buffered output lines to new subscriber for run-{JobId}",
                 lines.Count, jobId);
         }
+
+        // Push a RunStateSnapshot to the caller so the PipelineSidebar can be seeded
+        // with the current step, HighWaterMark, IssueLabels, and all detail fields.
+        // Only push if the run is active (GetRun returns null for completed runs).
+        var activeRun = _facade.GetRun(new Pipeline.Models.JobId(jobId));
+        if (activeRun is not null)
+        {
+            var snapshot = BuildRunStateSnapshot(activeRun);
+            await _uiContext.Clients.Client(Context.ConnectionId)
+                .SendAsync(HubMethodNames.OnRunStateSnapshot, jobId, snapshot);
+            _logger.Debug("Pushed RunStateSnapshot to new subscriber for run-{JobId} at step {Step}",
+                jobId, activeRun.CurrentStep);
+        }
     }
 
     /// <summary>
@@ -75,4 +94,52 @@ public sealed partial class AgentHub
             throw new HubException($"Invalid jobId format: must be a valid GUID.");
         return Groups.RemoveFromGroupAsync(Context.ConnectionId, $"run-{jobId}");
     }
+
+    /// <summary>
+    /// Builds a <see cref="RunStateSnapshot"/> from the current state of an active <see cref="PipelineRun"/>.
+    /// </summary>
+    private static RunStateSnapshot BuildRunStateSnapshot(PipelineRun run) => new()
+    {
+        CurrentStep = run.CurrentStep,
+        HighWaterMark = run.HighWaterMark,
+        RetryCount = run.RetryCount,
+        BranchName = run.BranchName,
+        BaselineHealthPassed = run.BaselineHealthPassed,
+        BrainRepoUsed = run.BrainProviderConfigId != null,
+        BrainContextLoaded = run.BrainContextLoaded,
+        BrainKnowledgeFileCount = run.BrainKnowledgeFileCount,
+        IssueLabels = run.IssueLabels,
+        AnalysisSkipped = run.AnalysisSkipped,
+        AnalysisRecommendation = run.AnalysisRecommendation,
+        FilesChangedCount = run.FilesChangedCount,
+        LinesAdded = run.LinesAdded,
+        LinesRemoved = run.LinesRemoved,
+        CodeReviewIterationsCompleted = run.CodeReviewIterationsCompleted,
+        CodeReviewIterationInProgress = run.CodeReviewIterationInProgress,
+        CodeReviewIterationsTotal = run.CodeReviewIterationsTotal,
+        CodeReviewAgentsRun = run.CodeReviewAgentsRun,
+        CodeReviewCriticalCount = run.CodeReviewCriticalCount,
+        CodeReviewWarningCount = run.CodeReviewWarningCount,
+        CodeReviewSuggestionCount = run.CodeReviewSuggestionCount,
+        LatestQualityReport = run.LatestQualityReport,
+        QualityGateHistory = run.QualityGateHistory.ToArray(),
+        PullRequestUrl = run.PullRequestUrl,
+        PullRequestNumber = run.PullRequestNumber,
+        IsDraftPr = run.IsDraftPr,
+        BlacklistedFilesDetected = run.BlacklistedFilesDetected,
+        OpenIssuesDownloaded = run.OpenIssuesDownloaded,
+        BrainFilesCommitted = run.BrainFilesCommitted,
+        BrainUpdatesPushed = run.BrainUpdatesPushed,
+        DecompositionSubIssuesCreated = run.DecompositionSubIssuesCreated,
+        DecompositionSubIssuesAttempted = run.DecompositionSubIssuesAttempted,
+        FinalStep = null, // Not terminal — active run
+        FailureReason = run.FailureReason,
+        ModelName = run.ModelName,
+        RepositoryName = run.RepositoryName,
+        RunType = run.RunType,
+        IssueIdentifier = run.IssueIdentifier.ToString(),
+        IssueTitle = run.IssueTitle,
+        StartedAtOffset = run.StartedAtOffset,
+        BrainProviderConfigId = run.BrainProviderConfigId,
+    };
 }
