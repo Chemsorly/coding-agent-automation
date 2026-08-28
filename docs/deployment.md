@@ -89,7 +89,7 @@ The chart deploys:
 | `database.sslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. Defaults to `Require` in production if not set. Use `Disable` for in-cluster Postgres without TLS. |
 | `workDistribution.dispatch.intervalSeconds` | Seconds between dispatch cycles (default: `10`) |
 | `workDistribution.dispatch.rateLimitPerSecond` | Max dispatches per second (default: `10`) |
-| `workDistribution.dispatch.chatSessionMaxDurationSeconds` | Max lifetime (seconds) of a chat pod K8s Job (default: `7200`). Sets `activeDeadlineSeconds`. |
+| `workDistribution.dispatch.agentJobTimeoutSeconds` | Max lifetime (seconds) of any agent K8s Job — work-item agents, consolidation jobs, and chat pods (default: `7200`). Sets `activeDeadlineSeconds`. |
 | `workDistribution.dispatch.chatPodConnectTimeoutSeconds` | Max seconds to wait for a chat pod to connect to the hub after Job creation (default: `120`). |
 | `workDistribution.dispatch.chatTerminationGracePeriodSeconds` | `terminationGracePeriodSeconds` on chat pod spec (default: `120`). |
 | `workDistribution.reconciliation.intervalSeconds` | Seconds between reconciliation cycles (default: `30`) |

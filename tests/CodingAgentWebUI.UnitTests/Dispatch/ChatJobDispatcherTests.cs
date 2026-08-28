@@ -45,7 +45,7 @@ public class ChatJobDispatcherTests
         AgentApiKeySecretName = "caa-secret",
         AgentServiceAccountName = "caa-agent",
         ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
-        ChatSessionMaxDurationSeconds = chatSessionMaxDuration,
+        AgentJobTimeoutSeconds = chatSessionMaxDuration,
         ChatTerminationGracePeriodSeconds = gracePeriod
     };
 
@@ -107,7 +107,8 @@ public class ChatJobDispatcherTests
         IHubContext<AgentHub, IAgentHubClient>? hubContext = null,
         JobTemplateStore? templateStore = null,
         AgentRegistryService? registry = null,
-        DispatchServiceOptions? options = null)
+        DispatchServiceOptions? options = null,
+        CodingAgentWebUI.Orchestration.Redis.IRedisStore? redis = null)
     {
         return new ChatJobDispatcher(
             jobClient ?? CreateJobClientMock().Object,
@@ -115,7 +116,8 @@ public class ChatJobDispatcherTests
             templateStore ?? CreateTemplateStore(),
             registry ?? CreateRegistry(),
             options ?? CreateOptions(),
-            Mock.Of<ILogger>());
+            Mock.Of<ILogger>(),
+            redis);
     }
 
     // ─── 1. DispatchChatPodAsync — no existing chat job ───────────────────────
@@ -811,7 +813,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            ChatSessionMaxDurationSeconds = 7200,
+            AgentJobTimeoutSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1   // 1 second grace → force-delete triggers fast
         };
 
@@ -982,7 +984,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            ChatSessionMaxDurationSeconds = 7200,
+            AgentJobTimeoutSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1
         };
 
@@ -1048,5 +1050,209 @@ public class ChatJobDispatcherTests
         watcherCompleted.Should().BeTrue("watcher must exit when job returns 404, not retry forever");
 
         dispatcher.HasActiveSession(agentId).Should().BeFalse("session must be removed after 404");
+    }
+
+    // ─── Circuit-based lifecycle: idle-kill tests ─────────────────────────────
+
+    /// <summary>
+    /// When the client never sends a keepalive after dispatch, the watcher should
+    /// terminate the pod once ChatIdleTimeoutSeconds elapses with no heartbeat.
+    /// </summary>
+    [Fact]
+    public async Task WatcherIdleKill_NoHeartbeatReceived_TerminatesPodAfterIdleTimeout()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? createdJobName = null;
+
+        // ReadJobAsync always returns non-terminal — pod won't exit on its own
+        jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, createdJobName!, dispatchId, "conn-idle");
+            })
+            .Returns(Task.CompletedTask);
+
+        // Very short idle timeout so the test completes fast
+        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
+        options.ChatIdleTimeoutSeconds = 2; // 2s without a heartbeat → kill
+
+        var dispatcher = CreateDispatcher(
+            jobClient: jobClientMock.Object,
+            registry: registry,
+            options: options,
+            redis: new CodingAgentWebUI.TestUtilities.FakeRedisStore());
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // No heartbeat sent — watcher should auto-terminate after ChatIdleTimeoutSeconds
+
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(15));
+        watcherDone.Should().BeTrue("watcher must exit after idle timeout expires");
+
+        // Pod must be terminated (CancelChat + force-delete path)
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.Is<string>(n => n == createdJobName),
+            TestNamespace,
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "pod must be force-deleted when no client heartbeat arrives within ChatIdleTimeoutSeconds");
+    }
+
+    /// <summary>
+    /// When the client sends regular keepalive heartbeats, the pod must stay alive
+    /// beyond ChatIdleTimeoutSeconds.
+    /// </summary>
+    [Fact]
+    public async Task WatcherIdleKill_HeartbeatReceived_PodRemainsAlive()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? createdJobName = null;
+
+        // ReadJobAsync always returns non-terminal — pod won't exit on its own
+        jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, createdJobName!, dispatchId, "conn-alive");
+            })
+            .Returns(Task.CompletedTask);
+
+        // Idle timeout of 2s; we'll heartbeat every ~500ms for 3s then cancel
+        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
+        options.ChatIdleTimeoutSeconds = 2;
+
+        var fakeRedis = new CodingAgentWebUI.TestUtilities.FakeRedisStore();
+        var dispatcher = CreateDispatcher(
+            jobClient: jobClientMock.Object,
+            registry: registry,
+            options: options,
+            redis: fakeRedis);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // Send heartbeats every 500ms for 3 seconds — pod should NOT be killed
+        using var heartbeatCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        _ = Task.Run(async () =>
+        {
+            while (!heartbeatCts.IsCancellationRequested)
+            {
+                dispatcher.RecordClientHeartbeat(createdJobName!);
+                await Task.Delay(500, heartbeatCts.Token).ContinueWith(_ => { });
+            }
+        }, CancellationToken.None);
+
+        // Wait the full 3s — watcher should NOT have finished (pod still alive)
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(3));
+        watcherDone.Should().BeFalse("watcher must NOT exit while client heartbeats are arriving");
+
+        // Now stop heartbeats and wait for idle kill to fire
+        heartbeatCts.Cancel();
+        var idleKillDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(10));
+        idleKillDone.Should().BeTrue("watcher must exit after heartbeats stop and idle timeout fires");
+
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.Is<string>(n => n == createdJobName),
+            TestNamespace,
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "pod must be force-deleted after heartbeats stop");
+    }
+
+    /// <summary>
+    /// Cross-replica scenario: keepalive arrives on a different replica than the one that owns
+    /// the watcher. The "remote" replica writes to the shared Redis store but has no
+    /// WatcherEntry for the agentId (so local ticks on the watcher replica are never updated).
+    /// The watcher must read the Redis heartbeat and keep the pod alive.
+    ///
+    /// Design:
+    ///  - Dispatcher A owns the watcher (dispatched the pod, has a WatcherEntry).
+    ///  - Dispatcher B shares the same FakeRedisStore but has no WatcherEntry for the agentId.
+    ///  - After dispatch, A's local LastClientHeartbeatTicks = StartedAt (immediately stale).
+    ///  - B calls RecordClientHeartbeat → updates Redis only (no WatcherEntry on B → local no-op).
+    ///  - A's watcher checks Redis (fresh) → pod must stay alive despite stale local ticks.
+    /// </summary>
+    [Fact]
+    public async Task WatcherIdleKill_CrossReplica_HeartbeatOnRemoteReplica_PodRemainsAlive()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registryA = CreateRegistry();
+        string? createdJobName = null;
+
+        // ReadJobAsync always returns non-terminal — pod won't exit on its own
+        jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registryA, createdJobName!, dispatchId, "conn-replica-a");
+            })
+            .Returns(Task.CompletedTask);
+
+        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
+        options.ChatIdleTimeoutSeconds = 2;
+
+        // Shared Redis store — simulates the shared Redis instance in a multi-replica deployment
+        var sharedRedis = new CodingAgentWebUI.TestUtilities.FakeRedisStore();
+
+        // Dispatcher A — owns the watcher, uses shared Redis
+        var dispatcherA = CreateDispatcher(
+            jobClient: jobClientMock.Object,
+            registry: registryA,
+            options: options,
+            redis: sharedRedis);
+
+        // Dispatcher B — "remote replica": separate registry (no WatcherEntry), same Redis
+        var registryB = CreateRegistry(); // no agents registered on B
+        var dispatcherB = CreateDispatcher(
+            jobClient: CreateJobClientMock().Object,
+            registry: registryB,
+            options: options,
+            redis: sharedRedis);
+
+        await dispatcherA.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // Send heartbeats via dispatcher B every 500ms for 3s.
+        // B has no WatcherEntry → local ticks on A are never updated by B.
+        // B writes only to sharedRedis → A's watcher must read Redis to see the heartbeat.
+        using var heartbeatCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        _ = Task.Run(async () =>
+        {
+            while (!heartbeatCts.IsCancellationRequested)
+            {
+                dispatcherB.RecordClientHeartbeat(createdJobName!);
+                await Task.Delay(500, heartbeatCts.Token).ContinueWith(_ => { });
+            }
+        }, CancellationToken.None);
+
+        // Watcher on A must NOT idle-kill while B's heartbeats are arriving via Redis
+        var killedEarly = await dispatcherA.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(3));
+        killedEarly.Should().BeFalse(
+            "watcher must NOT idle-kill the pod while a remote replica is sending heartbeats via Redis");
+
+        // Stop B's heartbeats; A's watcher should now detect idle and terminate
+        heartbeatCts.Cancel();
+        var idleKillDone = await dispatcherA.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(10));
+        idleKillDone.Should().BeTrue("watcher must idle-kill the pod after cross-replica heartbeats stop");
+
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.Is<string>(n => n == createdJobName),
+            TestNamespace,
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "pod must be force-deleted when cross-replica heartbeats stop");
     }
 }

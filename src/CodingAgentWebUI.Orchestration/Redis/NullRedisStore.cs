@@ -12,6 +12,7 @@ namespace CodingAgentWebUI.Orchestration.Redis;
 internal sealed class NullRedisStore : IRedisStore
 {
     public Task<bool> SetAsync(string key, string value, TimeSpan? expiry = null, When when = When.Always) => Task.FromResult(false);
+    public Task<string?> GetAsync(string key) => Task.FromResult<string?>(null);
     public Task<bool> SetIfNotExistsAsync(string key, string value, TimeSpan expiry) => Task.FromResult(false);
     public Task<bool> DeleteAsync(string key) => Task.FromResult(false);
     public Task<bool> ExpireAsync(string key, TimeSpan expiry) => Task.FromResult(false);
@@ -27,7 +28,6 @@ internal sealed class NullRedisStore : IRedisStore
     public Task ListTrimAsync(string key, long start, long stop) => Task.CompletedTask;
     public Task<string[]> ListRangeAsync(string key, long start, long stop) => Task.FromResult(Array.Empty<string>());
     public Task<bool> ExistsAsync(string key) => Task.FromResult(false);
-    public Task<string?> GetAsync(string key) => Task.FromResult<string?>(null);
     public Task<bool> PingAsync() => Task.FromResult(false);
     public Task<RedisResult> ScriptEvaluateAsync(string script, RedisKey[] keys, RedisValue[] values)
         => Task.FromResult(RedisResult.Create(RedisValue.Null));

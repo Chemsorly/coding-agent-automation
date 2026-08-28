@@ -127,6 +127,26 @@ public static class WorkDistributionTelemetry
             "Work items reaching terminal status");
 
     /// <summary>
+    /// Counter: agent jobs killed by the session timeout enforcer.
+    /// Each increment corresponds to one work item transitioned to Failed with FailureReason=Timeout.
+    /// Tags: agent_selector.
+    /// Alert rule: rate > 2 / 7d → investigate timeout headroom.
+    /// </summary>
+    public static readonly Counter<long> AgentTimeouts =
+        Meter.CreateCounter<long>("workdistribution.agent_timeouts", "{job}",
+            "Agent jobs killed by session timeout enforcer");
+
+    /// <summary>
+    /// Counter: PVC pool exhaustion events.
+    /// Fires once per work item that attempted claim and found no available PVC.
+    /// Tags: pool (always "kiro" currently).
+    /// Alert rule: any non-zero rate when pool is at full concurrency.
+    /// </summary>
+    public static readonly Counter<long> PvcPoolExhaustions =
+        Meter.CreateCounter<long>("workdistribution.pvc_pool_exhaustions", "{event}",
+            "PVC pool exhaustion events — no available PVC when a job attempted to claim one");
+
+    /// <summary>
     /// Counter: number of dispatch poll cycles executed.
     /// </summary>
     public static readonly Counter<long> DispatcherPollCount =

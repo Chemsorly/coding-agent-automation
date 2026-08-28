@@ -32,7 +32,7 @@ public sealed class DispatchServiceTests
             Namespace              = "test-ns",
             PollIntervalSeconds    = 1,
             RateLimitPerSecond     = 100,
-            ChatSessionMaxDurationSeconds  = 7200,
+            AgentJobTimeoutSeconds  = 7200,
             ChatPodConnectTimeoutSeconds   = 120
         };
 

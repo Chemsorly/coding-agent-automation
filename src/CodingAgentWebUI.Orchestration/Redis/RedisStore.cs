@@ -19,6 +19,12 @@ public sealed class RedisStore : IRedisStore
     public async Task<bool> SetAsync(string key, string value, TimeSpan? expiry = null, When when = When.Always)
         => await _db.StringSetAsync(key, value, expiry, when: when);
 
+    public async Task<string?> GetAsync(string key)
+    {
+        var result = await _db.StringGetAsync(key);
+        return result.HasValue ? (string?)result : null;
+    }
+
     public async Task<bool> SetIfNotExistsAsync(string key, string value, TimeSpan expiry)
         => await _db.StringSetAsync(key, value, expiry, when: When.NotExists);
 
@@ -69,12 +75,6 @@ public sealed class RedisStore : IRedisStore
 
     public async Task<bool> ExistsAsync(string key)
         => await _db.KeyExistsAsync(key);
-
-    public async Task<string?> GetAsync(string key)
-    {
-        var value = await _db.StringGetAsync(key);
-        return value.IsNull ? null : (string?)value;
-    }
 
     public async Task<bool> PingAsync()
     {
