@@ -24,22 +24,19 @@ public static class SchedulerHealthEndpoints
 {
     /// <summary>
     /// Maps <c>/healthz</c>, <c>/readyz</c>, and <c>/health</c> probe endpoints.
+    /// All three are anonymous so Kubernetes probes and the Dockerfile HEALTHCHECK
+    /// remain reachable even if authorization middleware is added to the pipeline.
     /// </summary>
     public static IEndpointRouteBuilder MapSchedulerHealthEndpoints(this IEndpointRouteBuilder endpoints)
     {
         // Liveness: Is the process alive? Always 200 — never check external dependencies here.
-        // TODO [WARNING]: Missing .AllowAnonymous() — if UseAuthorization() is ever added to the
-        // application pipeline, Kubernetes liveness probes will receive 401/403 and the pod will
-        // restart. Fix: append .AllowAnonymous() here to match the /health pattern below and
-        // satisfy the issue requirement "Both endpoints must be reachable without authentication."
-        endpoints.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));
+        endpoints.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }))
+                 .AllowAnonymous();
 
         // Readiness: All scheduler replicas are considered ready regardless of leader state.
         // The non-leader idles but is healthy and should not be evicted.
-        // TODO [WARNING]: Missing .AllowAnonymous() — same risk as /healthz above. If authorization
-        // middleware is added, Kubernetes readiness probes will receive 401/403. Fix: append
-        // .AllowAnonymous() here.
-        endpoints.MapGet("/readyz", () => Results.Ok(new { status = "ready" }));
+        endpoints.MapGet("/readyz", () => Results.Ok(new { status = "ready" }))
+                 .AllowAnonymous();
 
         // Backward compatibility: retained for Dockerfile HEALTHCHECK
         // (CMD curl -f http://localhost:8080/health || exit 1)

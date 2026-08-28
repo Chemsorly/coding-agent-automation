@@ -1,6 +1,7 @@
 using System.Net;
 using AwesomeAssertions;
 using CodingAgentWebUI.Scheduler;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -30,15 +31,8 @@ public class SchedulerHealthEndpointsTests : IAsyncDisposable
     private IHost? _host;
     private HttpClient? _client;
 
-    private async Task<HttpClient> CreateTestClient()
+    private async Task<HttpClient> CreateTestClient(bool withAuthorization = false)
     {
-        // TODO [WARNING]: This test host omits UseAuthentication()/UseAuthorization(). If authorization
-        // middleware is added to Program.cs in the future, /healthz and /readyz (which currently lack
-        // .AllowAnonymous()) would return 401/403 to Kubernetes probes, but these tests would still
-        // pass because they never exercise the authorization pipeline. Consider adding a separate test
-        // that configures services.AddAuthorization() and app.UseAuthorization() and asserts that
-        // /healthz and /readyz still return 200 — this would catch the missing .AllowAnonymous()
-        // calls flagged in SchedulerHealthEndpoints.cs.
         _host = await new HostBuilder()
             .ConfigureWebHost(webBuilder =>
             {
@@ -47,10 +41,23 @@ public class SchedulerHealthEndpointsTests : IAsyncDisposable
                     .ConfigureServices(services =>
                     {
                         services.AddRouting();
+                        if (withAuthorization)
+                        {
+                            services.AddAuthorization(options =>
+                            {
+                                // Default policy requires authentication — everything is locked down
+                                // unless endpoints explicitly opt out via .AllowAnonymous().
+                                options.FallbackPolicy = new AuthorizationPolicyBuilder()
+                                    .RequireAuthenticatedUser()
+                                    .Build();
+                            });
+                        }
                     })
                     .Configure(appBuilder =>
                     {
                         appBuilder.UseRouting();
+                        if (withAuthorization)
+                            appBuilder.UseAuthorization();
                         appBuilder.UseEndpoints(endpoints =>
                         {
                             // Calls the same extension method used by Program.cs.
@@ -75,10 +82,7 @@ public class SchedulerHealthEndpointsTests : IAsyncDisposable
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var content = await response.Content.ReadAsStringAsync();
-        // TODO [WARNING]: This substring assertion also passes on bodies like {"error":"not healthy"}.
-        // Either drop the content assertion (HTTP 200 is the stated requirement) or tighten it to an
-        // exact JSON match (e.g. content.Should().Be("{\"status\":\"healthy\"}")).
-        content.Should().Contain("healthy");
+        content.Should().Be("{\"status\":\"healthy\"}");
     }
 
     [Fact]
@@ -90,9 +94,7 @@ public class SchedulerHealthEndpointsTests : IAsyncDisposable
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var content = await response.Content.ReadAsStringAsync();
-        // TODO [WARNING]: Same weak substring assertion as Healthz_Returns200Ok above — "ready"
-        // appears in "not ready" too. Either drop the assertion or tighten to an exact JSON match.
-        content.Should().Contain("ready");
+        content.Should().Be("{\"status\":\"ready\"}");
     }
 
     [Fact]
@@ -106,8 +108,26 @@ public class SchedulerHealthEndpointsTests : IAsyncDisposable
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var content = await response.Content.ReadAsStringAsync();
-        // TODO [WARNING]: Same weak substring assertion as the other health tests above.
-        content.Should().Contain("healthy");
+        content.Should().Be("{\"status\":\"healthy\"}");
+    }
+
+    /// <summary>
+    /// Verifies that all three health probes remain reachable when authorization middleware
+    /// is active with a deny-by-default fallback policy. This guards against accidentally
+    /// removing .AllowAnonymous() from any of the probe endpoints.
+    /// </summary>
+    [Theory]
+    [InlineData("/healthz")]
+    [InlineData("/readyz")]
+    [InlineData("/health")]
+    public async Task HealthProbes_Return200Ok_WhenAuthorizationMiddlewareIsActive(string path)
+    {
+        var client = await CreateTestClient(withAuthorization: true);
+
+        var response = await client.GetAsync(path);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK,
+            because: $"{path} must be reachable without authentication so Kubernetes probes succeed");
     }
 
     public async ValueTask DisposeAsync()
