@@ -72,6 +72,13 @@ public class MainLayoutComponentTests : BunitContext
         mockConfigClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         Services.AddSingleton(mockConfigClient.Object);
+
+        // Faro frontend observability — no-op mocks; MainLayout now injects these
+        Services.AddSingleton<IFaroService>(Mock.Of<IFaroService>());
+        Services.AddSingleton<NotificationService>();
+        Services.AddSingleton(sp => new NotificationFaroBridge(
+            sp.GetRequiredService<NotificationService>(),
+            sp.GetRequiredService<IFaroService>()));
     }
 
     [Fact]
