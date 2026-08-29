@@ -90,9 +90,9 @@ public class JobDistributionRequestFactoryTests
 
         var result = JobDistributionRequest.FromTemplate(
             template, issue, initiatedBy: "loop",
-            projectId: "proj-1", projectName: "My Project");
+            projectId: new Guid("11110000-0000-0000-0000-000000000002"), projectName: "My Project");
 
-        Assert.Equal("proj-1", result.ProjectId);
+        Assert.Equal(new Guid("11110000-0000-0000-0000-000000000002"), result.ProjectId);
         Assert.Equal("My Project", result.ProjectName);
     }
 
@@ -241,9 +241,9 @@ public class JobDistributionRequestFactoryTests
 
         var result = JobDistributionRequest.FromTemplate(
             template, pr, initiatedBy: "manual",
-            projectId: "proj-2", projectName: "Review Project");
+            projectId: new Guid("22220000-0000-0000-0000-000000000002"), projectName: "Review Project");
 
-        Assert.Equal("proj-2", result.ProjectId);
+        Assert.Equal(new Guid("22220000-0000-0000-0000-000000000002"), result.ProjectId);
         Assert.Equal("Review Project", result.ProjectName);
     }
 
@@ -295,9 +295,9 @@ public class JobDistributionRequestFactoryTests
 
         var result = JobDistributionRequest.FromTemplate(
             template, issue, PipelineRunType.DecompositionAnalysis,
-            initiatedBy: "manual", projectId: "proj-3", projectName: "Epic Project");
+            initiatedBy: "manual", projectId: new Guid("33330000-0000-0000-0000-000000000002"), projectName: "Epic Project");
 
-        Assert.Equal("proj-3", result.ProjectId);
+        Assert.Equal(new Guid("33330000-0000-0000-0000-000000000002"), result.ProjectId);
         Assert.Equal("Epic Project", result.ProjectName);
     }
 
@@ -395,14 +395,14 @@ public class JobDistributionRequestFactoryTests
             TaskType = WorkItemTaskType.Implementation,
             AgentSelector = "",
             TimeoutSeconds = 0,
-            ProjectId = "proj-x",
+            ProjectId = new Guid("AAAAAAAA-1111-0000-0000-000000000001"),
             ProjectName = "Proj X",
             IssueDetail = new IssueDetail { Identifier = issue.Identifier, Title = issue.Title ?? "", Description = "", Labels = [] }
         };
 
         var factory = JobDistributionRequest.FromTemplate(
             template, issue, initiatedBy: "loop",
-            projectId: "proj-x", projectName: "Proj X");
+            projectId: new Guid("AAAAAAAA-1111-0000-0000-000000000001"), projectName: "Proj X");
 
         AssertRequestsEqual(legacy, factory);
     }
@@ -465,7 +465,7 @@ public class JobDistributionRequestFactoryTests
             TaskType = WorkItemTaskType.Review,
             AgentSelector = "",
             TimeoutSeconds = 3600,
-            ProjectId = "proj-m",
+            ProjectId = new Guid("BBBBBBBB-1111-0000-0000-000000000001"),
             ProjectName = "Manual Project",
             RunType = PipelineRunType.Review,
             IssueDetail = new IssueDetail
@@ -489,7 +489,7 @@ public class JobDistributionRequestFactoryTests
 
         var factory = JobDistributionRequest.FromTemplate(
             template, pr, initiatedBy: "manual", timeoutSeconds: 3600,
-            projectId: "proj-m", projectName: "Manual Project");
+            projectId: new Guid("BBBBBBBB-1111-0000-0000-000000000001"), projectName: "Manual Project");
 
         AssertRequestsEqual(legacy, factory);
     }

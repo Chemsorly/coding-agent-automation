@@ -87,7 +87,7 @@ public sealed class DbModeDataIntegrityTests : HeadlessE2ETestBase
         var workItem = await db.WorkItems.AsNoTracking().FirstAsync(w => w.Id == workItemId);
 
         Assert.Equal(WorkItemStatus.Succeeded, workItem.Status);
-        Assert.Equal(WellKnownIds.DefaultProjectId, workItem.ProjectId);
+        Assert.Equal(Guid.Parse(WellKnownIds.DefaultProjectId), workItem.ProjectId);
         Assert.Equal("42", workItem.IssueIdentifier);
         Assert.Equal(WorkItemTaskType.Implementation, workItem.TaskType);
         Assert.Equal(agentId, workItem.AssignedAgentId);

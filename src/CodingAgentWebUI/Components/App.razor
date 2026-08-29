@@ -1,3 +1,6 @@
+@inject IConfiguration Configuration
+@inject CodingAgentWebUI.Models.BuildInfo BuildInfo
+@inject IWebHostEnvironment Env
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -5,6 +8,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Coding Agent</title>
     <base href="./" />
+    @{
+        // Faro collector URL injected as a meta tag so faro-init.js can read it without
+        // hardcoding it in the static bundle. Empty string → Faro disabled (dev/test).
+        var faroCollectorUrl = Configuration["Faro:CollectorUrl"] ?? "";
+    }
+    <meta name="faro-collector-url" content="@faroCollectorUrl" />
+    <meta name="app-version" content="@BuildInfo.ShortSha" />
+    <meta name="app-environment" content="@Env.EnvironmentName.ToLowerInvariant()" />
+    <!-- Grafana Faro: faro-init.js reads faro-collector-url meta and dynamically loads the CDN bundles -->
+    <script src="js/faro-init.js"></script>
     <link rel="stylesheet" href="css/app.css" />
     <link rel="stylesheet" href="CodingAgentWebUI.styles.css" />
     <HeadOutlet @rendermode="InteractiveServer" />

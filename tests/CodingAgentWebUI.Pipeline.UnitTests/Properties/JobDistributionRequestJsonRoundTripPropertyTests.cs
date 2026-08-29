@@ -69,7 +69,7 @@ public class JobDistributionRequestArbitraries
             WorkItemTaskType.Consolidation)
         from agentSelector in GenString()
         from timeoutSeconds in Gen.Choose(60, 7200)
-        from projectId in GenNullableString()
+        from projectId in GenNullableGuid()
         from projectName in GenNullableString()
         from runType in Gen.Elements(
             PipelineRunType.Implementation,
@@ -131,6 +131,13 @@ public class JobDistributionRequestArbitraries
         Gen.Frequency(
             (1, Gen.Constant<string?>(null)),
             (3, Gen.Elements(StringPool).Select<string, string?>(s => s)));
+
+    private static Gen<Guid?> GenNullableGuid() =>
+        Gen.Frequency(
+            new (int, Gen<Guid?>)[] {
+                (1, Gen.Constant<Guid?>(null)),
+                (3, Gen.Fresh(() => (Guid?)Guid.NewGuid()))
+            });
 
     private static Gen<T?> GenNullable<T>(Gen<T> gen) where T : class =>
         Gen.Frequency(

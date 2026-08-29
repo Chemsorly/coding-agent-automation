@@ -241,6 +241,16 @@ API endpoints:
 
 For full request/response examples, authentication details, and query parameters, see the [HTTP API Reference](api-reference.md). For migration scenarios, see [Bootstrap](bootstrap.md).
 
+### Frontend Observability (Grafana Faro)
+
+| Variable | Description |
+|----------|-------------|
+| `Faro__CollectorUrl` | Grafana Faro collector endpoint for frontend RUM data. Obtain from Grafana Cloud → Frontend Observability → Add App → copy the collector URL. When absent or empty, Faro is disabled and the `faroApi` stub no-ops silently — no errors thrown, no impact on the app. Example: `https://faro-collector-prod-eu-west-0.grafana.net/collect/<your-app-id>`. The URL contains a per-app token and is designed to be public-facing (safe to expose in the browser). Must be an `https://` URL; HTTP values are not validated at startup but will route data to an unintended destination. |
+
+> **Free tier:** Grafana Cloud free tier includes 50,000 frontend sessions/month, which covers this feature at no cost.
+
+> **Air-gapped / firewalled deployments:** When `Faro__CollectorUrl` is set, `faro-init.js` asynchronously loads two bundles from `unpkg.com` (CDN). In environments without outbound internet access, these loads fail silently — the app continues normally, Faro stays as a no-op stub, and there is **no page-load stall** (loading is async, not blocking). If you need Faro in a firewalled environment: download the pinned bundle files locally, copy them to `wwwroot/js/faro/`, and update `SDK_URL` / `TRACING_URL` in `faro-init.js` to relative paths (`js/faro/faro-web-sdk.iife.js`, etc.).
+
 ### Orchestrator
 
 | Variable | Description |

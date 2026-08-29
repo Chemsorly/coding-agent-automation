@@ -56,7 +56,7 @@ public static class JobAssignmentMessageFactory
             ReviewPrDescription = request.ReviewPrDescription,
             ReviewPrAuthor = request.ReviewPrAuthor,
             ProjectContext = request.ProjectContext,
-            ProjectId = request.ProjectId,
+            ProjectId = request.ProjectId?.ToString(),
             ProjectName = request.ProjectName,
             ProjectSteeringContent = request.ProjectSteeringContent,
             RepoSteeringContent = request.RepoSteeringContent,
