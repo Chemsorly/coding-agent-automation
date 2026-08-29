@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using Serilog.Context;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -149,6 +150,14 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// <summary>Emits an output line to subscribers. Exception-isolated.</summary>
     public void EmitOutputLine(string message)
     {
+        var runId = ActiveRun?.RunId;
+        // TODO: [WARNING] When ActiveRun is null (pre-run or post-completion), runId is null and silently
+        // logged as the literal null. The acceptance criterion requires the run_id context property to be
+        // present and meaningful. A guard or diagnostic warning when ActiveRun is null may be appropriate. (#2178)
+        using (LogContext.PushProperty("PipelineRunId", runId))
+        {
+            _logger.Information("[Pipeline] {Line}", message);
+        }
         try { OnOutputLine?.Invoke(message); }
         catch (Exception ex) { _logger.Warning(ex, "OnOutputLine handler threw an exception"); }
     }

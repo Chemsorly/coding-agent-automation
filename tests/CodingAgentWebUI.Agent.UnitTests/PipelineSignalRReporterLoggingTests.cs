@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 
 /// <summary>
 /// Tests that verify <see cref="PipelineSignalRReporter.EmitOutputLine"/> produces exactly
-/// one Serilog <see cref="LogEventLevel.Debug"/> entry per call, with <c>StepName</c>
+/// one Serilog <see cref="LogEventLevel.Information"/> entry per call, with <c>StepName</c>
 /// correctly captured from <see cref="LogContext"/> when called inside a step body.
 /// </summary>
 /// <remarks>
@@ -51,10 +51,10 @@ public class PipelineSignalRReporterLoggingTests
         // Act
         reporter.EmitOutputLine("test line", context: null, ct: CancellationToken.None);
 
-        // Assert — exactly one log event at Debug level
+        // Assert — exactly one log event at Information level
         _sink.Events.Should().HaveCount(1);
         var logEvent = _sink.Events.Single();
-        logEvent.Level.Should().Be(LogEventLevel.Debug);
+        logEvent.Level.Should().Be(LogEventLevel.Information);
         // The rendered message should contain the line text via the {Line} property
         logEvent.Properties.Should().ContainKey("Line");
         logEvent.Properties["Line"].ToString().Should().Contain("test line");
@@ -109,7 +109,12 @@ public class PipelineSignalRReporterLoggingTests
         _sink.Events.Should().HaveCount(1);
         var logEvent = _sink.Events.Single();
         logEvent.Properties.Should().NotContainKey("StepName");
-        logEvent.Level.Should().Be(LogEventLevel.Debug);
+        logEvent.Level.Should().Be(LogEventLevel.Information);
+        // TODO: [WARNING] This test does not verify that PipelineRunId is captured as a LogContext property
+        // when PipelineRunId is pushed by the caller (as LocalPipelineExecutor.ExecutePipelineStepsAsync does
+        // at line 197). Without this, a regression where PipelineRunId is not pushed into LogContext at the
+        // call site would be undetected — the test suite would still pass. Add a variant that pushes
+        // PipelineRunId via LogContext.PushProperty and asserts it is present on the captured log event. (#2178)
         // TODO: [WARNING] This test does not verify the synchronous-capture property: that StepName is
         // absent *after* a LogContext using-scope disposes. Add a second call to EmitOutputLine outside
         // a LogContext.PushProperty("StepName") scope (after an inner using block is disposed) and assert
@@ -129,6 +134,46 @@ public class PipelineSignalRReporterLoggingTests
 
         // Assert — exactly 3 entries, one per call (no batching or deduplication)
         _sink.Events.Should().HaveCount(3);
+    }
+
+    /// <summary>
+    /// Single-emission guard for the cancellation code path in
+    /// <c>LocalPipelineExecutor.ExecutePipelineStepsAsync</c>:
+    /// <c>buildResult.EmitOutputLine("🚫 Pipeline cancelled")</c>.
+    ///
+    /// <para>
+    /// Context: <see cref="PipelineSignalRReporter.EmitOutputLine"/> and
+    /// <see cref="CodingAgentWebUI.Pipeline.Services.PipelineRunLifecycleService.EmitOutputLine"/>
+    /// are independent entry points that can both emit a "🚫 Pipeline cancelled" line —
+    /// the former from <c>LocalPipelineExecutor</c> (agent layer), the latter from
+    /// <c>PipelineRunLifecycleService.CancelRunAsync</c> (orchestrator layer).
+    /// Each must produce exactly one Serilog entry per call. This test pins the guarantee
+    /// for the <see cref="PipelineSignalRReporter"/> path: a single
+    /// <see cref="PipelineSignalRReporter.EmitOutputLine"/> call outside a step context
+    /// (matching the cancellation call site in <c>LocalPipelineExecutor</c>) produces
+    /// exactly one <see cref="Serilog.Events.LogEventLevel.Information"/> entry.
+    /// A caller that accidentally invokes both paths for the same event would produce
+    /// two entries; this test is the per-class guard on the reporter side.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task EmitOutputLine_CancellationPath_SingleCallProducesExactlyOneEntry()
+    {
+        // Arrange — simulate the cancellation call site: no LogContext (no PipelineRunId, no StepName)
+        await using var reporter = CreateReporter(_captureLogger);
+
+        // Act — mirrors LocalPipelineExecutor line: buildResult.EmitOutputLine("🚫 Pipeline cancelled")
+        reporter.EmitOutputLine("🚫 Pipeline cancelled", context: null, ct: CancellationToken.None);
+
+        // Assert — exactly one Information entry; no duplication from a second internal log call
+        _sink.Events.Should().HaveCount(1,
+            "a single EmitOutputLine call must produce exactly one Serilog entry — " +
+            "double-emission would occur if both PipelineSignalRReporter and " +
+            "PipelineRunLifecycleService.EmitOutputLine are invoked for the same cancellation event");
+        var logEvent = _sink.Events.Single();
+        logEvent.Level.Should().Be(LogEventLevel.Information);
+        logEvent.Properties.Should().ContainKey("Line");
+        logEvent.Properties["Line"].ToString().Should().Contain("Pipeline cancelled");
     }
 
     [Fact]
