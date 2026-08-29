@@ -381,7 +381,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             AgentSelector = "kiro,dotnet",
             TimeoutSeconds = 3600,
             TaskType = WorkItemTaskType.Implementation,
-            ProjectId = WellKnownIds.DefaultProjectId,
+            ProjectId = Guid.Parse(WellKnownIds.DefaultProjectId),
             InitiatedBy = "k8s-e2e-test"
         };
         var payloadJson = System.Text.Json.JsonSerializer.Serialize(payloadRequest, PipelineJsonOptions.Default);
@@ -886,7 +886,7 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             AgentSelector = "kiro,dotnet",
             TimeoutSeconds = 3600,
             TaskType = WorkItemTaskType.Implementation,
-            ProjectId = WellKnownIds.DefaultProjectId,
+            ProjectId = Guid.Parse(WellKnownIds.DefaultProjectId),
             InitiatedBy = "lifecycle-e2e-test"
         }, CancellationToken.None);
 

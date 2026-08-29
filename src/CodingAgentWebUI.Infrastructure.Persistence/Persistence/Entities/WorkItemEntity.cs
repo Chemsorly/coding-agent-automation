@@ -34,7 +34,7 @@ public class WorkItemEntity
     /// <summary>Agent-reported result payload (JSONB string, nullable).</summary>
     public string? Result { get; set; }
 
-    public string? ProjectId { get; set; }
+    public Guid? ProjectId { get; set; }
 
     /// <summary>
     /// The original enqueue timestamp, carried forward across re-dispatches of the same issue.

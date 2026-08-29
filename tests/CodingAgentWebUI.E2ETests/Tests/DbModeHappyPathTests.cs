@@ -195,10 +195,15 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
     [Fact]
     public async Task DbMode_ProjectSecrets_DeliveredToAgent()
     {
+        // Use a valid GUID as project ID — Projects.Id is UUID in the DB schema,
+        // and DispatchOrchestrationService uses Guid.TryParse which silently returns
+        // null for non-GUID strings, causing ProjectId to be null on the work item.
+        const string secretsProjectId = "11111111-2222-3333-4444-555555555555";
+
         // Arrange: seed project with secrets
         var projectWithSecrets = new PipelineProject
         {
-            Id = "project-secrets-e2e",
+            Id = secretsProjectId,
             Name = "Secrets Test Project",
             Enabled = true,
             TemplateIds = new List<string>(),
@@ -218,7 +223,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
             Labels = new[] { "enhancement", "agent:next" }
         });
 
-        await Fixture.ConfigStore.SaveTemplateAsync("project-secrets-e2e", new PipelineJobTemplate
+        await Fixture.ConfigStore.SaveTemplateAsync(secretsProjectId, new PipelineJobTemplate
         {
             Id = "template-secrets-e2e",
             Name = "Secrets Template",
@@ -240,7 +245,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act: dispatch with the secrets project
-        var result = await DispatchIssueAsync("46", projectId: "project-secrets-e2e");
+        var result = await DispatchIssueAsync("46", projectId: secretsProjectId);
         Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
 
         // Assert: agent received the job with secrets
