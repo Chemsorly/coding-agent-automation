@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
@@ -49,7 +50,7 @@ public sealed class ConsolidationDispatchLoopTests
             .ReturnsAsync(new V1JobList { Items = [] });
     }
 
-    private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode") =>
+    private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode", int timeoutSeconds = 0) =>
         new()
         {
             Id = ItemId,
@@ -58,7 +59,8 @@ public sealed class ConsolidationDispatchLoopTests
             TaskType = WorkItemTaskType.Consolidation,
             CreatedAt = DateTimeOffset.UtcNow,
             AgentSelector = agentSelector,
-            RetryCount = 0
+            RetryCount = 0,
+            TimeoutSeconds = timeoutSeconds
         };
 
     private static ConsolidationWorkItemClaimResponse MakeClaimed(
@@ -305,4 +307,53 @@ public sealed class ConsolidationDispatchLoopTests
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
         _consolidationClient.Verify(c => c.TransitionRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // ── Math.Max timeout selection ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task WhenItemTimeoutExceedsGlobal_K8sJob_ActiveDeadlineSeconds_UsesItemTimeout()
+    {
+        // item timeout (28800s) > global timeout (7200s) → activeDeadlineSeconds == 28860
+        _consolidationClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending(timeoutSeconds: 28800)]);
+        _consolidationClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        V1Job? capturedJob = null;
+        _k8sClient.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop(); // _options.AgentJobTimeoutSeconds == 7200
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        capturedJob.Should().NotBeNull();
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(28860L); // 28800 + 60
+    }
+
+    [Fact]
+    public async Task WhenGlobalTimeoutExceedsItem_K8sJob_ActiveDeadlineSeconds_UsesGlobalTimeout()
+    {
+        // item timeout (3600s) < global timeout (7200s) → activeDeadlineSeconds == 7260
+        _consolidationClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending(timeoutSeconds: 3600)]);
+        _consolidationClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        V1Job? capturedJob = null;
+        _k8sClient.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop(); // _options.AgentJobTimeoutSeconds == 7200
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        capturedJob.Should().NotBeNull();
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(7260L); // 7200 + 60
+    }
+
+    // TODO: Add equal-values edge case test — WhenItemTimeoutEqualsGlobal_K8sJob_ActiveDeadlineSeconds_UsesSharedTimeout
+    // where item.TimeoutSeconds == agentJobTimeoutSeconds (e.g. both 7200s) → activeDeadlineSeconds == 7260.
+    // This boundary condition confirms that floor and ceiling converge cleanly at the same value.
+    // See review finding: tests/CodingAgentWebUI.JobController.UnitTests/Dispatch/ConsolidationDispatchLoopTests.cs:340
 }

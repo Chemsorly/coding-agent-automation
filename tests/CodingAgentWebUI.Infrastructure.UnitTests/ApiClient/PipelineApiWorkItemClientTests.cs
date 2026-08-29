@@ -49,7 +49,8 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
                 taskType = "Implementation",
                 createdAt = DateTimeOffset.UtcNow,
                 agentSelector = "kiro",
-                retryCount = 0
+                retryCount = 0,
+                timeoutSeconds = 0
             }
         };
         _server.Given(Request.Create().WithPath("/api/work-items/pending").UsingGet())

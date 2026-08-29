@@ -57,7 +57,8 @@ public static class ConsolidationWorkItemEndpoints
                 TaskType = w.TaskType,
                 CreatedAt = w.CreatedAt,
                 AgentSelector = w.AgentSelector,
-                RetryCount = w.RetryCount
+                RetryCount = w.RetryCount,
+                TimeoutSeconds = w.TimeoutSeconds
             })
             .ToListAsync(ct);
 

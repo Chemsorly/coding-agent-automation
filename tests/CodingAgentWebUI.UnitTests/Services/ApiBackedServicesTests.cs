@@ -35,7 +35,8 @@ public sealed class ApiBackedServicesTests
                     TaskType = WorkItemTaskType.Implementation,
                     CreatedAt = createdAt,
                     AgentSelector = "kiro,dotnet",
-                    RetryCount = 0
+                    RetryCount = 0,
+                    TimeoutSeconds = 0
                 }
             });
 
@@ -69,7 +70,8 @@ public sealed class ApiBackedServicesTests
                     TaskType = WorkItemTaskType.Consolidation,
                     CreatedAt = DateTimeOffset.UtcNow,
                     AgentSelector = "kiro",
-                    RetryCount = 0
+                    RetryCount = 0,
+                    TimeoutSeconds = 0
                 }
             });
 
@@ -105,13 +107,13 @@ public sealed class ApiBackedServicesTests
             {
                 new() { Id = Guid.NewGuid(), IssueIdentifier = "a#1", IssueProviderConfigId = "p1",
                     TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
-                    AgentSelector = "kiro", RetryCount = 0 },
+                    AgentSelector = "kiro", RetryCount = 0, TimeoutSeconds = 0 },
                 new() { Id = Guid.NewGuid(), IssueIdentifier = "a#2", IssueProviderConfigId = "p1",
                     TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
-                    AgentSelector = "kiro", RetryCount = 0 },
+                    AgentSelector = "kiro", RetryCount = 0, TimeoutSeconds = 0 },
                 new() { Id = Guid.NewGuid(), IssueIdentifier = "a#3", IssueProviderConfigId = "p1",
                     TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
-                    AgentSelector = "kiro", RetryCount = 0 }
+                    AgentSelector = "kiro", RetryCount = 0, TimeoutSeconds = 0 }
             });
 
         var sut = new ApiBackedPendingWorkQuery(client.Object);
@@ -129,7 +131,7 @@ public sealed class ApiBackedServicesTests
             {
                 new() { Id = Guid.NewGuid(), IssueIdentifier = "a#1", IssueProviderConfigId = "p1",
                     TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
-                    AgentSelector = "kiro , dotnet , linux", RetryCount = 0 }
+                    AgentSelector = "kiro , dotnet , linux", RetryCount = 0, TimeoutSeconds = 0 }
             });
 
         var sut = new ApiBackedPendingWorkQuery(client.Object);
@@ -165,6 +167,7 @@ public sealed class ApiBackedServicesTests
                     CreatedAt = DateTimeOffset.UtcNow,
                     AgentSelector = "kiro",
                     RetryCount = 0,
+                    TimeoutSeconds = 0,
                     InitiatedBy = "manual",
                     IssueTitle = "Fix the bug",
                     ProjectName = "MyProject",
@@ -202,6 +205,7 @@ public sealed class ApiBackedServicesTests
                     CreatedAt = DateTimeOffset.UtcNow,
                     AgentSelector = "kiro",
                     RetryCount = 0,
+                    TimeoutSeconds = 0,
                     InitiatedBy = null  // legacy/edge-case item — payload absent or key missing
                 }
             });
@@ -230,6 +234,7 @@ public sealed class ApiBackedServicesTests
                     CreatedAt = DateTimeOffset.UtcNow,
                     AgentSelector = "kiro",
                     RetryCount = 0,
+                    TimeoutSeconds = 0,
                     ProjectName = null,
                     ProjectId = "abc-123"
                 }
@@ -261,6 +266,7 @@ public sealed class ApiBackedServicesTests
                     CreatedAt = DateTimeOffset.UtcNow,
                     AgentSelector = "kiro",
                     RetryCount = 0,
+                    TimeoutSeconds = 0,
                     ProjectName = null,
                     ProjectId = null
                 }
