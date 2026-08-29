@@ -45,13 +45,6 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         // a full explanation of why ReplaceRun is required (not just GetRun + mutate).
         // In OrchestratorRunService (in-memory), this is a no-op: the same reference is
         // already in the dictionary, so re-assigning it has no observable effect.
-        // TODO [WARNING]: DistributedRunService.ReplaceRun calls HashSetAsync().GetAwaiter().GetResult()
-        // (sync-over-async). If Redis is unavailable here, the exception propagates out of ExecuteAsync
-        // without entering the try/catch below, bypassing DefensiveRunCleanupAsync and leaving the
-        // work item in an indeterminate state. This is a pre-existing design issue in
-        // DistributedRunService.ReplaceRun (safe on ThreadPool per its own comment) — consider
-        // wrapping the ReplaceRun call in a try/catch that logs and continues, since CompleteRunAsync
-        // will still attempt RemoveRun and persist history with the pre-Apply snapshot as a fallback.
         _facade.ReplaceRun(run);
 
         activity?.SetTag("success", payload.FinalStep == PipelineStep.Completed);
