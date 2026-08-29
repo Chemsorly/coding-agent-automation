@@ -100,6 +100,12 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
             // drained one pending signal, continue until empty
         }
 
+        // Reset the terminal deduplication cache so the new leadership term calls
+        // PostStatusAsync at least once for any completed K8s Jobs still present in
+        // the retention window (satisfies AC: On leadership re-acquisition, the
+        // in-process cache is cleared and PostStatusAsync is called once).
+        _loop.OnLeadershipAcquired();
+
         Log.Information("ReconciliationService: leader acquired, entering poll loop");
 
         while (!ct.IsCancellationRequested)
