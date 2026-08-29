@@ -195,6 +195,46 @@ public sealed class RegularJobCompletionStrategyTests
         run.PullRequestUrl.Should().Be("https://github.com/org/repo/pull/99");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_calls_ReplaceRun_with_mutated_run_before_CompleteRunAsync()
+    {
+        // Regression guard for distributed mode: _facade.ReplaceRun must be called with
+        // PullRequestUrl and CompletedAtOffset already set (from JobCompletionMapper.Apply),
+        // and it must be called BEFORE CompleteRunAsync. Without ReplaceRun, DistributedRunService
+        // re-deserializes from Redis on CompleteRunAsync's RemoveRun call and gets the pre-Apply
+        // snapshot, causing CompletedAt/PullRequestUrl/TotalTokens to be null/zero in the DB.
+        var run = MakeRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PullRequestUrl = "https://github.com/org/repo/pull/99"
+        };
+
+        var callOrder = new List<string>();
+
+        _facade
+            .Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()))
+            .Callback<PipelineRun>(_ => callOrder.Add("ReplaceRun"));
+
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync(It.IsAny<RunId>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(run)
+            .Callback(() => callOrder.Add("CompleteRunAsync"));
+
+        var strategy = CreateStrategy();
+        await strategy.ExecuteAsync(new JobId("job-1"), run, payload, null, CancellationToken.None);
+
+        // ReplaceRun was called exactly once, with PullRequestUrl and CompletedAtOffset already set
+        _facade.Verify(f => f.ReplaceRun(It.Is<PipelineRun>(r =>
+            r.PullRequestUrl == "https://github.com/org/repo/pull/99" &&
+            r.CompletedAtOffset.HasValue)), Times.Once);
+
+        // ReplaceRun came before CompleteRunAsync
+        callOrder.Should().ContainInOrder("ReplaceRun", "CompleteRunAsync");
+    }
+
     // ── Notifications ─────────────────────────────────────────────────────────
 
     [Fact]

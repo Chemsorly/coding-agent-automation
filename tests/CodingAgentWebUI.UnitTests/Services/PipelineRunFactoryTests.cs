@@ -271,7 +271,7 @@ public sealed class PipelineRunFactoryTests
             TimeoutSeconds = 1800,
             RunId = "run-project-propagation",
             RunType = PipelineRunType.Implementation,
-            ProjectId = "019f1860-8b18-7b7e-ba7c-89afe24853b1",
+            ProjectId = new Guid("019f1860-8b18-7b7e-ba7c-89afe24853b1"),
             ProjectName = "Default"
         };
 

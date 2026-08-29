@@ -208,7 +208,7 @@ public static class ConsolidationWorkItemEndpoints
 
         // Resolve project secrets
         Dictionary<string, string>? projectSecrets = null;
-        var projectId = entity.ProjectId;
+        var projectId = entity.ProjectId?.ToString();
         if (string.IsNullOrEmpty(projectId) && projectStore is not null
             && !string.IsNullOrEmpty(request.ConsolidationTemplateId))
         {

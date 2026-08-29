@@ -30,7 +30,7 @@ public class JobAssignmentMessageFactoryTests
         TaskType = WorkItemTaskType.Implementation,
         AgentSelector = "kiro,linux",
         TimeoutSeconds = 1800,
-        ProjectId = "proj-1",
+        ProjectId = new Guid("11110000-0000-0000-0000-000000000001"),
         RunType = PipelineRunType.Implementation
     };
 
@@ -45,7 +45,7 @@ public class JobAssignmentMessageFactoryTests
             PipelineProviderConfigId = "pipeline-1",
             IssueDetail = new IssueDetail { Identifier = "owner/repo#11", Title = "Test", Description = "Desc", Labels = ["bug"] },
             RunType = PipelineRunType.Review,
-            ProjectId = "project-x",
+            ProjectId = new Guid("22220000-0000-0000-0000-000000000001"),
             ProjectName = "My Project"
         };
 
@@ -58,7 +58,7 @@ public class JobAssignmentMessageFactoryTests
         message.BrainProviderConfigId.Should().Be("brain-1");
         message.PipelineProviderConfigId.Should().Be("pipeline-1");
         message.RunType.Should().Be(PipelineRunType.Review);
-        message.ProjectId.Should().Be("project-x");
+        message.ProjectId.Should().Be(new Guid("22220000-0000-0000-0000-000000000001").ToString());
         message.ProjectName.Should().Be("My Project");
         message.InitiatedBy.Should().Be("pipeline-loop");
     }
