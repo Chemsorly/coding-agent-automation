@@ -25,6 +25,14 @@ public sealed class ReconciliationLoop
     private const string JobPhaseFailed = "Failed";
     private const string JobPhaseComplete = "Complete"; // the condition type Kubernetes sets on success
 
+    /// <summary>
+    /// Minimum execution age (seconds) before timeout is enforced.
+    /// Values below this threshold indicate a possible timestamp anchor bug (INV-001).
+    /// Canary increments signal that <c>CreatedAt</c> or another wrong anchor is being used
+    /// instead of <c>DispatchedAt</c>.
+    /// </summary>
+    private const int TimeoutCanaryMinAgeSeconds = 60;
+
     private readonly IPipelineApiWorkItemClient _workItemClient;
     private readonly IKubernetesJobClient _k8sClient;
     private readonly PvcPool _pvcPool;
@@ -97,6 +105,26 @@ public sealed class ReconciliationLoop
 
             // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
             if (item.Status != WorkItemStatus.Running) continue;
+
+            // Compute execution age from DispatchedAt. If DispatchedAt is null (items dispatched before
+            // the field was added), fall back to AgentJobTimeoutSeconds — safe to enforce.
+            var executionAgeSeconds = item.DispatchedAt.HasValue
+                ? (DateTimeOffset.UtcNow - item.DispatchedAt.Value).TotalSeconds
+                : _options.AgentJobTimeoutSeconds;
+
+            WorkDistributionTelemetry.TimeoutExecutionAge.Record(executionAgeSeconds,
+                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+
+            // Canary guard: if age is suspiciously low the timeout anchor is wrong (INV-001).
+            // Skip enforcement for this sweep — the item will be re-evaluated next cycle.
+            if (executionAgeSeconds < TimeoutCanaryMinAgeSeconds)
+            {
+                Log.Warning("WorkItem {Id} timeout canary violation: execution age {AgeSeconds:F1}s < {MinAge}s — skipping enforcement",
+                    item.Id, executionAgeSeconds, TimeoutCanaryMinAgeSeconds);
+                WorkDistributionTelemetry.TimeoutCanaryViolations.Add(1,
+                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                continue;
+            }
 
             Log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}) after {Seconds}s — marking Failed",
                 item.Id, item.Status, item.K8sJobName ?? "none", _options.AgentJobTimeoutSeconds);
