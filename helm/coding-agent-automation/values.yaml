@@ -89,6 +89,10 @@ orchestrator:
     readinessDrainDelaySeconds: 15
     # Log level for the orchestrator application
     logLevel: Information
+    # Grafana Faro collector URL for frontend RUM monitoring.
+    # Get this from Grafana Cloud → Frontend Observability → your app → Web SDK Config.
+    # Leave empty to disable Faro (no CDN load, no data sent).
+    faroCollectorUrl: ""
 
 # ── Secrets ──────────────────────────────────────────────────────────────────
 

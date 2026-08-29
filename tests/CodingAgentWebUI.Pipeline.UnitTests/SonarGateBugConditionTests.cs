@@ -120,7 +120,7 @@ public partial class SonarGateBugConditionTests
             ("tests/CodingAgentWebUI.IntegrationTests/Smoke/DbModeSmokeTests.cs",                                36,  "DbModeSmokeTests line 36"),
             ("tests/CodingAgentWebUI.Infrastructure.UnitTests/Locking/InProcessDistributedLockProviderTests.cs", 44,  "InProcessDistributedLockProviderTests line 44"),
             ("tests/CodingAgentWebUI.Infrastructure.UnitTests/Locking/InProcessDistributedLockProviderTests.cs", 93,  "InProcessDistributedLockProviderTests line 93"),
-            ("tests/CodingAgentWebUI.UnitTests/DispatchOrchestrationServiceTests.cs",                          1273,  "DispatchOrchestrationServiceTests line 1273 (RevertFailedDistribution_SwapsLabelBackToNext)"),
+            ("tests/CodingAgentWebUI.UnitTests/DispatchOrchestrationServiceTests.cs",                          1371,  "DispatchOrchestrationServiceTests line 1371 (RevertFailedDistribution_SwapsLabelBackToNext)"),
             ("tests/CodingAgentWebUI.Agent.UnitTests/OpenCode/OpenCodeHealthMonitorTests.cs",                   165,  "OpenCodeHealthMonitorTests line 165"),
         };
 

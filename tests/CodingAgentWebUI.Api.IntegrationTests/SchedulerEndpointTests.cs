@@ -97,7 +97,7 @@ public sealed class SchedulerEndpointTests
     {
         // Arrange: seed two work items with different statuses
         using var db = _factory.CreateDbContext();
-        var projectId = Guid.NewGuid().ToString();
+        var projectId = Guid.NewGuid();
         db.WorkItems.Add(new WorkItemEntity
         {
             Id = Guid.NewGuid(),

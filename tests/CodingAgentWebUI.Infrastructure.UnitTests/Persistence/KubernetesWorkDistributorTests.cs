@@ -218,7 +218,7 @@ public class KubernetesWorkDistributorTests
         TaskType = WorkItemTaskType.Implementation,
         AgentSelector = "kiro,linux",
         TimeoutSeconds = 1800,
-        ProjectId = "proj-1",
+        ProjectId = new Guid("11110000-0000-0000-0000-000000000001"),
         RunType = PipelineRunType.Implementation
     };
 }

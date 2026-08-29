@@ -112,6 +112,12 @@ builder.Services.AddWorkDistribution(builder.Configuration);
 // DB health monitoring removed — monolith has no direct Postgres connection.
 builder.Services.AddSingleton<CodingAgentWebUI.Services.InfrastructureHealthService>();
 
+// Frontend observability (Faro) — scoped so each Blazor circuit gets its own instance.
+// FaroService wraps IJSRuntime; NotificationFaroBridge forwards notifications to Faro.
+// Both silently no-op if Faro is not configured (Faro:CollectorUrl env var absent).
+builder.Services.AddScoped<CodingAgentWebUI.Services.IFaroService, CodingAgentWebUI.Services.FaroService>();
+builder.Services.AddScoped<CodingAgentWebUI.Services.NotificationFaroBridge>();
+
 // Page-level services (scoped — one instance per Blazor circuit)
 builder.Services.AddScoped<CodingAgentWebUI.Services.IIssueDrawerService, CodingAgentWebUI.Services.IssueDrawerService>();
 builder.Services.AddScoped<CodingAgentWebUI.Services.IPrReviewDrawerService, CodingAgentWebUI.Services.PrReviewDrawerService>();

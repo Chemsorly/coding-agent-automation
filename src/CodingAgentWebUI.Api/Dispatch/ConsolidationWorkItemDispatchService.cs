@@ -288,8 +288,8 @@ internal sealed class ConsolidationWorkItemDispatchService : LeaderElectedPollin
     private async Task<string?> ResolveProjectIdAsync(
         PendingWorkItemProjection item, JobDistributionRequest request, CancellationToken ct)
     {
-        if (!string.IsNullOrEmpty(item.ProjectId))
-            return item.ProjectId;
+        if (item.ProjectId.HasValue)
+            return item.ProjectId.Value.ToString();
 
         if (_projectStore is null || string.IsNullOrEmpty(request.ConsolidationTemplateId))
             return null;

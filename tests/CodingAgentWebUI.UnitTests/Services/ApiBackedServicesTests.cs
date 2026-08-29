@@ -171,7 +171,7 @@ public sealed class ApiBackedServicesTests
                     InitiatedBy = "manual",
                     IssueTitle = "Fix the bug",
                     ProjectName = "MyProject",
-                    ProjectId = "proj-42"
+                    ProjectId = new Guid("42420000-0000-0000-0000-000000000001")
                 }
             });
 
@@ -184,7 +184,7 @@ public sealed class ApiBackedServicesTests
         job.IssueTitle.Should().Be("Fix the bug");
         job.Project.Should().NotBeNull();
         job.Project!.Name.Should().Be("MyProject");
-        job.Project.Id.Should().Be("proj-42");
+        job.Project.Id.Should().Be(new Guid("42420000-0000-0000-0000-000000000001").ToString());
     }
 
     [Fact]
@@ -236,7 +236,7 @@ public sealed class ApiBackedServicesTests
                     RetryCount = 0,
                     TimeoutSeconds = 0,
                     ProjectName = null,
-                    ProjectId = "abc-123"
+                    ProjectId = new Guid("abc12300-0000-0000-0000-000000000001")
                 }
             });
 
@@ -245,8 +245,8 @@ public sealed class ApiBackedServicesTests
 
         var job = result[0];
         job.Project.Should().NotBeNull("ProjectId is set so Project must be non-null");
-        job.Project!.Id.Should().Be("abc-123");
-        job.Project.Name.Should().Be("abc-123", "ProjectId is used as fallback Name when ProjectName is null");
+        job.Project!.Id.Should().Be(new Guid("abc12300-0000-0000-0000-000000000001").ToString());
+        job.Project.Name.Should().Be(new Guid("abc12300-0000-0000-0000-000000000001").ToString(), "ProjectId is used as fallback Name when ProjectName is null");
     }
 
     [Fact]

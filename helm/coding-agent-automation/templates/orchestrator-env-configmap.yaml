@@ -12,6 +12,7 @@ data:
   PIPELINE_LOOP_STARTUP_DELAY_SECONDS: {{ .Values.orchestrator.env.pipelineLoopStartupDelaySeconds | quote }}
   READINESS_DRAIN_DELAY_SECONDS: {{ .Values.orchestrator.env.readinessDrainDelaySeconds | quote }}
   LOG_LEVEL: {{ .Values.orchestrator.env.logLevel | quote }}
+  Faro__CollectorUrl: {{ .Values.orchestrator.env.faroCollectorUrl | quote }}
   # LeaderElection__Namespace is injected as a direct env var (fieldRef) in the deployment —
   # it cannot be set here in a ConfigMap as fieldRef is not available in ConfigMap data.
   # WorkDistribution env vars — used by ChatJobDispatcher and KubernetesJobCleanup.

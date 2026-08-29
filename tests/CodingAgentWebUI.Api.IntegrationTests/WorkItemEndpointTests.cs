@@ -403,7 +403,7 @@ public sealed class WorkItemEndpointTests
             TaskType = WorkItemTaskType.Implementation,
             AgentSelector = "kiro",
             TimeoutSeconds = 3600,
-            ProjectId = "proj-123",
+            ProjectId = new Guid("12300000-0000-0000-0000-000000000001"),
             ProjectName = "Default",
             IssueDetail = new IssueDetail
             {
@@ -416,6 +416,15 @@ public sealed class WorkItemEndpointTests
 
         using (var db = _factory.CreateDbContext())
         {
+            // Seed the Project row first; the FK constraint (added by the migration) requires a
+            // matching Projects row when ProjectId is non-null.
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = new Guid("12300000-0000-0000-0000-000000000001"),
+                Name = "Default",
+                Enabled = true,
+                TemplateIds = []
+            });
             db.WorkItems.Add(new WorkItemEntity
             {
                 Id = workItemId,
@@ -426,7 +435,7 @@ public sealed class WorkItemEndpointTests
                 Payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default),
                 AgentSelector = "kiro",
                 TimeoutSeconds = 3600,
-                ProjectId = "proj-123",
+                ProjectId = new Guid("12300000-0000-0000-0000-000000000001"),
                 CreatedAt = DateTimeOffset.UtcNow
             });
             db.SaveChanges();
@@ -445,7 +454,7 @@ public sealed class WorkItemEndpointTests
         dto!.InitiatedBy.Should().Be("loop");
         dto.IssueTitle.Should().Be("My issue title");
         dto.ProjectName.Should().Be("Default");
-        dto.ProjectId.Should().Be("proj-123");
+        dto.ProjectId.Should().Be(new Guid("12300000-0000-0000-0000-000000000001"));
     }
 
     [Fact]
