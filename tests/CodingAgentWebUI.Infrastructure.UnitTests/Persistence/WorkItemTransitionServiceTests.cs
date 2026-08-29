@@ -254,10 +254,7 @@ public class WorkItemTransitionServiceTests
         {
             var item = await db.WorkItems.FindAsync(workItemId);
             item!.Status.Should().Be(WorkItemStatus.Succeeded);
-            // TODO: Also assert item.CompletedAt.Should().NotBeNull() here — a regression where
-            // BuildMutationAction skips setting CompletedAt on the Timeout recovery path would go
-            // undetected without it. The fallback-layer test already asserts CompletedAt for
-            // consistency. See review finding [WARNING] WorkItemTransitionServiceTests.cs:303.
+            item.CompletedAt.Should().NotBeNull("BuildMutationAction must set CompletedAt on recovery");
         }
     }
 
@@ -304,13 +301,49 @@ public class WorkItemTransitionServiceTests
         }
     }
 
-    // TODO: Add TryRecoverFromInfrastructureFailure_WithQualityGateExhaustedReason_ReturnsFalse
-    // test at this (WorkItemTransitionService) layer. The acceptance criteria explicitly require
-    // QualityGateExhausted to NOT recover, and AgentError has a lower-layer negative test here —
-    // QualityGateExhausted should have one too. Without it, a guard regression (accidentally
-    // including QualityGateExhausted in the `is not (... or ...)` allowlist) would only be caught
-    // by the higher-level fallback test, making the failure harder to diagnose.
-    // See review finding [WARNING] WorkItemTransitionServiceTests.cs:213.
+    [Fact]
+    public async Task TryRecoverFromInfrastructureFailure_WithQualityGateExhaustedReason_ReturnsFalse()
+    {
+        // Acceptance criteria: QualityGateExhausted failures must NOT be recoverable.
+        // Negative test at the WorkItemTransitionService layer to catch guard regressions
+        // (e.g., accidentally including QualityGateExhausted in the allowlist) before
+        // they propagate to higher layers.
+        var workItemId = Guid.NewGuid();
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#202",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Failed,
+                FailureReason = FailureReason.QualityGateExhausted,
+                ErrorMessage = "Quality gate retries exhausted",
+                CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                CreatedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new ConcurrencyConflictDbContextFactory(dbOptions, throwOnSaveCallNumbers: []);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        var result = await service.TryRecoverFromInfrastructureFailureAsync(
+            workItemId, WorkItemStatus.Succeeded);
+
+        result.Should().BeFalse("QualityGateExhausted must not be recoverable");
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Failed);
+            item.FailureReason.Should().Be(FailureReason.QualityGateExhausted);
+        }
+    }
 
     // ── Test Infrastructure ─────────────────────────────────────────────
 
