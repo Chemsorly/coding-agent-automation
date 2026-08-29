@@ -30,7 +30,7 @@ jobs:
         run: dotnet build --no-restore --configuration Release --verbosity quiet
 
       - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category!=E2E" --collect:"XPlat Code Coverage"
+        run: dotnet test --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category!=E2E&Category!=Integration" --collect:"XPlat Code Coverage"
 
       - name: Generate coverage report
         uses: danielpalme/ReportGenerator-GitHub-Action@d3ebf1f760f7d8ab92cc44d9bcfee7ad73722a31 # v5.5.11
@@ -59,6 +59,55 @@ jobs:
       #     name: test-results
       #     path: TestResults
       #   if: ${{ always() }}
+
+  # Migration integrity — applies all EF migrations from scratch against a real Postgres
+  # container (via Testcontainers) and asserts that the compiled model matches the migration
+  # snapshot. Catches PendingModelChangesWarning and bad DDL that EF InMemory cannot detect.
+  # Runs directly on the runner (no container: wrapper) so Docker is available for Testcontainers.
+  # Runs in parallel with build-and-test; does NOT need build-and-test to succeed first.
+  migration-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore tests/CodingAgentWebUI.Infrastructure.IntegrationTests/CodingAgentWebUI.Infrastructure.IntegrationTests.csproj --verbosity quiet
+
+      - name: Build
+        run: dotnet build tests/CodingAgentWebUI.Infrastructure.IntegrationTests/ --no-restore --configuration Release --verbosity quiet
+
+      - name: Run migration integrity tests
+        run: dotnet test tests/CodingAgentWebUI.Infrastructure.IntegrationTests/ --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category=Integration" --collect:"XPlat Code Coverage"
+
+      - name: Generate coverage report
+        uses: danielpalme/ReportGenerator-GitHub-Action@d3ebf1f760f7d8ab92cc44d9bcfee7ad73722a31 # v5.5.11
+        with:
+          reports: TestResults/**/coverage.cobertura.xml
+          targetdir: CoverageReport
+          reporttypes: MarkdownAssembliesSummary
+        if: ${{ always() && hashFiles('TestResults/**/coverage.cobertura.xml') != '' }}
+
+      - name: Post coverage to PR
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: coverage-integration
+          path: CoverageReport/AssembliesSummary.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ always() && github.event_name == 'pull_request' && hashFiles('CoverageReport/AssembliesSummary.md') != '' }}
+
+      - name: Write coverage to job summary
+        run: cat CoverageReport/AssembliesSummary.md >> $GITHUB_STEP_SUMMARY
+        if: ${{ always() && hashFiles('CoverageReport/AssembliesSummary.md') != '' }}
 
   # Secret scanning — detect leaked credentials in code
   gitleaks:
