@@ -123,7 +123,12 @@ public class WorkItemTransitionServiceTests
     }
 
     [Fact]
-    public async Task TryRecoverFromInfrastructureFailure_ConcurrencyConflict_ExhaustsRetries_PropagatesException()
+    // TODO: This test asserts result.Should().BeFalse() but does not explicitly verify the method does not throw.
+    // A defensive addition of `await act.Should().NotThrowAsync()` before the value check would make an accidental
+    // exception propagation immediately visible rather than potentially swallowed by the async test context.
+    // Also consider adding a read-back assertion (item.Status.Should().Be(WorkItemStatus.Failed)) to confirm no
+    // partial mutation occurred on intermediate retry attempts.
+    public async Task TryRecoverFromInfrastructureFailure_WhenAllRetriesExhaustWithConcurrencyException_ReturnsFalse()
     {
         // Arrange: WorkItem in Failed/InfrastructureFailure state
         var workItemId = Guid.NewGuid();
@@ -150,11 +155,12 @@ public class WorkItemTransitionServiceTests
         var factory = new ConcurrencyConflictDbContextFactory(dbOptions, throwOnSaveCallNumbers: [1, 2, 3, 4]);
         var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        // Act & Assert: Final attempt propagates DbUpdateConcurrencyException
-        var act = () => service.TryRecoverFromInfrastructureFailureAsync(
+        // Act — no exception should escape the method boundary
+        var result = await service.TryRecoverFromInfrastructureFailureAsync(
             workItemId, WorkItemStatus.Succeeded);
 
-        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+        // Assert: returns false without throwing — method must never propagate DbUpdateConcurrencyException
+        result.Should().BeFalse();
     }
 
     [Fact]
