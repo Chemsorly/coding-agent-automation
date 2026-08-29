@@ -238,9 +238,9 @@ public static class WorkItemEndpoints
 
         // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
         // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
-        // CancellationToken.None: the task runs independently of the HTTP request lifetime;
-        // using the request-scoped ct would cause spurious OperationCanceledException warnings
-        // when ASP.NET Core cancels the token as soon as the response is sent.
+        // Pass CancellationToken.None because the task runs independently of the HTTP request
+        // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
+        // warnings when ASP.NET Core cancels the token as soon as the response is sent.
         if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
             _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
 
@@ -298,20 +298,6 @@ public static class WorkItemEndpoints
             // Note: Postgres throws DbUpdateException (SQLSTATE 23505); EF InMemory throws
             // ArgumentException("An item with the same key has already been added") directly,
             // so the catch must be on Exception rather than DbUpdateException.
-            //
-            // TODO [WARNING]: The broad `catch (Exception)` combined with string-matching in
-            // IsUniqueViolation is a maintenance fragility. `catch (DbUpdateException)` was safer
-            // for the Postgres path; the widening to `Exception` was required for EF InMemory test
-            // support. For production hardening, consider splitting into separate catch clauses:
-            // `catch (DbUpdateException)` for Postgres and `catch (ArgumentException)` for InMemory,
-            // so unrelated exceptions are not accidentally matched by the string filters.
-            //
-            // TODO [WARNING]: The AnyAsync lookup below is not atomic with the failed SaveChangesAsync.
-            // A concurrent delete between the two calls could cause AnyAsync to return false, making a
-            // retried idempotent request incorrectly return 409. Additionally, if both a PK collision
-            // and a business-rule unique-index collision fire simultaneously (extreme edge case), the
-            // PK-collision path returns 201 even though the stored row has a different IssueProviderConfigId.
-            // For production hardening, consider a single-query upsert (INSERT ... ON CONFLICT DO NOTHING).
             await using var readDb = await dbFactory.CreateDbContextAsync(ct);
             var exists = await readDb.WorkItems.AnyAsync(w => w.Id == workItemId, ct);
             if (exists)
@@ -977,13 +963,7 @@ public static class WorkItemEndpoints
         // EF InMemory throws ArgumentException("An item with the same key has already been added")
         // directly — it is NOT wrapped in DbUpdateException — so we must check the top-level
         // message as well as the inner exception message.
-        //
-        // TODO [WARNING]: The EF InMemory phrase "An item with the same key has already been added"
-        // is an implementation detail of EF Core InMemory and is not guaranteed stable across EF Core
-        // versions. If a future EF Core release changes this message text, the in-memory path will
-        // silently stop recognising PK collisions, causing idempotent retries to throw instead of
-        // returning 201. Consider tracking this against the EF Core version in use and validating
-        // after EF Core upgrades.
+        // Note: the EF InMemory phrase is an implementation detail and may change across EF Core versions.
         var message = ex.Message ?? "";
         var innerMessage = ex.InnerException?.Message ?? "";
         return message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)

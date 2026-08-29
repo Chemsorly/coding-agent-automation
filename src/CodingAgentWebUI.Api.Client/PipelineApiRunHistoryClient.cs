@@ -43,9 +43,6 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
     public async Task AddRunToHistoryAsync(PipelineRunSummary summary, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(summary);
-        // TODO [WARNING]: HttpRequestMessage is IDisposable but is not disposed here. If SendAsync
-        // throws (e.g., TaskCanceledException on timeout), the message and its JsonContent body are
-        // never disposed. Fix: use `using var req = new HttpRequestMessage(...)`.
         var req = new HttpRequestMessage(HttpMethod.Post, "/api/pipeline-runs/");
         if (!string.IsNullOrEmpty(summary.RunId))
             req.Headers.Add("X-Idempotency-Key", summary.RunId);
