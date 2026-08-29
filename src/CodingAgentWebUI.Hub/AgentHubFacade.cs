@@ -90,11 +90,11 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _runService.ReplaceRun(run);
 
     /// <inheritdoc />
-    public async Task TransitionWorkItemAsync(JobId jobId, WorkItemStatus status, CancellationToken ct,
+    public async Task<bool> TransitionWorkItemAsync(JobId jobId, WorkItemStatus status, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null)
     {
         if (_workItemFallbackTransition is null || !Guid.TryParse(jobId.Value, out var workItemId))
-            return;
+            return true; // No DB configured — treat as success (no-op)
 
         // Single retry with longer backoff — acts as a safety net above the Polly pipeline
         // in WorkItemTransitionService (which handles transient DB errors with 5 retries).
@@ -107,12 +107,12 @@ public sealed class AgentHubFacade : IAgentHubFacade
             try
             {
                 if (await _workItemFallbackTransition.TryFallbackChainAsync(workItemId, status, errorMessage, failureReason, ct))
-                    return;
+                    return true;
 
                 _logger.LogWarning(
                     "WorkItem {WorkItemId} transition to {Status} rejected (may already be terminal)",
                     workItemId, status);
-                return;
+                return false;
             }
             catch (Exception ex) when (attempt < maxAttempts - 1
                 && ex is not Polly.CircuitBreaker.BrokenCircuitException)
@@ -128,6 +128,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _logger.LogError(
             "WorkItem {WorkItemId} transition to {Status} failed after all retry attempts",
             workItemId, status);
+        return false;
     }
 
     /// <inheritdoc />
