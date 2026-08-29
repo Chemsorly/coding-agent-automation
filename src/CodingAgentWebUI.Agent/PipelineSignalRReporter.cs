@@ -71,10 +71,15 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
 
     /// <summary>
     /// Fire-and-forget output line emission with secret masking.
+    /// Synchronously writes a Serilog entry at <see cref="Serilog.Events.LogEventLevel.Debug"/>
+    /// <em>before</em> the fire-and-forget continuation is discarded so that Serilog's
+    /// <see cref="Serilog.Context.LogContext"/> (including <c>StepName</c> pushed by
+    /// <c>PipelineStepRunner.ExecuteAsync</c>) is still in scope on this synchronous call site.
     /// </summary>
     public void EmitOutputLine(string line, PipelineStepContext? context, CancellationToken ct)
     {
         var masked = MaskSecretsInOutput(line, context);
+        _logger.Debug("[output] {Line}", masked);  // StepName is still in LogContext here
         _ = EmitOutputLineInternalAsync(masked, ct);
     }
 

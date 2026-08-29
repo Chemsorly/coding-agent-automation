@@ -50,8 +50,6 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
             context.InjectedSecrets = effectiveSecrets;
 
             var keyList = string.Join(", ", effectiveSecrets.Keys);
-            _logger.Information("Pipeline {RunId} stored {Count} environment secrets for per-process injection (keys: {Keys})",
-                context.Run.RunId, effectiveSecrets.Count, keyList);
 
             context.Callbacks.EmitOutputLine(
                 SecretMasker.Mask($"🔐 Injected {effectiveSecrets.Count} environment secrets (keys: {keyList})", effectiveSecrets));
@@ -59,8 +57,6 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
             if (supersededKeys.Count > 0)
             {
                 var supersededList = string.Join(", ", supersededKeys);
-                _logger.Information("Pipeline {RunId} repo-level secrets superseded project-level for keys: {SupersededKeys}",
-                    context.Run.RunId, supersededList);
                 context.Callbacks.EmitOutputLine(
                     $"⚠️ Repo-level secrets superseded project-level for keys: {supersededList}");
             }
@@ -94,8 +90,6 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
                 context.Run.RunId, step.Name);
         }
 
-        _logger.Information("Pipeline {RunId} environment setup complete ({StepCount} steps executed successfully)",
-            context.Run.RunId, steps.Count);
         context.Callbacks.EmitOutputLine($"✅ Environment setup complete ({steps.Count} steps)");
         return StepResult.Continue;
     }
