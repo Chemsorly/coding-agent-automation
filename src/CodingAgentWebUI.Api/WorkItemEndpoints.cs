@@ -385,6 +385,7 @@ public static class WorkItemEndpoints
                 CreatedAt = w.CreatedAt,
                 AgentSelector = w.AgentSelector,
                 RetryCount = w.RetryCount,
+                TimeoutSeconds = req?.TimeoutSeconds ?? 0,
                 IssueTitle = req?.IssueDetail?.Title,
                 InitiatedBy = req?.InitiatedBy,
                 ProjectName = req?.ProjectName,

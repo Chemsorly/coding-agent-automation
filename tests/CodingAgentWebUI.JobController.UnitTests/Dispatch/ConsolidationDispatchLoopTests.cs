@@ -58,7 +58,8 @@ public sealed class ConsolidationDispatchLoopTests
             TaskType = WorkItemTaskType.Consolidation,
             CreatedAt = DateTimeOffset.UtcNow,
             AgentSelector = agentSelector,
-            RetryCount = 0
+            RetryCount = 0,
+            TimeoutSeconds = 0
         };
 
     private static ConsolidationWorkItemClaimResponse MakeClaimed(

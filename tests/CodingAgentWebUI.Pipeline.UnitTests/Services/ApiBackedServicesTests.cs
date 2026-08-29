@@ -574,7 +574,8 @@ public sealed class ApiBackedServicesTests
         TaskType = WorkItemTaskType.Implementation,
         CreatedAt = DateTimeOffset.UtcNow,
         AgentSelector = "kiro",
-        RetryCount = 0
+        RetryCount = 0,
+        TimeoutSeconds = 0
     };
 
     [Fact]
@@ -617,7 +618,8 @@ public sealed class ApiBackedServicesTests
             TaskType = WorkItemTaskType.Implementation,
             CreatedAt = DateTimeOffset.UtcNow,
             AgentSelector = "kiro, dotnet",
-            RetryCount = 0
+            RetryCount = 0,
+            TimeoutSeconds = 0
         };
         mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
@@ -640,7 +642,8 @@ public sealed class ApiBackedServicesTests
             TaskType = WorkItemTaskType.Consolidation,
             CreatedAt = DateTimeOffset.UtcNow,
             AgentSelector = "kiro",
-            RetryCount = 0
+            RetryCount = 0,
+            TimeoutSeconds = 0
         };
         mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
@@ -672,7 +675,8 @@ public sealed class ApiBackedServicesTests
             TaskType = WorkItemTaskType.Review,
             CreatedAt = DateTimeOffset.UtcNow,
             AgentSelector = "kiro",
-            RetryCount = 0
+            RetryCount = 0,
+            TimeoutSeconds = 0
         };
         mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
@@ -695,7 +699,8 @@ public sealed class ApiBackedServicesTests
             TaskType = WorkItemTaskType.Decomposition,
             CreatedAt = DateTimeOffset.UtcNow,
             AgentSelector = "kiro",
-            RetryCount = 0
+            RetryCount = 0,
+            TimeoutSeconds = 0
         };
         mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);

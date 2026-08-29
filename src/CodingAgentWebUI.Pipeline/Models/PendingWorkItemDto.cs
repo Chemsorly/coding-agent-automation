@@ -15,6 +15,9 @@ public sealed record PendingWorkItemDto
     public required string AgentSelector { get; init; }
     public required int RetryCount { get; init; }
 
+    /// <summary>Maximum execution time in seconds. 0 means "use the agent default". From <c>JobDistributionRequest.TimeoutSeconds</c>.</summary>
+    public required int TimeoutSeconds { get; init; }
+
     // ── Display fields for the Agent Monitoring Job Queue UI ──────────────
     // Populated by the API from the Payload JSONB column and the ProjectId column.
     // The Job Controller claim path never reads these fields; they are null-safe additions.

@@ -57,7 +57,8 @@ public static class ConsolidationWorkItemEndpoints
                 TaskType = w.TaskType,
                 CreatedAt = w.CreatedAt,
                 AgentSelector = w.AgentSelector,
-                RetryCount = w.RetryCount
+                RetryCount = w.RetryCount,
+                TimeoutSeconds = 0  // consolidation items use the agent default; payload not loaded in this projection
             })
             .ToListAsync(ct);
 

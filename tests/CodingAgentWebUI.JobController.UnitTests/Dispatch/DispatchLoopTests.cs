@@ -56,7 +56,8 @@ public sealed class DispatchLoopTests
             TaskType = WorkItemTaskType.Implementation,
             CreatedAt = DateTimeOffset.UtcNow,
             AgentSelector = agentSelector,
-            RetryCount = 0
+            RetryCount = 0,
+            TimeoutSeconds = 0
         };
 
     private static WorkItemClaimResponse MakeClaimed() =>
