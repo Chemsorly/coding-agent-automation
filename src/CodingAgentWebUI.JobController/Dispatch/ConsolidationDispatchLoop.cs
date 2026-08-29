@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
@@ -26,24 +27,28 @@ public sealed class ConsolidationDispatchLoop
     private readonly JobTemplateStore _templateStore;
     private readonly PvcPool _pvcPool;
     private readonly DispatchServiceOptions _options;
+    private readonly IReconciliationTrigger _reconciliationTrigger;
 
     public ConsolidationDispatchLoop(
         IPipelineApiConsolidationWorkItemClient consolidationClient,
         IKubernetesJobClient k8sClient,
         JobTemplateStore templateStore,
         PvcPool pvcPool,
-        DispatchServiceOptions options)
+        DispatchServiceOptions options,
+        IReconciliationTrigger reconciliationTrigger)
     {
         ArgumentNullException.ThrowIfNull(consolidationClient);
         ArgumentNullException.ThrowIfNull(k8sClient);
         ArgumentNullException.ThrowIfNull(templateStore);
         ArgumentNullException.ThrowIfNull(pvcPool);
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(reconciliationTrigger);
         _consolidationClient = consolidationClient;
         _k8sClient = k8sClient;
         _templateStore = templateStore;
         _pvcPool = pvcPool;
         _options = options;
+        _reconciliationTrigger = reconciliationTrigger;
     }
 
     /// <summary>
@@ -174,6 +179,10 @@ public sealed class ConsolidationDispatchLoop
             if (pvcName is null)
             {
                 Log.Warning("ConsolidationDispatchLoop: no available PVC for kiro agent {Id}, requeuing", item.Id);
+                // Signal ReconciliationService to run an immediate cycle so any completed-but-not-yet-
+                // reconciled K8s Jobs release their PVC slots quickly, rather than waiting up to 30s.
+                // The call is non-blocking and idempotent.
+                _reconciliationTrigger.RequestImmediateCycle();
                 await SafeRequeueAsync(item.Id, claimed.RunId, "No PVC available", ct);
                 return;
             }
