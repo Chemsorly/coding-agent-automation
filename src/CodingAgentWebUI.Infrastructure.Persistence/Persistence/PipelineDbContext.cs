@@ -53,6 +53,12 @@ public class PipelineDbContext : DbContext
                 .IsDescending(false, true)
                 .HasFilter("\"ProjectId\" IS NOT NULL AND \"Status\" IN (3, 4, 5) AND \"CompletedAt\" IS NOT NULL")
                 .HasDatabaseName("IX_WorkItems_ProjectId_CompletedAt_Terminal");
+            // FK relationship: WorkItems.ProjectId → Projects.Id (nullable, ON DELETE SET NULL)
+            e.HasOne<ProjectEntity>()
+                .WithMany()
+                .HasForeignKey(w => w.ProjectId)
+                .OnDelete(DeleteBehavior.SetNull)
+                .IsRequired(false);
         });
 
         modelBuilder.Entity<PipelineRunEntity>(e =>

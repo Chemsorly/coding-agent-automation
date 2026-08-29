@@ -34,7 +34,7 @@ public record JobDistributionRequest
     public required int TimeoutSeconds { get; init; }
 
     /// <summary>Project ID this work item belongs to, if any.</summary>
-    public string? ProjectId { get; init; }
+    public Guid? ProjectId { get; init; }
 
     /// <summary>Project display name, if any.</summary>
     public string? ProjectName { get; init; }
@@ -161,7 +161,7 @@ public record JobDistributionRequest
         IssueSummary issue,
         string initiatedBy,
         int timeoutSeconds = 0,
-        string? projectId = null,
+        Guid? projectId = null,
         string? projectName = null)
     {
         ArgumentNullException.ThrowIfNull(template);
@@ -202,7 +202,7 @@ public record JobDistributionRequest
         string initiatedBy,
         int timeoutSeconds = 0,
         bool useFullPrMetadata = true,
-        string? projectId = null,
+        Guid? projectId = null,
         string? projectName = null)
     {
         ArgumentNullException.ThrowIfNull(template);
@@ -245,7 +245,7 @@ public record JobDistributionRequest
         PipelineRunType phase,
         string initiatedBy,
         int timeoutSeconds = 0,
-        string? projectId = null,
+        Guid? projectId = null,
         string? projectName = null,
         string? decompositionSource = null)
     {
@@ -302,5 +302,5 @@ internal sealed record JobDistributionRequestBaseParams(
     WorkItemTaskType TaskType,
     int TimeoutSeconds,
     PipelineRunType RunType,
-    string? ProjectId,
+    Guid? ProjectId,
     string? ProjectName);

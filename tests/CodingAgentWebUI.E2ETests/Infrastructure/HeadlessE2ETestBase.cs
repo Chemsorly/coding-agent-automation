@@ -137,7 +137,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
             AgentSelector = agentSelector,
             TimeoutSeconds = 3600,
             TaskType = WorkItemTaskType.Implementation,
-            ProjectId = WellKnownIds.DefaultProjectId,
+            ProjectId = Guid.Parse(WellKnownIds.DefaultProjectId),
             InitiatedBy = "e2e-test"
         };
         return await distributor.DistributeAsync(request, CancellationToken.None);
@@ -166,7 +166,12 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
             AgentSelector = agentSelector,
             CreatedAt = DateTimeOffset.UtcNow,
             TimeoutSeconds = timeoutSeconds,
-            ProjectId = projectId ?? WellKnownIds.DefaultProjectId
+            // TODO: [WARNING] Guid.Parse will throw FormatException if projectId is not a valid UUID.
+            // Current callers only pass null or WellKnownIds.DefaultProjectId (both valid), but the
+            // method's public string? signature accepts arbitrary values. Consider changing the parameter
+            // to Guid? to match the entity type, or using Guid.TryParse with a fallback and a clear
+            // error message to avoid confusing stack traces during test authoring.
+            ProjectId = Guid.Parse(projectId ?? WellKnownIds.DefaultProjectId)
         });
         await db.SaveChangesAsync();
         return workItemId;

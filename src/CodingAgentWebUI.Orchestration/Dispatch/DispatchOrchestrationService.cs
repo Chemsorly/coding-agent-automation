@@ -415,7 +415,12 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             TaskType = taskType,
             AgentSelector = agentSelector,
             TimeoutSeconds = (int)result.PipelineConfiguration.AgentTimeout.TotalSeconds,
-            ProjectId = result.Project.Id,
+            // TODO: [WARNING] If result.Project.Id is not a valid UUID string, TryParse silently sets
+            // ProjectId = null, losing the project association with no log or error. PipelineProject.Id
+            // is documented as GUID-generated, but a misconfigured/legacy project store could supply a
+            // non-UUID value and silently drop the project link. Consider logging a warning when
+            // TryParse fails so operators can detect and fix data inconsistencies.
+            ProjectId = Guid.TryParse(result.Project.Id, out var projectGuid) ? projectGuid : null,
             ProjectName = result.Project.Name,
             RunType = runType,
             IssueDetail = result.IssueDetail,

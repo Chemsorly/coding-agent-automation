@@ -185,7 +185,7 @@ public class JobDistributionRequestArbitraries
                 TaskType = taskType,
                 AgentSelector = agentSelector,
                 TimeoutSeconds = timeout,
-                ProjectId = hasProject ? Guid.NewGuid().ToString() : null,
+                ProjectId = hasProject ? Guid.NewGuid() : (Guid?)null,
                 ProjectName = hasProject ? projectName : null,
                 RunType = runType,
                 IssueDetail = hasIssueDetail ? issueDetail : null,

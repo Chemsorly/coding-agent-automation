@@ -45,7 +45,7 @@ public class DispatchOrchestrationServiceTests
 
     private static readonly PipelineProject TestProject = new()
     {
-        Id = "proj-1",
+        Id = "11110000-0000-0000-0000-000000000001",
         Name = "TestProject",
         Enabled = true
     };
@@ -219,7 +219,7 @@ public class DispatchOrchestrationServiceTests
         result.IssueDetail.Title.Should().Be("Test Issue Title");
         result.CreatedRun.Should().NotBeNull();
         result.CreatedRun.IssueIdentifier.Value.Should().Be("issue-42");
-        result.Project.Id.Should().Be("proj-1");
+        result.Project.Id.Should().Be("11110000-0000-0000-0000-000000000001");
         result.PipelineConfiguration.Should().NotBeNull();
     }
 
@@ -347,7 +347,7 @@ public class DispatchOrchestrationServiceTests
 
         result.Should().NotBeNull();
         result!.CreatedRun.IssueIdentifier.Value.Should().Be("issue-42");
-        result.CreatedRun.ProjectId.Should().Be("proj-1");
+        result.CreatedRun.ProjectId.Should().Be("11110000-0000-0000-0000-000000000001");
         result.CreatedRun.ProjectName.Should().Be("TestProject");
         // Run is no longer registered in the monolith's OrchestratorRunService (Req 1a.1 Option A).
         // The API registers it when POST /api/work-items persists the WorkItem.
@@ -447,7 +447,12 @@ public class DispatchOrchestrationServiceTests
         request.InitiatedBy.Should().Be("test-user");
         request.TaskType.Should().Be(WorkItemTaskType.Implementation);
         request.RunType.Should().Be(PipelineRunType.Implementation);
-        request.ProjectId.Should().Be("proj-1");
+        // TODO: [WARNING] This test only exercises the happy path where Project.Id is already a valid
+        // UUID string. The production code uses Guid.TryParse with a silent null fallback — if
+        // Project.Id is a non-UUID string, ProjectId is silently set to null with no error or log.
+        // Add a test case where Project.Id is a non-UUID string (e.g. "proj-1") to verify either
+        // (a) a warning is logged, or (b) the behaviour is explicitly accepted as a known tradeoff.
+        request.ProjectId.Should().Be(new Guid("11110000-0000-0000-0000-000000000001"));
         request.ProjectName.Should().Be("TestProject");
         request.ResolvedProfileId.Should().Be("profile-1");
         request.IssueDetail.Should().NotBeNull();
@@ -560,7 +565,7 @@ public class DispatchOrchestrationServiceTests
 
         var projectWithSteering = new PipelineProject
         {
-            Id = "proj-1",
+            Id = "11110000-0000-0000-0000-000000000001",
             Name = "TestProject",
             Enabled = true,
             SteeringContent = "## Project Instructions\nAlways use structured logging."

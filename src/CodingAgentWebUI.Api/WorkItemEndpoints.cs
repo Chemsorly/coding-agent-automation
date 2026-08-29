@@ -173,9 +173,9 @@ public static class WorkItemEndpoints
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
 
         // Inject project secrets at delivery time (not serialized in payload for security)
-        if (!string.IsNullOrEmpty(request.ProjectId))
+        if (request.ProjectId.HasValue)
         {
-            var project = await projectStore.GetProjectByIdAsync(request.ProjectId, ct);
+            var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
             if (project?.Secrets is { Count: > 0 })
                 message = message with { ProjectSecrets = project.Secrets };
         }

@@ -30,6 +30,9 @@ public class RetentionSweepIntegrationTests : IDisposable
     private readonly Mock<IPipelineConfigStore> _mockConfigStore;
     private readonly IConfiguration _configuration;
 
+    private static readonly Guid ProjA = new Guid("AAAAAAAA-0000-0000-0000-000000000001");
+    private static readonly Guid ProjB = new Guid("BBBBBBBB-0000-0000-0000-000000000001");
+
     public RetentionSweepIntegrationTests()
     {
         var dbName = $"RetentionSweep-{Guid.NewGuid()}";
@@ -199,13 +202,13 @@ public class RetentionSweepIntegrationTests : IDisposable
             .Select(i => (Id: Guid.NewGuid(), CompletedAt: t.AddHours(i)))
             .ToList();
         foreach (var (id, completedAt) in ids)
-            await InsertWorkItem(id, "proj-a", WorkItemStatus.Succeeded, completedAt);
+            await InsertWorkItem(id, ProjA, WorkItemStatus.Succeeded, completedAt);
 
         SetupConfig(workItemRetentionCount: 3);
         await CreateService().SweepWorkItemRetentionAsync(CancellationToken.None);
 
         await using var db = await _dbFactory.CreateDbContextAsync();
-        var surviving = (await db.WorkItems.Where(w => w.ProjectId == "proj-a").ToListAsync())
+        var surviving = (await db.WorkItems.Where(w => w.ProjectId == ProjA).ToListAsync())
             .Select(w => w.Id).ToHashSet();
         surviving.Should().HaveCount(3);
         surviving.Should().NotContain(ids[0].Id, "oldest deleted");
@@ -226,8 +229,8 @@ public class RetentionSweepIntegrationTests : IDisposable
         // that the terminal row is pruned while the non-terminal rows survive.
         var runningId = Guid.NewGuid();
         var pendingId = Guid.NewGuid();
-        await InsertWorkItem(runningId, "proj-a", WorkItemStatus.Running, completedAt: null);
-        await InsertWorkItem(pendingId, "proj-a", WorkItemStatus.Pending, completedAt: null);
+        await InsertWorkItem(runningId, ProjA, WorkItemStatus.Running, completedAt: null);
+        await InsertWorkItem(pendingId, ProjA, WorkItemStatus.Pending, completedAt: null);
 
         SetupConfig(workItemRetentionCount: 1);
         await CreateService().SweepWorkItemRetentionAsync(CancellationToken.None);
@@ -242,7 +245,7 @@ public class RetentionSweepIntegrationTests : IDisposable
     public async Task SweepWorkItemRetention_TerminalNullCompletedAt_NeverDeleted()
     {
         var id = Guid.NewGuid();
-        await InsertWorkItem(id, "proj-a", WorkItemStatus.Succeeded, completedAt: null);
+        await InsertWorkItem(id, ProjA, WorkItemStatus.Succeeded, completedAt: null);
 
         SetupConfig(workItemRetentionCount: 1);
         await CreateService().SweepWorkItemRetentionAsync(CancellationToken.None);
@@ -274,10 +277,10 @@ public class RetentionSweepIntegrationTests : IDisposable
         var middle = Guid.NewGuid();
         var oldest = Guid.NewGuid();
 
-        await InsertWorkItem(runningId, "proj-a", WorkItemStatus.Running, completedAt: null);
-        await InsertWorkItem(newest, "proj-a", WorkItemStatus.Succeeded, t.AddHours(2));
-        await InsertWorkItem(middle, "proj-a", WorkItemStatus.Succeeded, t.AddHours(1));
-        await InsertWorkItem(oldest, "proj-a", WorkItemStatus.Succeeded, t.AddHours(0));
+        await InsertWorkItem(runningId, ProjA, WorkItemStatus.Running, completedAt: null);
+        await InsertWorkItem(newest, ProjA, WorkItemStatus.Succeeded, t.AddHours(2));
+        await InsertWorkItem(middle, ProjA, WorkItemStatus.Succeeded, t.AddHours(1));
+        await InsertWorkItem(oldest, ProjA, WorkItemStatus.Succeeded, t.AddHours(0));
 
         SetupConfig(workItemRetentionCount: 2);
         await CreateService().SweepWorkItemRetentionAsync(CancellationToken.None);
@@ -384,9 +387,25 @@ public class RetentionSweepIntegrationTests : IDisposable
     }
 
     private async Task InsertWorkItem(
-        Guid id, string? projectId, WorkItemStatus status, DateTimeOffset? completedAt)
+        Guid id, Guid? projectId, WorkItemStatus status, DateTimeOffset? completedAt)
     {
+        // TODO: [WARNING] No test calls InsertWorkItem with projectId: null. Work items without a project
+        // are valid (FK is nullable), but the null path is never exercised. If the FK constraint were
+        // accidentally changed to NOT NULL, a null-projectId insert would fail and no test would catch
+        // it. Add at least one retention sweep test using a work item with projectId: null to verify
+        // the nullable FK column and ensure null-project items are swept correctly.
         await using var db = await _dbFactory.CreateDbContextAsync();
+        // The FK constraint requires a matching Projects row when ProjectId is non-null.
+        if (projectId.HasValue && !await db.Projects.AnyAsync(p => p.Id == projectId.Value))
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = projectId.Value,
+                Name = $"Test Project {projectId.Value}",
+                Enabled = true,
+                TemplateIds = []
+            });
+        }
         db.WorkItems.Add(new WorkItemEntity
         {
             Id = id,
