@@ -881,7 +881,9 @@ public static partial class PromptBuilder
 
     /// <summary>
     /// Builds a prompt that asks the agent to produce a structured PR description
-    /// summarizing what changed and why.
+    /// summarizing what changed and why. The agent writes the description to a workspace
+    /// file (<see cref="AgentWorkspacePaths.PrDescriptionFilePath"/>) so that raw stdout
+    /// tool-invocation noise is not included in the PR body.
     /// </summary>
     public static string BuildPrDescriptionPrompt(PipelineRun run)
     {
@@ -890,9 +892,7 @@ public static partial class PromptBuilder
         var sb = new StringBuilder();
         sb.AppendLine("## Generate a Pull Request Description");
         sb.AppendLine();
-        sb.AppendLine("Write a structured summary of the changes you made. Output ONLY the markdown below — no file writes, no code changes.");
-        sb.AppendLine();
-        sb.AppendLine("Use this format:");
+        sb.AppendLine("Write a structured summary of the changes you made using this format:");
         sb.AppendLine();
         sb.AppendLine("### Summary");
         sb.AppendLine("2-3 sentences explaining what was done and why.");
@@ -909,6 +909,8 @@ public static partial class PromptBuilder
         sb.AppendLine("---");
         sb.AppendLine();
         sb.AppendLine($"**Issue:** #{run.IssueIdentifier} — {run.IssueTitle}");
+        sb.AppendLine();
+        sb.AppendLine($"Write the description to `{AgentWorkspacePaths.PrDescriptionFilePath}` in the workspace. Do NOT print it to stdout — only write it to that file.");
 
         return sb.ToString().TrimEnd();
     }
