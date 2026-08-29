@@ -156,8 +156,9 @@ public class WorkItemMetricsBackgroundServiceTests : IDisposable
         //    then can be flipped to throw to trigger the error-reset path.
         //    Both _dbFactory (used for seeding above) and SwitchableDbContextFactory share the same
         //    in-memory database via _dbOptions, so the seeded WorkItem is visible to 'switchable'.
+        //    Use a short poll interval so the error-reset path is exercised quickly in CI.
         var switchable = new SwitchableDbContextFactory(_dbOptions);
-        var service = new WorkItemMetricsBackgroundService(switchable);
+        var service = new WorkItemMetricsBackgroundService(switchable, pollInterval: TimeSpan.FromMilliseconds(200));
         using var cts = new CancellationTokenSource();
 
         await service.StartAsync(cts.Token);
@@ -179,8 +180,8 @@ public class WorkItemMetricsBackgroundServiceTests : IDisposable
         switchable.ShouldThrow = true;
 
         // 5. Poll until measurements are empty — proves the service reset its cache on error.
-        //    Allow up to 15s: the PeriodicTimer fires every 10s, plus execution margin.
-        deadline = DateTime.UtcNow.AddSeconds(15);
+        //    With a 200ms poll interval, the next tick fires within ~200ms; allow 5s for CI margin.
+        deadline = DateTime.UtcNow.AddSeconds(5);
         while (DateTime.UtcNow < deadline)
         {
             _measurements.Clear();

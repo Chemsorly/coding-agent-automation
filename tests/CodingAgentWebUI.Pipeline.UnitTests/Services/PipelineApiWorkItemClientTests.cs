@@ -45,7 +45,8 @@ public sealed class PipelineApiWorkItemClientTests
         TaskType = WorkItemTaskType.Implementation,
         CreatedAt = DateTimeOffset.UtcNow,
         AgentSelector = "kiro",
-        RetryCount = 0
+        RetryCount = 0,
+        TimeoutSeconds = 0
     };
 
     // ── GetPendingAsync ───────────────────────────────────────────────────

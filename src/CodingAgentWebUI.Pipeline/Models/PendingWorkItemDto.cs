@@ -15,6 +15,13 @@ public sealed record PendingWorkItemDto
     public required string AgentSelector { get; init; }
     public required int RetryCount { get; init; }
 
+    /// <summary>
+    /// Per-item software-level timeout in seconds. Used by the Job Controller to compute
+    /// <c>activeDeadlineSeconds</c> on the K8s Job: <c>Max(TimeoutSeconds, agentJobTimeoutSeconds) + 60</c>.
+    /// Populated from <c>WorkItemEntity.TimeoutSeconds</c> by the pending-items API endpoint.
+    /// </summary>
+    public required int TimeoutSeconds { get; init; }
+
     // ── Display fields for the Agent Monitoring Job Queue UI ──────────────
     // Populated by the API from the Payload JSONB column and the ProjectId column.
     // The Job Controller claim path never reads these fields; they are null-safe additions.

@@ -80,9 +80,6 @@ internal sealed class WriteSteeringStep : IPipelineStep
             written.Add("repo");
         }
 
-        _logger.Information("Pipeline {RunId} wrote steering files ({Sources}) to .kiro/steering/ ({ProjectLength} + {RepoLength} chars)",
-            context.Run.RunId, string.Join("+", written),
-            _job.ProjectSteeringContent?.Length ?? 0, _job.RepoSteeringContent?.Length ?? 0);
         context.Callbacks.EmitOutputLine($"📋 Wrote pipeline steering ({string.Join("+", written)}) to .kiro/steering/");
     }
 
@@ -103,8 +100,6 @@ internal sealed class WriteSteeringStep : IPipelineStep
             : block + "\n" + existingContent;
 
         File.WriteAllText(agentsPath, combined);
-        _logger.Information("Pipeline {RunId} wrote steering to AGENTS.md ({ProjectLength} + {RepoLength} chars)",
-            context.Run.RunId, _job.ProjectSteeringContent?.Length ?? 0, _job.RepoSteeringContent?.Length ?? 0);
         context.Callbacks.EmitOutputLine("📋 Wrote pipeline steering to AGENTS.md");
     }
 

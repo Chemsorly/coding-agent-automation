@@ -22,9 +22,6 @@ public sealed class DetectReworkStep : IPipelineStep
                 {
                     await context.RepoProvider.ClosePullRequestAsync(pr.Number, ct);
                     context.Callbacks.EmitOutputLine($"🗑️ Closed stale draft PR #{pr.Number}");
-                    context.Logger.Information(
-                        "Pipeline {RunId} closed stale draft PR #{PrNumber} for issue {IssueIdentifier}",
-                        context.Run.RunId, pr.Number, context.Run.IssueIdentifier);
                 }
 
                 // TODO: This relies on GetAgentPullRequestsAsync filtering by open state at the provider level. If a future provider returns non-open PRs, add an explicit guard here to verify the candidate is still open before entering rework mode.
@@ -38,9 +35,6 @@ public sealed class DetectReworkStep : IPipelineStep
                 {
                     context.Run.LinkedPullRequest = candidate;
                     context.Callbacks.EmitOutputLine($"🔄 Rework mode: updating existing PR #{candidate.Number}");
-                    context.Logger.Information(
-                        "Pipeline {RunId} detected existing agent PR #{PrNumber} for issue {IssueIdentifier}, entering rework mode",
-                        context.Run.RunId, candidate.Number, context.Run.IssueIdentifier);
                 }
             }
         }

@@ -149,7 +149,6 @@ public partial class QualityGateExecutor
         {
             if (skipCiIfNoChanges)
             {
-                _logger.Information("Pipeline {RunId} no changes after cleanup, skipping external CI (already validated)", run.RunId);
                 callbacks.EmitOutputLine("✅ External CI skipped — no changes since last CI pass");
                 return true;
             }

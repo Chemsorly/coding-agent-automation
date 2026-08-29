@@ -18,14 +18,23 @@ public sealed class WorkItemMetricsBackgroundService : BackgroundService
     private static readonly ILogger Log = Serilog.Log.ForContext<WorkItemMetricsBackgroundService>();
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
+    private readonly TimeSpan _pollInterval;
 
     private IEnumerable<Measurement<long>> _cachedMeasurements = [];
 
-    public WorkItemMetricsBackgroundService(IDbContextFactory<PipelineDbContext> dbFactory)
+    /// <param name="dbFactory">Factory used to open DB connections on each poll tick.</param>
+    /// <param name="pollInterval">
+    ///   How often to poll. Defaults to 10 seconds in production.
+    ///   Inject a shorter value in tests to avoid multi-second waits.
+    /// </param>
+    public WorkItemMetricsBackgroundService(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        TimeSpan? pollInterval = null)
     {
         // TODO: Add ArgumentNullException.ThrowIfNull(dbFactory) to fail fast on DI misconfiguration
         // instead of deferring failure to the first ExecuteAsync tick.
         _dbFactory = dbFactory;
+        _pollInterval = pollInterval ?? TimeSpan.FromSeconds(10);
 
         // TODO: RegisterWorkItemsByStatusCallback overwrites the static callback — if a second instance
         // is constructed (e.g., in tests or DI misconfiguration), the previous callback is silently lost.
@@ -35,9 +44,9 @@ public sealed class WorkItemMetricsBackgroundService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        Log.Information("WorkItemMetricsBackgroundService started — polling every 10s");
+        Log.Information("WorkItemMetricsBackgroundService started — polling every {Interval}", _pollInterval);
 
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        using var timer = new PeriodicTimer(_pollInterval);
 
         // Immediate first tick
         await UpdateMeasurementsAsync(stoppingToken);
