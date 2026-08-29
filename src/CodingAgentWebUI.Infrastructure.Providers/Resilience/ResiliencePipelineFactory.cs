@@ -1,5 +1,6 @@
 using System.Net.Sockets;
 using LibGit2Sharp;
+using Microsoft.AspNetCore.SignalR;
 using NGitLab;
 using Octokit;
 using Polly;
@@ -198,7 +199,18 @@ public static class ResiliencePipelineFactory
                     .Handle<TimeoutRejectedException>()
                     .Handle<InvalidOperationException>(ex =>
                         ex.Message.Contains("not in the 'Connected' state", StringComparison.OrdinalIgnoreCase) ||
-                        ex.Message.Contains("connection was stopped", StringComparison.OrdinalIgnoreCase)),
+                        ex.Message.Contains("connection was stopped", StringComparison.OrdinalIgnoreCase))
+                    .Handle<HubException>(ex =>
+                        // TODO: "is not assigned to agent" is a substring of the permanent job-mismatch
+                        // message "Job X is not assigned to agent Y" (thrown by GuardActiveJob when an
+                        // agent tries to claim a job it doesn't own). Retrying a permanent mismatch wastes
+                        // DefaultMaxRetryAttempts backoff cycles before surfacing the real error, which
+                        // contradicts the stated design intent of only covering transient reconnect windows.
+                        // Consider narrowing this to only the "Agent not registered" transient case, or
+                        // document that retrying permanent job-mismatch errors is an accepted trade-off.
+                        // (WARNING — Correctness Review / .NET Specialist)
+                        ex.Message.Contains("is not assigned to agent", StringComparison.OrdinalIgnoreCase) ||
+                        ex.Message.Contains("Agent not registered", StringComparison.OrdinalIgnoreCase)),
                 OnRetry = args =>
                 {
                     RecordRetryEvent(args, logger, "SignalR", DefaultMaxRetryAttempts);
