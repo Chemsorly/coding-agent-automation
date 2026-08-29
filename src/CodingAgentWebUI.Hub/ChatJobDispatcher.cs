@@ -308,10 +308,10 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 await Task.Delay(500, timeoutCts.Token);
             }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
             // Internal connect timeout
-            _logger.Warning(
+            _logger.Warning(ex,
                 "ChatJobDispatcher: chat pod for {AgentSelector} did not connect within {TimeoutSeconds}s — cleaning up {JobName}",
                 normalized, _options.ChatPodConnectTimeoutSeconds, jobName);
 
@@ -537,7 +537,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.Warning(
+            _logger.Warning(ex,
                 "ChatJobDispatcher: transient ReadJobAsync failure for {JobName} (will retry): {ErrorMessage}",
                 jobName, ex.Message);
             return (null, true);
@@ -763,7 +763,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.Warning(
+            _logger.Warning(ex,
                 "ChatJobDispatcher: CancelChat to agent {AgentId} failed (will await watcher): {ErrorMessage}",
                 agentId, ex.Message);
         }
