@@ -198,7 +198,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         // Use a valid GUID as project ID — Projects.Id is UUID in the DB schema,
         // and DispatchOrchestrationService uses Guid.TryParse which silently returns
         // null for non-GUID strings, causing ProjectId to be null on the work item.
-        const string secretsProjectId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+        const string secretsProjectId = "11111111-2222-3333-4444-555555555555";
 
         // Arrange: seed project with secrets
         var projectWithSecrets = new PipelineProject
