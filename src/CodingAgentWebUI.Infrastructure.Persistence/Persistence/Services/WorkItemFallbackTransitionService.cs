@@ -10,8 +10,9 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Services;
 ///   <item><description>Direct transition — sets CompletedAt, ErrorMessage, FailureReason.</description></item>
 ///   <item><description>Two-step via Running — Dispatched→Running→terminal, for any terminal status
 ///   (Succeeded, Cancelled, or Failed).</description></item>
-///   <item><description>Infrastructure-failure recovery — bypasses terminal state for items stuck
-///   in Failed with <c>FailureReason.InfrastructureFailure</c>.</description></item>
+///   <item><description>Race-induced failure recovery — bypasses terminal state for items stuck
+///   in Failed with <c>FailureReason.InfrastructureFailure</c> (SignalR delivery timeout) or
+///   <c>FailureReason.Timeout</c> (ReconciliationLoop timeout race where agent completed late).</description></item>
 /// </list>
 /// This service is a singleton — it contains no per-request state and wraps
 /// <see cref="WorkItemTransitionService"/>, which is also singleton.
@@ -145,7 +146,7 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         if (recovered)
         {
             _logger.LogWarning(
-                "WorkItem {WorkItemId} recovered from infrastructure-failure Failed to {Status}",
+                "WorkItem {WorkItemId} recovered from race-induced Failed to {Status}",
                 workItemId, status);
         }
 
