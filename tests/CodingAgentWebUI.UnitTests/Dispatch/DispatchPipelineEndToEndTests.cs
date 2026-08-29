@@ -76,7 +76,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
     private static readonly PipelineProject TestProject = new()
     {
-        Id = "proj-1",
+        Id = "11110000-0000-0000-0000-000000000001",
         Name = "TestProject",
         Enabled = true
     };

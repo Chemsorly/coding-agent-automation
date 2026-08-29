@@ -41,8 +41,8 @@ internal sealed class ApiBackedPendingWorkQuery : IPendingWorkQuery
             // (System.Text.Json does not enforce `required` at runtime; missing keys produce null).
             // PendingJob.InitiatedBy is required string, so we fall back to "" for legacy/edge-case items.
             InitiatedBy = item.InitiatedBy ?? "",
-            Project = (!string.IsNullOrEmpty(item.ProjectName) || !string.IsNullOrEmpty(item.ProjectId))
-                ? new PipelineProject { Id = item.ProjectId ?? "", Name = item.ProjectName ?? item.ProjectId ?? "" }
+            Project = (!string.IsNullOrEmpty(item.ProjectName) || item.ProjectId.HasValue)
+                ? new PipelineProject { Id = item.ProjectId?.ToString() ?? "", Name = item.ProjectName ?? item.ProjectId?.ToString() ?? "" }
                 : null,
             RequiredLabels = item.AgentSelector
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),

@@ -17,7 +17,7 @@ internal sealed record PendingWorkItemProjection
     public required DateTimeOffset CreatedAt { get; init; }
     public required int TimeoutSeconds { get; init; }
     public WorkItemTaskType TaskType { get; init; }
-    public string? ProjectId { get; init; }
+    public Guid? ProjectId { get; init; }
     public string? IssueIdentifier { get; init; }
     public string? IssueProviderConfigId { get; init; }
 }
