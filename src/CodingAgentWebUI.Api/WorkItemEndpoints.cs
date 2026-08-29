@@ -953,7 +953,7 @@ public static class WorkItemEndpoints
         }
     }
 
-    private static bool IsUniqueViolation(Exception ex)
+    internal static bool IsUniqueViolation(Exception ex)
     {
         // Postgres path: DbUpdateException wrapping a PostgresException with SQLSTATE 23505
         if (ex is DbUpdateException { InnerException: PostgresException pg })
