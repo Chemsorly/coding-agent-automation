@@ -213,6 +213,138 @@ public class WorkItemTransitionServiceTests
         result.Should().BeFalse();
     }
 
+    // ── TryRecoverFromInfrastructureFailureAsync — Timeout reason (Issue #2146) ─
+
+    [Fact]
+    public async Task TryRecoverFromInfrastructureFailure_WithTimeoutReason_Succeeds()
+    {
+        // Arrange: WorkItem in Failed/Timeout state (set by ReconciliationLoop.EnforceTimeoutsAsync)
+        var workItemId = Guid.NewGuid();
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#200",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Failed,
+                FailureReason = FailureReason.Timeout,
+                ErrorMessage = "Job timed out after 3600s",
+                CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                CreatedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new ConcurrencyConflictDbContextFactory(dbOptions, throwOnSaveCallNumbers: []);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        // Act
+        var result = await service.TryRecoverFromInfrastructureFailureAsync(
+            workItemId, WorkItemStatus.Succeeded);
+
+        // Assert
+        result.Should().BeTrue("Failed/Timeout should be recoverable");
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Succeeded);
+            item.CompletedAt.Should().NotBeNull("BuildMutationAction must set CompletedAt on recovery");
+        }
+    }
+
+    [Fact]
+    public async Task TryRecoverFromInfrastructureFailure_WithAgentErrorReason_ReturnsFalse()
+    {
+        // Arrange: WorkItem in Failed/AgentError state — must NOT be recoverable
+        var workItemId = Guid.NewGuid();
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#201",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Failed,
+                FailureReason = FailureReason.AgentError,
+                ErrorMessage = "Agent reported an error",
+                CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                CreatedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new ConcurrencyConflictDbContextFactory(dbOptions, throwOnSaveCallNumbers: []);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        // Act
+        var result = await service.TryRecoverFromInfrastructureFailureAsync(
+            workItemId, WorkItemStatus.Succeeded);
+
+        // Assert
+        result.Should().BeFalse("AgentError must not be recoverable");
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Failed);
+            item.FailureReason.Should().Be(FailureReason.AgentError);
+        }
+    }
+
+    [Fact]
+    public async Task TryRecoverFromInfrastructureFailure_WithQualityGateExhaustedReason_ReturnsFalse()
+    {
+        // Acceptance criteria: QualityGateExhausted failures must NOT be recoverable.
+        // Negative test at the WorkItemTransitionService layer to catch guard regressions
+        // (e.g., accidentally including QualityGateExhausted in the allowlist) before
+        // they propagate to higher layers.
+        var workItemId = Guid.NewGuid();
+        var dbOptions = CreateInMemoryDbOptions();
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            db.Database.EnsureCreated();
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#202",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Failed,
+                FailureReason = FailureReason.QualityGateExhausted,
+                ErrorMessage = "Quality gate retries exhausted",
+                CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                CreatedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var factory = new ConcurrencyConflictDbContextFactory(dbOptions, throwOnSaveCallNumbers: []);
+        var service = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        var result = await service.TryRecoverFromInfrastructureFailureAsync(
+            workItemId, WorkItemStatus.Succeeded);
+
+        result.Should().BeFalse("QualityGateExhausted must not be recoverable");
+
+        await using (var db = new InMemoryPipelineDbContext(dbOptions))
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Failed);
+            item.FailureReason.Should().Be(FailureReason.QualityGateExhausted);
+        }
+    }
+
     // ── Test Infrastructure ─────────────────────────────────────────────
 
     private static DbContextOptions<PipelineDbContext> CreateInMemoryDbOptions()

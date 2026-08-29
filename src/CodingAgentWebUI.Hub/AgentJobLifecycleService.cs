@@ -237,8 +237,9 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     {
         // Run not in memory — this happens when RevertFailedDistributionAsync already cleaned up
         // after a delivery timeout, but the agent actually received and completed the job.
-        // Attempt direct DB recovery: if the WorkItem is in Failed with InfrastructureFailure reason,
-        // transition it to the appropriate terminal status.
+        // Attempt direct DB recovery: if the WorkItem is in Failed with InfrastructureFailure or
+        // Timeout reason (both represent "server gave up waiting, agent may still succeed"), transition
+        // it to the appropriate terminal status.
         var (workItemStatus, recoveryErrorMsg, recoveryFailureEnum) =
             CompletionOutcomeResolver.Resolve(payload.FinalStep, payload.FailureReason, payload.FailureCategory,
                 "Agent reported failure (run not in memory)");
