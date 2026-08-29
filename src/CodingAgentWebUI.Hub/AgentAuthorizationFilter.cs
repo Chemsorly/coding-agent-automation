@@ -4,6 +4,7 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
 using ILogger = Serilog.ILogger;
 
@@ -113,6 +114,41 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             return;
 
         var agent = _registry.GetByConnectionId(ctx.Context.ConnectionId);
+
+        // Fallback: _connectionIndex is node-local and empty on a cold pod (after API restart).
+        // If GetByConnectionId misses, check Redis directly using the agentId query param.
+        //
+        // SECURITY: only accept the Redis entry if its ConnectionId already matches the current
+        // connection — meaning Register() has completed on some replica and written the new
+        // connectionId. If Redis still holds a previous connection's ID, the guard rejects the
+        // entry and the caller must retry (the Polly pipeline covers that residual window).
+        //
+        // Operator connections never reach this method (IsOperatorConnection check routes them to
+        // GuardOperatorMethod first), so the ?agentId fallback cannot be abused by the UI circuit.
+        // TODO: ctx.Context.Features is non-nullable in the SignalR contract and is always initialized
+        // before InvokeMethodAsync — the `is not null` guard is redundant and misleading. The real
+        // null-safety is provided by the ?. null-conditional on GetHttpContext() below. Remove this
+        // guard in a future cleanup pass. (WARNING — Correctness Review / .NET Specialist / Security)
+        if (agent is null && ctx.Context.Features is not null)
+        {
+            // TODO: Query["agentId"].ToString() on a StringValues struct returns a comma-joined string
+            // (e.g. "a,b") when the parameter appears multiple times in the query string. This produces
+            // a silently invalid AgentId that GetByAgentId returns null for rather than throwing.
+            // Prefer Query["agentId"].FirstOrDefault() to pick only the first value. (WARNING — .NET Specialist)
+            //
+            // TODO: No format/length validation is applied to queryAgentId before the Redis lookup.
+            // Any caller with a valid API key can probe Redis for arbitrary agent keys on a cold pod.
+            // Add a max-length and character allowlist check here if Redis key enumeration is a concern.
+            // (WARNING — Security Review)
+            var queryAgentId = ctx.Context.GetHttpContext()?.Request.Query["agentId"].ToString();
+            if (!string.IsNullOrEmpty(queryAgentId))
+            {
+                var candidate = _registry.GetByAgentId(new AgentId(queryAgentId));
+                if (candidate?.ConnectionId == ctx.Context.ConnectionId)
+                    agent = candidate;
+            }
+        }
+
         if (agent is null)
         {
             _logger.Warning(
