@@ -389,11 +389,6 @@ public class RetentionSweepIntegrationTests : IDisposable
     private async Task InsertWorkItem(
         Guid id, Guid? projectId, WorkItemStatus status, DateTimeOffset? completedAt)
     {
-        // TODO: [WARNING] No test calls InsertWorkItem with projectId: null. Work items without a project
-        // are valid (FK is nullable), but the null path is never exercised. If the FK constraint were
-        // accidentally changed to NOT NULL, a null-projectId insert would fail and no test would catch
-        // it. Add at least one retention sweep test using a work item with projectId: null to verify
-        // the nullable FK column and ensure null-project items are swept correctly.
         await using var db = await _dbFactory.CreateDbContextAsync();
         // The FK constraint requires a matching Projects row when ProjectId is non-null.
         if (projectId.HasValue && !await db.Projects.AnyAsync(p => p.Id == projectId.Value))

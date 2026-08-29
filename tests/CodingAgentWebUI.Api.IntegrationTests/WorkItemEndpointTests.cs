@@ -374,11 +374,15 @@ public sealed class WorkItemEndpointTests
 
         using (var db = _factory.CreateDbContext())
         {
-            // TODO: [WARNING] This test inserts a WorkItemEntity with ProjectId set but does NOT seed a
-            // matching Projects row first. With the FK constraint added by the migration, SaveChanges()
-            // will throw a foreign key violation if the integration-test database enforces FKs (it uses
-            // the same schema as production via dotnet ef database update). Fix: seed a ProjectEntity
-            // with Id = new Guid("12300000-0000-0000-0000-000000000001") before adding the WorkItemEntity.
+            // Seed the Project row first; the FK constraint (added by the migration) requires a
+            // matching Projects row when ProjectId is non-null.
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = new Guid("12300000-0000-0000-0000-000000000001"),
+                Name = "Default",
+                Enabled = true,
+                TemplateIds = []
+            });
             db.WorkItems.Add(new WorkItemEntity
             {
                 Id = workItemId,

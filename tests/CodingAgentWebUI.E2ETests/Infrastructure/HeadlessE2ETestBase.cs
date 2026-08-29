@@ -151,7 +151,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         string issueIdentifier,
         string agentSelector = "kiro,dotnet",
         int timeoutSeconds = 3600,
-        string? projectId = null)
+        Guid? projectId = null)
     {
         var workItemId = Guid.NewGuid();
         await using var db = Fixture.DbContextFactory.CreateDbContext();
@@ -166,12 +166,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
             AgentSelector = agentSelector,
             CreatedAt = DateTimeOffset.UtcNow,
             TimeoutSeconds = timeoutSeconds,
-            // TODO: [WARNING] Guid.Parse will throw FormatException if projectId is not a valid UUID.
-            // Current callers only pass null or WellKnownIds.DefaultProjectId (both valid), but the
-            // method's public string? signature accepts arbitrary values. Consider changing the parameter
-            // to Guid? to match the entity type, or using Guid.TryParse with a fallback and a clear
-            // error message to avoid confusing stack traces during test authoring.
-            ProjectId = Guid.Parse(projectId ?? WellKnownIds.DefaultProjectId)
+            ProjectId = projectId ?? Guid.Parse(WellKnownIds.DefaultProjectId)
         });
         await db.SaveChangesAsync();
         return workItemId;

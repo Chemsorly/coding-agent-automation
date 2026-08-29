@@ -54,14 +54,13 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Persistence.Migrations
                 principalColumn: "Id",
                 onDelete: ReferentialAction.SetNull);
 
-            // TODO: This migration is missing a CreateIndex call for IX_WorkItems_ProjectId (the simple
-            // single-column FK index). The EF model snapshot and migration designer both declare
-            // b.HasIndex("ProjectId"), but this Up() method never emits CreateIndex for it.
-            // The raw SQL ALTER COLUMN bypassed EF's automatic FK-index generation.
-            // Impact: (1) FK-based queries and ON DELETE SET NULL cascades lack index support;
-            // (2) the next `dotnet ef migrations add` run will emit a spurious CreateIndex migration.
-            // Fix: add migrationBuilder.CreateIndex(name: "IX_WorkItems_ProjectId", table: "WorkItems",
-            // column: "ProjectId") here, and a matching DropIndex in Down() before the FK is dropped.
+            // Create the simple single-column FK index declared in the EF model snapshot as
+            // b.HasIndex("ProjectId"). The raw SQL ALTER COLUMN bypassed EF's automatic index
+            // generation, so this CreateIndex is required to keep the schema in sync with the model.
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkItems_ProjectId",
+                table: "WorkItems",
+                column: "ProjectId");
         }
 
         /// <inheritdoc />
@@ -70,6 +69,11 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Persistence.Migrations
             // Drop the FK constraint first
             migrationBuilder.DropForeignKey(
                 name: "FK_WorkItems_Projects_ProjectId",
+                table: "WorkItems");
+
+            // Drop the single-column FK index before reverting the column type
+            migrationBuilder.DropIndex(
+                name: "IX_WorkItems_ProjectId",
                 table: "WorkItems");
 
             // Drop the retention index before reverting the column type

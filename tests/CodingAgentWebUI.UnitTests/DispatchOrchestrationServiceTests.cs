@@ -447,17 +447,64 @@ public class DispatchOrchestrationServiceTests
         request.InitiatedBy.Should().Be("test-user");
         request.TaskType.Should().Be(WorkItemTaskType.Implementation);
         request.RunType.Should().Be(PipelineRunType.Implementation);
-        // TODO: [WARNING] This test only exercises the happy path where Project.Id is already a valid
-        // UUID string. The production code uses Guid.TryParse with a silent null fallback — if
-        // Project.Id is a non-UUID string, ProjectId is silently set to null with no error or log.
-        // Add a test case where Project.Id is a non-UUID string (e.g. "proj-1") to verify either
-        // (a) a warning is logged, or (b) the behaviour is explicitly accepted as a known tradeoff.
         request.ProjectId.Should().Be(new Guid("11110000-0000-0000-0000-000000000001"));
         request.ProjectName.Should().Be("TestProject");
         request.ResolvedProfileId.Should().Be("profile-1");
         request.IssueDetail.Should().NotBeNull();
         request.ProviderConfigs.Should().NotBeNullOrEmpty();
         request.PipelineConfiguration.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task PrepareDistributionRequestAsync_NonUuidProjectId_SetsProjectIdNull_AndLogsWarning()
+    {
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        // Use a project whose Id is a legacy non-UUID string
+        var legacyProject = new PipelineProject
+        {
+            Id = "proj-legacy",
+            Name = "LegacyProject",
+            Enabled = true
+        };
+
+        var service = CreateService();
+        DispatchOrchestrationService iface = service;
+
+        var request = await iface.PrepareDistributionRequestAsync(
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "test-user",
+                Project = legacyProject,
+                TaskType = WorkItemTaskType.Implementation,
+                RunType = PipelineRunType.Implementation
+            },
+            CancellationToken.None);
+
+        request.Should().NotBeNull();
+        // Non-UUID Project.Id must be surfaced as null rather than silently lost
+        request!.ProjectId.Should().BeNull("a non-UUID project ID cannot be stored as Guid and is explicitly nulled");
+        request.ProjectName.Should().Be("LegacyProject", "ProjectName is stored as string and always preserved");
+        // A warning must be logged so operators can detect misconfigured project stores
+        _mockLogger.Verify(
+            l => l.Warning(It.IsAny<string>(), It.Is<string>(v => v == "proj-legacy")),
+            Times.Once);
     }
 
     [Fact]

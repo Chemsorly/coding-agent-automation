@@ -263,7 +263,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 requiredLabels, request.Project, request.RunType),
             ct);
 
-        return result is null ? null : MapToRequest(result, request.TaskType, request.RunType);
+        return result is null ? null : MapToRequest(result, request.TaskType, request.RunType, _logger);
     }
 
     /// <inheritdoc />
@@ -290,7 +290,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         if (result is null) return null;
 
-        var request = MapToRequest(result, WorkItemTaskType.Review, PipelineRunType.Review);
+        var request = MapToRequest(result, WorkItemTaskType.Review, PipelineRunType.Review, _logger);
         return request with
         {
             LinkedPullRequest = new LinkedPullRequest
@@ -325,7 +325,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         if (result is null) return null;
 
-        var jobRequest = MapToRequest(result, WorkItemTaskType.Decomposition, request.PhaseType);
+        var jobRequest = MapToRequest(result, WorkItemTaskType.Decomposition, request.PhaseType, _logger);
         return jobRequest with
         {
             DecompositionSource = request.DecompositionSource,
@@ -399,7 +399,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private static JobDistributionRequest MapToRequest(
         DispatchPreparationResult result,
         WorkItemTaskType taskType,
-        PipelineRunType runType)
+        PipelineRunType runType,
+        ILogger logger)
     {
         var agentSelector = string.Join(",",
             (result.ResolvedProfile.MatchLabels ?? []).OrderBy(l => l, StringComparer.Ordinal));
@@ -415,12 +416,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             TaskType = taskType,
             AgentSelector = agentSelector,
             TimeoutSeconds = (int)result.PipelineConfiguration.AgentTimeout.TotalSeconds,
-            // TODO: [WARNING] If result.Project.Id is not a valid UUID string, TryParse silently sets
-            // ProjectId = null, losing the project association with no log or error. PipelineProject.Id
-            // is documented as GUID-generated, but a misconfigured/legacy project store could supply a
-            // non-UUID value and silently drop the project link. Consider logging a warning when
-            // TryParse fails so operators can detect and fix data inconsistencies.
-            ProjectId = Guid.TryParse(result.Project.Id, out var projectGuid) ? projectGuid : null,
+            ProjectId = ParseProjectId(result.Project.Id, logger),
             ProjectName = result.Project.Name,
             RunType = runType,
             IssueDetail = result.IssueDetail,
@@ -527,5 +523,21 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             merged[ps.Name] = ps;
 
         return merged.Values.ToList();
+    }
+
+    /// <summary>
+    /// Parses a project ID string to <see cref="Guid"/>. Returns <c>null</c> and logs a warning
+    /// when the value is not a valid UUID so operators can detect misconfigured or legacy project stores.
+    /// </summary>
+    private static Guid? ParseProjectId(string? projectId, ILogger logger)
+    {
+        if (projectId is null)
+            return null;
+
+        if (Guid.TryParse(projectId, out var guid))
+            return guid;
+
+        logger.Warning("Project.Id {ProjectId} is not a valid UUID — ProjectId will be set to null on the dispatch request. Check the project configuration for data inconsistencies.", projectId);
+        return null;
     }
 }
