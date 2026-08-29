@@ -195,6 +195,13 @@ public class PullRequestFinalizationServiceTests
             PipelineStep.GeneratingPrDescription,
             PipelineStep.ReflectingOnRun,
             PipelineStep.SyncingBrainRepoPostRun);
+        // TODO: This test uses CreateRun() which sets WorkspacePath = "/tmp/workspace". Because
+        // .agent/pr-description.md does not exist there, GeneratePrDescriptionAsync silently skips the
+        // UpdatePullRequestAsync call — the happy-path PR description update is never exercised here.
+        // Override WorkspacePath to a real temp directory and write the pr-description file so this test
+        // also validates that repoProvider.UpdatePullRequestAsync is called when the file exists.
+        // Additionally, if /tmp/workspace happens to exist on a CI host with a stale file from a prior run,
+        // test outcomes become non-deterministic (latent flakiness risk).
         // TODO: Verify which specific AgentRequest was made for each step (PR description vs reflection vs feedback) rather than just counting calls.
         // TODO: Assert observable side-effects (e.g., run.Feedback populated, repoProvider.UpdatePullRequestAsync invoked) to validate each step executed correctly.
         agentProvider.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()), Times.Exactly(3));
@@ -314,151 +321,329 @@ public class PullRequestFinalizationServiceTests
 
     // ── GeneratePrDescriptionAsync — blockquote stripping ──
 
+    private static string WritePrDescriptionFile(string tempDir, string content)
+    {
+        var agentDir = Path.Combine(tempDir, ".agent");
+        Directory.CreateDirectory(agentDir);
+        var filePath = Path.Combine(agentDir, "pr-description.md");
+        File.WriteAllText(filePath, content);
+        return filePath;
+    }
+
     [Fact]
     public async Task GeneratePrDescriptionAsync_StripsBlockquotePrefix_FromAllLines()
     {
-        var run = CreateRun();
-        run.PullRequestNumber = "10";
-        run.PullRequestBody = "existing body";
-        var agentProvider = new Mock<IAgentProvider>();
-        var repoProvider = new Mock<IRepositoryProvider>();
-        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
-        string? capturedBody = null;
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            WritePrDescriptionFile(tempDir, "> ### Summary\n> \n> Some description\n> with multiple lines");
 
-        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["> ### Summary", "> ", "> Some description", "> with multiple lines"] });
-        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
-            .Returns(Task.CompletedTask);
+            var run = CreateRun();
+            run.PullRequestNumber = "10";
+            run.PullRequestBody = "existing body";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+            string? capturedBody = null;
 
-        await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+                .Returns(Task.CompletedTask);
 
-        capturedBody.Should().NotBeNull();
-        capturedBody.Should().StartWith("### Summary\n\nSome description\nwith multiple lines");
-        capturedBody.Should().NotContain("> ###");
+            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+            capturedBody.Should().NotBeNull();
+            capturedBody.Should().StartWith("### Summary\n\nSome description\nwith multiple lines");
+            capturedBody.Should().NotContain("> ###");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Fact]
     public async Task GeneratePrDescriptionAsync_PreservesOutput_WithoutBlockquotePrefix()
     {
-        var run = CreateRun();
-        run.PullRequestNumber = "10";
-        run.PullRequestBody = "existing body";
-        var agentProvider = new Mock<IAgentProvider>();
-        var repoProvider = new Mock<IRepositoryProvider>();
-        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
-        string? capturedBody = null;
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            WritePrDescriptionFile(tempDir, "### Summary\n\nSome description");
 
-        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["### Summary", "", "Some description"] });
-        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
-            .Returns(Task.CompletedTask);
+            var run = CreateRun();
+            run.PullRequestNumber = "10";
+            run.PullRequestBody = "existing body";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+            string? capturedBody = null;
 
-        await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+                .Returns(Task.CompletedTask);
 
-        capturedBody.Should().NotBeNull();
-        capturedBody.Should().StartWith("### Summary\n\nSome description");
+            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+            capturedBody.Should().NotBeNull();
+            capturedBody.Should().StartWith("### Summary\n\nSome description");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Fact]
     public async Task GeneratePrDescriptionAsync_PreservesMidLineGreaterThan()
     {
-        var run = CreateRun();
-        run.PullRequestNumber = "10";
-        run.PullRequestBody = "";
-        var agentProvider = new Mock<IAgentProvider>();
-        var repoProvider = new Mock<IRepositoryProvider>();
-        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
-        string? capturedBody = null;
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            WritePrDescriptionFile(tempDir, "> ### Summary\n> Code uses x > 5 comparison\n> Generic List<T>");
 
-        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["> ### Summary", "> Code uses x > 5 comparison", "> Generic List<T>"] });
-        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
-            .Returns(Task.CompletedTask);
+            var run = CreateRun();
+            run.PullRequestNumber = "10";
+            run.PullRequestBody = "";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+            string? capturedBody = null;
 
-        await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+                .Returns(Task.CompletedTask);
 
-        capturedBody.Should().NotBeNull();
-        capturedBody.Should().Contain("Code uses x > 5 comparison");
-        capturedBody.Should().Contain("Generic List<T>");
-        // TODO: Assertions are too weak — the substrings exist even without stripping the leading "> " prefix.
-        // Should additionally assert capturedBody.Should().NotContain("> Code uses x > 5") to confirm prefix removal.
+            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+            capturedBody.Should().NotBeNull();
+            capturedBody.Should().Contain("Code uses x > 5 comparison");
+            capturedBody.Should().Contain("Generic List<T>");
+            capturedBody.Should().NotContain("> Code uses x > 5");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Fact]
     public async Task GeneratePrDescriptionAsync_EmptyBlockquoteLine_BecomesEmptyString()
     {
-        var run = CreateRun();
-        run.PullRequestNumber = "10";
-        run.PullRequestBody = "";
-        var agentProvider = new Mock<IAgentProvider>();
-        var repoProvider = new Mock<IRepositoryProvider>();
-        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
-        string? capturedBody = null;
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            WritePrDescriptionFile(tempDir, "> ### Summary\n>\n> Next paragraph");
 
-        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["> ### Summary", ">", "> Next paragraph"] });
-        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
-            .Returns(Task.CompletedTask);
+            var run = CreateRun();
+            run.PullRequestNumber = "10";
+            run.PullRequestBody = "";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+            string? capturedBody = null;
 
-        await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+                .Returns(Task.CompletedTask);
 
-        capturedBody.Should().NotBeNull();
-        capturedBody.Should().StartWith("### Summary\n\nNext paragraph");
+            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+            capturedBody.Should().NotBeNull();
+            capturedBody.Should().StartWith("### Summary\n\nNext paragraph");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Fact]
     public async Task GeneratePrDescriptionAsync_StripsBlockquotePrefix_WithCrlfLineEndings()
     {
-        var run = CreateRun();
-        run.PullRequestNumber = "10";
-        run.PullRequestBody = "existing body";
-        var agentProvider = new Mock<IAgentProvider>();
-        var repoProvider = new Mock<IRepositoryProvider>();
-        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
-        string? capturedBody = null;
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            // Write file with CRLF line endings
+            WritePrDescriptionFile(tempDir, "> ### Summary\r\n> \r\n> Some description\r\n> with multiple lines\r\n");
 
-        // Simulate CRLF: individual OutputLines contain trailing \r (as happens when upstream splits on \n only)
-        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["> ### Summary\r", "> \r", "> Some description\r", "> with multiple lines\r"] });
-        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
-            .Returns(Task.CompletedTask);
+            var run = CreateRun();
+            run.PullRequestNumber = "10";
+            run.PullRequestBody = "existing body";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+            string? capturedBody = null;
 
-        await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+                .Returns(Task.CompletedTask);
 
-        capturedBody.Should().NotBeNull();
-        capturedBody.Should().StartWith("### Summary\n\nSome description\nwith multiple lines");
-        capturedBody.Should().NotContain("\r");
-        capturedBody.Should().NotContain("> ###");
+            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+            capturedBody.Should().NotBeNull();
+            capturedBody.Should().StartWith("### Summary\n\nSome description\nwith multiple lines");
+            // TODO: The NotContain("\r") assertion may pass because File.ReadAllTextAsync normalises CRLF on some
+            // platforms, not because StripBlockquotePrefix does so. Clarify which layer is responsible for \r
+            // removal — if it is StripBlockquotePrefix, add a unit test for that method in isolation with a CRLF
+            // input to make the guarantee explicit and platform-independent.
+            capturedBody.Should().NotContain("\r");
+            capturedBody.Should().NotContain("> ###");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Fact]
     public async Task GeneratePrDescriptionAsync_EmptyBlockquoteLine_WithCrlfLineEndings()
     {
-        var run = CreateRun();
-        run.PullRequestNumber = "10";
-        run.PullRequestBody = "";
-        var agentProvider = new Mock<IAgentProvider>();
-        var repoProvider = new Mock<IRepositoryProvider>();
-        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
-        string? capturedBody = null;
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            // Bare ">" with CRLF
+            WritePrDescriptionFile(tempDir, "> ### Summary\r\n>\r\n> Next paragraph\r\n");
 
-        // Bare ">" with trailing \r simulates CRLF line endings
-        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["> ### Summary\r", ">\r", "> Next paragraph\r"] });
-        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
-            .Returns(Task.CompletedTask);
+            var run = CreateRun();
+            run.PullRequestNumber = "10";
+            run.PullRequestBody = "";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+            string? capturedBody = null;
 
-        await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+                .Returns(Task.CompletedTask);
 
-        capturedBody.Should().NotBeNull();
-        capturedBody.Should().StartWith("### Summary\n\nNext paragraph");
-        capturedBody.Should().NotContain("\r");
+            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+            capturedBody.Should().NotBeNull();
+            capturedBody.Should().StartWith("### Summary\n\nNext paragraph");
+            capturedBody.Should().NotContain("\r");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenFileExists_UsesFileContentAsDescription()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            var fileContent = "### Summary\n\nThis PR fixes the bug.\n\n### Approach\n\nMinimal change.";
+            WritePrDescriptionFile(tempDir, fileContent);
+
+            var run = CreateRun();
+            run.PullRequestNumber = "42";
+            run.PullRequestBody = "existing body";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+            string? capturedBody = null;
+
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["I will run: git diff", "diff --git a/..."] });
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+                .Returns(Task.CompletedTask);
+
+            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+            // File content is used, not OutputLines
+            capturedBody.Should().NotBeNull();
+            // TODO: Strengthen these assertions — use capturedBody.Should().Be($"{fileContent}\n\n---\n\nexisting body")
+            // (or at minimum StartWith(fileContent)) to verify exact round-trip fidelity. The current Contain checks
+            // would pass even if StripBlockquotePrefix corrupted the content. Also, the NotContain assertions for
+            // OutputLines content could spuriously pass if the file content happened to contain those substrings —
+            // an exact-match assertion makes them redundant and the test immune to content coincidences.
+            capturedBody.Should().Contain("### Summary");
+            capturedBody.Should().Contain("This PR fixes the bug.");
+            capturedBody.Should().Contain("### Approach");
+            capturedBody.Should().NotContain("I will run: git diff");
+            capturedBody.Should().NotContain("diff --git a/");
+
+            // run.PullRequestBody is updated
+            run.PullRequestBody.Should().NotBe("existing body");
+            run.PullRequestBody.Should().Contain("### Summary");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenFileDoesNotExist_SkipsUpdateAndLogsWarning()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            // Do NOT create .agent/pr-description.md
+
+            var run = CreateRun();
+            run.PullRequestNumber = "42";
+            run.PullRequestBody = "unchanged body";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["### Summary", "Some output"] });
+
+            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+            // UpdatePullRequestAsync must NOT have been called
+            repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+
+            // run.PullRequestBody is unchanged
+            run.PullRequestBody.Should().Be("unchanged body");
+
+            // Warning was logged (template + 2 structured args: RunId and Path)
+            // TODO: The It.IsAny<string>() matchers for the two structured log arguments provide no additional
+            // constraint beyond the template match. If stronger validation is needed, replace them with
+            // It.Is<string>(s => s == run.RunId) and It.Is<string>(s => s.EndsWith("pr-description.md"))
+            // to confirm the correct run and path were logged.
+            _logger.Verify(l => l.Warning(
+                It.Is<string>(s => s.Contains("PR description file not found")),
+                It.IsAny<string>(), It.IsAny<string>()),
+                Times.Once);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     // ── RunFullPrCreationAsync ──

@@ -62,6 +62,11 @@ public static class AgentWorkspacePaths
     public const string PromptInputFilePath = ".agent/prompt-input.md";
 
     /// <summary>
+    /// The file path (relative to workspace) where the agent writes the PR description markdown.
+    /// </summary>
+    public const string PrDescriptionFilePath = ".agent/pr-description.md";
+
+    /// <summary>
     /// The file path (relative to workspace) where the pipeline writes the diff stat
     /// (file list with line counts) for review agents to triage changes efficiently.
     /// </summary>

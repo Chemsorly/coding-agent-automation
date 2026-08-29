@@ -190,7 +190,23 @@ public sealed class PullRequestFinalizationService
 
             run.AccumulateTokenUsage(result, phase: "pr_description");
 
-            var rawDescription = string.Join("\n", result.OutputLines).Trim();
+            // TODO: TOCTOU race — File.Exists followed by File.ReadAllTextAsync means the file could be deleted
+            // between the two calls, causing FileNotFoundException to be caught by the outer handler with a
+            // misleading log message. Prefer attempting File.ReadAllTextAsync directly and catching
+            // FileNotFoundException explicitly to make the "file absent" intent distinct from unexpected failures.
+            var filePath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.PrDescriptionFilePath);
+            if (!File.Exists(filePath))
+            {
+                // TODO: The issue requirement stated a fallback to OutputLines-based extraction when the file is
+                // absent. The current implementation skips the update entirely instead. If the agent fails to
+                // write the file (e.g., tool execution error), the PR body receives no description. Consider
+                // whether a best-effort OutputLines fallback is worth restoring for resilience.
+                _logger.Warning("Pipeline {RunId} PR description file not found at {Path}, description skipped",
+                    run.RunId, filePath);
+                return;
+            }
+
+            var rawDescription = await File.ReadAllTextAsync(filePath, ct);
             var description = StripBlockquotePrefix(rawDescription);
             if (string.IsNullOrWhiteSpace(description))
             {

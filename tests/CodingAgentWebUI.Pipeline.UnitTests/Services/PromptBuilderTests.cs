@@ -1092,4 +1092,84 @@ public class PromptBuilderTests
         RepoProviderConfigId = "repo-provider",
         StartedAt = DateTime.UtcNow
     };
+
+    #region BuildPrDescriptionPrompt
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsPrDescriptionFilePath()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain(AgentWorkspacePaths.PrDescriptionFilePath);
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_DoesNotContainOldNoFileWritesInstruction()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().NotContain("no file writes, no code changes");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsSummarySection()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("### Summary");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsApproachSection()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("### Approach");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsKeyChangesSection()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("### Key Changes");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsBreakingChangesSection()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("### Breaking Changes");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_InstructsNotToPrintToStdout()
+    {
+        var run = CreatePipelineRun();
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("Do NOT print it to stdout");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_ContainsIssueReference()
+    {
+        var run = CreatePipelineRun(issueId: "77");
+        run.IssueTitle = "Fix the thing";
+        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
+        result.Should().Contain("#77");
+        result.Should().Contain("Fix the thing");
+    }
+
+    [Fact]
+    public void BuildPrDescriptionPrompt_NullRun_Throws()
+    {
+        // TODO: The production method uses ArgumentNullException.ThrowIfNull(run) so this test correctly
+        // asserts ArgumentNullException. If the null guard is ever removed or refactored, this test will
+        // start catching NullReferenceException instead — keep the guard in place.
+        var act = () => PromptBuilder.BuildPrDescriptionPrompt(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    #endregion
 }
