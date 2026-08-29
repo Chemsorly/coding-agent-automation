@@ -355,5 +355,4 @@ public sealed class ConsolidationDispatchLoopTests
     // TODO: Add equal-values edge case test — WhenItemTimeoutEqualsGlobal_K8sJob_ActiveDeadlineSeconds_UsesSharedTimeout
     // where item.TimeoutSeconds == agentJobTimeoutSeconds (e.g. both 7200s) → activeDeadlineSeconds == 7260.
     // This boundary condition confirms that floor and ceiling converge cleanly at the same value.
-    // See review finding: tests/CodingAgentWebUI.JobController.UnitTests/Dispatch/ConsolidationDispatchLoopTests.cs:340
 }
