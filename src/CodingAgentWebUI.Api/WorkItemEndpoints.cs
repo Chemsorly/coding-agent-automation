@@ -353,7 +353,8 @@ public static class WorkItemEndpoints
                 w.AgentSelector,
                 w.RetryCount,
                 w.Payload,
-                w.ProjectId
+                w.ProjectId,
+                w.TimeoutSeconds
             })
             .ToListAsync(ct);
 
@@ -385,6 +386,7 @@ public static class WorkItemEndpoints
                 CreatedAt = w.CreatedAt,
                 AgentSelector = w.AgentSelector,
                 RetryCount = w.RetryCount,
+                TimeoutSeconds = w.TimeoutSeconds,
                 IssueTitle = req?.IssueDetail?.Title,
                 InitiatedBy = req?.InitiatedBy,
                 ProjectName = req?.ProjectName,
