@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
-using DotNet.Testcontainers.Builders;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -47,26 +46,14 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     }
 
     /// <summary>
-    /// Returns early (vacuous pass) when Docker is unavailable in this environment.
-    /// Migration integrity tests require a real PostgreSQL container and can only run where
-    /// Docker is available (e.g., the GitHub Actions <c>migration-integrity</c> job).
-    /// When Docker is absent, the test produces no assertion rather than failing with
-    /// an infrastructure error — the tests are not skipped in the xUnit sense, but they
-    /// are not meaningful either.  The GitHub Actions <c>migration-integrity</c> job
-    /// runs these tests against a real Docker daemon.
-    /// </summary>
-    private bool ShouldSkip() => _fixture.SkipReason is not null;
-
-    /// <summary>
     /// All EF migrations must apply cleanly from scratch against a real Postgres database.
     /// A failure here indicates broken DDL in one of the migration files — typically
     /// Postgres-specific SQL that is only validated at execution time (e.g., USING casts,
     /// index expressions, FK constraint violations on existing data).
     /// </summary>
-    [Fact]
+    [RequiresDockerFact]
     public void AllMigrations_ApplyFromScratch_WithoutError()
     {
-        if (ShouldSkip()) return;
         // The fixture already ran MigrateAsync in InitializeAsync.
         // If migrations failed, the fixture throws and xUnit marks every test in this class
         // as failed (IClassFixture lifecycle — InitializeAsync exception propagates to all tests).
@@ -84,10 +71,9 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     ///   "InvalidOperationException: PendingModelChangesWarning: The model for context
     ///    'PipelineDbContext' has pending changes. Add a new migration before updating the database."
     /// </summary>
-    [Fact]
+    [RequiresDockerFact]
     public async Task AfterMigrations_NoPendingModelChanges()
     {
-        if (ShouldSkip()) return;
         await using var db = _fixture.CreateDbContext();
 
         var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
@@ -110,10 +96,9 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     /// but the corresponding DB update was never run (or vice versa — a migration was applied
     /// to the DB but its file was deleted from the project).
     /// </summary>
-    [Fact]
+    [RequiresDockerFact]
     public async Task AfterMigrations_AppliedMigrations_MatchAssemblyMigrations()
     {
-        if (ShouldSkip()) return;
         await using var db = _fixture.CreateDbContext();
 
         var applied = (await db.Database.GetAppliedMigrationsAsync()).ToList();
@@ -130,10 +115,9 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     /// This is a structural smoke test that validates the most recently modified table
     /// (the one involved in the ProjectId uuid migration that triggered Bug 1).
     /// </summary>
-    [Fact]
+    [RequiresDockerFact]
     public async Task WorkItems_ProjectIdColumn_IsUuidType()
     {
-        if (ShouldSkip()) return;
         await using var conn = _fixture.CreateConnection();
         await conn.OpenAsync();
 
@@ -158,10 +142,9 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     /// This validates that the FK created by WorkItemProjectIdToUuidWithFk is present
     /// and correctly named — a missing FK would silently allow orphaned WorkItems.
     /// </summary>
-    [Fact]
+    [RequiresDockerFact]
     public async Task WorkItems_ForeignKey_ToProjects_Exists()
     {
-        if (ShouldSkip()) return;
         await using var conn = _fixture.CreateConnection();
         await conn.OpenAsync();
 
@@ -191,10 +174,9 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     /// OnModelCreating, causing PendingModelChangesWarning. It was dropped by
     /// 20260829124255_DropSpuriousWorkItemProjectIdIndex.
     /// </summary>
-    [Fact]
+    [RequiresDockerFact]
     public async Task WorkItems_SpuriousSingleColumnProjectIdIndex_DoesNotExist()
     {
-        if (ShouldSkip()) return;
         await using var conn = _fixture.CreateConnection();
         await conn.OpenAsync();
 
@@ -228,20 +210,10 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
 /// </summary>
 public sealed class MigrationIntegrityFixture : IAsyncLifetime
 {
-    // Initialized in InitializeAsync rather than as a field initializer so that
-    // PostgreSqlBuilder.Build() (which validates Docker availability) is not called
-    // during class construction.  A constructor-level DockerUnavailableException would
-    // cause xUnit to mark every test in the class as "fixture init failed", which is
-    // indistinguishable from a real test failure.  Deferring to InitializeAsync lets us
-    // catch the exception, set SkipReason, and have each test throw SkipException instead.
+    // Deferred: Build() is called in InitializeAsync, not the constructor, so that
+    // DockerUnavailableException is thrown asynchronously rather than crashing the
+    // class fixture constructor and marking every test as "failed to initialize".
     private PostgreSqlContainer? _container;
-
-    /// <summary>
-    /// Set when Docker is unavailable in this environment.
-    /// Tests read this via <see cref="MigrationIntegrityTests.SkipIfDockerUnavailable"/> and
-    /// skip themselves gracefully rather than failing.
-    /// </summary>
-    public string? SkipReason { get; private set; }
 
     /// <summary>
     /// Set when <see cref="InitializeAsync"/> catches an exception from <c>MigrateAsync</c>.
@@ -249,31 +221,32 @@ public sealed class MigrationIntegrityFixture : IAsyncLifetime
     /// </summary>
     public Exception? MigrationException { get; private set; }
 
+    /// <summary>
+    /// Set when Docker is unavailable in this environment. Tests use
+    /// <see cref="RequiresDockerFact"/> which skips when this is non-null.
+    /// </summary>
+    public string? DockerSkipReason { get; private set; }
+
     public async Task InitializeAsync()
     {
-        PostgreSqlContainer container;
+        // Build() validates Docker availability eagerly. Do it here (async lifecycle)
+        // rather than in the constructor, so DockerUnavailableException is catchable and
+        // surfaces as a skip reason instead of crashing the class fixture constructor.
         try
         {
-            container = new PostgreSqlBuilder()
+            _container = new PostgreSqlBuilder()
                 .WithImage("postgres:17-alpine")
                 .WithDatabase("migration_test")
                 .WithUsername("test")
                 .WithPassword("test")
                 .Build();
         }
-        catch (DockerUnavailableException ex)
+        catch (DotNet.Testcontainers.Builders.DockerUnavailableException ex)
         {
-            // Docker is not available in this environment (e.g., the agent quality-gate
-            // pod has no Docker socket).  Set SkipReason so that every test can skip
-            // cleanly instead of being reported as failed.
-            SkipReason = $"Docker is unavailable — migration integrity tests require a real " +
-                         $"PostgreSQL container and must run in an environment with Docker " +
-                         $"(e.g., the GitHub Actions migration-integrity job). " +
-                         $"Inner: {ex.Message}";
+            DockerSkipReason = $"Docker is not available in this environment: {ex.Message}";
             return;
         }
 
-        _container = container;
         await _container.StartAsync();
 
         await using var db = CreateDbContext();
@@ -309,4 +282,29 @@ public sealed class MigrationIntegrityFixture : IAsyncLifetime
     /// <summary>Creates a raw <see cref="NpgsqlConnection"/> for schema inspection queries.</summary>
     public NpgsqlConnection CreateConnection() =>
         new(_container!.GetConnectionString());
+}
+
+/// <summary>
+/// A <see cref="FactAttribute"/> that skips the test when Docker is not available.
+///
+/// The check is performed synchronously at attribute construction time (before xUnit
+/// discovers and queues the test) by probing the Docker socket path. This causes the test
+/// to be statically skipped — counted as "Skipped" by <c>dotnet test</c> rather than
+/// "Failed" — which is the correct behavior in environments that don't have Docker (e.g.
+/// agent pods). Tests decorated with this attribute are still executed normally on the
+/// GitHub Actions <c>migration-integrity</c> job, which runs on a bare runner where Docker
+/// is available.
+/// </summary>
+[AttributeUsage(AttributeTargets.Method)]
+internal sealed class RequiresDockerFact : FactAttribute
+{
+    private const string DockerSocketPath = "/var/run/docker.sock";
+
+    public RequiresDockerFact()
+    {
+        if (!System.IO.File.Exists(DockerSocketPath))
+            Skip = $"Skipped: Docker socket not found at '{DockerSocketPath}'. " +
+                   "These tests require Docker and are intended to run only in the " +
+                   "migration-integrity CI job.";
+    }
 }

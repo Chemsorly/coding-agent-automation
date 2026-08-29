@@ -132,8 +132,13 @@ public sealed class DispatchLoopTests
 
     // ─── PVC pool exhausted ───────────────────────────────────────────────────
 
+    /// <summary>
+    /// PVC starvation must NOT call RequeueAsync — the item is already Pending and should
+    /// be held there silently until a PVC becomes available. Calling RequeueAsync would
+    /// increment RetryCount on every 10s poll cycle, corrupting the field (issue #2129).
+    /// </summary>
     [Fact]
-    public async Task WhenPvcPoolExhausted_ShouldCallRequeueAsync_NotCreateJob()
+    public async Task WhenPvcPoolExhausted_ShouldNotCallRequeueAsync_AndShouldNotCreateJob()
     {
         // Template with kiro providerType so PVC is required
         const string kiroYaml = """
@@ -147,11 +152,17 @@ public sealed class DispatchLoopTests
         {
             Namespace = "test-ns",
             RateLimitPerSecond = 100,
-            KiroPvcPool = [] // empty pool
+            KiroPvcPool = [] // empty pool — TryClaim returns null
         };
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
+        // TODO [WARNING]: The ClaimAsync setup below allows the mock to silently handle a call to
+        // ClaimAsync without failing. A partially reverted implementation (PVC check moved after
+        // claim) would still pass all assertions except the Times.Never verify further down.
+        // Removing this setup would cause Moq to throw MockException on an unexpected ClaimAsync
+        // call, giving an earlier and more explicit failure signal. The sibling
+        // ConsolidationDispatchLoopTests version of this test was already corrected (setup removed).
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
 
@@ -162,8 +173,15 @@ public sealed class DispatchLoopTests
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
+        // PVC unavailability must NOT mutate the item's RetryCount — no requeue call
+        _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        _workItemClient.Verify(c => c.RequeueAsync(ItemId, It.IsAny<CancellationToken>()), Times.Once);
+        // PVC check must happen BEFORE ClaimAsync — if ClaimAsync fires, the item transitions
+        // Pending→Dispatched server-side with no K8s Job, stranding it indefinitely (issue #2129).
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        // TODO [WARNING]: This test does not assert that _reconciliationTrigger.RequestImmediateCycle()
+        // was called. The sibling WhenPvcPoolExhausted_ShouldCallRequestImmediateCycle test covers it,
+        // but an explicit cross-check here would catch an accidental removal of the trigger call.
     }
 
     [Fact]
