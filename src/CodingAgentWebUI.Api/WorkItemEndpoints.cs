@@ -238,9 +238,9 @@ public static class WorkItemEndpoints
 
         // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
         // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
-        // CancellationToken.None: the task runs independently of the HTTP request lifetime;
-        // using the request-scoped ct would cause spurious OperationCanceledException warnings
-        // when ASP.NET Core cancels the token as soon as the response is sent.
+        // Pass CancellationToken.None because the task runs independently of the HTTP request
+        // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
+        // warnings when ASP.NET Core cancels the token as soon as the response is sent.
         if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
             _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
 
@@ -289,9 +289,22 @@ public static class WorkItemEndpoints
             db.WorkItems.Add(entity);
             await db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        catch (Exception ex) when (IsUniqueViolation(ex))
         {
-            // Postgres 23505: unique index on (IssueIdentifier, IssueProviderConfigId) for non-terminal statuses
+            // Distinguish idempotent PK retry from business-rule unique index conflict.
+            // If a row with this workItemId already exists, this is a safe idempotent retry —
+            // return 201 so EnsureSuccessStatusCode() on the retried response succeeds.
+            //
+            // Note: Postgres throws DbUpdateException (SQLSTATE 23505); EF InMemory throws
+            // ArgumentException("An item with the same key has already been added") directly,
+            // so the catch must be on Exception rather than DbUpdateException.
+            await using var readDb = await dbFactory.CreateDbContextAsync(ct);
+            var exists = await readDb.WorkItems.AnyAsync(w => w.Id == workItemId, ct);
+            if (exists)
+                return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
+
+            // Postgres 23505: partial unique index on (IssueIdentifier, IssueProviderConfigId)
+            // for non-terminal statuses — a different run is already live for this issue.
             return TypedResults.Conflict("A live work item already exists for this issue.");
         }
 
@@ -940,14 +953,25 @@ public static class WorkItemEndpoints
         }
     }
 
-    private static bool IsUniqueViolation(DbUpdateException ex)
+    internal static bool IsUniqueViolation(Exception ex)
     {
-        var inner = ex.InnerException;
-        if (inner is PostgresException pg)
+        // Postgres path: DbUpdateException wrapping a PostgresException with SQLSTATE 23505
+        if (ex is DbUpdateException { InnerException: PostgresException pg })
             return pg.SqlState == "23505";
 
-        return ex.InnerException?.Message?.Contains("duplicate key", StringComparison.OrdinalIgnoreCase) == true
-            || ex.InnerException?.Message?.Contains("unique constraint", StringComparison.OrdinalIgnoreCase) == true;
+        // Postgres fallback (non-Npgsql drivers) and EF InMemory path.
+        // EF InMemory throws ArgumentException("An item with the same key has already been added")
+        // directly — it is NOT wrapped in DbUpdateException — so we must check the top-level
+        // message as well as the inner exception message.
+        // Note: the EF InMemory phrase is an implementation detail and may change across EF Core versions.
+        var message = ex.Message ?? "";
+        var innerMessage = ex.InnerException?.Message ?? "";
+        return message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
+            || innerMessage.Contains("duplicate key", StringComparison.OrdinalIgnoreCase)
+            || innerMessage.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
+            // EF InMemory exact phrase
+            || message.Contains("An item with the same key has already been added", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
