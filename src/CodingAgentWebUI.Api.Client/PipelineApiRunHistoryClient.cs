@@ -43,7 +43,11 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
     public async Task AddRunToHistoryAsync(PipelineRunSummary summary, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(summary);
-        var response = await _http.PostAsJsonAsync("/api/pipeline-runs/", summary, PipelineJsonOptions.Default, ct);
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/pipeline-runs/");
+        if (!string.IsNullOrEmpty(summary.RunId))
+            req.Headers.Add("X-Idempotency-Key", summary.RunId);
+        req.Content = JsonContent.Create(summary, options: PipelineJsonOptions.Default);
+        var response = await _http.SendAsync(req, ct);
         response.EnsureSuccessStatusCode();
     }
 }

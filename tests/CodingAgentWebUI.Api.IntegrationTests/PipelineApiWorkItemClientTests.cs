@@ -266,6 +266,79 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
             e.RequestMessage.Path == "/api/work-items");
     }
 
+    /// <summary>
+    /// Test D — client-side idempotency key header.
+    /// <see cref="PipelineApiWorkItemClient.CreateAsync"/> must send <c>X-Idempotency-Key: {RunId}</c>
+    /// when <c>request.RunId</c> is non-empty.
+    /// </summary>
+    [Fact]
+    public async Task CreateAsync_SendsIdempotencyKeyHeader_WhenRunIdProvided()
+    {
+        var runId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath("/api/work-items").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(201)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(runId)));
+
+        var request = new JobDistributionRequest
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = new IssueIdentifier("owner/repo#1"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "kiro",
+            TimeoutSeconds = 3600
+        };
+
+        await _client.CreateAsync(request);
+
+#pragma warning disable CS8602
+        _server.LogEntries.Should().Contain(e =>
+            e.RequestMessage!.Headers.ContainsKey("X-Idempotency-Key") &&
+            e.RequestMessage!.Headers["X-Idempotency-Key"].Contains(runId.ToString()),
+            "CreateAsync must send X-Idempotency-Key header matching the RunId for Polly retry safety");
+#pragma warning restore CS8602
+    }
+
+    [Fact]
+    public async Task CreateAsync_DoesNotSendIdempotencyKeyHeader_WhenRunIdEmpty()
+    {
+        var newId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath("/api/work-items").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(201)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(newId)));
+
+        var request = new JobDistributionRequest
+        {
+            // RunId intentionally omitted — server generates a new GUID; no stable idempotency key
+            IssueIdentifier = new IssueIdentifier("owner/repo#2"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "kiro",
+            TimeoutSeconds = 3600
+        };
+
+        await _client.CreateAsync(request);
+
+#pragma warning disable CS8602
+        // TODO [WARNING]: LogEntries accumulates across all calls on this server instance for its
+        // lifetime. xUnit creates a new PipelineApiWorkItemClientTests instance per test (fresh
+        // server each time), so isolation is currently safe. If this class ever becomes a shared
+        // fixture, add _server.ResetLogEntries() before this assertion and scope it to
+        // e.RequestMessage.Path == "/api/work-items" to prevent false failures from accumulated entries.
+        _server.LogEntries.Should().NotContain(e =>
+            e.RequestMessage!.Headers.ContainsKey("X-Idempotency-Key"),
+            "X-Idempotency-Key must not be sent when RunId is absent — no stable key exists");
+#pragma warning restore CS8602
+    }
+
     // ── GetActiveIdentifiersAsync ──────────────────────────────────────────────
 
     [Fact]
