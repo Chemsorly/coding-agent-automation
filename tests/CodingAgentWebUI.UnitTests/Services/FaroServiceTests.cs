@@ -145,61 +145,111 @@ public class FaroServiceTests
     }
 
     // ── Graceful degradation ─────────────────────────────────────────────────
+    // Each swallowed exception type is tested across all three methods so that
+    // per-method catch-block regressions are caught. A negative test verifies
+    // the filter is selective (unexpected exceptions must propagate).
 
-    [Fact]
-    public async Task PushLogAsync_DoesNotThrow_WhenJsInteropFails()
+    [Theory]
+    [InlineData("JSException")]
+    [InlineData("JSDisconnectedException")]
+    [InlineData("OperationCanceledException")]
+    [InlineData("ObjectDisposedException")]
+    [InlineData("InvalidOperationException")]
+    public async Task PushLogAsync_DoesNotThrow_ForAllSafeExceptionTypes(string exceptionType)
     {
-        var js = new Mock<IJSRuntime>();
-        js.Setup(j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
-                It.IsAny<string>(), It.IsAny<object?[]?>()))
-            .ThrowsAsync(new JSException("Faro not loaded"));
-
+        var js = MakeThrowingMock(exceptionType);
         var sut = new FaroService(js.Object);
-
         var ex = await Record.ExceptionAsync(() => sut.PushLogAsync("test"));
         Assert.Null(ex);
     }
 
-    [Fact]
-    public async Task PushErrorAsync_DoesNotThrow_WhenJsInteropFails()
+    [Theory]
+    [InlineData("JSException")]
+    [InlineData("JSDisconnectedException")]
+    [InlineData("OperationCanceledException")]
+    [InlineData("ObjectDisposedException")]
+    [InlineData("InvalidOperationException")]
+    public async Task PushErrorAsync_DoesNotThrow_ForAllSafeExceptionTypes(string exceptionType)
     {
-        var js = new Mock<IJSRuntime>();
-        js.Setup(j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
-                It.IsAny<string>(), It.IsAny<object?[]?>()))
-            .ThrowsAsync(new JSDisconnectedException("disconnected"));
-
+        var js = MakeThrowingMock(exceptionType);
         var sut = new FaroService(js.Object);
-
         var ex = await Record.ExceptionAsync(() => sut.PushErrorAsync("test"));
         Assert.Null(ex);
     }
 
-    [Fact]
-    public async Task PushEventAsync_DoesNotThrow_WhenJsInteropFails()
+    [Theory]
+    [InlineData("JSException")]
+    [InlineData("JSDisconnectedException")]
+    [InlineData("OperationCanceledException")]
+    [InlineData("ObjectDisposedException")]
+    [InlineData("InvalidOperationException")]
+    public async Task PushEventAsync_DoesNotThrow_ForAllSafeExceptionTypes(string exceptionType)
     {
-        var js = new Mock<IJSRuntime>();
-        js.Setup(j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
-                It.IsAny<string>(), It.IsAny<object?[]?>()))
-            .ThrowsAsync(new TaskCanceledException());
-
+        var js = MakeThrowingMock(exceptionType);
         var sut = new FaroService(js.Object);
-
         var ex = await Record.ExceptionAsync(() => sut.PushEventAsync("test"));
         Assert.Null(ex);
     }
 
     [Fact]
-    public async Task PushLogAsync_DoesNotThrow_WhenJsDisconnected()
+    public async Task PushLogAsync_Propagates_WhenUnexpectedExceptionOccurs()
+    {
+        // Verifies the filter is selective — swallowing ALL exceptions would be wrong.
+        var js = new Mock<IJSRuntime>();
+        js.Setup(j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
+                It.IsAny<string>(), It.IsAny<object?[]?>()))
+            .ThrowsAsync(new ArgumentNullException("param"));
+
+        var sut = new FaroService(js.Object);
+
+        var ex = await Record.ExceptionAsync(() => sut.PushLogAsync("test"));
+        Assert.IsType<ArgumentNullException>(ex);
+    }
+
+    [Fact]
+    public async Task PushErrorAsync_Propagates_WhenUnexpectedExceptionOccurs()
     {
         var js = new Mock<IJSRuntime>();
         js.Setup(j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
                 It.IsAny<string>(), It.IsAny<object?[]?>()))
-            .ThrowsAsync(new JSDisconnectedException("circuit gone"));
+            .ThrowsAsync(new ArgumentNullException("param"));
 
         var sut = new FaroService(js.Object);
 
-        var ex = await Record.ExceptionAsync(() => sut.PushLogAsync("circuit gone"));
-        Assert.Null(ex);
+        var ex = await Record.ExceptionAsync(() => sut.PushErrorAsync("test"));
+        Assert.IsType<ArgumentNullException>(ex);
+    }
+
+    [Fact]
+    public async Task PushEventAsync_Propagates_WhenUnexpectedExceptionOccurs()
+    {
+        var js = new Mock<IJSRuntime>();
+        js.Setup(j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
+                It.IsAny<string>(), It.IsAny<object?[]?>()))
+            .ThrowsAsync(new ArgumentNullException("param"));
+
+        var sut = new FaroService(js.Object);
+
+        var ex = await Record.ExceptionAsync(() => sut.PushEventAsync("test"));
+        Assert.IsType<ArgumentNullException>(ex);
+    }
+
+    private static Mock<IJSRuntime> MakeThrowingMock(string exceptionType)
+    {
+        var js = new Mock<IJSRuntime>();
+        Exception exception = exceptionType switch
+        {
+            "JSException" => new JSException("faro not loaded"),
+            "JSDisconnectedException" => new JSDisconnectedException("disconnected"),
+            "OperationCanceledException" => new OperationCanceledException(),
+            "ObjectDisposedException" => new ObjectDisposedException("component"),
+            "InvalidOperationException" => new InvalidOperationException("prerender"),
+            _ => throw new ArgumentOutOfRangeException(nameof(exceptionType))
+        };
+        js.Setup(j => j.InvokeAsync<Microsoft.JSInterop.Infrastructure.IJSVoidResult>(
+                It.IsAny<string>(), It.IsAny<object?[]?>()))
+            .ThrowsAsync(exception);
+        return js;
     }
 
     // ── NotificationService integration ──────────────────────────────────────

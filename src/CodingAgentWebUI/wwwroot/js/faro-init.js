@@ -135,8 +135,16 @@
     }
 
     // Chain: load SDK → load tracing → init
+    // Tracing is optional: if the tracing bundle fails to load (SRI mismatch, firewall,
+    // network error), initFaro() is still called so the core SDK — which is already
+    // loaded at this point — initialises normally. Error capture, web vitals, console
+    // instrumentation and the faroApi stub replacement all work without tracing.
     loadScript(SDK_URL, SDK_SRI, function () {
         loadScript(TRACING_URL, TRACING_SRI, function () {
+            initFaro();
+        }, function () {
+            // Tracing bundle failed — init core SDK without tracing
+            console.warn('[faro-init] Tracing bundle failed to load; initializing without tracing.');
             initFaro();
         });
     });

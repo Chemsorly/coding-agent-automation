@@ -52,11 +52,14 @@ internal sealed class FaroService(IJSRuntime js) : IFaroService
     /// <summary>
     /// Returns true for exceptions that indicate Faro is unavailable (CDN blocked, circuit
     /// disconnected, component disposed) rather than a bug in the calling code.
+    /// OperationCanceledException (parent of TaskCanceledException) is used rather than
+    /// TaskCanceledException directly — IJSRuntime throws either depending on the runtime
+    /// version and cancellation path. Consistent with the rest of the codebase.
     /// </summary>
     private static bool IsSafeToSwallow(Exception ex) =>
         ex is JSException
             or JSDisconnectedException
-            or TaskCanceledException
+            or OperationCanceledException
             or ObjectDisposedException
             or InvalidOperationException;
 }
