@@ -660,10 +660,6 @@ public sealed class ApiBackedServicesTests
         query.PendingCount.Should().Be(0);
     }
 
-    // TODO: These two tests are near-identical in structure (same mock setup, same assertion pattern, only TaskType
-    // and PipelineRunType differ). Consider refactoring into a parameterized [Theory] with [InlineData], matching
-    // the pattern used in WorkItemTaskTypeExtensionsTests. Adding a new task type mapping would otherwise require
-    // another copy-pasted test, increasing maintenance surface without adding coverage value.
     [Fact]
     public async Task PendingWorkQuery_ReviewTask_MapsToReviewRunType()
     {
