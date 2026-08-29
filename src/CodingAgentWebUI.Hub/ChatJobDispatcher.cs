@@ -711,19 +711,19 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             // TryReadJobAsync returns readError=true (e.g. K8s API outage), because Dispose() on a
             // CancellationTokenSource does not cancel it; only Cancel() does.
             //
-            // TODO: Race condition — if CleanupSession (called via WatchJobUntilTerminalAsync's own
-            // OperationCanceledException path, e.g. from _shutdownCts) has already Disposed WatcherCts
-            // before we reach this line, Cancel() will throw ObjectDisposedException. Wrap this call in
-            // a try/catch(ObjectDisposedException) to handle the concurrent-cleanup race gracefully.
-            // See review finding: DotNetSpecialist WARNING @ line 711.
+            // Known follow-up (race): CleanupSession (called via WatchJobUntilTerminalAsync's own
+            // OperationCanceledException path, e.g. from _shutdownCts) may have already Disposed WatcherCts
+            // before we reach this line, causing CancelAsync() to throw ObjectDisposedException. A future
+            // hardening pass should wrap this call in try/catch(ObjectDisposedException) to handle the
+            // concurrent-cleanup race gracefully. See review finding: DotNetSpecialist WARNING @ line 711.
             //
-            // TODO: WatchJobUntilTerminalAsync uses CancellationToken.None for the inner TryReadJobAsync
-            // call, so if the K8s API is hanging (e.g. slow TCP timeout ~30s), the watcher will not exit
-            // promptly after WatcherCts.Cancel() — it can block for up to one full TCP-timeout before
-            // observing cancellation at the next Task.Delay. Fixing this requires passing WatcherCts.Token
-            // into TryReadJobAsync, which is a pre-existing design gap not introduced by this change.
+            // Known follow-up (blocking): WatchJobUntilTerminalAsync uses CancellationToken.None for the
+            // inner TryReadJobAsync call, so if the K8s API is hanging (e.g. slow TCP timeout ~30s), the
+            // watcher will not exit promptly after WatcherCts cancellation — it can block for up to one full
+            // TCP-timeout before observing cancellation at the next Task.Delay. Fixing this requires passing
+            // WatcherCts.Token into TryReadJobAsync, which is a pre-existing design gap not introduced here.
             // See review finding: DotNetSpecialist WARNING @ line 711.
-            entry.WatcherCts.Cancel();
+            await entry.WatcherCts.CancelAsync();
             activity?.SetTag(TagOutcome, "force_delete");
             await ForceDeleteAndCleanupAsync(agentId.Value, entry);
         }
