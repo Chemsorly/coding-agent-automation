@@ -9,6 +9,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 14 | Last run: 2026-08-22 | Updates: T12 audit — marked #2027/#2028/#2025/#1058/#1059 resolved; fixed ConsolidationDispatchHandler→ConsolidationWorkItemDispatchService; T10 decision added; T11 decisions added -->
 <!-- Session: 15 | Last run: 2026-08-22 | Updates: T22 — AgentSelectorKey.From() extracted; ScanPagedAsync private helper extracted in PostgresPipelineRunHistoryService; T6/T15/T16/T20 closed; LabelStateMachine.cs stale path fixed -->
 <!-- Session: 16 | Last run: 2026-08-28 | Decisions added: 4 (soft anti-affinity, AgentJobTimeoutSeconds backstop, Redis required for multi-replica keepalive, ExternalCiDuration split); issue created: #2133; helm templates fixed (required→preferred anti-affinity, all 4 deployments); stale audit: monolith decision updated (4-service split), DatabaseMaintenanceService migration closed (Spec 047 superseded), SignalR reconnect Reassess-when updated, MessagePack/MaxRunsPerCycle docker-compose refs removed, Decision Map cleaned -->
+<!-- Session: 17 | Last run: 2026-08-29 | Decisions added: 5 (WorkItems.Payload dispatch-time snapshot, EmitOutputLine→Serilog, AgentJobTimeoutSeconds hierarchy, PriorityWeight secondary sort, Grafana Faro CDN-only); issues created: #2178; stale audit: Chat keepalive Redis #2133 text updated (warning now implemented) -->
+<!-- Session: 18 | Last run: 2026-08-29 | Decisions added: 3 (PR description via file, FeedbackTimeoutSeconds config, single AgentTimeout); no-opinions: 3 (registration race, terminal guard pattern, concurrency map filter); issues created: #2179; stale: AgentJobTimeoutSeconds decision superseded by #2179 -->
 <!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition -->
 
 ---
@@ -687,6 +689,55 @@ Leader election continues to handle multi-replica safety. The split was driven b
 
 ---
 
+### AgentJobTimeoutSeconds: removed — PipelineConfiguration.AgentTimeout is the single source of truth (#2179)
+
+**Date:** 2026-08-29 · **Supersedes:** session-17 "Helm default, per-project override takes precedence"
+**Category:** configuration
+
+**Decision:** `DispatchServiceOptions.AgentJobTimeoutSeconds` and its Helm counterpart are **removed**. `PipelineConfiguration.AgentTimeout` (Key 4, `[ProjectOverridable(Order=3)]`, default 30 min) is the sole configurable agent wall-clock limit. Having two places for the same concern is bad practice; the Helm value was silently ignored at the per-project level anyway (see #2158). `DispatchLoop` and `ConsolidationDispatchLoop` must read `TimeoutSeconds` from the `PendingWorkItemDto` (sourced from the WorkItem payload), falling back to the global `AgentTimeout` default for items without the field. `ReconciliationLoop.EnforceTimeoutsAsync` uses the same per-item value.
+
+**Chat-specific timeouts stay in `DispatchServiceOptions`:** `ChatIdleTimeoutSeconds`, `ChatPodConnectTimeoutSeconds`, and `ChatTerminationGracePeriodSeconds` have no `PipelineConfiguration` equivalent — they remain.
+
+**Context:** `AgentJobTimeoutSeconds` was added before `AgentTimeout` became per-project-overridable. The two diverged: orchestration set `JobDistributionRequest.TimeoutSeconds` from the per-project `AgentTimeout`, but the job controller used the Helm value. Result: per-project timeout overrides were silently ignored at the K8s `activeDeadlineSeconds` layer.
+
+**Alternatives considered:** Keep both (explicit Helm ceiling + per-project override) — rejected: two places, same concern, bad practice. Make `AgentTimeout` non-overridable (global only) — rejected: per-project granularity is a documented feature.
+
+**Reassess when:** Never for the single-source principle. If a "maximum agent lifetime cap" independent of `AgentTimeout` is needed (safety floor), add an explicit `MaxAgentTimeoutCap` with a clear name — do not re-introduce a shadow of the same field.
+
+**Status:** Currently broken (#2179 tracks the fix; depends on #2171 for `TimeoutSeconds` propagation).
+
+---
+
+### PriorityWeight: secondary sort key within RunType tier — static tier ordering preserved
+
+**Date:** 2026-08-29
+**Category:** configuration
+
+**Decision:** `WorkItemEntity.PriorityWeight` (integer, default 0) is a **secondary sort key within the same RunType tier**. The static priority ordering `Review > Decomposition > Implementation > Consolidation` is preserved as the primary sort. Within the same tier, higher `PriorityWeight` dispatches first. This enables urgent work items (e.g., a hotfix Implementation) to jump ahead of other Implementation items without crossing tier boundaries. Default is 0 (FIFO within tier, as before).
+
+**Context:** Issues #2172 (schema) and #2173 (UI edit). The rationale: a critical Implementation job still dispatches after all Review jobs — the tier ordering reflects latency sensitivity by job type, not urgency. Within the Implementation tier, urgency can be expressed via weight.
+
+**Alternatives considered:** Weight replaces tier ordering (fully flexible but requires calibrating default weights per RunType to preserve Review-first behavior), tier-override flag for urgent items (more complex, deferred).
+
+**Reassess when:** If a cross-tier urgency use case emerges (e.g., "this Implementation is more urgent than pending Review jobs") — at that point, evaluate whether a `PriorityClass` concept that overrides tier ordering is needed.
+
+---
+
+### FeedbackTimeoutSeconds: must be a PipelineConfiguration field — hardcoded const is bad practice
+
+**Date:** 2026-08-29
+**Category:** configuration
+
+**Decision:** `FailureFeedbackTimeoutSeconds = 60` (hardcoded `const` in `RunFeedback.cs`) must be promoted to a `PipelineConfiguration` field. Hardcoded timeout constants are bad practice — they cannot be adjusted without a recompile, they're invisible in configuration documentation, and they're inconsistent with all other timeout fields in the system. The value should be in the "hidden advanced" section of the settings UI. The current 60s default is reasonable; operators with slow agent environments may need to increase it.
+
+**Context:** `FailureFeedbackTimeoutSeconds` is used in `PullRequestFinalizationService.CollectFeedbackAsync` and `QualityGateExecutor.RetryLoop.CollectFeedbackAsync` — both as a non-fatal step budget. It is the only timeout in the system that is a compile-time constant rather than a runtime-configurable field.
+
+**Alternatives considered:** Keep as `const` (simple, no operator knob needed — rejected: inconsistent with system-wide practice), make it a `static readonly` default with a config override (equivalent to a `PipelineConfiguration` field but needlessly complex).
+
+**Reassess when:** Never — once promoted to `PipelineConfiguration`, this decision is stable. The "hidden advanced" placement keeps it out of the default configuration view.
+
+---
+
 ### Draft PR is the retry-exhausted fallback
 
 **Date:** 2026-07-04
@@ -986,6 +1037,21 @@ Leader election continues to handle multi-replica safety. The split was driven b
 **Alternatives considered:** Content hash in telemetry (enables Grafana correlation but adds complexity for a problem that doesn't exist), semantic versions on constants (documentation overhead without consumer).
 
 **Reassess when:** The system serves multiple teams, OR a regression is traced to a prompt change that took days to identify because there was no correlation in telemetry.
+
+---
+
+### Grafana Faro RUM: CDN-only is acceptable for now — air-gapped deployments need revision
+
+**Date:** 2026-08-29
+**Category:** integration
+
+**Decision:** The Grafana Faro SDK and tracing bundles are loaded from `unpkg.com` (SRI-pinned, v2.8.1). There is no configurable bundle URL. In air-gapped or firewalled clusters, the CDN load silently fails — the no-op stub remains and Faro is disabled; the application is unaffected. This is intentionally acceptable for the current deployment target (Grafana Cloud with outbound internet access). The workaround for air-gapped deployments (copy bundles to `wwwroot/js/faro/`, update `SDK_URL`/`TRACING_URL` in `faro-init.js`) requires a code change, not a config change — this is a known limitation.
+
+**Context:** `Faro:CollectorUrl` absent/empty = Faro disabled (no CDN load attempted). The environment toggle is the config value, not an explicit `isDevelopment` guard. `app-environment` meta is passed to Faro for dashboard filtering but does not gate loading. SRI hashes protect against CDN tampering. No Content-Security-Policy header is currently configured for the `<script>` tags loaded from unpkg.com — this is a known gap if CSP is ever added.
+
+**Alternatives considered:** Configurable `Faro__SdkUrl` / `Faro__TracingUrl` env vars (adds config surface; deferred — no demand yet), NPM bundle at build time (requires a JS build step not currently present in the Docker build), self-hosted bundle path (documented as workaround, not first-class).
+
+**Reassess when:** A deployment scenario arises that requires Faro without outbound internet access. At that point, add `Faro__SdkUrl` / `Faro__TracingUrl` overrides (pointing to a self-hosted copy) as the minimal change. If CSP is ever added, `unpkg.com` must be in `script-src`.
 
 ## Scope
 
@@ -1311,13 +1377,118 @@ Leader election continues to handle multi-replica safety. The split was driven b
 
 **Decision:** Redis is required when `api.replicas > 1` OR `orchestrator.replicas > 1` for correct chat keepalive behavior. When keepalive POSTs land on a different API replica than the one hosting the watcher, the in-process `LastClientHeartbeatTicks` fallback does NOT see the heartbeat — the pod is idle-killed after `ChatIdleTimeoutSeconds` (90s) even though the browser is active. Redis is the cross-replica authoritative heartbeat store (`chat:heartbeat:{agentId}`, TTL=2× idle timeout). The in-process fallback is only correct for single-replica local dev.
 
-A startup warning must be added when `ChatJobDispatcher` is instantiated with `_redis == null` and `api.replicas > 1`. This is tracked in #2133.
+A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_redis == null` and `api.replicas > 1`. **Implemented in #2133 (closed 2026-08-29).**
 
 **Context:** The current code silently falls back to local ticks when Redis is absent — no warning is emitted. In a 2-replica deployment without Redis configured, a user whose keepalive POST happens to land on the non-watcher replica will see their chat pod killed after 90s of inactivity on the watcher side. This is a silent incorrect behavior, not a loud failure.
 
 **Alternatives considered:** Make Redis unconditionally required (breaks local dev without Redis), configurable `requireRedisForHeartbeat: true/false` (unnecessary complexity when the rule is simply `replicas > 1`). See #2131 for implementation.
 
 **Reassess when:** Never for the principle. Redis is already required for multi-replica SignalR backplane — this is consistent with that existing requirement.
+
+---
+
+### ExternalCiDuration vs PostPrCiDuration: two separate histograms for two distinct CI poll phases
+
+**Date:** 2026-08-28
+**Category:** architecture
+
+**Decision:** `ExternalCiDuration` (existing) measures the pre-PR CI poll in `AppendExternalCiIfNeededAsync` — triggered on branch push. A new `PostPrCiDuration` histogram must be added to measure the post-PR CI poll in `WaitForPostPrCiAsync` — triggered on the pull_request event after PR promotion. The two are semantically distinct: pre-PR CI validates the branch commit; post-PR CI validates CI workflows that only trigger on `pull_request` events. Emitting both into `ExternalCiDuration` inflates p50/p99 dashboards on runs that execute both phases.
+
+**Context:** The TODO in `WaitForPostPrCiAsync` documents this gap. On paths where both pre-PR and post-PR CI run (e.g., cleanup made no changes → skipCiIfNoChanges → post-PR CI fires), two histogram samples land in `ExternalCiDuration`, making the p99 appear 2× higher than actual worst-case single-phase duration.
+
+**Alternatives considered:** Keep single metric with a phase tag (`phase=pre_pr|post_pr`) — equally valid but requires a Grafana filter to disaggregate; separate histograms are more natural for Grafana dashboard panels that show one thing per panel. Run-level aggregation (`TotalCiWaitDuration` emitted once at end) — accurate but loses per-phase granularity needed for debugging.
+
+**Reassess when:** Never for the separation principle. If a third CI poll phase is added, follow the same pattern.
+
+---
+
+### WorkItems.Payload: config snapshot must be at dispatch time, not enqueue time — currently broken (#2171)
+
+**Date:** 2026-08-29
+**Category:** architecture
+
+**Decision:** `WorkItems.Payload` should store only identity fields (issue identifier, provider config IDs, run ID, agent selector, timeout, trace context). All mutable config — steering content, provider configs (with fresh tokens), QG configs, reviewer configs, MCP servers, pipeline configuration — must be resolved **fresh at dispatch/assignment time** (`GET /api/work-items/{id}/assignment`), not frozen at enqueue. This is the same pattern already used for `ProjectSecrets` (injected at assignment time) and for consolidation work items (enriched at claim time).
+
+**Why:** Steering, QG configs, and provider configs can change between when work is enqueued and when an agent starts. An agent receiving a stale snapshot silently ignores these changes. Confirmed in production: a steering update was invisible to a run enqueued 1h earlier.
+
+**Context:** The current design pre-fetches and serializes the full `JobDistributionRequest` (including `RepoSteeringContent`, `ProviderConfigs`, `QualityGateConfigs`) into `WorkItems.Payload` at orchestration time. The intent was to avoid duplicate GitHub API calls at assignment time — this concern is addressed by moving the fetch to assignment time rather than removing it.
+
+**Alternatives considered:** Snapshot everything at enqueue (current — rejected: silent stale config), re-fetch all on every poll (excessive API calls), selective refresh (too complex to maintain correctly).
+
+**Reassess when:** Never for the principle. If `GetAssignment` performance becomes a bottleneck (due to provider API latency), add a server-side cache with a short TTL (e.g., 30s) — but the freshness contract must hold.
+
+**Status:** Currently broken. #2171 tracks the fix.
+
+---
+
+### EmitOutputLine must route through Serilog — currently bypasses it (#2178)
+
+**Date:** 2026-08-29
+**Category:** architecture
+
+**Decision:** `EmitOutputLine` is the pipeline's progress message channel (`Action<string>` callback). Every invocation must produce a Serilog `Information` entry tagged with `run_id`. The UI output buffer receives the same line as a forwarded side-effect. No line is logged twice — the forwarding is internal to the callback implementation, not a second explicit log call at the call site.
+
+**Why:** Pipeline progress messages ("🔍 Starting code review...", "📝 Generating review summary...") are currently invisible in Grafana. Full run traceability requires that every observable pipeline event be queryable by `run_id` in structured logs — the telemetry philosophy decision already establishes this as a requirement.
+
+**Context:** `EmitOutputLine` was introduced as a lightweight UI streaming callback before Serilog integration was complete. It was never wired through structured logging. OTel spans cover phase boundaries; `EmitOutputLine` covers the intra-phase human-readable stream. Both are needed for full traceability.
+
+**Alternatives considered:** Mirror all lines as Serilog messages (accepted — but emoji strings reduce SNR), dedicated span events per output line (overkill — OTel spans already cover phase structure), UI-only remains (rejected — invisible to ops tooling).
+
+**Reassess when:** If output line volume causes Serilog/Loki ingestion cost issues, add a sampling filter for high-frequency lines. The `run_id` tag enables targeted filtering per run.
+
+**Status:** Currently broken. #2178 tracks the fix.
+
+---
+
+### PR description: agent writes to .agent/pr-description.md — stdout is not the output channel
+
+**Date:** 2026-08-29
+**Category:** architecture
+
+**Decision:** `GeneratePrDescriptionAsync` must read the PR description from `.agent/pr-description.md` written by the agent, NOT from `result.OutputLines` (raw stdout). The agent is instructed via prompt to write the description to that file; the service reads it post-execution. This is consistent with the filesystem-as-context decision (agents deliver structured outputs via files, not stdout) and eliminates the current corruption where tool call outputs, reasoning, and git diff content are prepended to the PR body.
+
+**Why:** Joining all stdout lines (`string.Join("\n", result.OutputLines)`) produces a broken PR body when the agent emits any output before or after the description (tool calls, internal monologue, blockquote-stripped reasoning). Confirmed in production: scrambled PR bodies caused by tool invocation output leaking into the description.
+
+**Context:** The file-based output pattern already exists for brain knowledge (`.brain/`), analysis results (`.agent/`), acceptance criteria (`.agent/ac.md`). Using `.agent/pr-description.md` is consistent. The `StripBlockquotePrefix` step was a workaround for Kiro CLI's `> ` formatting — with file output, the agent writes clean markdown directly.
+
+**Alternatives considered:** Keep stdout with delimiter markers — rejected: another bespoke parsing pattern, fragile across agent backends. Keep stdout with extraction (last markdown block) — rejected: unreliable when agents emit multi-section output.
+
+**Reassess when:** Never for the file-based output principle. If `.agent/pr-description.md` is absent after execution (agent failed to write it), fall back gracefully (log warning, skip description — do not corrupt the PR body with raw stdout).
+
+**Status:** Currently broken (#2161). Fix: change prompt to instruct file write; change `GeneratePrDescriptionAsync` to read file instead of joining `OutputLines`.
+
+---
+
+### AgentAuthorizationFilter reconnect race: implementation detail — no strong opinion
+
+**Date:** 2026-08-29
+**Category:** architecture
+
+**Decision:** No strong preference on the implementation approach for fixing the `[RequiresActiveJob]` filter race during agent reconnection (async `ActiveJobId` set in `RecoverOrphanedStateAsync` vs. filter checking before it completes). Agents may choose the most pragmatic fix: atomic registration, grace-period retry, or guard in `GuardActiveJob`. The hard requirement is that in-flight runs are not killed when the API pod restarts mid-run. Implementation detail — agents decide.
+
+**Reassess when:** Never — once the race is fixed (#2152), the implementation choice is stable.
+
+---
+
+### ReconciliationLoop terminal guard: implementation detail — no strong opinion
+
+**Date:** 2026-08-29
+**Category:** architecture
+
+**Decision:** No strong preference on whether `HandleJobCompletedAsync` uses an in-memory processed-job `HashSet`, a GET-before-POST guard, or another mechanism to avoid repeated status posts for completed K8s Jobs within their TTL window (#2177). The hard requirement is that each completed job's status is posted to the API exactly once (or idempotently — the API absorbs duplicates, but unnecessary load is undesirable). Implementation detail — agents decide.
+
+**Reassess when:** Never — once #2177 is fixed, the implementation choice is stable.
+
+---
+
+### DispatchLoop concurrency map: filter to Active>0 — implementation detail, no strong opinion
+
+**Date:** 2026-08-29
+**Category:** configuration
+
+**Decision:** No strong preference on the exact implementation of the concurrency map fix (#2176). The hard requirement is that completed K8s Jobs (within their 60-minute TTL window) are excluded from the active concurrency count. `job.Status?.Active > 0` is the obvious filter. Implementation detail — agents decide.
+
+**Reassess when:** Never — once #2176 is fixed, the implementation choice is stable.
 
 ---
 
@@ -1403,18 +1574,29 @@ A startup warning must be added when `ChatJobDispatcher` is instantiated with `_
 - "AgentJobTimeoutSeconds: unified backstop" enables "Chat keepalive Redis required for multi-replica" (the backstop fires when the idle-kill circuit fails, which happens when Redis is absent in multi-replica)
 - "Chat keepalive Redis required for multi-replica" scoped by "HMAC key derivation for agent auth" (Redis is already in the dependency stack for multi-replica SignalR; this adds one more reason it's required)
 - "ExternalCiDuration vs PostPrCiDuration" scoped by "Telemetry philosophy: instrument every decision point" (the split follows from the principle that each observable event gets its own instrument)
-
+- "WorkItems.Payload dispatch-time snapshot" scoped by "Dual JSON options (Default/Lenient)" (fresh fetch at assignment uses Lenient deserialization for backward compat); currently broken — #2171 tracks the fix
+- "WorkItems.Payload dispatch-time snapshot" enables "Token vending: private keys never leave orchestrator" (tokens vended fresh at assignment time, not expired from enqueue snapshot)
+- "EmitOutputLine → Serilog routing" scoped by "Telemetry philosophy: instrument every decision point" (full run traceability requires every observable event to be Serilog-queryable); currently broken — #2178 tracks the fix
+- "AgentJobTimeoutSeconds: removed — single AgentTimeout" supersedes "AgentJobTimeoutSeconds: Helm default + per-project override" (session 17 entry); #2179 tracks the removal
+- "PriorityWeight: secondary sort within RunType tier" scoped by "Dispatch priority: static ordering Review > Decomp > Impl > Consolidation" (tier ordering is primary; weight is secondary within tier)
+- "FeedbackTimeoutSeconds: must be PipelineConfiguration field" scoped by "AgentJobTimeoutSeconds: removed" (part of the same timeout simplification arc — no more hardcoded timeouts)
+- "PR description via .agent/pr-description.md" scoped by "Filesystem-as-context" (structured agent outputs delivered via files, not stdout)
+- "PR description via .agent/pr-description.md" enables "Partial failure contract" (description failure is non-fatal; reading from file makes fallback cleaner — no stdout pollution)
+- "Grafana Faro CDN-only" scoped by "Telemetry philosophy: instrument every decision point" (RUM is the frontend telemetry complement; CDN-only is acceptable for current deployment target)
 ### Coverage Gaps (auto-detected)
 - Automated calibration design remains explicitly deferred
 - Housekeeping feature calibration data — no empirical data yet; revisit after 50+ housekeeping cycles
 - AgentCodingPageService decomposition — decision captured but implementation not yet started
 - `RateLimiter` null-forgiving operator (#1994) — no opinion captured, implementation detail
+- Timeout field proliferation: `FailureFeedbackTimeoutSeconds` const is the last remaining hardcoded timeout (session 18 decision queues its promotion)
 
 ### Queued Questions (for next session)
 - Automated calibration design — when a clear mechanism emerges, revisit
 - Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct?
 - AgentCodingPageService decomposition: after extraction, was the per-drawer split the right granularity?
-- PostPrCiDuration: after #2133 and the metric split are implemented, verify Grafana panels updated
+- PostPrCiDuration: after the metric split is implemented, verify Grafana panels updated
+- Grafana Faro CSP: when CSP is added, revisit `script-src` to include `unpkg.com`
+- After #2171 + #2179 land: verify `TimeoutSeconds` propagation to `activeDeadlineSeconds` end-to-end
 
 ---
 
