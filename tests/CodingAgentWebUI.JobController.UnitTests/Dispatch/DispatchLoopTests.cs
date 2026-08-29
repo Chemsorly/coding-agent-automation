@@ -157,14 +157,8 @@ public sealed class DispatchLoopTests
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
-        // TODO [WARNING]: The ClaimAsync setup below allows the mock to silently handle a call to
-        // ClaimAsync without failing. A partially reverted implementation (PVC check moved after
-        // claim) would still pass all assertions except the Times.Never verify further down.
-        // Removing this setup would cause Moq to throw MockException on an unexpected ClaimAsync
-        // call, giving an earlier and more explicit failure signal. The sibling
-        // ConsolidationDispatchLoopTests version of this test was already corrected (setup removed).
-        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(MakeClaimed());
+        // No ClaimAsync setup — PVC check runs before claim, so Moq will throw MockException
+        // on any unexpected ClaimAsync call, giving an early and explicit failure signal.
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
@@ -179,9 +173,6 @@ public sealed class DispatchLoopTests
         // PVC check must happen BEFORE ClaimAsync — if ClaimAsync fires, the item transitions
         // Pending→Dispatched server-side with no K8s Job, stranding it indefinitely (issue #2129).
         _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-        // TODO [WARNING]: This test does not assert that _reconciliationTrigger.RequestImmediateCycle()
-        // was called. The sibling WhenPvcPoolExhausted_ShouldCallRequestImmediateCycle test covers it,
-        // but an explicit cross-check here would catch an accidental removal of the trigger call.
     }
 
     [Fact]

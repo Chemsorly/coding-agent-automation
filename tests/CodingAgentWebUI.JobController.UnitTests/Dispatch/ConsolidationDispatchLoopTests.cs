@@ -193,14 +193,9 @@ public sealed class ConsolidationDispatchLoopTests
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         // PVC starvation must NOT call RequeueAsync (would increment RetryCount)
         _consolidationClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
-        // PVC starvation must NOT fire a ConsolidationRunStatus.Failed transition
+        // PVC starvation must NOT fire any run-state transition (no claim, no job)
         _consolidationClient.Verify(c => c.TransitionRunAsync(
-            It.IsAny<string>(), ConsolidationRunStatus.Failed, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
-        // TODO [WARNING]: The verify above only checks for ConsolidationRunStatus.Failed transitions.
-        // A spurious ConsolidationRunStatus.Running transition on the starvation path would also be
-        // incorrect (no claim, no job) but would not be caught by this assertion. Consider using
-        // It.IsAny<ConsolidationRunStatus>() or adding an explicit Running-status verify to give a
-        // complete guarantee that no run-state mutation occurs on PVC starvation.
+            It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
         // PVC check is before ClaimAsync, so no claim should have been attempted
         _consolidationClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
