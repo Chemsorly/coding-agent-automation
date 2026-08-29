@@ -169,6 +169,10 @@ public sealed class AgentJobLifecycleServiceCoverageTests
     [Fact]
     public async Task HandleJobAccepted_NullAgent_NotifyChangeNotCalled()
     {
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(true);
+
         var svc = CreateService();
 
         await svc.HandleJobAcceptedAsync(new JobId("job-1"), null, CancellationToken.None);

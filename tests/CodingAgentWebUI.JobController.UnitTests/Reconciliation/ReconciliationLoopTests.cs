@@ -1,7 +1,10 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.JobController.Reconciliation;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 
 namespace CodingAgentWebUI.JobController.UnitTests.Reconciliation;
 
@@ -1030,5 +1033,239 @@ public sealed class ReconciliationLoopErrorTests
             },
             Status = status
         };
+    }
+}
+
+// ─── Metric / telemetry tests ─────────────────────────────────────────────────
+// These tests use MeterListener directly (IDisposable, no [Collection] fixture)
+// because the JobController test project has no Metrics collection definition.
+// The static WorkDistributionTelemetry.Meter is process-wide, so concurrent tests
+// may fire TimeoutExecutionAge.Record(...) while a listener is active. Assertions
+// use Contain-style checks and snapshot-delta patterns to remain robust.
+
+public sealed class ReconciliationLoopMetricTests : IDisposable
+{
+    private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
+    private readonly Mock<IKubernetesJobClient> _k8sClient = new();
+    private readonly DispatchServiceOptions _options;
+
+    private readonly MeterListener _listener = new();
+    private readonly ConcurrentBag<(string InstrumentName, double DoubleValue, long LongValue, string? AgentSelector)> _recordings = [];
+
+    public ReconciliationLoopMetricTests()
+    {
+        _options = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            AgentJobTimeoutSeconds = 7200,
+            ChatPodConnectTimeoutSeconds = 120
+        };
+
+        // Default: no active K8s jobs
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        // Default: no active work items
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        // Enable all instruments on the WorkDistribution meter
+        _listener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName)
+                listener.EnableMeasurementEvents(instrument);
+        };
+
+        // Capture Histogram<double> recordings (TimeoutExecutionAge)
+        _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
+        {
+            string? selector = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "agent_selector") { selector = tag.Value?.ToString(); break; }
+            }
+            _recordings.Add((instrument.Name, measurement, 0L, selector));
+        });
+
+        // Capture Counter<long> recordings (TimeoutCanaryViolations)
+        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            string? selector = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "agent_selector") { selector = tag.Value?.ToString(); break; }
+            }
+            _recordings.Add((instrument.Name, 0d, measurement, selector));
+        });
+
+        _listener.Start();
+    }
+
+    public void Dispose() => _listener.Dispose();
+
+    private ReconciliationLoop CreateLoop() =>
+        new(_workItemClient.Object, _k8sClient.Object, new PvcPool([]), _options);
+
+    // ─── AC: DispatchedAt = UtcNow - 30s → enforcement skipped, canary incremented ──
+
+    [Fact]
+    public async Task EnforceTimeouts_WhenExecutionAgeLessThan60s_SkipsEnforcementAndIncrementsCanaryCounter()
+    {
+        // Arrange
+        var item = new ActiveWorkItemDto
+        {
+            Id = Guid.NewGuid(),
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-30),
+            AgentSelector = "test",
+            IssueIdentifier = "owner/repo#1"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+
+        // Act
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Assert — enforcement must be skipped
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Assert — canary counter incremented with correct tag
+        _recordings.Should().Contain(
+            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
+                 && r.LongValue == 1L
+                 && r.AgentSelector == "test",
+            "timeout_canary_violations must be incremented by 1 with agent_selector=test");
+
+        // Assert — execution age histogram recorded (≈ 30s; window tolerates clock jitter)
+        // TODO: The lower bound >= 25.0 gives only a 5s tolerance against wall-clock jitter between
+        // UtcNow.AddSeconds(-30) in Arrange and the UtcNow call inside EnforceTimeoutsAsync. On a
+        // heavily loaded CI agent with >5s thread preemption this assertion could fail spuriously.
+        // Consider lowering the bound (e.g. >= 20.0) or using a time-frozen anchor to eliminate the
+        // flakiness surface. (Correctness review warning)
+        _recordings.Should().Contain(
+            r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
+                 && r.DoubleValue >= 25.0 && r.DoubleValue < 60.0
+                 && r.AgentSelector == "test",
+            "timeout_execution_age_seconds must record ≈ 30s for a 30s-old work item");
+    }
+
+    // ─── AC: DispatchedAt = UtcNow - 7200s → enforcement proceeds, canary not incremented ──
+
+    [Fact]
+    public async Task EnforceTimeouts_WhenExecutionAgeAtOrAbove60s_ProceedsNormally_NoCanaryIncrement()
+    {
+        // Arrange
+        var id = Guid.NewGuid();
+        var item = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-7200),
+            AgentSelector = "test",
+            IssueIdentifier = "owner/repo#1"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Snapshot canary count before act to tolerate stray recordings from parallel tests
+        var canaryCountBefore = _recordings.Count(
+            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
+                 && r.AgentSelector == "test");
+
+        // Act
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Assert — enforcement must proceed
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Assert — canary counter NOT incremented (snapshot delta)
+        var canaryCountAfter = _recordings.Count(
+            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
+                 && r.AgentSelector == "test");
+        canaryCountAfter.Should().Be(canaryCountBefore,
+            "timeout_canary_violations must not be incremented when execution age >= 60s");
+
+        // Assert — execution age histogram recorded (≈ 7200s)
+        // TODO: This Contain assertion does not verify the recording happened exactly once for this
+        // item. If a future refactor moves or duplicates the Record(...) call, this would still pass.
+        // Consider adding a count assertion (e.g. count of matching entries == 1 via snapshot-delta)
+        // to confirm the item was recorded exactly once before enforcement. (TestQuality review warning)
+        _recordings.Should().Contain(
+            r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
+                 && r.DoubleValue >= 3600.0
+                 && r.AgentSelector == "test",
+            "timeout_execution_age_seconds must record ≈ 7200s");
+    }
+
+    // ─── AC: DispatchedAt = null → fallback to AgentJobTimeoutSeconds → enforcement proceeds ──
+
+    [Fact]
+    public async Task EnforceTimeouts_WhenDispatchedAtIsNull_UsesFallbackAge_ProceedsNormally()
+    {
+        // Arrange
+        var id = Guid.NewGuid();
+        var item = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = null,
+            AgentSelector = "test",
+            IssueIdentifier = "owner/repo#1"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Snapshot canary count before act
+        var canaryCountBefore = _recordings.Count(
+            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
+                 && r.AgentSelector == "test");
+
+        // Act
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Assert — enforcement must proceed
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Assert — canary counter NOT incremented (snapshot delta)
+        var canaryCountAfter = _recordings.Count(
+            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
+                 && r.AgentSelector == "test");
+        canaryCountAfter.Should().Be(canaryCountBefore,
+            "timeout_canary_violations must not be incremented when DispatchedAt is null (falls back to full timeout age)");
+
+        // Assert — execution age histogram recorded with exact fallback value (7200.0, not clock-based)
+        // TODO: This Contain assertion does not bound the number of matching recordings. Using
+        // Should().ContainSingle(...) would make the intent explicit and catch loop-iteration bugs
+        // where Record(...) is called multiple times for the same item. (TestQuality review warning)
+        _recordings.Should().Contain(
+            r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
+                 && r.DoubleValue == (double)_options.AgentJobTimeoutSeconds
+                 && r.AgentSelector == "test",
+            $"timeout_execution_age_seconds must record exactly {_options.AgentJobTimeoutSeconds}s for null DispatchedAt");
     }
 }

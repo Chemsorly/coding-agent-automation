@@ -297,6 +297,48 @@ public sealed class WorkItemEndpointTests
         ((int)response.StatusCode).Should().BeGreaterThanOrEqualTo(400);
     }
 
+    /// <summary>
+    /// Acceptance criterion: sending the same POST /api/work-items payload twice with the same
+    /// RunId results in one DB row and no exception (idempotent retry returns 201).
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_SameRunId_SecondCallReturns201_AndExactlyOneRowExists()
+    {
+        // Arrange: create a request with a stable RunId so the endpoint derives the same workItemId
+        // on both calls (workItemId = Guid.Parse(request.RunId)).
+        var runId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier($"idem-test-{runId:N}"),
+            IssueProviderConfigId = "prov-idem",
+            RepoProviderConfigId = "repo-idem",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            ProjectId = null,
+            RunId = runId.ToString()
+        };
+
+        // Act: first POST — must succeed with 201
+        var response1 = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+        response1.StatusCode.Should().Be(HttpStatusCode.Created);
+        var returnedId1 = await response1.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+        returnedId1.Should().Be(runId, "the returned ID must equal the RunId from the request");
+
+        // Act: second POST with identical payload — must also return 201 (idempotent retry)
+        var response2 = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+        response2.StatusCode.Should().Be(HttpStatusCode.Created,
+            "a retry with the same RunId must be idempotent and return 201, not 409 or 500");
+        var returnedId2 = await response2.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+        returnedId2.Should().Be(runId, "both calls must return the same work item ID");
+
+        // Assert: exactly one row in the DB — the duplicate was suppressed, not inserted
+        using var db = _factory.CreateDbContext();
+        var count = db.WorkItems.Count(w => w.Id == runId);
+        count.Should().Be(1, "idempotent retry must not create a second DB row");
+    }
+
     // ── Pending ───────────────────────────────────────────────────────────────────
 
     [Fact]
