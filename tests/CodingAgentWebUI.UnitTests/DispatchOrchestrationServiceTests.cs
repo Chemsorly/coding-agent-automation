@@ -45,7 +45,7 @@ public class DispatchOrchestrationServiceTests
 
     private static readonly PipelineProject TestProject = new()
     {
-        Id = "proj-1",
+        Id = "11110000-0000-0000-0000-000000000001",
         Name = "TestProject",
         Enabled = true
     };
@@ -219,7 +219,7 @@ public class DispatchOrchestrationServiceTests
         result.IssueDetail.Title.Should().Be("Test Issue Title");
         result.CreatedRun.Should().NotBeNull();
         result.CreatedRun.IssueIdentifier.Value.Should().Be("issue-42");
-        result.Project.Id.Should().Be("proj-1");
+        result.Project.Id.Should().Be("11110000-0000-0000-0000-000000000001");
         result.PipelineConfiguration.Should().NotBeNull();
     }
 
@@ -347,7 +347,7 @@ public class DispatchOrchestrationServiceTests
 
         result.Should().NotBeNull();
         result!.CreatedRun.IssueIdentifier.Value.Should().Be("issue-42");
-        result.CreatedRun.ProjectId.Should().Be("proj-1");
+        result.CreatedRun.ProjectId.Should().Be("11110000-0000-0000-0000-000000000001");
         result.CreatedRun.ProjectName.Should().Be("TestProject");
         // Run is no longer registered in the monolith's OrchestratorRunService (Req 1a.1 Option A).
         // The API registers it when POST /api/work-items persists the WorkItem.
@@ -447,12 +447,64 @@ public class DispatchOrchestrationServiceTests
         request.InitiatedBy.Should().Be("test-user");
         request.TaskType.Should().Be(WorkItemTaskType.Implementation);
         request.RunType.Should().Be(PipelineRunType.Implementation);
-        request.ProjectId.Should().Be("proj-1");
+        request.ProjectId.Should().Be(new Guid("11110000-0000-0000-0000-000000000001"));
         request.ProjectName.Should().Be("TestProject");
         request.ResolvedProfileId.Should().Be("profile-1");
         request.IssueDetail.Should().NotBeNull();
         request.ProviderConfigs.Should().NotBeNullOrEmpty();
         request.PipelineConfiguration.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task PrepareDistributionRequestAsync_NonUuidProjectId_SetsProjectIdNull_AndLogsWarning()
+    {
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        // Use a project whose Id is a legacy non-UUID string
+        var legacyProject = new PipelineProject
+        {
+            Id = "proj-legacy",
+            Name = "LegacyProject",
+            Enabled = true
+        };
+
+        var service = CreateService();
+        DispatchOrchestrationService iface = service;
+
+        var request = await iface.PrepareDistributionRequestAsync(
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "test-user",
+                Project = legacyProject,
+                TaskType = WorkItemTaskType.Implementation,
+                RunType = PipelineRunType.Implementation
+            },
+            CancellationToken.None);
+
+        request.Should().NotBeNull();
+        // Non-UUID Project.Id must be surfaced as null rather than silently lost
+        request!.ProjectId.Should().BeNull("a non-UUID project ID cannot be stored as Guid and is explicitly nulled");
+        request.ProjectName.Should().Be("LegacyProject", "ProjectName is stored as string and always preserved");
+        // A warning must be logged so operators can detect misconfigured project stores
+        _mockLogger.Verify(
+            l => l.Warning(It.IsAny<string>(), It.Is<string>(v => v == "proj-legacy")),
+            Times.Once);
     }
 
     [Fact]
@@ -560,7 +612,7 @@ public class DispatchOrchestrationServiceTests
 
         var projectWithSteering = new PipelineProject
         {
-            Id = "proj-1",
+            Id = "11110000-0000-0000-0000-000000000001",
             Name = "TestProject",
             Enabled = true,
             SteeringContent = "## Project Instructions\nAlways use structured logging."

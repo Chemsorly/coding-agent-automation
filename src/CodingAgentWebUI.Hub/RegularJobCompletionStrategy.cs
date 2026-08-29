@@ -38,6 +38,15 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         // Update run with completion data
         JobCompletionMapper.Apply(run, payload);
 
+        // Persist Apply's mutations back to Redis so CompleteRunAsync's RemoveRun
+        // deserializes the updated state. Without this, DistributedRunService.RemoveRun
+        // re-reads the pre-Apply Redis snapshot and history is persisted with nulls/zeros.
+        // Same pattern as WorkItemEndpoints.ClaimWorkItem — see that file's comment for
+        // a full explanation of why ReplaceRun is required (not just GetRun + mutate).
+        // In OrchestratorRunService (in-memory), this is a no-op: the same reference is
+        // already in the dictionary, so re-assigning it has no observable effect.
+        _facade.ReplaceRun(run);
+
         activity?.SetTag("success", payload.FinalStep == PipelineStep.Completed);
 
         var (workItemStatus, errorMsg, failureEnum) =

@@ -137,7 +137,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
             AgentSelector = agentSelector,
             TimeoutSeconds = 3600,
             TaskType = WorkItemTaskType.Implementation,
-            ProjectId = WellKnownIds.DefaultProjectId,
+            ProjectId = Guid.Parse(WellKnownIds.DefaultProjectId),
             InitiatedBy = "e2e-test"
         };
         return await distributor.DistributeAsync(request, CancellationToken.None);
@@ -151,7 +151,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         string issueIdentifier,
         string agentSelector = "kiro,dotnet",
         int timeoutSeconds = 3600,
-        string? projectId = null)
+        Guid? projectId = null)
     {
         var workItemId = Guid.NewGuid();
         await using var db = Fixture.DbContextFactory.CreateDbContext();
@@ -166,7 +166,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
             AgentSelector = agentSelector,
             CreatedAt = DateTimeOffset.UtcNow,
             TimeoutSeconds = timeoutSeconds,
-            ProjectId = projectId ?? WellKnownIds.DefaultProjectId
+            ProjectId = projectId ?? Guid.Parse(WellKnownIds.DefaultProjectId)
         });
         await db.SaveChangesAsync();
         return workItemId;

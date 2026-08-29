@@ -100,7 +100,7 @@ public static class PipelineRunFactory
         if (initialStep.HasValue)
             run.CurrentStep = initialStep.Value;
 
-        run.ProjectId = request.ProjectId;
+        run.ProjectId = request.ProjectId?.ToString();
         run.ProjectName = request.ProjectName;
 
         return run;

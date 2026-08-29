@@ -29,5 +29,5 @@ public sealed record PendingWorkItemDto
     public string? ProjectName { get; init; }
 
     /// <summary>Project ID from the <c>WorkItemEntity.ProjectId</c> column. Null when item has no project.</summary>
-    public string? ProjectId { get; init; }
+    public Guid? ProjectId { get; init; }
 }
