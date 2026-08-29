@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -21,6 +22,7 @@ public sealed class DispatchLoop
     private readonly JobTemplateStore _templateStore;
     private readonly PvcPool _pvcPool;
     private readonly DispatchServiceOptions _options;
+    private readonly IReconciliationTrigger _reconciliationTrigger;
 
     private bool _startupValidationDone;
 
@@ -30,7 +32,8 @@ public sealed class DispatchLoop
         IKubernetesJobClient k8sClient,
         JobTemplateStore templateStore,
         PvcPool pvcPool,
-        DispatchServiceOptions options)
+        DispatchServiceOptions options,
+        IReconciliationTrigger reconciliationTrigger)
     {
         ArgumentNullException.ThrowIfNull(workItemClient);
         ArgumentNullException.ThrowIfNull(configClient);
@@ -38,12 +41,14 @@ public sealed class DispatchLoop
         ArgumentNullException.ThrowIfNull(templateStore);
         ArgumentNullException.ThrowIfNull(pvcPool);
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(reconciliationTrigger);
         _workItemClient = workItemClient;
         _configClient = configClient;
         _k8sClient = k8sClient;
         _templateStore = templateStore;
         _pvcPool = pvcPool;
         _options = options;
+        _reconciliationTrigger = reconciliationTrigger;
     }
 
     /// <summary>
@@ -208,6 +213,10 @@ public sealed class DispatchLoop
             if (pvcName is null)
             {
                 Log.Warning("No available PVC for kiro agent {Id}, requeuing", item.Id);
+                // Signal ReconciliationService to run an immediate cycle so any completed-but-not-yet-
+                // reconciled K8s Jobs release their PVC slots quickly, rather than waiting up to 30s.
+                // The call is non-blocking and idempotent.
+                _reconciliationTrigger.RequestImmediateCycle();
                 await SafeRequeueAsync(item.Id, ct);
                 return;
             }

@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
+using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
 
@@ -16,6 +17,7 @@ public sealed class ConsolidationDispatchLoopTests
 {
     private readonly Mock<IPipelineApiConsolidationWorkItemClient> _consolidationClient = new();
     private readonly Mock<IKubernetesJobClient> _k8sClient = new();
+    private readonly Mock<IReconciliationTrigger> _reconciliationTrigger = new();
     private readonly JobTemplateStore _templateStore;
     private readonly DispatchServiceOptions _options;
 
@@ -75,7 +77,7 @@ public sealed class ConsolidationDispatchLoopTests
         };
 
     private ConsolidationDispatchLoop CreateLoop() =>
-        new(_consolidationClient.Object, _k8sClient.Object, _templateStore, new PvcPool(_options.KiroPvcPool), _options);
+        new(_consolidationClient.Object, _k8sClient.Object, _templateStore, new PvcPool(_options.KiroPvcPool), _options, _reconciliationTrigger.Object);
 
     // ── Happy path ─────────────────────────────────────────────────────────────
 
@@ -178,12 +180,45 @@ public sealed class ConsolidationDispatchLoopTests
 
         var loop = new ConsolidationDispatchLoop(
             _consolidationClient.Object, _k8sClient.Object,
-            kiroStore, new PvcPool([]), emptyPoolOptions);
+            kiroStore, new PvcPool([]), emptyPoolOptions,
+            _reconciliationTrigger.Object);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _consolidationClient.Verify(c => c.RequeueAsync(ItemId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task WhenPvcPoolExhausted_ShouldCallRequestImmediateCycle()
+    {
+        const string kiroYaml = """
+            - labels: dotnet10,kiro
+              image: chemsorly/coding-agent:kiro-dotnet10
+              providerType: kiro
+              maxConcurrent: 0
+            """;
+        var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
+        var emptyPoolOptions = new DispatchServiceOptions { Namespace = "test-ns", RateLimitPerSecond = 100, KiroPvcPool = [] };
+
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,kiro")]);
+        _consolidationClient
+            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        var loop = new ConsolidationDispatchLoop(
+            _consolidationClient.Object, _k8sClient.Object,
+            kiroStore, new PvcPool([]), emptyPoolOptions,
+            _reconciliationTrigger.Object);
+
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Trigger must fire exactly once — not zero (no-op) and not more than once per cycle
+        _reconciliationTrigger.Verify(t => t.RequestImmediateCycle(), Times.Once);
+        // No K8s Job should be created
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Concurrency limit reached ──────────────────────────────────────────────
@@ -218,7 +253,8 @@ public sealed class ConsolidationDispatchLoopTests
 
         var loop = new ConsolidationDispatchLoop(
             _consolidationClient.Object, _k8sClient.Object,
-            limitedStore, new PvcPool([]), _options);
+            limitedStore, new PvcPool([]), _options,
+            _reconciliationTrigger.Object);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
