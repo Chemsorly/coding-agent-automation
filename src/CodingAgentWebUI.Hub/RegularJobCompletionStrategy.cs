@@ -38,6 +38,22 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
         // Update run with completion data
         JobCompletionMapper.Apply(run, payload);
 
+        // Persist Apply's mutations back to Redis so CompleteRunAsync's RemoveRun
+        // deserializes the updated state. Without this, DistributedRunService.RemoveRun
+        // re-reads the pre-Apply Redis snapshot and history is persisted with nulls/zeros.
+        // Same pattern as WorkItemEndpoints.ClaimWorkItem — see that file's comment for
+        // a full explanation of why ReplaceRun is required (not just GetRun + mutate).
+        // In OrchestratorRunService (in-memory), this is a no-op: the same reference is
+        // already in the dictionary, so re-assigning it has no observable effect.
+        // TODO [WARNING]: DistributedRunService.ReplaceRun calls HashSetAsync().GetAwaiter().GetResult()
+        // (sync-over-async). If Redis is unavailable here, the exception propagates out of ExecuteAsync
+        // without entering the try/catch below, bypassing DefensiveRunCleanupAsync and leaving the
+        // work item in an indeterminate state. This is a pre-existing design issue in
+        // DistributedRunService.ReplaceRun (safe on ThreadPool per its own comment) — consider
+        // wrapping the ReplaceRun call in a try/catch that logs and continues, since CompleteRunAsync
+        // will still attempt RemoveRun and persist history with the pre-Apply snapshot as a fallback.
+        _facade.ReplaceRun(run);
+
         activity?.SetTag("success", payload.FinalStep == PipelineStep.Completed);
 
         var (workItemStatus, errorMsg, failureEnum) =

@@ -195,6 +195,64 @@ public sealed class RegularJobCompletionStrategyTests
         run.PullRequestUrl.Should().Be("https://github.com/org/repo/pull/99");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_calls_ReplaceRun_with_mutated_run_before_CompleteRunAsync()
+    {
+        // Regression guard for distributed mode: _facade.ReplaceRun must be called with
+        // PullRequestUrl and CompletedAtOffset already set (from JobCompletionMapper.Apply),
+        // and it must be called BEFORE CompleteRunAsync. Without ReplaceRun, DistributedRunService
+        // re-deserializes from Redis on CompleteRunAsync's RemoveRun call and gets the pre-Apply
+        // snapshot, causing CompletedAt/PullRequestUrl/TotalTokens to be null/zero in the DB.
+        var run = MakeRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PullRequestUrl = "https://github.com/org/repo/pull/99"
+        };
+
+        var callOrder = new List<string>();
+
+        _facade
+            .Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()))
+            .Callback<PipelineRun>(_ => callOrder.Add("ReplaceRun"));
+
+        // TODO [WARNING]: If this setup is changed to ReturnsAsync((PipelineRun?)null) to test the
+        // race path, the Callback below would no longer fire (Moq callbacks on ReturnsAsync(null)
+        // still fire, but callOrder would never contain "CompleteRunAsync" if the callback
+        // registration is dropped). The ordering assertion ContainInOrder would then vacuously
+        // pass rather than fail. To test the race-condition path separately, add a dedicated test
+        // that verifies ReplaceRun is called even when CompleteRunAsync returns null.
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync(It.IsAny<RunId>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(run)
+            .Callback(() => callOrder.Add("CompleteRunAsync"));
+
+        var strategy = CreateStrategy();
+        await strategy.ExecuteAsync(new JobId("job-1"), run, payload, null, CancellationToken.None);
+
+        // ReplaceRun was called exactly once, with PullRequestUrl and CompletedAtOffset already set
+        // TODO [WARNING]: The ordering assertion (ContainInOrder) and the mutation assertion (Verify below)
+        // are decoupled — the Callback records "ReplaceRun" unconditionally regardless of whether
+        // Apply had run yet. Both assertions together enforce the full invariant; neither alone does.
+        // A hypothetical regression that called ReplaceRun before Apply and CompleteRunAsync after
+        // would still be caught by the Verify below (PullRequestUrl would not be set at ReplaceRun
+        // time), but a regression that moved Apply after ReplaceRun would not be caught by
+        // ContainInOrder alone. Consider consolidating into a single callback that captures the
+        // run's state at the time of the ReplaceRun call for a more airtight guard.
+        // TODO [WARNING]: r.CompletedAtOffset.HasValue is weaker than asserting the exact value from
+        // payload.CompletedAt. A future mapping bug that sets CompletedAtOffset to the wrong timestamp
+        // would not be caught. Consider capturing payload.CompletedAt and asserting
+        // r.CompletedAtOffset == payload.CompletedAt for a stronger guard.
+        _facade.Verify(f => f.ReplaceRun(It.Is<PipelineRun>(r =>
+            r.PullRequestUrl == "https://github.com/org/repo/pull/99" &&
+            r.CompletedAtOffset.HasValue)), Times.Once);
+
+        // ReplaceRun came before CompleteRunAsync
+        callOrder.Should().ContainInOrder("ReplaceRun", "CompleteRunAsync");
+    }
+
     // ── Notifications ─────────────────────────────────────────────────────────
 
     [Fact]
