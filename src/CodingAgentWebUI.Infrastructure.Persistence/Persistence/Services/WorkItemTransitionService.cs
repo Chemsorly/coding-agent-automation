@@ -218,9 +218,12 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
         };
 
     /// <summary>
-    /// Attempts to recover a WorkItem from an infrastructure-failure-induced Failed state.
-    /// This is an explicit, auditable bypass of the terminal state machine rule that only
-    /// activates when the FailureReason is InfrastructureFailure (e.g., SignalR delivery timeout).
+    /// Attempts to recover a WorkItem from a race-induced Failed state.
+    /// This is an explicit, auditable bypass of the terminal state machine rule that activates
+    /// when the FailureReason is <see cref="FailureReason.InfrastructureFailure"/> (e.g., SignalR
+    /// delivery timeout) or <see cref="FailureReason.Timeout"/> (e.g., ReconciliationLoop timeout
+    /// race where the agent completed after the server gave up waiting). Both reasons represent
+    /// "server gave up waiting, but the agent may still succeed" and share identical recovery semantics.
     /// Does NOT modify IsValidTransition — the standard state machine remains strict.
     /// Wraps DB operations in the Polly resilience pipeline for transient fault tolerance,
     /// and retries up to 3 times on DbUpdateConcurrencyException (matching TransitionCoreAsync).
@@ -277,8 +280,10 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             if (item.Status != WorkItemStatus.Failed)
                 return false;
 
-            // Only recover infrastructure failures (delivery timeouts), not legitimate agent errors
-            if (item.FailureReason != FailureReason.InfrastructureFailure)
+            // Only recover race-induced failures (delivery timeouts, reconciliation-loop timeouts),
+            // not legitimate agent errors. Both InfrastructureFailure and Timeout represent
+            // "server gave up waiting, but agent may still succeed" — recovery semantics are identical.
+            if (item.FailureReason is not (FailureReason.InfrastructureFailure or FailureReason.Timeout))
                 return false;
 
             // Perform the recovery transition
@@ -289,8 +294,8 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             {
                 await db.SaveChangesAsync(ct);
                 _logger.LogWarning(
-                    "Recovered WorkItem {WorkItemId} from infrastructure-failure-induced Failed to {DesiredStatus}",
-                    workItemId, desiredStatus);
+                    "Recovered WorkItem {WorkItemId} from {FailureReason}-induced Failed to {DesiredStatus}",
+                    workItemId, item.FailureReason, desiredStatus);
                 return true;
             }
             catch (DbUpdateConcurrencyException) when (attempt < MaxRetries)

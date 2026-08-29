@@ -344,7 +344,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         agent.ActiveJobId = "job-1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var hub = CreateHubWithOrchestration();
         await hub.JobAccepted("job-1");
@@ -359,7 +359,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         agent.ActiveJobId = "job-1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var hub = CreateHubWithOrchestration();
         await hub.JobAccepted("job-1");
@@ -373,7 +373,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         // When agent is null (connection not found), the WorkItem transition should still happen
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
         _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var hub = CreateHubWithOrchestration();
         await hub.JobAccepted("job-1");
@@ -404,7 +404,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         agent.ActiveJobId = "job-1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var hub = CreateHubWithOrchestration();
         var act = () => hub.JobAccepted("job-1");

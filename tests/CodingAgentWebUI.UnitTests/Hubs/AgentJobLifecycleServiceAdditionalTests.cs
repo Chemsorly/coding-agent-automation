@@ -63,6 +63,13 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
     {
         var agent = MakeAgent();
         var svc = CreateService();
+        // TODO: These setups use the 3-parameter form (omitting optional null, null) while
+        // AgentJobLifecycleServiceTests.cs consistently uses the 5-parameter form. Moq currently
+        // matches correctly, but if the interface gains a true overload the setup could silently
+        // become a no-op. Consider normalizing to the 5-parameter form (It.IsAny<string?>(),
+        // It.IsAny<FailureReason?>()) for consistency and long-term safety.
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         await svc.HandleJobAcceptedAsync(new JobId("job-1"), agent, CancellationToken.None);
 
@@ -75,6 +82,8 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
     {
         var agent = MakeAgent();
         var svc = CreateService();
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         await svc.HandleJobAcceptedAsync(new JobId("job-1"), agent, CancellationToken.None);
 
@@ -86,6 +95,8 @@ public sealed class AgentJobLifecycleServiceAdditionalTests
     public async Task HandleJobAccepted_NullAgent_StillTransitionsWorkItemToRunning()
     {
         var svc = CreateService();
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         await svc.HandleJobAcceptedAsync(new JobId("job-1"), null, CancellationToken.None);
 
