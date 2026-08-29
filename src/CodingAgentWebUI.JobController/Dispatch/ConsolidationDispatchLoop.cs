@@ -193,7 +193,7 @@ public sealed class ConsolidationDispatchLoop
         {
             WorkItemId = item.Id,
             AgentSelector = selector,
-            TimeoutSeconds = _options.AgentJobTimeoutSeconds,
+            TimeoutSeconds = Math.Max(item.TimeoutSeconds, _options.AgentJobTimeoutSeconds),
             JobName = jobName,
             ClaimedPvc = pvcName,
             OrchestratorUrl = _options.OrchestratorUrl,

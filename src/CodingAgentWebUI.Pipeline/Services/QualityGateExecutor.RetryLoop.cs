@@ -87,7 +87,6 @@ public partial class QualityGateExecutor
 
         callbacks.TransitionTo(PipelineStep.PreparingForPullRequest);
         callbacks.EmitOutputLine("🧹 Preparing for pull request — running cleanup...");
-        _logger.Information("Pipeline {RunId} quality gates passed, entering PreparingForPullRequest cleanup step", run.RunId);
 
         var cleanupPrompt = PromptBuilder.BuildCleanupPrompt();
         run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = cleanupPrompt });
@@ -119,7 +118,6 @@ public partial class QualityGateExecutor
         }
 
         callbacks.EmitOutputLine("🏗️ Running final quality gates after cleanup...");
-        _logger.Information("Pipeline {RunId} running final quality gates after cleanup", run.RunId);
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
         var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
         report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
@@ -307,7 +305,6 @@ public partial class QualityGateExecutor
     {
         try
         {
-            _logger.Information("Pipeline {RunId} collecting failure feedback from agent", run.RunId);
             context.Callbacks.EmitOutputLine("📋 Collecting failure feedback...");
 
             // Load distinct categories from recent run summaries
@@ -406,8 +403,7 @@ public partial class QualityGateExecutor
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
 
-            _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}",
-                run.RunId, run.RetryCount, config.MaxRetries);
+            _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}", run.RunId, run.RetryCount, config.MaxRetries);
             callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {run.RetryCount}/{config.MaxRetries})");
 
             var retryPromptSummary = BuildQualityGateRetryPrompt(report, run.RetryCount, config.MaxRetries);

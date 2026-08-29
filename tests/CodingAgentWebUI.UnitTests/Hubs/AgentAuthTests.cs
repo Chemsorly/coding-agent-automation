@@ -8,6 +8,9 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Connections.Features;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
@@ -527,4 +530,181 @@ public class AgentAuthorizationFilterInvokeTests
 public sealed class DummyHub : Microsoft.AspNetCore.SignalR.Hub
 {
     public void DoSomething() { }
+}
+
+/// <summary>
+/// Unit tests for the Redis fallback in <see cref="AgentAuthorizationFilter.GuardAgentMethod"/>
+/// (Fix 1 for issue #2152). Tests use <see cref="Mock{IAgentRegistryService}"/> to independently
+/// control <c>GetByConnectionId</c> (returning null, simulating a cold pod) and
+/// <c>GetByAgentId</c> (returning a controlled Redis snapshot).
+///
+/// Note on operator connections: operators are routed to <c>GuardOperatorMethod</c> before
+/// <c>GuardAgentMethod</c> is ever reached (via the <c>IsOperatorConnection</c> claim check),
+/// so the <c>?agentId</c> fallback is structurally unreachable for operator-authenticated
+/// connections — no separate test is needed for that path.
+/// </summary>
+public class AgentAuthorizationFilterRedisFallbackTests
+{
+    private readonly Mock<IAgentRegistryService> _registryMock;
+    private readonly Mock<ILogger> _loggerMock;
+    private readonly AgentAuthorizationFilter _filter;
+
+    public AgentAuthorizationFilterRedisFallbackTests()
+    {
+        _registryMock = new Mock<IAgentRegistryService>();
+        _loggerMock = new Mock<ILogger>();
+        _filter = new AgentAuthorizationFilter(_registryMock.Object, _loggerMock.Object);
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a <see cref="HubCallerContext"/> mock with the given connectionId and, optionally,
+    /// an HttpContext with the agentId query parameter — matching how the SignalR pipeline
+    /// attaches the original HTTP request context to the connection.
+    /// </summary>
+    private static HubCallerContext MakeContextWithAgentIdQuery(string connectionId, string? agentIdQueryParam)
+    {
+        var httpContext = new DefaultHttpContext();
+        if (agentIdQueryParam is not null)
+            httpContext.Request.QueryString = new QueryString($"?agentId={agentIdQueryParam}");
+
+        var features = new FeatureCollection();
+        features.Set<IHttpContextFeature>(new TestHttpContextFeature(httpContext));
+
+        var mock = new Mock<HubCallerContext>();
+        mock.Setup(c => c.ConnectionId).Returns(connectionId);
+        mock.Setup(c => c.Features).Returns(features);
+        return mock.Object;
+    }
+
+    private static AgentEntry MakeEntry(string agentId, string connectionId) => new()
+    {
+        AgentId = new AgentId(agentId),
+        ConnectionId = connectionId,
+        Hostname = "host",
+        Labels = [],
+        Status = AgentStatus.Idle,
+        RegisteredAt = DateTimeOffset.UtcNow
+    };
+
+    private AgentHub CreateHub(HubCallerContext context)
+    {
+        var hub = new AgentHub(new AgentHubDependencies(
+            Mock.Of<IAgentHubFacade>(),
+            Mock.Of<IChatNotifier>(),
+            Mock.Of<IChangeNotifier>(),
+            Mock.Of<IHubConsolidationOperations>(),
+            Mock.Of<IHubIssueOperations>(),
+            Mock.Of<IAgentJobLifecycleService>(),
+            Mock.Of<IAgentTokenRefreshService>(),
+            Mock.Of<IGateCommentFormatter>(),
+            _loggerMock.Object,
+            Mock.Of<IAgentOrphanRecoveryService>(),
+            HubTestHelpers.CreateNoOpHubContext()));
+        hub.Context = context;
+        return hub;
+    }
+
+    // ── Fix 1 tests ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Scenario: Cold pod — _connectionIndex misses (GetByConnectionId returns null), but Redis
+    /// already has the new connectionId (Register completed on another replica).
+    /// Fallback reads Redis via GetByAgentId, sees connectionId match → authorizes the call.
+    /// </summary>
+    [Fact]
+    public async Task GuardAgentMethod_ConnectionIdMiss_RedisHasMatchingConnectionId_AllowsCall()
+    {
+        const string agentId = "agent-1";
+        const string connectionId = "conn-new";
+
+        // GetByConnectionId returns null (cold pod — _connectionIndex empty)
+        _registryMock.Setup(r => r.GetByConnectionId(connectionId)).Returns((AgentEntry?)null);
+
+        // Redis has the current connectionId (Register completed on another replica)
+        _registryMock.Setup(r => r.GetByAgentId(new AgentId(agentId)))
+            .Returns(MakeEntry(agentId, connectionId));
+
+        var ctx = MakeContextWithAgentIdQuery(connectionId, agentId);
+        var hub = CreateHub(ctx);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var nextCalled = false;
+        await _filter.InvokeMethodAsync(invocationCtx, _ =>
+        {
+            nextCalled = true;
+            return ValueTask.FromResult((object?)null);
+        });
+
+        nextCalled.Should().BeTrue("Redis fallback should authorize when connectionId matches");
+    }
+
+    /// <summary>
+    /// Scenario: Cold pod — _connectionIndex misses. Redis has an entry, but it still holds the
+    /// previous connection's ID (RegisterAgent hasn't written the new connectionId to Redis yet).
+    /// Fallback sees the mismatch and falls through → throws HubException.
+    /// Polly retry (Fix 2) handles this residual window.
+    /// </summary>
+    [Fact]
+    public async Task GuardAgentMethod_ConnectionIdMiss_RedisHasStaleConnectionId_Throws()
+    {
+        const string agentId = "agent-1";
+        const string currentConnectionId = "conn-new";
+        const string staleConnectionId = "conn-OLD";
+
+        // GetByConnectionId returns null (cold pod)
+        _registryMock.Setup(r => r.GetByConnectionId(currentConnectionId)).Returns((AgentEntry?)null);
+
+        // Redis has a stale connectionId from the previous session
+        _registryMock.Setup(r => r.GetByAgentId(new AgentId(agentId)))
+            .Returns(MakeEntry(agentId, staleConnectionId));
+
+        var ctx = MakeContextWithAgentIdQuery(currentConnectionId, agentId);
+        var hub = CreateHub(ctx);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var act = () => _filter.InvokeMethodAsync(invocationCtx, _ => ValueTask.FromResult((object?)null)).AsTask();
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*not registered*",
+                "stale connectionId in Redis must not grant access to the new connection");
+    }
+
+    /// <summary>
+    /// Scenario: Cold pod — _connectionIndex misses. Redis also returns null (e.g. first-ever
+    /// registration, or Register hasn't reached any replica's Redis yet).
+    /// Both lookups fail → throws HubException.
+    /// </summary>
+    [Fact]
+    public async Task GuardAgentMethod_ConnectionIdMiss_RedisReturnsNull_Throws()
+    {
+        const string agentId = "agent-1";
+        const string connectionId = "conn-new";
+
+        // Both lookups return null
+        _registryMock.Setup(r => r.GetByConnectionId(connectionId)).Returns((AgentEntry?)null);
+        _registryMock.Setup(r => r.GetByAgentId(new AgentId(agentId))).Returns((AgentEntry?)null);
+
+        var ctx = MakeContextWithAgentIdQuery(connectionId, agentId);
+        var hub = CreateHub(ctx);
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invocationCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var act = () => _filter.InvokeMethodAsync(invocationCtx, _ => ValueTask.FromResult((object?)null)).AsTask();
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*not registered*",
+                "missing Redis entry should not grant access");
+    }
+
+    // ── Inner helper for IHttpContextFeature ─────────────────────────────
+
+    private sealed class TestHttpContextFeature : IHttpContextFeature
+    {
+        public TestHttpContextFeature(HttpContext httpContext) => HttpContext = httpContext;
+        public HttpContext? HttpContext { get; set; }
+    }
 }

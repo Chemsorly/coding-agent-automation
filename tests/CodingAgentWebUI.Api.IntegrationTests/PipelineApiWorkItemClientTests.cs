@@ -46,7 +46,8 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
         TaskType = WorkItemTaskType.Implementation,
         CreatedAt = DateTimeOffset.UtcNow,
         AgentSelector = "kiro",
-        RetryCount = 0
+        RetryCount = 0,
+        TimeoutSeconds = 0
     };
 
     private static ActiveWorkItemDto MakeActive(Guid? id = null) => new()

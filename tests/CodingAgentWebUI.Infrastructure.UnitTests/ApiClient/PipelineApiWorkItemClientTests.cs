@@ -49,7 +49,8 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
                 taskType = "Implementation",
                 createdAt = DateTimeOffset.UtcNow,
                 agentSelector = "kiro",
-                retryCount = 0
+                retryCount = 0,
+                timeoutSeconds = 0
             }
         };
         _server.Given(Request.Create().WithPath("/api/work-items/pending").UsingGet())
@@ -75,6 +76,74 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
         var result = await _sut.GetPendingAsync();
 
         result.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Regression: production crash — orchestrator threw JsonException with
+    /// "missing required properties including: 'timeoutSeconds'" when the API pod
+    /// was still running the pre-deployment binary that did not yet emit the field.
+    /// The HTTP-level client must propagate this as a thrown exception, not silently
+    /// return a list with TimeoutSeconds=0.
+    /// </summary>
+    [Fact]
+    public async Task GetPendingAsync_ResponseMissingTimeoutSeconds_ThrowsJsonException()
+    {
+        // Simulate the old API response: all fields present except timeoutSeconds.
+        const string bodyMissingTimeout = """
+            [{
+                "id": "11111111-1111-1111-1111-111111111111",
+                "issueIdentifier": "owner/repo#1",
+                "issueProviderConfigId": "github",
+                "taskType": 0,
+                "createdAt": "2026-08-29T12:00:00+00:00",
+                "agentSelector": "kiro",
+                "retryCount": 0
+            }]
+            """;
+
+        _server.Given(Request.Create().WithPath("/api/work-items/pending").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(bodyMissingTimeout));
+
+        var act = () => _sut.GetPendingAsync();
+
+        await act.Should().ThrowAsync<JsonException>(
+            "timeoutSeconds is required on PendingWorkItemDto; a response without it must throw, " +
+            "not silently default to 0 (which would produce an invalid activeDeadlineSeconds=60 on K8s Jobs)");
+    }
+
+    [Fact]
+    public async Task GetPendingAsync_TimeoutSecondsNonZero_DeserializesCorrectValue()
+    {
+        // Regression: previous tests only asserted count, never asserting the TimeoutSeconds value.
+        // A bug in the mapping (e.g., always emitting 0 from the API) would have been invisible.
+        const string body = """
+            [{
+                "id": "11111111-1111-1111-1111-111111111111",
+                "issueIdentifier": "owner/repo#1",
+                "issueProviderConfigId": "github",
+                "taskType": 0,
+                "createdAt": "2026-08-29T12:00:00+00:00",
+                "agentSelector": "kiro",
+                "retryCount": 0,
+                "timeoutSeconds": 7200
+            }]
+            """;
+
+        _server.Given(Request.Create().WithPath("/api/work-items/pending").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(body));
+
+        var result = await _sut.GetPendingAsync();
+
+        result.Should().HaveCount(1);
+        result[0].TimeoutSeconds.Should().Be(7200,
+            "the TimeoutSeconds value from the API response must round-trip to the client " +
+            "so the Job Controller can compute the correct activeDeadlineSeconds on the K8s Job");
     }
 
     // ── ClaimAsync ────────────────────────────────────────────────────────
