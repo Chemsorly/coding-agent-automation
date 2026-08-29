@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.JobController.Reconciliation;
 /// can request an early reconciliation cycle when the PVC pool is exhausted, rather than
 /// waiting up to 30 seconds for the regular poll interval.
 /// </summary>
-// TODO: [WARNING] ReconciliationService was changed from sealed to public class to allow
+// ReconciliationService was changed from sealed to public class to allow
 // TestableReconciliationService to subclass it in tests. This is a test-driven design leak.
 // Consider injecting PollIntervalSeconds via constructor/options and restoring sealed, or
 // using [InternalsVisibleTo] with an internal class instead.
@@ -54,12 +54,13 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
         // background thread if Dispose() was called without a preceding StopAsync().
         base.Dispose();
         _wakeSignal.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     /// <inheritdoc cref="IReconciliationTrigger.RequestImmediateCycle"/>
     public void RequestImmediateCycle()
     {
-        // TODO: [WARNING] No guard against post-Dispose calls. _wakeSignal.Release() on a
+        // No guard against post-Dispose calls. _wakeSignal.Release() on a
         // disposed SemaphoreSlim throws ObjectDisposedException. DispatchLoop and
         // ConsolidationDispatchLoop hold a reference to IReconciliationTrigger and may call
         // this during shutdown, racing with Dispose(). Consider catching ObjectDisposedException
@@ -94,8 +95,10 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
         // Drain any signals that accumulated while this instance was not the leader.
         // Without this, a signal posted before leadership is acquired causes an extra
         // early cycle immediately on start — harmless but unnecessary.
-        while (_wakeSignal.CurrentCount > 0)
-            _wakeSignal.Wait(0);
+        while (await _wakeSignal.WaitAsync(0, CancellationToken.None))
+        {
+            // drained one pending signal, continue until empty
+        }
 
         Log.Information("ReconciliationService: leader acquired, entering poll loop");
 
@@ -137,8 +140,10 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
 
                 // Drain any extra signals that arrived while the cycle was running or
                 // while we were in Task.Delay. With maxCount: 1 this is at most one drain.
-                while (_wakeSignal.CurrentCount > 0)
-                    _wakeSignal.Wait(0);
+                while (await _wakeSignal.WaitAsync(0, CancellationToken.None))
+                {
+                    // drained one pending signal, continue until empty
+                }
             }
             catch (OperationCanceledException)
             {

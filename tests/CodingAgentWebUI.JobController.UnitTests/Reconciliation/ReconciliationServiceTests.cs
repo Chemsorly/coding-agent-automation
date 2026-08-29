@@ -245,7 +245,7 @@ public sealed class ReconciliationServiceTests
             .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(async (string _, string _, CancellationToken _) =>
             {
-                await Task.Delay(20); // simulate cycle taking 20ms per internal call
+                await Task.Delay(20, CancellationToken.None); // simulate cycle taking 20ms per internal call
                 return new V1JobList { Items = [] };
             });
 
