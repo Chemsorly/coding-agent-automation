@@ -165,12 +165,12 @@ public sealed class DispatchLoop
         }
 
         // Concurrency limit check
-        if (template.MaxConcurrent > 0 &&
-            (activeConcurrency.TryGetValue(selector, out var active) ? active : 0) >= template.MaxConcurrent)
+        var currentConcurrency = activeConcurrency.TryGetValue(selector, out var active) ? active : 0;
+        if (template.MaxConcurrent > 0 && currentConcurrency >= template.MaxConcurrent)
         {
             Log.Information(
                 "DispatchLoop: concurrency limit reached for selector '{Selector}' (limit={Max}, active={Active}), holding WorkItem {Id}",
-                selector, template.MaxConcurrent, active, item.Id);
+                selector, template.MaxConcurrent, currentConcurrency, item.Id);
             return;
         }
 
@@ -183,52 +183,13 @@ public sealed class DispatchLoop
         // PVC assignment for kiro agents — checked BEFORE ClaimAsync to avoid the
         // claim-then-return pattern that would strand the item in Dispatched state with no
         // K8s Job and no path back to Pending (issue #2129).
-        string? pvcName = null;
-        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-        if (isKiroAgent)
-        {
-            pvcName = _pvcPool.TryClaim(item.Id);
-            if (pvcName is null)
-            {
-                Log.Information(
-                    "DispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
-                    item.Id);
-                // Signal ReconciliationService to run an immediate cycle so any completed-but-not-yet-
-                // reconciled K8s Jobs release their PVC slots quickly, rather than waiting up to 30s.
-                // The call is non-blocking and idempotent.
-                _reconciliationTrigger.RequestImmediateCycle();
-                // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
-                // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting the
-                // field (issue #2129). Simply return; the next dispatch cycle will retry.
-                return;
-            }
-        }
+        var pvcName = TryClaimPvcForKiroAgent(item.Id, template.ProviderType);
+        if (pvcName is null && string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase))
+            return; // PVC unavailable — item stays Pending, next cycle retries
 
         // Claim the item (atomic — 409 if already claimed by another instance)
-        WorkItemClaimResponse? claimed;
-        try
-        {
-            claimed = await _workItemClient.ClaimAsync(
-                item.Id,
-                new ClaimWorkItemRequest { AssignedAgentId = jobName, K8sJobName = jobName, DispatchedAt = DateTimeOffset.UtcNow },
-                ct);
-        }
-        catch (WorkItemNotFoundException)
-        {
-            // Item was in the pending list but no longer exists — data race (deleted between
-            // GetPendingAsync and ClaimAsync) or a bug in the pending query. Skip with a
-            // warning so it is distinguishable from normal 409 contention in the logs.
-            if (pvcName is not null) _pvcPool.Release(pvcName);
-            Log.Warning("WorkItem {Id} not found during claim (404) — item may have been deleted between poll and claim, skipping", item.Id);
-            return;
-        }
-
-        if (claimed is null)
-        {
-            if (pvcName is not null) _pvcPool.Release(pvcName);
-            Log.Debug("WorkItem {Id} already claimed by another instance (409), skipping", item.Id);
-            return;
-        }
+        var claimed = await TryClaimWorkItemAsync(item.Id, jobName, pvcName, ct);
+        if (claimed is null) return;
 
         // Build and create K8s Job
         // Do NOT set DerivedKeySecretName — work-item pods use the master key file mount.
@@ -250,24 +211,10 @@ public sealed class DispatchLoop
             OpencodeConfigSecretName = _options.OpencodeConfigSecretName
         };
 
-        var job = JobSpecBuilder.Build(template, buildContext);
+        var created = await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, pvcName, ct);
+        if (!created) return;
 
-        try
-        {
-            await _k8sClient.CreateJobAsync(job, _options.Namespace, ct);
-            Log.Information(
-                "K8s Job {JobName} created for WorkItem {Id} (OrchestratorUrl={OrchestratorUrl})",
-                jobName, item.Id, _options.OrchestratorUrl);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "K8s Job creation failed for WorkItem {Id}, requeuing", item.Id);
-            if (pvcName is not null) _pvcPool.Release(pvcName);
-            await SafeRequeueAsync(item.Id, ct);
-            return;
-        }
-
-        activeConcurrency[selector] = (activeConcurrency.TryGetValue(selector, out var curr) ? curr : 0) + 1;
+        activeConcurrency[selector] = currentConcurrency + 1;
 
         // Label swap — non-fatal; job is already running
         try
@@ -286,6 +233,91 @@ public sealed class DispatchLoop
             createdAt: item.CreatedAt,
             agentSelector: item.AgentSelector);
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+    }
+
+    /// <summary>
+    /// For kiro agents, tries to claim a PVC from the pool before claiming the work item.
+    /// Returns the PVC name if claimed, null if unavailable (callers must return early) or not applicable.
+    /// Side effect: triggers an immediate reconciliation cycle when no PVC is available so freed
+    /// slots are picked up quickly rather than waiting for the next 30s poll interval.
+    /// </summary>
+    private string? TryClaimPvcForKiroAgent(Guid workItemId, string? providerType)
+    {
+        if (!string.Equals(providerType, "kiro", StringComparison.OrdinalIgnoreCase))
+            return null; // Not a kiro agent — no PVC needed
+
+        var pvcName = _pvcPool.TryClaim(workItemId);
+        if (pvcName is not null) return pvcName;
+
+        Log.Information(
+            "DispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
+            workItemId);
+        // Signal ReconciliationService to run an immediate cycle so any completed-but-not-yet-
+        // reconciled K8s Jobs release their PVC slots quickly, rather than waiting up to 30s.
+        // The call is non-blocking and idempotent.
+        _reconciliationTrigger.RequestImmediateCycle();
+        // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
+        // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting the
+        // field (issue #2129). Simply return null; the caller returns early.
+        return null;
+    }
+
+    /// <summary>
+    /// Atomically claims a work item. Returns the claim response on success, null to signal the
+    /// caller should skip this item (contention or deletion). Releases the PVC on failure.
+    /// </summary>
+    private async Task<WorkItemClaimResponse?> TryClaimWorkItemAsync(
+        Guid workItemId, string jobName, string? pvcName, CancellationToken ct)
+    {
+        try
+        {
+            var claimed = await _workItemClient.ClaimAsync(
+                workItemId,
+                new ClaimWorkItemRequest { AssignedAgentId = jobName, K8sJobName = jobName, DispatchedAt = DateTimeOffset.UtcNow },
+                ct);
+
+            if (claimed is null)
+            {
+                if (pvcName is not null) _pvcPool.Release(pvcName);
+                Log.Debug("WorkItem {Id} already claimed by another instance (409), skipping", workItemId);
+            }
+            return claimed;
+        }
+        catch (WorkItemNotFoundException)
+        {
+            // Item was in the pending list but no longer exists — data race (deleted between
+            // GetPendingAsync and ClaimAsync) or a bug in the pending query. Skip with a
+            // warning so it is distinguishable from normal 409 contention in the logs.
+            if (pvcName is not null) _pvcPool.Release(pvcName);
+            Log.Warning("WorkItem {Id} not found during claim (404) — item may have been deleted between poll and claim, skipping", workItemId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Creates the K8s Job for a claimed work item. Returns true on success, false on failure
+    /// (in which case the work item is re-queued and the PVC released).
+    /// </summary>
+    private async Task<bool> TryCreateK8sJobAsync(
+        Guid workItemId, string jobName, JobTemplate template,
+        JobSpecBuilder.BuildContext buildContext, string? pvcName, CancellationToken ct)
+    {
+        var job = JobSpecBuilder.Build(template, buildContext);
+        try
+        {
+            await _k8sClient.CreateJobAsync(job, _options.Namespace, ct);
+            Log.Information(
+                "K8s Job {JobName} created for WorkItem {Id} (OrchestratorUrl={OrchestratorUrl})",
+                jobName, workItemId, _options.OrchestratorUrl);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "K8s Job creation failed for WorkItem {Id}, requeuing", workItemId);
+            if (pvcName is not null) _pvcPool.Release(pvcName);
+            await SafeRequeueAsync(workItemId, ct);
+            return false;
+        }
     }
 
     private async Task SafeRequeueAsync(Guid workItemId, CancellationToken ct)
