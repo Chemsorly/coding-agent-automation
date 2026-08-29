@@ -106,7 +106,11 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
 
     public async Task<Guid> CreateAsync(JobDistributionRequest request, CancellationToken ct = default)
     {
-        var response = await _http.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default, ct);
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/work-items");
+        if (!string.IsNullOrEmpty(request.RunId))
+            req.Headers.Add("X-Idempotency-Key", request.RunId);
+        req.Content = JsonContent.Create(request, options: PipelineJsonOptions.Default);
+        var response = await _http.SendAsync(req, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<Guid>(cancellationToken: ct);
     }

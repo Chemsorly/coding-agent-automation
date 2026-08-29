@@ -150,7 +150,13 @@ public class WorkItemTransitionServiceAdditionalTests
     }
 
     [Fact]
-    public async Task TransitionAsync_ExhaustedRetries_PropagatesException()
+    // TODO: The factory's call counter tracks CreateDbContextAsync invocations, not SaveChangesAsync invocations.
+    // This works because TransitionCoreAsync creates a new context per loop iteration (1:1 mapping). If the
+    // implementation is ever refactored to reuse a single context across retries, throwOnCallNumbers would shift
+    // and the test would silently stop covering the exhausted-retries branch. To make the assumption explicit,
+    // expose a CreateCallCount property on ThrowingOnSaveDbContextFactory and add:
+    //   factory.CreateCallCount.Should().Be(4); // one context per attempt (attempts 0..3 with maxRetries=3)
+    public async Task TransitionAsync_ExhaustedRetries_ReturnsFalse()
     {
         var opts = CreateDbOptions();
         var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
@@ -158,8 +164,9 @@ public class WorkItemTransitionServiceAdditionalTests
         var factory = new ThrowingOnSaveDbContextFactory(opts, throwOnCallNumbers: [1, 2, 3, 4]);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var act = () => svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched, maxRetries: 3);
-        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched, maxRetries: 3);
+
+        result.Should().BeFalse();
     }
 
     // ── TransitionIfAsync ────────────────────────────────────────────────────
@@ -263,15 +270,22 @@ public class WorkItemTransitionServiceAdditionalTests
     }
 
     [Fact]
-    public async Task TransitionIfAsync_AllRetriesExhausted_PropagatesException()
+    // TODO: Uses the default maxRetries (3) implicitly — throwOnCallNumbers: [1, 2, 3, 4] assumes this default.
+    // If the public TransitionIfAsync default ever changes, the throw array would under- or over-cover the retries
+    // and the test would pass vacuously. Consider passing maxRetries: 3 explicitly to make the assumption
+    // self-documenting and robust against default changes.
+    // Same fragile call-count coupling as TransitionAsync_ExhaustedRetries_ReturnsFalse: expose CreateCallCount on
+    // ThrowingOnSaveDbContextFactory and assert factory.CreateCallCount.Should().Be(4) to pin iteration count.
+    public async Task TransitionIfAsync_AllRetriesExhausted_ReturnsFalse()
     {
         var opts = CreateDbOptions();
         var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
         var factory = new ThrowingOnSaveDbContextFactory(opts, throwOnCallNumbers: [1, 2, 3, 4]);
         var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
 
-        var act = () => svc.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
-        await act.Should().ThrowAsync<DbUpdateConcurrencyException>();
+        var result = await svc.TransitionIfAsync(item.Id, WorkItemStatus.Pending, WorkItemStatus.Dispatched);
+
+        result.Should().BeFalse();
     }
 
     // ── GetRetryCountAsync ────────────────────────────────────────────────────

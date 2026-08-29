@@ -308,10 +308,10 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 await Task.Delay(500, timeoutCts.Token);
             }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
             // Internal connect timeout
-            _logger.Warning(
+            _logger.Warning(ex,
                 "ChatJobDispatcher: chat pod for {AgentSelector} did not connect within {TimeoutSeconds}s — cleaning up {JobName}",
                 normalized, _options.ChatPodConnectTimeoutSeconds, jobName);
 
@@ -537,7 +537,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.Warning(
+            _logger.Warning(ex,
                 "ChatJobDispatcher: transient ReadJobAsync failure for {JobName} (will retry): {ErrorMessage}",
                 jobName, ex.Message);
             return (null, true);
@@ -706,6 +706,24 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
+            // Grace period expired — cancel the watcher so it exits its poll loop promptly (issue #2143).
+            // Without this, WatchJobUntilTerminalAsync keeps retrying ReadJobAsync indefinitely when
+            // TryReadJobAsync returns readError=true (e.g. K8s API outage), because Dispose() on a
+            // CancellationTokenSource does not cancel it; only Cancel() does.
+            //
+            // Known follow-up (race): CleanupSession (called via WatchJobUntilTerminalAsync's own
+            // OperationCanceledException path, e.g. from _shutdownCts) may have already Disposed WatcherCts
+            // before we reach this line, causing CancelAsync() to throw ObjectDisposedException. A future
+            // hardening pass should wrap this call in try/catch(ObjectDisposedException) to handle the
+            // concurrent-cleanup race gracefully. See review finding: DotNetSpecialist WARNING @ line 711.
+            //
+            // Known follow-up (blocking): WatchJobUntilTerminalAsync uses CancellationToken.None for the
+            // inner TryReadJobAsync call, so if the K8s API is hanging (e.g. slow TCP timeout ~30s), the
+            // watcher will not exit promptly after WatcherCts cancellation — it can block for up to one full
+            // TCP-timeout before observing cancellation at the next Task.Delay. Fixing this requires passing
+            // WatcherCts.Token into TryReadJobAsync, which is a pre-existing design gap not introduced here.
+            // See review finding: DotNetSpecialist WARNING @ line 711.
+            await entry.WatcherCts.CancelAsync();
             activity?.SetTag(TagOutcome, "force_delete");
             await ForceDeleteAndCleanupAsync(agentId.Value, entry);
         }
@@ -745,7 +763,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.Warning(
+            _logger.Warning(ex,
                 "ChatJobDispatcher: CancelChat to agent {AgentId} failed (will await watcher): {ErrorMessage}",
                 agentId, ex.Message);
         }
