@@ -248,12 +248,10 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
     /// The fallback mapper is only invoked for WorkItems with no joined PipelineRun row, which
     /// are always newly-queued Phase 1 jobs.
     /// </summary>
-    // TODO: The _ (default/fallback) arm of MapTaskTypeToRunType now throws UnreachableException for
-    // any unrecognised WorkItemTaskType. This throw path is not exercised by the theory below.
-    // Add a test that asserts Assert.Throws<UnreachableException>(...) (or an integration-level
-    // variant inserting an unrecognised TaskType directly into the DB) to lock in the fail-fast
-    // contract and prevent a silent regression if the switch is accidentally reverted.
-    // (Flagged by TestQualityReviewer.)
+    // The _ (default/fallback) arm of ToDefaultRunType() throws UnreachableException for any
+    // unrecognised WorkItemTaskType. This throw path is exercised directly by
+    // WorkItemTaskTypeExtensionsTests.ToDefaultRunType_UnknownValue_ThrowsUnreachableException,
+    // which is a more targeted unit test than an integration-level DB insertion would be.
     [Theory]
     [InlineData(WorkItemTaskType.Implementation, PipelineRunType.Implementation)]
     [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
@@ -261,7 +259,7 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
     public async Task GetActiveRunsAsync_TaskType_MapsToCorrectRunType(
         WorkItemTaskType taskType, PipelineRunType expectedRunType)
     {
-        // Arrange — WorkItem in DB with no matching PipelineRuns row (exercises MapTaskTypeToRunType fallback)
+        // Arrange — WorkItem in DB with no matching PipelineRuns row (exercises ToDefaultRunType() fallback)
         var workItemId = Guid.NewGuid();
         await using (var db = new InMemoryPipelineDbContext(_options))
         {
@@ -299,7 +297,8 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
     /// <summary>
     /// Documents that Consolidation work items are excluded from active-run results by the
     /// pre-filter in the query (.Where(wi => wi.TaskType != WorkItemTaskType.Consolidation)).
-    /// The Consolidation arm of MapTaskTypeToRunType is therefore unreachable dead code.
+    /// The Consolidation arm of ToDefaultRunType() is therefore unreachable from this service,
+    /// though it is exercised by WorkItemTaskTypeExtensionsTests for completeness.
     /// </summary>
     [Fact]
     public async Task GetActiveRunsAsync_ConsolidationWorkItem_ExcludedFromResults()

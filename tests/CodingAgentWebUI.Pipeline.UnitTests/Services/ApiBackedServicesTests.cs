@@ -660,6 +660,56 @@ public sealed class ApiBackedServicesTests
         query.PendingCount.Should().Be(0);
     }
 
+    // TODO: These two tests are near-identical in structure (same mock setup, same assertion pattern, only TaskType
+    // and PipelineRunType differ). Consider refactoring into a parameterized [Theory] with [InlineData], matching
+    // the pattern used in WorkItemTaskTypeExtensionsTests. Adding a new task type mapping would otherwise require
+    // another copy-pasted test, increasing maintenance surface without adding coverage value.
+    [Fact]
+    public async Task PendingWorkQuery_ReviewTask_MapsToReviewRunType()
+    {
+        var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>();
+        var dto = new PendingWorkItemDto
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = "PR-2153",
+            IssueProviderConfigId = "github",
+            TaskType = WorkItemTaskType.Review,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "kiro",
+            RetryCount = 0
+        };
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
+
+        var query = new ApiBackedPendingWorkQuery(mockClient.Object);
+        var result = await query.GetPendingJobsAsync();
+
+        result[0].RunType.Should().Be(PipelineRunType.Review);
+    }
+
+    [Fact]
+    public async Task PendingWorkQuery_DecompositionTask_MapsToDecompositionAnalysisRunType()
+    {
+        var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>();
+        var dto = new PendingWorkItemDto
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = "GH-100",
+            IssueProviderConfigId = "github",
+            TaskType = WorkItemTaskType.Decomposition,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "kiro",
+            RetryCount = 0
+        };
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
+
+        var query = new ApiBackedPendingWorkQuery(mockClient.Object);
+        var result = await query.GetPendingJobsAsync();
+
+        result[0].RunType.Should().Be(PipelineRunType.DecompositionAnalysis);
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // ApiBackedPipelineRunHistoryService
     // ─────────────────────────────────────────────────────────────────────

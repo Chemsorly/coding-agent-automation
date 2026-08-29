@@ -108,4 +108,60 @@ public class JobQueueSectionTests : BunitContext
         var headerCells = cut.FindAll(".monitoring-table thead th");
         Assert.Equal(9, headerCells.Count);
     }
+
+    [Fact]
+    public void Renders_ReviewBadge_ForReviewJob()
+    {
+        var jobs = new List<PendingJob>
+        {
+            new()
+            {
+                IssueIdentifier = "PR-1",
+                IssueTitle = "Review PR",
+                IssueProviderId = "ip-1",
+                RepoProviderId = "rp-1",
+                RunType = PipelineRunType.Review,
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "test",
+                RequiredLabels = Array.Empty<string>()
+            }
+        };
+
+        var cut = Render<JobQueueSection>(p => p
+            .Add(s => s.QueuedJobs, jobs)
+            .Add(s => s.QueuedConsolidationRuns, Array.Empty<ConsolidationRun>()));
+
+        Assert.Contains("run-type-review", cut.Markup);
+        // TODO: This assertion is weaker than necessary — "Review" may appear elsewhere in the markup (column headers,
+        // aria-labels, etc.), so it would pass even if the badge text were accidentally changed to "Review Job" or
+        // "Reviewing". Prefer asserting the exact badge text scoped to the element carrying the run-type-review CSS
+        // class, e.g. find the element with class run-type-review and assert its text content is exactly "Review".
+        Assert.Contains("Review", cut.Markup);
+    }
+
+    [Fact]
+    public void Renders_DecompBadge_ForDecompositionAnalysisJob()
+    {
+        var jobs = new List<PendingJob>
+        {
+            new()
+            {
+                IssueIdentifier = "GH-50",
+                IssueTitle = "Decomp Epic",
+                IssueProviderId = "ip-1",
+                RepoProviderId = "rp-1",
+                RunType = PipelineRunType.DecompositionAnalysis,
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "test",
+                RequiredLabels = Array.Empty<string>()
+            }
+        };
+
+        var cut = Render<JobQueueSection>(p => p
+            .Add(s => s.QueuedJobs, jobs)
+            .Add(s => s.QueuedConsolidationRuns, Array.Empty<ConsolidationRun>()));
+
+        Assert.Contains("run-type-decomp", cut.Markup);
+        Assert.Contains("Decomp (A)", cut.Markup);
+    }
 }
