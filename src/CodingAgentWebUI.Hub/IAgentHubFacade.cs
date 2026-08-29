@@ -70,8 +70,10 @@ public interface IAgentHubFacade
     /// Transitions the WorkItem row in Postgres to the given terminal status.
     /// Called from ReportJobCompleted to ensure DB state matches in-memory state.
     /// No-op if no DB-backed work distribution is configured.
+    /// Returns <c>true</c> if the transition was accepted (or no DB is configured),
+    /// <c>false</c> if the transition was rejected (e.g. WorkItem already in a terminal state).
     /// </summary>
-    Task TransitionWorkItemAsync(JobId jobId, WorkItemStatus status, CancellationToken ct,
+    Task<bool> TransitionWorkItemAsync(JobId jobId, WorkItemStatus status, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null);
 
     /// <summary>

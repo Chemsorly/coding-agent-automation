@@ -246,6 +246,86 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
         item2!.Status.Should().Be(WorkItemStatus.Failed, "status unchanged after rejected recovery");
     }
 
+    // ── Timeout race recovery (Issue #2146) ──────────────────────────────
+
+    [Fact]
+    public async Task TryFallbackChainAsync_WithFailedTimeout_TargetSucceeded_ReturnsTrue_AndTransitionsToSucceeded()
+    {
+        // ReconciliationLoop timed out the WorkItem (Failed/Timeout), then the agent completed
+        // late. The fallback chain must recover it to Succeeded via TryInfrastructureRecoveryAsync.
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(id);
+            item!.Status = WorkItemStatus.Failed;
+            item.FailureReason = FailureReason.Timeout;
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _sut.TryFallbackChainAsync(id, WorkItemStatus.Succeeded, null, null, CancellationToken.None);
+
+        result.Should().BeTrue("Failed/Timeout items must be recoverable to Succeeded");
+        var recovered = await ReadItem(id);
+        recovered!.Status.Should().Be(WorkItemStatus.Succeeded);
+        recovered.CompletedAt.Should().NotBeNull();
+        // FailureReason.Timeout is preserved as an audit trail artifact — BuildMutationAction
+        // does not clear FailureReason for non-Failed targets.
+        recovered.FailureReason.Should().Be(FailureReason.Timeout);
+        // TODO: A Succeeded WorkItem retaining FailureReason = Timeout is semantically
+        // inconsistent — any downstream consumer reading FailureReason without first checking
+        // Status will observe a misleading "Timeout" on a succeeded item. This is intentional
+        // per issue requirements (audit trail preservation), but consider clearing FailureReason
+        // upon successful recovery transition if that requirement is ever relaxed.
+        // The assertion above intentionally bakes in this behavior — do not remove it without
+        // revisiting the BuildMutationAction logic in WorkItemFallbackTransitionService.cs.
+        // See review finding [WARNING] WorkItemFallbackTransitionServiceTests.cs:279.
+    }
+
+    [Fact]
+    public async Task TryFallbackChainAsync_WithFailedAgentError_TargetSucceeded_ReturnsFalse_StateUnchanged()
+    {
+        // Acceptance criterion: AgentError failures must NOT recover to Succeeded.
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(id);
+            item!.Status = WorkItemStatus.Failed;
+            item.FailureReason = FailureReason.AgentError;
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _sut.TryFallbackChainAsync(id, WorkItemStatus.Succeeded, null, null, CancellationToken.None);
+
+        result.Should().BeFalse("AgentError failures must not be recovered to Succeeded");
+        var unchanged = await ReadItem(id);
+        unchanged!.Status.Should().Be(WorkItemStatus.Failed);
+        unchanged.FailureReason.Should().Be(FailureReason.AgentError);
+    }
+
+    [Fact]
+    public async Task TryFallbackChainAsync_WithFailedQualityGateExhausted_TargetSucceeded_ReturnsFalse_StateUnchanged()
+    {
+        // Acceptance criterion: QualityGateExhausted failures must NOT recover to Succeeded.
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(id);
+            item!.Status = WorkItemStatus.Failed;
+            item.FailureReason = FailureReason.QualityGateExhausted;
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _sut.TryFallbackChainAsync(id, WorkItemStatus.Succeeded, null, null, CancellationToken.None);
+
+        result.Should().BeFalse("QualityGateExhausted failures must not be recovered to Succeeded");
+        var unchanged = await ReadItem(id);
+        unchanged!.Status.Should().Be(WorkItemStatus.Failed);
+        unchanged.FailureReason.Should().Be(FailureReason.QualityGateExhausted);
+    }
+
     // ── All paths fail ───────────────────────────────────────────────────
 
     [Fact]
