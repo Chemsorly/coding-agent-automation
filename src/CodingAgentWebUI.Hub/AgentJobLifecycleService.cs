@@ -50,23 +50,33 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     /// <inheritdoc />
     public async Task HandleJobAcceptedAsync(JobId jobId, AgentEntry? agent, CancellationToken ct)
     {
+        // Transition WorkItem from Dispatched → Running FIRST.
+        // Side-effects (TransitionStatus, NotifyChange) must only be committed after the DB write
+        // succeeds. Committing them before risks a split-state: agent registry says Busy while the
+        // WorkItem remains Dispatched, causing EnforceTimeoutsAsync to classify the job as Failed.
+        bool transitioned;
+        try
+        {
+            transitioned = await _facade.TransitionWorkItemAsync(jobId, WorkItemStatus.Running, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to transition WorkItem {JobId} to Running on JobAccepted", jobId.Value);
+            return; // Do not mark agent Busy — leave prior state intact for recovery
+        }
+
+        if (!transitioned)
+        {
+            _logger.Warning("WorkItem {JobId} transition to Running was rejected on JobAccepted — agent will not be marked Busy", jobId.Value);
+            return; // Do not mark agent Busy — WorkItem may already be in a terminal state
+        }
+
+        // Side-effects committed only after the DB write succeeds.
         if (agent is not null)
         {
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Busy);
             _logger.Information("Agent {AgentId} accepted job {JobId}", agent.AgentId, jobId.Value);
             _changeNotifier.NotifyChange();
-        }
-
-        // Transition WorkItem from Dispatched → Running (K8s DB-backed mode).
-        // This is critical: without it, ReportJobCompleted cannot transition to Succeeded
-        // because Dispatched → Succeeded is not a valid state transition.
-        try
-        {
-            await _facade.TransitionWorkItemAsync(jobId, WorkItemStatus.Running, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to transition WorkItem {JobId} to Running on JobAccepted", jobId.Value);
         }
     }
 

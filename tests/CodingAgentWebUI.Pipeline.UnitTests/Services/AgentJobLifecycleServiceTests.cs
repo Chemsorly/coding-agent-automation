@@ -79,7 +79,7 @@ public sealed class AgentJobLifecycleServiceTests
         var agent = MakeAgent();
         var jobId = new JobId("job-1");
         _facade.Setup(f => f.TransitionWorkItemAsync(jobId, WorkItemStatus.Running, It.IsAny<CancellationToken>(),
-            null, null)).Returns(Task.CompletedTask);
+            null, null)).ReturnsAsync(true);
 
         await _sut.HandleJobAcceptedAsync(jobId, agent, CancellationToken.None);
 
@@ -92,7 +92,7 @@ public sealed class AgentJobLifecycleServiceTests
     {
         var jobId = new JobId("job-1");
         _facade.Setup(f => f.TransitionWorkItemAsync(jobId, WorkItemStatus.Running, It.IsAny<CancellationToken>(),
-            null, null)).Returns(Task.CompletedTask);
+            null, null)).ReturnsAsync(true);
 
         await _sut.HandleJobAcceptedAsync(jobId, null, CancellationToken.None);
 
@@ -113,6 +113,50 @@ public sealed class AgentJobLifecycleServiceTests
         // Should not throw
         var act = () => _sut.HandleJobAcceptedAsync(jobId, agent, CancellationToken.None);
         await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task HandleJobAcceptedAsync_WhenTransitionThrows_AgentRemainsInPriorStatus_NotifyChangeNotCalled()
+    {
+        // Arrange: TransitionWorkItemAsync throws (DB failure)
+        // TODO: This test covers only the exception path. The false-return path is covered by
+        // HandleJobAcceptedAsync_WhenTransitionReturnsFalse_AgentRemainsInPriorStatus_NotifyChangeNotCalled.
+        // Both paths must remain in sync if the guard logic is ever refactored.
+        var agent = MakeAgent();
+        var jobId = new JobId("job-1");
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<CancellationToken>(), null, null))
+            .ThrowsAsync(new InvalidOperationException("DB error"));
+
+        // Act
+        await _sut.HandleJobAcceptedAsync(jobId, agent, CancellationToken.None);
+
+        // Assert: agent is NOT marked Busy and the UI is NOT notified
+        _facade.Verify(f => f.TransitionStatus(agent.AgentId, AgentStatus.Busy), Times.Never,
+            "Agent must NOT be marked Busy when the WorkItem DB transition fails");
+        _changeNotifier.Verify(n => n.NotifyChange(), Times.Never,
+            "NotifyChange must NOT be called when the WorkItem DB transition fails");
+    }
+
+    [Fact]
+    public async Task HandleJobAcceptedAsync_WhenTransitionReturnsFalse_AgentRemainsInPriorStatus_NotifyChangeNotCalled()
+    {
+        // Arrange: TransitionWorkItemAsync returns false — transition was rejected (e.g. WorkItem
+        // already in a terminal state). This is the "silent failure" path distinct from exceptions.
+        var agent = MakeAgent();
+        var jobId = new JobId("job-1");
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(false);
+
+        // Act
+        await _sut.HandleJobAcceptedAsync(jobId, agent, CancellationToken.None);
+
+        // Assert: agent is NOT marked Busy and the UI is NOT notified
+        _facade.Verify(f => f.TransitionStatus(agent.AgentId, AgentStatus.Busy), Times.Never,
+            "Agent must NOT be marked Busy when the WorkItem DB transition is rejected");
+        _changeNotifier.Verify(n => n.NotifyChange(), Times.Never,
+            "NotifyChange must NOT be called when the WorkItem DB transition is rejected");
     }
 
     // ── HandleJobRejectedAsync ────────────────────────────────────────────
@@ -175,7 +219,7 @@ public sealed class AgentJobLifecycleServiceTests
             .ReturnsAsync(3);
         _facade.Setup(f => f.TransitionWorkItemAsync(jobId, WorkItemStatus.Failed,
             It.IsAny<CancellationToken>(), It.IsAny<string>(), FailureReason.InfrastructureFailure))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Error)).Returns(Task.CompletedTask);
 
         await _sut.HandleJobRejectedAsync(jobId, agent, "crash", CancellationToken.None);
@@ -198,7 +242,7 @@ public sealed class AgentJobLifecycleServiceTests
             .ThrowsAsync(new Exception("DB down"));
         _facade.Setup(f => f.TransitionWorkItemAsync(jobId, WorkItemStatus.Failed,
             It.IsAny<CancellationToken>(), It.IsAny<string>(), FailureReason.InfrastructureFailure))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Error)).Returns(Task.CompletedTask);
 
         await _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
@@ -331,7 +375,7 @@ public sealed class AgentJobLifecycleServiceTests
         _facade.Setup(f => f.GetRun(jobId)).Returns((PipelineRun?)null);
         _facade.Setup(f => f.TransitionWorkItemAsync(jobId, It.IsAny<WorkItemStatus>(),
             It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
         _facade.Setup(f => f.GetWorkItemIssueMetadataAsync(jobId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(((string IssueIdentifier, string IssueProviderConfigId)?)null);
 
