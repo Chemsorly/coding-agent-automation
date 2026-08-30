@@ -50,6 +50,17 @@ public sealed class DispatchServiceOptions
     /// </summary>
     public int ChatIdleTimeoutSeconds { get; set; } = 90;
 
+    /// <summary>
+    /// Number of API replicas. Used by <see cref="CodingAgentWebUI.Orchestration.Dispatch.ChatJobDispatcher"/>
+    /// to emit a startup warning when Redis is absent and replicas &gt; 1, indicating that keepalive
+    /// heartbeats may be silently lost on non-watcher replicas. Default: 1 (safe for local dev / single-replica).
+    /// </summary>
+    // TODO: Add a lower-bound clamp for ChatReplicaCount in ValidateAndClamp (Math.Max(1, value)), consistent
+    // with the other numeric options (AgentJobTimeoutSeconds, ChatIdleTimeoutSeconds, etc.). A misconfigured
+    // value of 0 or negative (e.g. via Helm --set api.replicas=0) evaluates as <= 1, silently suppressing
+    // the Redis warning even though the deployment is broken. See review finding [WARNING] #2133.
+    public int ChatReplicaCount { get; set; } = 1;
+
     private const int MinAgentJobTimeoutSeconds = 60;
     private const int MinChatPodConnectTimeoutSeconds = 5;
     private const int MinChatTerminationGracePeriodSeconds = 5;
