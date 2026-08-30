@@ -614,10 +614,23 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     // ─── IHostedService ───────────────────────────────────────────────────────
 
     /// <summary>
-    /// No-op. Jobs active before this process started drain via <c>ActiveDeadlineSeconds</c>.
+    /// Emits a startup warning when Redis is absent and <see cref="DispatchServiceOptions.ChatReplicaCount"/>
+    /// is greater than 1 — in that configuration, keepalive heartbeats that land on a replica
+    /// other than the watcher replica are silently lost, causing chat pods to be idle-killed
+    /// despite active browser windows.
+    /// Jobs active before this process started drain via <c>ActiveDeadlineSeconds</c>.
     /// Session recovery was removed in Spec 049 alongside leader election.
     /// </summary>
-    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        if (_redis is null && _options.ChatReplicaCount > 1)
+            _logger.Warning(
+                "ChatJobDispatcher: Redis is not configured but ChatReplicaCount={Count}. " +
+                "Keepalive heartbeats will be invisible to watchers on other replicas — " +
+                "chat pods may be idle-killed despite active browser windows. " +
+                "Set signalr.redis.connectionString to fix.", _options.ChatReplicaCount);
+        return Task.CompletedTask;
+    }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
