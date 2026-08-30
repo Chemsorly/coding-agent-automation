@@ -82,6 +82,13 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     {
         // Skip if fixture setup failed (e.g., Docker unavailable in this environment);
         // AllMigrations_ApplyFromScratch_WithoutError already records that failure.
+        // TODO: `if (_fixture.MigrationException is not null) return;` silently passes this test
+        // for ANY migration failure (not just DockerUnavailableException), unlike the
+        // AllMigrations_ApplyFromScratch_WithoutError test which re-asserts the exception. A real
+        // migration DDL error would cause this and all subsequent migration tests to vacuously pass
+        // while only AllMigrations_ApplyFromScratch_WithoutError surfaces the failure. Consider
+        // checking for DockerUnavailableException specifically (like AllMigrations does) and
+        // asserting null for all other failure types to catch real migration regressions.
         if (_fixture.MigrationException is not null) return;
 
         await using var db = _fixture.CreateDbContext();
@@ -111,6 +118,11 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     {
         // Skip if fixture setup failed (e.g., Docker unavailable in this environment);
         // AllMigrations_ApplyFromScratch_WithoutError already records that failure.
+        // TODO: `if (_fixture.MigrationException is not null) return;` silently passes this test
+        // for ANY migration failure (not just DockerUnavailableException). A real DDL failure or
+        // PendingModelChangesException would cause this test to vacuously pass while only
+        // AllMigrations_ApplyFromScratch_WithoutError surfaces the failure. Consider mirroring
+        // that test's pattern: skip on DockerUnavailableException, assert null otherwise.
         if (_fixture.MigrationException is not null) return;
 
         await using var db = _fixture.CreateDbContext();
@@ -134,6 +146,11 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     {
         // Skip if fixture setup failed (e.g., Docker unavailable in this environment);
         // AllMigrations_ApplyFromScratch_WithoutError already records that failure.
+        // TODO: `if (_fixture.MigrationException is not null) return;` silently passes this test
+        // for ANY migration failure (not just DockerUnavailableException). A real DDL failure
+        // would cause this test to vacuously pass while only AllMigrations_ApplyFromScratch_WithoutError
+        // surfaces the failure. Consider mirroring that test's pattern: skip on
+        // DockerUnavailableException, assert null otherwise.
         if (_fixture.MigrationException is not null) return;
 
         await using var conn = _fixture.CreateConnection();
@@ -165,6 +182,11 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     {
         // Skip if fixture setup failed (e.g., Docker unavailable in this environment);
         // AllMigrations_ApplyFromScratch_WithoutError already records that failure.
+        // TODO: `if (_fixture.MigrationException is not null) return;` silently passes this test
+        // for ANY migration failure (not just DockerUnavailableException). A real DDL failure
+        // would cause this test to vacuously pass while only AllMigrations_ApplyFromScratch_WithoutError
+        // surfaces the failure. Consider mirroring that test's pattern: skip on
+        // DockerUnavailableException, assert null otherwise.
         if (_fixture.MigrationException is not null) return;
 
         await using var conn = _fixture.CreateConnection();
@@ -201,6 +223,11 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     {
         // Skip if fixture setup failed (e.g., Docker unavailable in this environment);
         // AllMigrations_ApplyFromScratch_WithoutError already records that failure.
+        // TODO: `if (_fixture.MigrationException is not null) return;` silently passes this test
+        // for ANY migration failure (not just DockerUnavailableException). A real DDL failure
+        // would cause this test to vacuously pass while only AllMigrations_ApplyFromScratch_WithoutError
+        // surfaces the failure. Consider mirroring that test's pattern: skip on
+        // DockerUnavailableException, assert null otherwise.
         if (_fixture.MigrationException is not null) return;
 
         await using var conn = _fixture.CreateConnection();

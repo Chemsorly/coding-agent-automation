@@ -70,6 +70,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     // invoking _shutdownCts.CancelAsync() twice and racing with _shutdownCts.Dispose().
     private int _stopped;
 
+    // Completion signal: set when StopAsync finishes its entire body (including CancelAsync and
+    // watcher drain). DisposeAsync awaits this before calling _shutdownCts.Dispose(), ensuring
+    // that even if DisposeAsync is called concurrently with an in-progress StopAsync, Dispose
+    // never races with CancelAsync.
+    private readonly TaskCompletionSource _stopCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private sealed class WatcherEntry
     {
         public Task WatcherTask = Task.CompletedTask; // assigned after construction; see RegisterWatcher
@@ -643,21 +649,28 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         // IHostedService.StopAsync and IAsyncDisposable.DisposeAsync → StopAsync in sequence),
         // return immediately so _shutdownCts.CancelAsync() is never invoked twice and cannot
         // race with _shutdownCts.Dispose() in DisposeAsync.
-        // TODO: The comment "1 = stop in progress or completed" slightly misrepresents the
-        // concurrent guarantee: a concurrent second caller returns immediately without waiting
-        // for the first caller to finish. In the ASP.NET Core host lifecycle Stop and Dispose
-        // are called strictly sequentially so this is safe in production, but a caller that
-        // invokes DisposeAsync concurrently with an in-progress StopAsync could trigger an
-        // ObjectDisposedException on _shutdownCts after DisposeAsync disposes it while StopAsync
-        // is still awaiting CancelAsync(). Consider adding a completion signal (e.g. TaskCompletionSource
-        // or SemaphoreSlim) so DisposeAsync can wait for any in-progress StopAsync before disposing.
+        // TODO: A concurrent second StopAsync caller (not DisposeAsync) returns immediately as a
+        // silent no-op rather than waiting for the first call to finish. The comment below about
+        // "DisposeAsync guards against this" is only true for DisposeAsync specifically — any other
+        // code path that calls StopAsync twice concurrently and then depends on "stopped" state may
+        // proceed prematurely. In the current ASP.NET Core host lifecycle this is not exercised
+        // (Stop and Dispose are sequential), but it is a latent correctness issue if StopAsync is
+        // ever called from outside the hosted service lifecycle.
+        // A concurrent second caller returns immediately without waiting for the first to finish;
+        // DisposeAsync guards against this by awaiting _stopCompleted before calling Dispose.
         if (Interlocked.Exchange(ref _stopped, 1) != 0)
             return;
 
         _logger.Information("ChatJobDispatcher: stopping — cancelling {Count} active watcher(s)",
             _activeWatchers.Count);
 
-        // Signal all watchers to stop
+        // Signal all watchers to stop.
+        // TODO: If CancelAsync() throws an unexpected exception here (e.g. ObjectDisposedException
+        // from an unusual code path), execution exits StopAsync before reaching the try/finally
+        // block below, leaving _stopCompleted unsignalled. DisposeAsync's `await _stopCompleted.Task`
+        // would then hang indefinitely. To fully harden this, consider wrapping the entire body
+        // (from CancelAsync through the finally block) in an outer try/finally that calls
+        // _stopCompleted.TrySetResult() as a last-resort fallback.
         await _shutdownCts.CancelAsync();
 
         // Collect current entries before they drain
@@ -674,11 +687,25 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             // Timeout or aggregate watcher failure on shutdown — manual cleanup follows
         }
 
-        // Clean up any sessions whose watchers didn't finish in time
-        foreach (var (_, entry) in entries)
+        // Clean up any sessions whose watchers didn't finish in time.
+        // Wrapped in try/finally so that _stopCompleted is always signalled even if CleanupSession
+        // throws an unexpected exception. Without the finally, an unhandled exception here would
+        // leave _stopCompleted unset, causing DisposeAsync's `await _stopCompleted.Task` to hang
+        // indefinitely and block pod shutdown until the host's shutdown timeout kills the process.
+        try
         {
-            var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
-            CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
+            foreach (var (_, entry) in entries)
+            {
+                var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
+                CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
+            }
+        }
+        finally
+        {
+            // Signal DisposeAsync that StopAsync has fully completed. This ensures that even if
+            // DisposeAsync is called concurrently with an in-progress StopAsync, _shutdownCts.Dispose()
+            // is never called while CancelAsync() is still in flight.
+            _stopCompleted.TrySetResult();
         }
     }
 
@@ -834,13 +861,20 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        // TODO: If StopAsync is concurrently in progress (between Interlocked.Exchange and
-        // completion of CancelAsync) when DisposeAsync reaches _shutdownCts.Dispose(), the
-        // dispose can race with the in-progress cancel and produce an ObjectDisposedException.
-        // The ASP.NET Core host lifecycle is strictly sequential (Stop then Dispose) so this
-        // race cannot occur in production, but direct calls to DisposeAsync without awaiting
-        // StopAsync first could trigger it. A completion signal would eliminate this risk.
+        // StopAsync sets _stopCompleted when it finishes. Awaiting it here ensures that
+        // _shutdownCts.Dispose() is never called while a concurrent in-progress StopAsync
+        // is still awaiting CancelAsync() — eliminating a potential ObjectDisposedException
+        // in that race window. In the sequential ASP.NET Core lifecycle (Stop then Dispose)
+        // this completes immediately because StopAsync already finished.
         await StopAsync(CancellationToken.None);
+        // TODO: In the sequential lifecycle this await is a no-op — StopAsync already
+        // set _stopCompleted before returning. It is only meaningful when StopAsync returned
+        // early via the idempotency guard (Interlocked.Exchange) because a first invocation
+        // is still in-flight; in that case _stopCompleted is not yet set and this await
+        // prevents _shutdownCts.Dispose() from racing with the first invocation's CancelAsync.
+        // Consider adding a clarifying comment or test to document this distinction so a
+        // future maintainer does not remove what appears to be a redundant await.
+        await _stopCompleted.Task;
         _shutdownCts.Dispose();
     }
 
