@@ -180,6 +180,8 @@ Usage (inside an env: list, indented to 12):
   value: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
 - name: WorkDistribution__Dispatch__ChatIdleTimeoutSeconds
   value: {{ .Values.workDistribution.dispatch.chatIdleTimeoutSeconds | quote }}
+- name: WorkDistribution__Dispatch__ChatReplicaCount
+  value: {{ .Values.api.replicas | quote }}
 {{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}
 - name: WorkDistribution__CredentialPools__Kiro__{{ $i }}
   value: {{ $pvc | quote }}
@@ -208,6 +210,7 @@ WorkDistribution__Dispatch__AgentJobTimeoutSeconds: {{ .Values.workDistribution.
 WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
 WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
 WorkDistribution__Dispatch__ChatIdleTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatIdleTimeoutSeconds | quote }}
+WorkDistribution__Dispatch__ChatReplicaCount: {{ .Values.api.replicas | quote }}
 WorkDistribution__Reconciliation__IntervalSeconds: {{ .Values.workDistribution.reconciliation.intervalSeconds | quote }}
 WorkDistribution__Reconciliation__StaleRetentionDays: {{ .Values.workDistribution.reconciliation.staleRetentionDays | quote }}
 {{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}

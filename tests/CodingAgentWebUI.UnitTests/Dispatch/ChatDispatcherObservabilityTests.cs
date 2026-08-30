@@ -500,6 +500,11 @@ public class ChatDispatcherObservabilityTests : IDisposable
         }
 
         // ─── StartAsync is now a no-op (RecoverSessionsAsync removed in Spec 049) ────
+        // TODO: Test name and comment "StartAsync must be a no-op" are now misleading — StartAsync executes a
+        // conditional log statement when Redis is absent and ChatReplicaCount > 1. The assertion itself remains
+        // valid (defaults use ChatReplicaCount=1 so no branch runs), but a future reader relying on this test
+        // as proof that StartAsync does nothing would miss the conditional warning path. Consider renaming to
+        // something like StartAsync_WithSingleReplica_DoesNotCallK8sAndEmitsNoWarning. See review [WARNING] #2133.
 
         [Fact]
         public async Task StartAsync_IsNoOp_DoesNotCallK8s()
@@ -516,6 +521,42 @@ public class ChatDispatcherObservabilityTests : IDisposable
             jobClientMock.Verify(
                 c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
                 Times.Never);
+        }
+
+        // ─── StartAsync warning: Redis absent + replicas > 1 ─────────────────
+        // TODO: Add a boundary test for ChatReplicaCount=0 (sentinel/misconfigured value). The production guard
+        // `> 1` treats 0 as single-replica and emits no warning, which is the intended behaviour, but no test
+        // documents or pins that decision. A test with ChatReplicaCount=0 confirming no warning is emitted would
+        // make the implicit contract explicit and prevent accidental breakage. See review [WARNING] #2133.
+
+        [Fact]
+        public async Task StartAsync_WithRedisNullAndReplicaCount2_EmitsWarningContainingRedisIsNotConfigured()
+        {
+            var (logger, events) = CreateCapturingLogger();
+            var options = CreateOptions();
+            options.ChatReplicaCount = 2;
+            // redis = null — CreateDispatcher already omits the redis argument, so _redis is null
+            var dispatcher = CreateDispatcher(logger, options: options);
+
+            await dispatcher.StartAsync(CancellationToken.None);
+
+            var warnings = events.Where(e => e.Level == Serilog.Events.LogEventLevel.Warning).ToList();
+            warnings.Should().ContainSingle("exactly one Warning must be emitted when Redis is absent and replicas > 1");
+            warnings[0].Message.Should().Contain("Redis is not configured",
+                "the warning message must mention Redis is not configured");
+        }
+
+        [Fact]
+        public async Task StartAsync_WithRedisNullAndReplicaCount1_EmitsNoWarning()
+        {
+            var (logger, events) = CreateCapturingLogger();
+            var options = CreateOptions(); // ChatReplicaCount defaults to 1
+            var dispatcher = CreateDispatcher(logger, options: options);
+
+            await dispatcher.StartAsync(CancellationToken.None);
+
+            events.Where(e => e.Level == Serilog.Events.LogEventLevel.Warning)
+                  .Should().BeEmpty("no warning must be emitted in single-replica deployments without Redis");
         }
     }
 }
