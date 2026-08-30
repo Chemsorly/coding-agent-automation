@@ -122,7 +122,13 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
                 ConsolidationTemplateId = templateId?.Value,
                 ConsolidationWorkspacePath = workspacePath,
                 RunId = run.RunId,
-                AutoDispatch = run.AutoDispatch
+                AutoDispatch = run.AutoDispatch,
+                // Carry the traceparent stored on the run at trigger time so the resulting
+                // WorkItem and K8s Job inherit the correct trace even though Activity.Current
+                // may be null in this background dispatch context.
+                TraceContext = !string.IsNullOrEmpty(run.TraceParent)
+                    ? new Dictionary<string, string> { ["traceparent"] = run.TraceParent }
+                    : null
             };
 
             var result = await _workDistributor.DistributeAsync(distributionRequest, ct);

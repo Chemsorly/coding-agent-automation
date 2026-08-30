@@ -14,7 +14,7 @@ Supporting libraries (shared, not deployed independently):
 
 - **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic, agent registry, run lifecycle, telemetry. Linked into the Pipeline API, Scheduler, and Orchestrator (transitively pulls in `Infrastructure.Persistence` and `Infrastructure.Providers`).
 - **Infrastructure.Persistence** (`CodingAgentWebUI.Infrastructure.Persistence`) — EF Core context, database migrations, config store. Directly referenced by `CodingAgentWebUI.Api`, `CodingAgentWebUI.Orchestration`, and `CodingAgentWebUI.Hub`. The Scheduler and Orchestrator have no direct reference but use it transitively through Orchestration.
-- **Infrastructure.Providers** (`CodingAgentWebUI.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API, Agent, Scheduler, and Orchestration (transitive). The Job Controller has no direct or transitive reference.
+- **Infrastructure.Providers** (`CodingAgentWebUI.Infrastructure.Providers`) — Provider implementations (GitHub, GitLab, filesystem), token vending. Linked into the Pipeline API, Agent, Scheduler, Job Controller, and Orchestration (transitive).
 - **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline model, step execution, `HousekeepingService`, interfaces, constants. Linked into the Scheduler (which runs `PipelineLoopService`) and Pipeline API.
 - **Hub** (`CodingAgentWebUI.Hub`) — Full hub implementation: `AgentHub` (split across partial classes), authentication handlers (`AgentApiKeyAuthHandler`), `ChatJobDispatcher` (ephemeral chat pod dispatch), job lifecycle services (`AgentJobLifecycleService`, `AgentOrphanRecoveryService`, `AgentTokenRefreshService`), completion strategies, `AgentHubFacade`, and DI wiring. Linked into the Pipeline API and Orchestrator.
 
@@ -81,6 +81,8 @@ The chart deploys:
 | `secrets.opencodeConfigContent` | OpenCode config JSON (mounted as file for opencode agents) |
 | `existingSecret` | Use a pre-existing K8s Secret instead of chart-managed one |
 | `otel.endpoint` | OTLP collector endpoint |
+| `otel.orchestratorServiceName` | `OTEL_SERVICE_NAME` for the Orchestrator (default: `coding-agent-orchestrator`). API, Job Controller, and Scheduler have fixed service names set in their own deployment templates. |
+| `orchestrator.env.faroCollectorUrl` | Grafana Faro collector URL for frontend RUM monitoring. Leave empty to disable (default: `""`). See [Faro configuration](configuration.md#frontend-observability-grafana-faro) for details. |
 | `orchestrator.ingress.enabled` | Enable Ingress for external access |
 | `database.host` | PostgreSQL hostname (required) |
 | `database.port` | PostgreSQL port (default: `5432`) |
@@ -92,6 +94,7 @@ The chart deploys:
 | `workDistribution.dispatch.agentJobTimeoutSeconds` | Max lifetime (seconds) of any agent K8s Job — work-item agents, consolidation jobs, and chat pods (default: `7200`). Sets `activeDeadlineSeconds`. |
 | `workDistribution.dispatch.chatPodConnectTimeoutSeconds` | Max seconds to wait for a chat pod to connect to the hub after Job creation (default: `120`). |
 | `workDistribution.dispatch.chatTerminationGracePeriodSeconds` | `terminationGracePeriodSeconds` on chat pod spec (default: `120`). |
+| `workDistribution.dispatch.chatIdleTimeoutSeconds` | Seconds a chat pod may remain idle (no client keepalive) before automatic termination (default: `90`). Minimum: `10`. |
 | `workDistribution.reconciliation.intervalSeconds` | Seconds between reconciliation cycles (default: `30`) |
 | `workDistribution.reconciliation.staleRetentionDays` | Days to retain stale work items before cleanup (default: `7`) |
 | `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. `DispatchService` claims one PVC per Job at dispatch time. |
