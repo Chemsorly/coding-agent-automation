@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RunSettings>
+  <!-- Exclude Category=Integration tests (MigrationIntegrityTests) from the default
+       dotnet test run.  These tests use Testcontainers/Docker, which is only available in
+       the dedicated migration-integrity CI job.  The quality-gate runner has no Docker, so
+       running them here causes DockerUnavailableException failures.
+       The VSTestTestCaseFilter property in the .csproj covers VS/VSTest invocations; this
+       TestCaseFilter element covers dotnet test invocations. -->
+  <TestRunParameters/>
+  <RunConfiguration>
+    <TestCaseFilter>Category!=Integration</TestCaseFilter>
+  </RunConfiguration>
   <DataCollectionRunSettings>
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">

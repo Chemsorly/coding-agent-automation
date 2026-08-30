@@ -54,12 +54,31 @@ public sealed class AgentReservationService
     /// <see cref="AgentEntry.LastJobCompletedAt"/>, falling back to <see cref="AgentEntry.RegisteredAt"/>).
     /// </summary>
     /// <returns>The reserved agent (already transitioned to Busy), or <c>null</c> if none available.</returns>
-    public AgentEntry? SelectAgent(IReadOnlyList<string> requiredLabels)
+    public async Task<AgentEntry?> SelectAgentAsync(IReadOnlyList<string> requiredLabels, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(requiredLabels);
 
         return _store is not null
-            ? SelectAgentDistributed(requiredLabels).GetAwaiter().GetResult() // Safe: ThreadPool context only
+            ? await SelectAgentDistributed(requiredLabels, ct)
+            : SelectAgentInMemory(requiredLabels);
+    }
+
+    /// <summary>
+    /// Synchronous overload retained for backward compatibility. Prefer <see cref="SelectAgentAsync"/>.
+    /// </summary>
+    public AgentEntry? SelectAgent(IReadOnlyList<string> requiredLabels)
+    {
+        ArgumentNullException.ThrowIfNull(requiredLabels);
+
+        // TODO: When _store is not null (distributed path), this blocks a ThreadPool thread
+        // on SelectAgentAsync which internally calls GetIdleAgentsAsync (Redis I/O). Any
+        // production caller still using this sync overload via the distributed path (e.g.
+        // through the [Obsolete] JobDeduplicationGuardService.SelectAgent) will block for
+        // the full Redis batch duration — the exact hazard the issue aimed to eliminate.
+        // Audit all callers and migrate them to SelectAgentAsync. See .NET Specialist
+        // review finding at AgentReservationService.cs:74.
+        return _store is not null
+            ? SelectAgentAsync(requiredLabels).GetAwaiter().GetResult()
             : SelectAgentInMemory(requiredLabels);
     }
 
@@ -69,7 +88,8 @@ public sealed class AgentReservationService
     {
         lock (_selectionLock)
         {
-            var compatible = GetCompatibleCandidates(requiredLabels);
+            var idleAgents = _registry.GetIdleAgents();
+            var compatible = GetCompatibleCandidates(idleAgents, requiredLabels);
             if (compatible is null) return null;
 
             foreach (var candidate in compatible)
@@ -98,9 +118,10 @@ public sealed class AgentReservationService
 
     // ── Distributed path (multi-replica with Redis) ───────────────────
 
-    private async Task<AgentEntry?> SelectAgentDistributed(IReadOnlyList<string> requiredLabels)
+    private async Task<AgentEntry?> SelectAgentDistributed(IReadOnlyList<string> requiredLabels, CancellationToken ct = default)
     {
-        var compatible = GetCompatibleCandidates(requiredLabels);
+        var idleAgents = await _registry.GetIdleAgentsAsync(ct);
+        var compatible = GetCompatibleCandidates(idleAgents, requiredLabels);
         if (compatible is null) return null;
 
         foreach (var candidate in compatible)
@@ -124,7 +145,7 @@ public sealed class AgentReservationService
                 // NOTE: TransitionStatus does NOT acquire this lock, so there is a tiny race window
                 // where an agent disconnects between HGETALL and HSET Busy. This is accepted:
                 // ReconciliationService recovers the wasted dispatch within its interval.
-                var fresh = _registry.GetByAgentId(candidate.AgentId);
+                var fresh = await _registry.GetByAgentIdAsync(candidate.AgentId, ct);
                 if (fresh is null || fresh.Status != AgentStatus.Idle || fresh.Disabled)
                 {
                     _logger.Debug("SelectAgent: agent {AgentId} status changed to {Status} between lock and double-check — skipping",
@@ -152,10 +173,8 @@ public sealed class AgentReservationService
         return null;
     }
 
-    private List<AgentEntry>? GetCompatibleCandidates(IReadOnlyList<string> requiredLabels)
+    private List<AgentEntry>? GetCompatibleCandidates(IReadOnlyList<AgentEntry> idleAgents, IReadOnlyList<string> requiredLabels)
     {
-        var idleAgents = _registry.GetIdleAgents();
-
         if (idleAgents.Count == 0)
         {
             _logger.Debug("SelectAgent: no idle agents available (requiredLabels=[{Labels}])",
@@ -202,6 +221,9 @@ public sealed class JobDeduplicationGuardService
         => _inner = new AgentReservationService(registry, logger);
 
     public AgentEntry? SelectAgent(IReadOnlyList<string> requiredLabels) => _inner.SelectAgent(requiredLabels);
+
+    public Task<AgentEntry?> SelectAgentAsync(IReadOnlyList<string> requiredLabels, CancellationToken ct = default)
+        => _inner.SelectAgentAsync(requiredLabels, ct);
 
     public static IReadOnlyList<string> ResolveRequiredLabels(ProviderConfig? repoConfig, PipelineConfiguration pipelineConfig)
         => AgentReservationService.ResolveRequiredLabels(repoConfig, pipelineConfig);

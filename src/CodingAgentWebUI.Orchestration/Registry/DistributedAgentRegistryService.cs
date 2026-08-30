@@ -43,6 +43,12 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     // Same retention semantics as _connectionIndex: entry persists until explicit Deregister is called.
     private readonly ConcurrentDictionary<string, AgentEntry> _localSnapshot = new();
 
+    // Cached copies of the last successful async reads. Written by GetIdleAgentsAsync /
+    // GetAllAgentsAsync and read by the sync overloads (Blazor render paths, OTel gauges)
+    // so that those paths never block on Redis. Null until the first async read completes.
+    private volatile IReadOnlyList<AgentEntry>? _cachedAll;
+    private volatile IReadOnlyList<AgentEntry>? _cachedIdle;
+
     // Internal hooks for test determinism: fire-and-forget tasks are stored here so tests can
     // await them instead of using Thread.Sleep. Not used in production code paths.
     // TODO (WARNING): Consider a dedicated FlushAsync() or IAsyncDisposable pattern if more
@@ -75,8 +81,17 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var agentId = message.AgentId.Value;
         var now = DateTimeOffset.UtcNow;
 
-        // Check if already exists (re-registration / reconnect)
-        var existing = GetAgentRaw(agentId);
+        // Check if already exists (re-registration / reconnect) using async Redis read.
+        // This is correct for multi-replica: if an agent registered on replica A reconnects
+        // to replica B, B's _localSnapshot has no entry but Redis does. Using _localSnapshot
+        // here would overwrite activeJobId/disabled/lastJobCompletedAt with null.
+        // TODO: Register() is a sync interface method that blocks on a Redis HGETALL via
+        // GetAwaiter().GetResult(). If Redis is slow/unavailable this blocks the SignalR
+        // dispatch thread for the full Redis timeout. To fix, IAgentRegistryService.Register
+        // should be made async (RegisterAsync) so the await can be forwarded to the caller.
+        // The change from GetAgentRaw to GetByAgentIdAsync(..).GetAwaiter().GetResult() preserves
+        // the blocking risk rather than eliminating it. See review finding at line 88.
+        var existing = GetByAgentIdAsync(message.AgentId).GetAwaiter().GetResult();
 
         // Determine status: Busy if existing activeJobId, else Idle
         AgentStatus status;
@@ -202,7 +217,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     private async Task DeregisterAsync(string agentId)
     {
         var key = AgentKey(agentId);
-        var entry = GetAgentRaw(agentId);
+        var entry = await GetByAgentIdAsync(new AgentId(agentId));
         // TODO (WARNING): If the Redis hash has already TTL-expired when Deregister is called,
         // GetAgentRaw returns null and _connectionIndex is not cleaned up — the stale
         // connectionId → agentId mapping persists indefinitely. A subsequent GetByConnectionId
@@ -401,7 +416,25 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     public AgentEntry? GetByAgentId(AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
-        return GetAgentRaw(agentId.Value);
+        // TODO: This sync overload still blocks a ThreadPool thread on a live Redis HGETALL
+        // via GetAwaiter().GetResult(). Unlike GetAllAgents/GetIdleAgents which were fixed to
+        // read from cache, GetByAgentId has no cache equivalent. Callers should be migrated
+        // to GetByAgentIdAsync. The acceptance criterion "No GetAwaiter().GetResult() on Redis
+        // operations" is not satisfied here. See .NET Specialist review finding at line 413.
+        return GetByAgentIdAsync(agentId).GetAwaiter().GetResult();
+    }
+
+    /// <inheritdoc />
+    public Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(agentId.Value);
+        return GetByAgentIdCoreAsync(agentId.Value);
+    }
+
+    private async Task<AgentEntry?> GetByAgentIdCoreAsync(string agentId)
+    {
+        var hash = await _store.HashGetAllAsync(AgentKey(agentId));
+        return hash.Length == 0 ? null : HashToEntry(hash);
     }
 
     /// <inheritdoc />
@@ -409,66 +442,90 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     {
         ArgumentNullException.ThrowIfNull(connectionId);
         // Node-local lookup — always on the correct replica
-        return _connectionIndex.TryGetValue(connectionId, out var agentId)
-            ? GetAgentRaw(agentId)
-            : null;
+        if (!_connectionIndex.TryGetValue(connectionId, out var agentId))
+            return null;
+        // TODO: This still calls GetByAgentIdAsync(...).GetAwaiter().GetResult() — a blocking
+        // Redis HGETALL on every SignalR hub message path (AgentHub, AgentAuthorizationFilter,
+        // AgentOrphanRecoveryService). This is the same sync-over-async hazard the issue aimed
+        // to eliminate. Fix by making GetByConnectionId async (GetByConnectionIdAsync) so
+        // callers can await it. See Correctness review finding at line 436.
+        return GetByAgentIdAsync(new AgentId(agentId)).GetAwaiter().GetResult();
     }
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetIdleAgents()
     {
-        return GetIdleAgentsAsync().GetAwaiter().GetResult(); // Safe: ThreadPool context only
+        // Return cached result so this sync overload never blocks on Redis.
+        // Cache is populated by GetIdleAgentsAsync, which is called by the hot path.
+        return _cachedIdle ?? Array.Empty<AgentEntry>();
     }
 
-    private async Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync()
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync(CancellationToken ct = default)
     {
+        // TODO: The CancellationToken ct parameter is never forwarded to any IRedisStore call
+        // (SetMembersAsync, HashGetAllAsync). Cancellation does not propagate — operations run
+        // to completion even after the caller cancels. Forward ct to IRedisStore methods when
+        // the interface is extended to accept it. See Correctness review finding at line 448.
         var members = await _store.SetMembersAsync(AgentsIdleKey);
-        var result = new List<AgentEntry>(members.Length);
-
-        foreach (var agentId in members)
+        if (members.Length == 0)
         {
-            var hash = await _store.HashGetAllAsync(AgentKey(agentId));
-            if (hash.Length == 0) continue; // TTL expired, set not yet cleaned
-
-            var entry = HashToEntry(hash);
-            if (entry is not null) result.Add(entry);
+            _cachedIdle = Array.Empty<AgentEntry>();
+            return Array.Empty<AgentEntry>();
         }
 
-        return result.AsReadOnly();
+        // Pipeline all HGETALL calls — StackExchange.Redis coalesces concurrent async
+        // requests on the multiplexed connection into a single network flush (one round-trip).
+        var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id))).ToArray();
+        var results = await Task.WhenAll(tasks);
+        var list = results.Select(HashToEntry).OfType<AgentEntry>().ToList().AsReadOnly();
+        _cachedIdle = list;
+        return list;
     }
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetAllAgents()
     {
-        return GetAllAgentsAsync().GetAwaiter().GetResult(); // Safe: ThreadPool context only
+        // Return cached result so this sync overload never blocks on Redis.
+        // Cache is populated by GetAllAgentsAsync, which is called by the hot path.
+        return _cachedAll ?? Array.Empty<AgentEntry>();
     }
 
-    private async Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync()
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync(CancellationToken ct = default)
     {
+        // TODO: Same as GetIdleAgentsAsync — the CancellationToken ct is not forwarded to
+        // IRedisStore calls. See Correctness review finding at line 448.
         var members = await _store.SetMembersAsync(AgentsAllKey);
-        var result = new List<AgentEntry>(members.Length);
-
-        foreach (var agentId in members)
+        if (members.Length == 0)
         {
-            var hash = await _store.HashGetAllAsync(AgentKey(agentId));
-            if (hash.Length == 0) continue;
-
-            var entry = HashToEntry(hash);
-            if (entry is not null) result.Add(entry);
+            _cachedAll = Array.Empty<AgentEntry>();
+            return Array.Empty<AgentEntry>();
         }
 
-        return result.AsReadOnly();
+        // Pipeline all HGETALL calls.
+        var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id))).ToArray();
+        var results = await Task.WhenAll(tasks);
+        var list = results.Select(HashToEntry).OfType<AgentEntry>().ToList().AsReadOnly();
+        _cachedAll = list;
+        return list;
     }
 
     /// <inheritdoc />
     public int GetBusyAgentCount()
-        => GetAllAgents().Count(a => a.Status == AgentStatus.Busy);
+        => (_cachedAll ?? Array.Empty<AgentEntry>()).Count(a => a.Status == AgentStatus.Busy);
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetAgentsByLabel(string labelKey, string labelValue)
     {
+        // TODO: GetAgentsByLabel reads from _cachedAll (in-process cache) with no Redis fallback.
+        // On cold start or after a service restart, _cachedAll is null until the first
+        // GetAllAgentsAsync call completes (dispatch cycle, monitoring page, or API endpoint).
+        // Any caller that invokes this before the cache warms will always get an empty result
+        // even if agents are present in Redis. Consider adding a Redis fallback or ensuring
+        // a cache warm-up occurs at startup. See Correctness review finding at line 500.
         var target = $"{labelKey}={labelValue}";
-        return GetAllAgents()
+        return (_cachedAll ?? Array.Empty<AgentEntry>())
             .Where(a => a.Labels?.Any(l => string.Equals(l, target, StringComparison.OrdinalIgnoreCase)) == true)
             .ToList()
             .AsReadOnly();
@@ -522,12 +579,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
-
-    private AgentEntry? GetAgentRaw(string agentId)
-    {
-        var hash = _store.HashGetAllAsync(AgentKey(agentId)).GetAwaiter().GetResult(); // Safe: ThreadPool
-        return hash.Length == 0 ? null : HashToEntry(hash);
-    }
 
     private static AgentEntry? HashToEntry(HashEntry[] hash)
     {

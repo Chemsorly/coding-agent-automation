@@ -233,7 +233,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         }
 
         // 2. Set ActiveJobId on agent + transition to Busy
-        var agent = _registry.GetByAgentId(agentId);
+        var agent = await _registry.GetByAgentIdAsync(agentId, ct);
         if (agent is not null)
         {
             await _registry.UpdateAgentFieldAsync(agentId, "activeJobId", runId.Value);
@@ -297,7 +297,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         if (string.IsNullOrEmpty(agentId))
             return;
 
-        var agent = _registry.GetByAgentId(agentId);
+        var agent = await _registry.GetByAgentIdAsync(new AgentId(agentId));
         if (agent is null)
         {
             _logger.Warning(

@@ -210,26 +210,34 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
 /// </summary>
 public sealed class MigrationIntegrityFixture : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder()
-        .WithImage("postgres:17-alpine")
-        .WithDatabase("migration_test")
-        .WithUsername("test")
-        .WithPassword("test")
-        .Build();
+    // Initialized lazily in InitializeAsync so that Build() — which validates Docker
+    // availability synchronously — does not run in the constructor.  Running it in the
+    // constructor caused the fixture to throw before xUnit could even call InitializeAsync,
+    // producing an opaque "fixture threw in constructor" error in environments without Docker
+    // (e.g. the agent quality-gate runner).  Deferring to InitializeAsync means the exception
+    // is captured in MigrationException and surfaced as a named test failure instead.
+    private PostgreSqlContainer? _container;
 
     /// <summary>
-    /// Set when <see cref="InitializeAsync"/> catches an exception from <c>MigrateAsync</c>.
-    /// Tests assert this is null to verify clean migration application.
+    /// Set when <see cref="InitializeAsync"/> catches an exception from container startup or
+    /// <c>MigrateAsync</c>. Tests assert this is null to verify clean migration application.
     /// </summary>
     public Exception? MigrationException { get; private set; }
 
     public async Task InitializeAsync()
     {
-        await _container.StartAsync();
-
-        await using var db = CreateDbContext();
         try
         {
+            _container = new PostgreSqlBuilder()
+                .WithImage("postgres:17-alpine")
+                .WithDatabase("migration_test")
+                .WithUsername("test")
+                .WithPassword("test")
+                .Build();
+
+            await _container.StartAsync();
+
+            await using var db = CreateDbContext();
             await db.Database.MigrateAsync();
         }
         catch (Exception ex)
@@ -244,12 +252,16 @@ public sealed class MigrationIntegrityFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        await _container.DisposeAsync();
+        if (_container is not null)
+            await _container.DisposeAsync();
     }
 
     /// <summary>Creates a new <see cref="PipelineDbContext"/> connected to the test container.</summary>
     public PipelineDbContext CreateDbContext()
     {
+        if (_container is null)
+            throw MigrationException ?? new InvalidOperationException("Container was not initialized.");
+
         var options = new DbContextOptionsBuilder<PipelineDbContext>()
             .UseNpgsql(_container.GetConnectionString())
             .Options;
@@ -257,6 +269,11 @@ public sealed class MigrationIntegrityFixture : IAsyncLifetime
     }
 
     /// <summary>Creates a raw <see cref="NpgsqlConnection"/> for schema inspection queries.</summary>
-    public NpgsqlConnection CreateConnection() =>
-        new(_container.GetConnectionString());
+    public NpgsqlConnection CreateConnection()
+    {
+        if (_container is null)
+            throw MigrationException ?? new InvalidOperationException("Container was not initialized.");
+
+        return new(_container.GetConnectionString());
+    }
 }

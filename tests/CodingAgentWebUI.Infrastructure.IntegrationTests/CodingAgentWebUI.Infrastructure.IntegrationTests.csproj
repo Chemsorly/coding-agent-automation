@@ -6,6 +6,12 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <RunSettingsFilePath>$(MSBuildProjectDirectory)\coverlet.runsettings</RunSettingsFilePath>
+    <!-- Exclude Category=Integration tests from the default test run.
+         Integration tests (MigrationIntegrityTests) use Testcontainers and Docker, which is
+         only available in the dedicated migration integrity CI job (ci.yml).  The quality gate
+         and solution-wide dotnet test runs have no Docker, so those tests must be skipped
+         unless the caller explicitly passes the filter Category=Integration to opt in. -->
+    <VSTestTestCaseFilter>Category!=Integration</VSTestTestCaseFilter>
   </PropertyGroup>
 
   <ItemGroup>

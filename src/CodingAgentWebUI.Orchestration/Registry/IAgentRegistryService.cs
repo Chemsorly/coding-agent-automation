@@ -48,9 +48,26 @@ public interface IAgentRegistryService
     IReadOnlyList<AgentEntry> GetIdleAgents();
 
     /// <summary>
+    /// Returns all agents currently in <see cref="AgentStatus.Idle"/> status asynchronously.
+    /// In the Redis-backed implementation, all HGETALL calls are pipelined in a single batch.
+    /// </summary>
+    Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Returns all registered agents regardless of status.
     /// </summary>
     IReadOnlyList<AgentEntry> GetAllAgents();
+
+    /// <summary>
+    /// Returns all registered agents regardless of status asynchronously.
+    /// In the Redis-backed implementation, all HGETALL calls are pipelined in a single batch.
+    /// </summary>
+    Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Looks up an agent by its unique agent identifier asynchronously.
+    /// </summary>
+    Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default);
 
     /// <summary>
     /// Returns the count of agents currently in <see cref="AgentStatus.Busy"/> status.

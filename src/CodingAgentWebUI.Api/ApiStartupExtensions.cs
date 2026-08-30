@@ -106,6 +106,8 @@ internal static class ApiStartupExtensions
     /// <summary>
     /// Registers observable gauges for agent metrics against the <see cref="PipelineTelemetry.Meter"/>.
     /// Agents register on the API hub, so this is the correct process to own these gauges.
+    /// The callbacks read from the in-process cache maintained by GetAllAgentsAsync / GetIdleAgentsAsync,
+    /// so they never block on Redis (Func&lt;T&gt; callbacks must remain synchronous).
     /// </summary>
     public static WebApplication RegisterApiObservableGauges(this WebApplication app)
     {
@@ -115,6 +117,12 @@ internal static class ApiStartupExtensions
 
         _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",
             () => agentRegistry.GetBusyAgentCount(), "{job}", "Currently executing agent jobs");
+        // TODO: The callbacks read from the in-process cache (_cachedAll). Between process start
+        // and the first GetAllAgentsAsync call (first dispatch cycle / monitoring page load),
+        // the cache is null and both gauges will report 0 even if agents are already registered
+        // in Redis. Operators should treat an immediate 0 reading after deployment as a
+        // cold-cache artifact, not a real absence of agents. See Correctness review finding
+        // at ApiStartupExtensions.cs:121.
         _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
             () => agentRegistry.GetAllAgents().Count, "{connection}", "Total registered agents");
 

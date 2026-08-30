@@ -739,7 +739,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         // For chat pods, jobName == agentId in production (AGENT_ID field ref to metadata.name).
         // In tests agentId may differ — always look up by agentId from the registry.
-        var agentEntry = _registry.GetByAgentId(agentId);
+        var agentEntry = await _registry.GetByAgentIdAsync(new AgentId(agentId));
         if (agentEntry is null)
             return;
 

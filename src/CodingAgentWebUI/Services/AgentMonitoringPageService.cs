@@ -120,7 +120,7 @@ public class AgentMonitoringPageService
 
     public async Task RefreshDataAsync(bool includeConsolidation = false)
     {
-        Agents = _registry.GetAllAgents();
+        Agents = await _registry.GetAllAgentsAsync();
         // Fetch run history via the Pipeline API.
         // Request a large page to approximate "all" for the monitoring view; paging is
         // supported by the underlying endpoint if larger datasets require it in future.

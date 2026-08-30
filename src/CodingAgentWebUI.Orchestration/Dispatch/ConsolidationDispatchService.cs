@@ -102,7 +102,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         var agentSelectorLabels = await ResolveAgentSelectorLabelsAsync(requiredLabels, ct);
 
         // Select an idle agent matching the labels
-        var agent = _jobDispatcher.SelectAgent(requiredLabels);
+        var agent = await _jobDispatcher.SelectAgentAsync(requiredLabels, ct);
         if (agent is null)
         {
             // No idle agent — enqueue via IWorkDistributor for unified drain
@@ -206,7 +206,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             return false;
         }
 
-        var agent = _registry.GetByAgentId(agentId);
+        var agent = await _registry.GetByAgentIdAsync(agentId, ct);
         if (agent is null)
             return false;
 

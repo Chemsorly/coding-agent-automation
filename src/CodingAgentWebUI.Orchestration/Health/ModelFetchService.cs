@@ -40,7 +40,7 @@ public sealed class ModelFetchService : IModelFetchReceiver
         if (_cachedModels is not null)
             return (_cachedModels, null);
 
-        var agents = _registry.GetAllAgents()
+        var agents = (await _registry.GetAllAgentsAsync())
             .Where(a => a.Status == AgentStatus.Idle || a.Status == AgentStatus.Busy)
             .ToList();
 
@@ -83,7 +83,7 @@ public sealed class ModelFetchService : IModelFetchReceiver
         AgentEntry? agent = null;
         while (!token.IsCancellationRequested)
         {
-            agent = _registry.GetAllAgents()
+            agent = (await _registry.GetAllAgentsAsync(token))
                 .FirstOrDefault(a =>
                     a.AgentId.Value.StartsWith(agentIdPrefix, StringComparison.Ordinal) &&
                     (a.Status == AgentStatus.Idle || a.Status == AgentStatus.Busy));
