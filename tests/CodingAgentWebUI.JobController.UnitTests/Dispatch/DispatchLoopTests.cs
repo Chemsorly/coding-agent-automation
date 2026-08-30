@@ -132,6 +132,14 @@ public sealed class DispatchLoopTests
 
     // ─── PVC pool exhausted ───────────────────────────────────────────────────
 
+    // TODO [WARNING]: No tests cover the PVC-release paths when TryClaimWorkItemAsync fails for a kiro
+    // agent in DispatchLoop. Two cases need coverage:
+    //   1. ClaimAsync throws WorkItemNotFoundException (404) — _pvcPool.Release(pvcName) must be called
+    //   2. ClaimAsync returns null (409 contention)          — _pvcPool.Release(pvcName) must be called
+    // Without these tests, a future regression that drops either Release call would cause a permanent
+    // PVC leak on every 404/409 event and would not be caught by the test suite. ConsolidationDispatchLoopTests
+    // has an equivalent TODO comment; DispatchLoopTests should have the same coverage.
+
     /// <summary>
     /// PVC starvation must NOT call RequeueAsync — the item is already Pending and should
     /// be held there silently until a PVC becomes available. Calling RequeueAsync would
@@ -197,6 +205,11 @@ public sealed class DispatchLoopTests
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
+        // TODO [WARNING]: The ClaimAsync setup above is now dead — the PVC check (TryClaimPvcForKiroAgent)
+        // returns early before ClaimAsync is ever reached. A reader would incorrectly conclude ClaimAsync
+        // is expected to be called in this path. Remove this setup and add a ClaimAsync: Times.Never
+        // verification (as the sibling test WhenPvcPoolExhausted_ShouldNotCallRequeueAsync does) to
+        // explicitly document the PVC-before-claim ordering.
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,

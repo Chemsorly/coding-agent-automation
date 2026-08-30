@@ -302,6 +302,13 @@ internal sealed class RequiresDockerFact : FactAttribute
 
     public RequiresDockerFact()
     {
+        // TODO [WARNING]: This checks only the Linux Docker socket path (/var/run/docker.sock).
+        // On macOS and Windows (Docker Desktop, Rancher Desktop, colima), the socket is at a
+        // different path (e.g. ~/.docker/run/docker.sock or a TCP address / named pipe). Those
+        // developer machines will always see Skip, silently masking real migration failures. The
+        // previous approach (catching DockerUnavailableException from PostgreSqlBuilder.Build() at
+        // runtime) was portable across platforms. Consider probing additional paths or using
+        // IDockerClient.SystemPingAsync() with a timeout to detect Docker availability portably.
         if (!System.IO.File.Exists(DockerSocketPath))
             Skip = $"Skipped: Docker socket not found at '{DockerSocketPath}'. " +
                    "These tests require Docker and are intended to run only in the " +

@@ -361,6 +361,14 @@ public class CreateSubIssuesStepTests : IDisposable
         listener.Start();
 
         // Capture baseline — other tests in the process may have already incremented the counter
+        // TODO [WARNING]: The baseline is captured after listener.Start(), so any parallel test that
+        // fires pipeline.decomposition.sub_issues.created between Start() and the baseline read will
+        // inflate createdCount before the baseline is set, then the delta will be 0 instead of 1 —
+        // a spurious failure. Conversely, a parallel test that fires the event between ExecuteAsync
+        // and the final delta read will inflate the delta to 2. The original measuring-flag approach
+        // was a narrower gate (only measurements fired while the flag was true were counted).
+        // Consider capturing the baseline before listener.Start(), or using a scoped MeterFactory
+        // that isolates measurements to this test instance rather than relying on a global listener.
         var baseline = Interlocked.Read(ref createdCount);
 
         var run = CreateRun();

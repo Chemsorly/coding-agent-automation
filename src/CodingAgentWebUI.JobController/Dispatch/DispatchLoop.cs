@@ -183,6 +183,13 @@ public sealed class DispatchLoop
         // PVC assignment for kiro agents — checked BEFORE ClaimAsync to avoid the
         // claim-then-return pattern that would strand the item in Dispatched state with no
         // K8s Job and no path back to Pending (issue #2129).
+        // TODO [WARNING]: TryClaimPvcForKiroAgent returns null for two semantically distinct reasons:
+        // (1) not a kiro agent — no PVC needed, proceed; (2) kiro agent, pool empty — hold/return early.
+        // The caller must duplicate the "is kiro?" check to discriminate between them. If the helper's
+        // internal condition is ever widened (new provider type that also uses PVCs), the caller's guard
+        // will silently fail to hold the item. ConsolidationDispatchLoop avoids this by keeping an
+        // explicit isKiroAgent variable in scope. Consider returning a discriminated value (enum or
+        // bool isPvcRequired out-parameter) rather than overloading null for two different outcomes.
         var pvcName = TryClaimPvcForKiroAgent(item.Id, template.ProviderType);
         if (pvcName is null && string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase))
             return; // PVC unavailable — item stays Pending, next cycle retries
@@ -269,6 +276,12 @@ public sealed class DispatchLoop
     private async Task<WorkItemClaimResponse?> TryClaimWorkItemAsync(
         Guid workItemId, string jobName, string? pvcName, CancellationToken ct)
     {
+        // TODO [WARNING]: Only WorkItemNotFoundException is explicitly caught here. An unexpected
+        // exception from ClaimAsync (e.g. HttpRequestException on network timeout, TaskCanceledException
+        // on shutdown) will propagate without releasing the PVC, keeping it in the _claimed set until
+        // controller restart. Repeated occurrences exhaust the pool (same symptom as issue #2129 but
+        // from a different cause). Consider adding a general catch (Exception) that releases the PVC
+        // before re-throwing, or wrapping ClaimAsync in a try/finally that releases on non-success paths.
         try
         {
             var claimed = await _workItemClient.ClaimAsync(

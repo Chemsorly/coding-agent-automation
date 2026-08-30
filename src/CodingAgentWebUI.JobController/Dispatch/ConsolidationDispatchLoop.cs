@@ -169,6 +169,12 @@ public sealed class ConsolidationDispatchLoop
         }
 
         // Claim (API does payload enrichment + token vending server-side)
+        // TODO [WARNING]: Only WorkItemNotFoundException is explicitly caught here. An unexpected
+        // exception from ClaimAsync (e.g. HttpRequestException on network timeout, TaskCanceledException
+        // on shutdown) will propagate without releasing the PVC claimed above, leaking it permanently
+        // until controller restart. The old code was immune because PVC was claimed after ClaimAsync;
+        // moving PVC before claim introduced this new failure surface. Consider adding a general
+        // catch (Exception) that releases the PVC before re-throwing, or a try/finally on non-success paths.
         ConsolidationWorkItemClaimResponse? claimed;
         try
         {
