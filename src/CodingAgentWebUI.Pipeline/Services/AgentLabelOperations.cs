@@ -43,7 +43,7 @@ public static class AgentLabelOperations
         // if the operation is interrupted partway through.
         if (!string.IsNullOrEmpty(newLabel))
         {
-            Logger.Information("AgentLabelOperations: adding label {Label} (issue={Identifier})", newLabel, identifier ?? "unknown");
+            Logger.Information("AgentLabelOperations: adding label {Label} (issue={IssueIdentifier})", newLabel, identifier ?? "unknown");
             await addLabel(newLabel, ct);
         }
 

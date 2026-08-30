@@ -147,8 +147,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
 
         _logger.Information(
-            "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, step={Step}, highWater={HighWater}, agent={AgentId})",
-            runId, terminalStatus, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none");
+            "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId})",
+            runId, terminalStatus, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none");
 
         return run;
     }
@@ -201,8 +201,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 
         _logger.Information(
-            "RunLifecycleManager.CancelRunAsync: run {RunId} terminal (status=Cancelled, step={Step}, highWater={HighWater}, agent={AgentId}, reason={Reason})",
-            runId, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none", failureReason ?? "none");
+            "RunLifecycleManager.CancelRunAsync: run {RunId} terminal (status=Cancelled, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId}, reason={Reason})",
+            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none", failureReason ?? "none");
 
         return run;
     }
