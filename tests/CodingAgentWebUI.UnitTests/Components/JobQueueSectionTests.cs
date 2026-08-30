@@ -12,6 +12,7 @@ namespace CodingAgentWebUI.UnitTests.Components;
 // Currently all tests pass Array.Empty<ConsolidationRun>() for QueuedConsolidationRuns,
 // leaving consolidation queue row rendering (~30 lines including badge, template name,
 // QueuedRequiredLabels, and cancel button wiring to OnCancelConsolidation) completely untested.
+
 public class JobQueueSectionTests : BunitContext
 {
     [Fact]
@@ -107,5 +108,62 @@ public class JobQueueSectionTests : BunitContext
 
         var headerCells = cut.FindAll(".monitoring-table thead th");
         Assert.Equal(9, headerCells.Count);
+    }
+
+    [Fact]
+    public void Renders_ReviewBadge_ForReviewRunType()
+    {
+        // Regression guard for #2159: queued Review jobs must render the "run-type-review" badge,
+        // not the default "run-type-impl" badge.
+        var jobs = new List<PendingJob>
+        {
+            new()
+            {
+                IssueIdentifier = "PR-42",
+                IssueTitle = "My PR",
+                IssueProviderId = "github",
+                RepoProviderId = "rp",
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "test",
+                RequiredLabels = Array.Empty<string>(),
+                RunType = PipelineRunType.Review
+            }
+        };
+
+        var cut = Render<JobQueueSection>(p => p
+            .Add(s => s.QueuedJobs, jobs)
+            .Add(s => s.QueuedConsolidationRuns, Array.Empty<ConsolidationRun>()));
+
+        Assert.Contains("run-type-review", cut.Markup);
+        Assert.DoesNotContain("run-type-impl", cut.Markup);
+    }
+
+    [Fact]
+    public void Renders_DecompBadge_ForDecompositionAnalysisRunType()
+    {
+        // Regression guard for #2159: pending Decomposition jobs are always Phase 1 (analysis)
+        // and must render the "run-type-decomp" badge with "Decomp (A)" label, not "Impl".
+        var jobs = new List<PendingJob>
+        {
+            new()
+            {
+                IssueIdentifier = "GH-100",
+                IssueTitle = "Big Feature",
+                IssueProviderId = "github",
+                RepoProviderId = "rp",
+                EnqueuedAt = DateTimeOffset.UtcNow,
+                InitiatedBy = "test",
+                RequiredLabels = Array.Empty<string>(),
+                RunType = PipelineRunType.DecompositionAnalysis
+            }
+        };
+
+        var cut = Render<JobQueueSection>(p => p
+            .Add(s => s.QueuedJobs, jobs)
+            .Add(s => s.QueuedConsolidationRuns, Array.Empty<ConsolidationRun>()));
+
+        Assert.Contains("run-type-decomp", cut.Markup);
+        Assert.Contains("Decomp (A)", cut.Markup);
+        Assert.DoesNotContain("run-type-impl", cut.Markup);
     }
 }
