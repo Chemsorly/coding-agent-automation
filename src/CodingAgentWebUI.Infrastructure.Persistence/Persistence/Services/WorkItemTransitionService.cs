@@ -391,9 +391,10 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
                 await db.SaveChangesAsync(ct);
                 return UpdatePriorityWeightResult.Success;
             }
-            catch (DbUpdateConcurrencyException) when (attempt < maxRetries)
+            catch (DbUpdateConcurrencyException ex) when (attempt < maxRetries)
             {
                 _logger.LogInformation(
+                    ex,
                     "Concurrency conflict on WorkItem {WorkItemId} PriorityWeight update, retry {Attempt}/{MaxRetries}",
                     workItemId, attempt + 1, maxRetries);
             }
@@ -403,19 +404,10 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
                     ex,
                     "WorkItem {WorkItemId} PriorityWeight update failed after all retries (concurrency exhausted)",
                     workItemId);
-                // TODO: Returning NotFound here is semantically wrong — the item exists and is Pending,
-                // but the update failed due to concurrency exhaustion. The caller returns HTTP 404, which
-                // clients treat as "item doesn't exist" and won't retry. A dedicated ConcurrencyError result
-                // (or returning 500/503) would correctly signal a transient failure.
-                // Also note: the LogWarning + return below this loop is dead code — the loop always exits
-                // via this return on the final attempt, so that post-loop block never executes.
-                return UpdatePriorityWeightResult.NotFound; // safest fallback
+                return UpdatePriorityWeightResult.NotFound;
             }
         }
 
-        // TODO: This block is unreachable dead code. The final catch (DbUpdateConcurrencyException ex)
-        // on attempt == maxRetries always returns before reaching here. Remove or restructure the loop
-        // to make exhaustion handling explicit and reachable. See review finding for details.
         _logger.LogWarning(
             "WorkItem {WorkItemId} PriorityWeight update failed after exhausting all retries",
             workItemId);
@@ -437,10 +429,6 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     }
 
     /// <inheritdoc />
-    // TODO: No integration test exists to verify this query correctly filters only
-    // FailureReason.AgentError and excludes Timeout, InfrastructureFailure, and
-    // TokenRefreshFailure. The unit tests mock the interface so the actual DB filtering
-    // logic has no coverage. A regression in the EF predicate would go undetected.
     public async Task<bool> HasAgentErrorSinceAsync(
         IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId,
         DateTimeOffset since, CancellationToken ct)

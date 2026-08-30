@@ -50,9 +50,6 @@ public static class ConsolidationWorkItemEndpoints
             .OrderByDescending(w => w.PriorityWeight)
             .ThenBy(w => w.CreatedAt)
             .Take(maxResults)
-            // TODO: PriorityWeight is not projected here — DTO consumers see PriorityWeight=0 for all
-            // consolidation items even though the query sorts by PriorityWeight DESC correctly.
-            // Fix: add `PriorityWeight = w.PriorityWeight` to this projection, matching WorkItemEndpoints.GetPendingWorkItems.
             .Select(w => new PendingWorkItemDto
             {
                 Id = w.Id,
@@ -63,7 +60,7 @@ public static class ConsolidationWorkItemEndpoints
                 AgentSelector = w.AgentSelector,
                 RetryCount = w.RetryCount,
                 TimeoutSeconds = w.TimeoutSeconds,
-                TraceParent = w.TraceParent
+                PriorityWeight = w.PriorityWeight
             })
             .ToListAsync(ct);
 
