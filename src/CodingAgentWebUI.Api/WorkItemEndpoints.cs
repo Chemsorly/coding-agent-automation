@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Claims;
 using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
@@ -280,7 +281,15 @@ public static class WorkItemEndpoints
             AgentSelector = request.AgentSelector ?? "",
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = DateTimeOffset.UtcNow,
+            // Capture the W3C traceparent from the current API span so the worker K8s Job
+            // can restore it and attach its spans to this trace rather than starting a new root.
+            // Activity.Current here is the ASP.NET Core request span — the API span that the
+            // caller's trace is already a child of — which is exactly the correct parent.
+            // Exception: when the request carries a pre-stored TraceContext (e.g., consolidation
+            // rehydration at startup where Activity.Current is null), prefer that instead.
+            TraceParent = request.TraceContext?.GetValueOrDefault("traceparent")
+                ?? FormatTraceParent(Activity.Current)
         };
 
         try
@@ -354,7 +363,8 @@ public static class WorkItemEndpoints
                 w.RetryCount,
                 w.Payload,
                 w.ProjectId,
-                w.TimeoutSeconds
+                w.TimeoutSeconds,
+                w.TraceParent
             })
             .ToListAsync(ct);
 
@@ -390,7 +400,8 @@ public static class WorkItemEndpoints
                 IssueTitle = req?.IssueDetail?.Title,
                 InitiatedBy = req?.InitiatedBy,
                 ProjectName = req?.ProjectName,
-                ProjectId = w.ProjectId
+                ProjectId = w.ProjectId,
+                TraceParent = w.TraceParent
             };
         }).ToList();
 
@@ -974,6 +985,18 @@ public static class WorkItemEndpoints
             || innerMessage.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
             // EF InMemory exact phrase
             || message.Contains("An item with the same key has already been added", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Formats a W3C traceparent string from the given <see cref="Activity"/>.
+    /// Returns null when no activity is active or tracing is not configured.
+    /// Format: 00-{traceId}-{spanId}-{flags}
+    /// </summary>
+    internal static string? FormatTraceParent(Activity? activity)
+    {
+        if (activity is null) return null;
+        var flags = activity.ActivityTraceFlags.HasFlag(ActivityTraceFlags.Recorded) ? "01" : "00";
+        return $"00-{activity.TraceId}-{activity.SpanId}-{flags}";
     }
 
     /// <summary>

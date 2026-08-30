@@ -310,7 +310,12 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             LastSuccessfulRunUtc = lastSuccessfulRunUtc?.UtcDateTime,
             FeedbackDataJson = ctx.FeedbackDataJson,
             WorkspacePath = ctx.WorkspacePath,
-            TraceContext = CaptureTraceContext(),
+            // Prefer the traceparent stored on the run at trigger time — this survives restarts
+            // and rehydration where Activity.Current would be null. Fall back to a fresh capture
+            // (live span) when the run predates TraceParent storage (old persisted runs).
+            TraceContext = !string.IsNullOrEmpty(ctx.Run.TraceParent)
+                ? new Dictionary<string, string> { ["traceparent"] = ctx.Run.TraceParent }
+                : CaptureTraceContext(),
             AutoDispatch = ctx.Run.AutoDispatch
         };
 
