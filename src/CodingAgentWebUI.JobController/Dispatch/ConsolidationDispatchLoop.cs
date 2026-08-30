@@ -144,7 +144,37 @@ public sealed class ConsolidationDispatchLoop
 
         var jobName = GenerateJobName(item.Id);
 
+        // PVC assignment for kiro agents — checked BEFORE ClaimAsync to avoid the
+        // claim-then-requeue churn that previously caused spurious ConsolidationRunStatus.Failed
+        // transitions on every starvation cycle (issue #2129).
+        string? pvcName = null;
+        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+        if (isKiroAgent)
+        {
+            pvcName = _pvcPool.TryClaim(item.Id);
+            if (pvcName is null)
+            {
+                Log.Information(
+                    "ConsolidationDispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
+                    item.Id);
+                // Signal ReconciliationService to run an immediate cycle so any completed-but-not-yet-
+                // reconciled K8s Jobs release their PVC slots quickly, rather than waiting up to 30s.
+                // The call is non-blocking and idempotent.
+                _reconciliationTrigger.RequestImmediateCycle();
+                // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
+                // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting the
+                // field (issue #2129). Simply return; the next dispatch cycle will retry.
+                return;
+            }
+        }
+
         // Claim (API does payload enrichment + token vending server-side)
+        // TODO [WARNING]: Only WorkItemNotFoundException is explicitly caught here. An unexpected
+        // exception from ClaimAsync (e.g. HttpRequestException on network timeout, TaskCanceledException
+        // on shutdown) will propagate without releasing the PVC claimed above, leaking it permanently
+        // until controller restart. The old code was immune because PVC was claimed after ClaimAsync;
+        // moving PVC before claim introduced this new failure surface. Consider adding a general
+        // catch (Exception) that releases the PVC before re-throwing, or a try/finally on non-success paths.
         ConsolidationWorkItemClaimResponse? claimed;
         try
         {
@@ -160,32 +190,16 @@ public sealed class ConsolidationDispatchLoop
         }
         catch (WorkItemNotFoundException)
         {
+            if (pvcName is not null) _pvcPool.Release(pvcName);
             Log.Warning("ConsolidationDispatchLoop: WorkItem {Id} not found during claim (404) — skipping", item.Id);
             return;
         }
 
         if (claimed is null)
         {
+            if (pvcName is not null) _pvcPool.Release(pvcName);
             Log.Debug("ConsolidationDispatchLoop: WorkItem {Id} already claimed by another instance (409), skipping", item.Id);
             return;
-        }
-
-        // PVC assignment for kiro agents
-        string? pvcName = null;
-        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-        if (isKiroAgent)
-        {
-            pvcName = _pvcPool.TryClaim(item.Id);
-            if (pvcName is null)
-            {
-                Log.Warning("ConsolidationDispatchLoop: no available PVC for kiro agent {Id}, requeuing", item.Id);
-                // Signal ReconciliationService to run an immediate cycle so any completed-but-not-yet-
-                // reconciled K8s Jobs release their PVC slots quickly, rather than waiting up to 30s.
-                // The call is non-blocking and idempotent.
-                _reconciliationTrigger.RequestImmediateCycle();
-                await SafeRequeueAsync(item.Id, claimed.RunId, "No PVC available", ct);
-                return;
-            }
         }
 
         // Build K8s Job spec — pass ProjectSecrets so JobSpecBuilder creates the volume mount

@@ -132,8 +132,21 @@ public sealed class DispatchLoopTests
 
     // ─── PVC pool exhausted ───────────────────────────────────────────────────
 
+    // TODO [WARNING]: No tests cover the PVC-release paths when TryClaimWorkItemAsync fails for a kiro
+    // agent in DispatchLoop. Two cases need coverage:
+    //   1. ClaimAsync throws WorkItemNotFoundException (404) — _pvcPool.Release(pvcName) must be called
+    //   2. ClaimAsync returns null (409 contention)          — _pvcPool.Release(pvcName) must be called
+    // Without these tests, a future regression that drops either Release call would cause a permanent
+    // PVC leak on every 404/409 event and would not be caught by the test suite. ConsolidationDispatchLoopTests
+    // has an equivalent TODO comment; DispatchLoopTests should have the same coverage.
+
+    /// <summary>
+    /// PVC starvation must NOT call RequeueAsync — the item is already Pending and should
+    /// be held there silently until a PVC becomes available. Calling RequeueAsync would
+    /// increment RetryCount on every 10s poll cycle, corrupting the field (issue #2129).
+    /// </summary>
     [Fact]
-    public async Task WhenPvcPoolExhausted_ShouldCallRequeueAsync_NotCreateJob()
+    public async Task WhenPvcPoolExhausted_ShouldNotCallRequeueAsync_AndShouldNotCreateJob()
     {
         // Template with kiro providerType so PVC is required
         const string kiroYaml = """
@@ -147,13 +160,13 @@ public sealed class DispatchLoopTests
         {
             Namespace = "test-ns",
             RateLimitPerSecond = 100,
-            KiroPvcPool = [] // empty pool
+            KiroPvcPool = [] // empty pool — TryClaim returns null
         };
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
-        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(MakeClaimed());
+        // No ClaimAsync setup — PVC check runs before claim, so Moq will throw MockException
+        // on any unexpected ClaimAsync call, giving an early and explicit failure signal.
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
@@ -162,8 +175,12 @@ public sealed class DispatchLoopTests
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
+        // PVC unavailability must NOT mutate the item's RetryCount — no requeue call
+        _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        _workItemClient.Verify(c => c.RequeueAsync(ItemId, It.IsAny<CancellationToken>()), Times.Once);
+        // PVC check must happen BEFORE ClaimAsync — if ClaimAsync fires, the item transitions
+        // Pending→Dispatched server-side with no K8s Job, stranding it indefinitely (issue #2129).
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -188,6 +205,11 @@ public sealed class DispatchLoopTests
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
+        // TODO [WARNING]: The ClaimAsync setup above is now dead — the PVC check (TryClaimPvcForKiroAgent)
+        // returns early before ClaimAsync is ever reached. A reader would incorrectly conclude ClaimAsync
+        // is expected to be called in this path. Remove this setup and add a ClaimAsync: Times.Never
+        // verification (as the sibling test WhenPvcPoolExhausted_ShouldNotCallRequeueAsync does) to
+        // explicitly document the PVC-before-claim ordering.
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,

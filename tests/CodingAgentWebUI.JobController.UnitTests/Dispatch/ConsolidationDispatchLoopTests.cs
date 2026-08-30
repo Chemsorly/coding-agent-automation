@@ -159,8 +159,16 @@ public sealed class ConsolidationDispatchLoopTests
 
     // ── PVC pool exhausted ─────────────────────────────────────────────────────
 
+    /// <summary>
+    /// PVC starvation must NOT call RequeueAsync — doing so would increment RetryCount
+    /// on every poll cycle (issue #2129). The item stays Pending and is picked up again
+    /// on the next cycle once a PVC is released.
+    ///
+    /// Additionally, because the PVC check now runs BEFORE ClaimAsync, no claim-then-requeue
+    /// churn occurs and no spurious ConsolidationRunStatus.Failed transition fires.
+    /// </summary>
     [Fact]
-    public async Task WhenPvcPoolExhausted_ShouldRequeueAndNotCreateJob()
+    public async Task WhenPvcPoolExhausted_ShouldNotCallRequeueAsync_AndNotCreateJob()
     {
         const string kiroYaml = """
             - labels: dotnet10,kiro
@@ -174,9 +182,6 @@ public sealed class ConsolidationDispatchLoopTests
         _consolidationClient
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
-        _consolidationClient
-            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(MakeClaimed());
 
         var loop = new ConsolidationDispatchLoop(
             _consolidationClient.Object, _k8sClient.Object,
@@ -186,8 +191,21 @@ public sealed class ConsolidationDispatchLoopTests
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        _consolidationClient.Verify(c => c.RequeueAsync(ItemId, It.IsAny<CancellationToken>()), Times.Once);
+        // PVC starvation must NOT call RequeueAsync (would increment RetryCount)
+        _consolidationClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        // PVC starvation must NOT fire any run-state transition (no claim, no job)
+        _consolidationClient.Verify(c => c.TransitionRunAsync(
+            It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        // PVC check is before ClaimAsync, so no claim should have been attempted
+        _consolidationClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // TODO [WARNING]: No test covers the PVC-release paths when ClaimAsync fails for a kiro agent
+    // in ConsolidationDispatchLoop. Two cases need coverage:
+    //   1. ClaimAsync throws WorkItemNotFoundException (404) — _pvcPool.Release(pvcName) must be called
+    //   2. ClaimAsync returns null (409 contention)     — _pvcPool.Release(pvcName) must be called
+    // Without these tests, a future regression that drops those Release calls would cause a permanent
+    // PVC leak on every 404/409 event and would not be caught by the test suite.
 
     [Fact]
     public async Task WhenPvcPoolExhausted_ShouldCallRequestImmediateCycle()
@@ -204,9 +222,7 @@ public sealed class ConsolidationDispatchLoopTests
         _consolidationClient
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
-        _consolidationClient
-            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(MakeClaimed());
+        // Note: no ClaimAsync setup — PVC check runs before claim, so claim is never called
 
         var loop = new ConsolidationDispatchLoop(
             _consolidationClient.Object, _k8sClient.Object,
@@ -219,6 +235,8 @@ public sealed class ConsolidationDispatchLoopTests
         _reconciliationTrigger.Verify(t => t.RequestImmediateCycle(), Times.Once);
         // No K8s Job should be created
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // PVC check before claim — claim must not be called on starvation
+        _consolidationClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Concurrency limit reached ──────────────────────────────────────────────
