@@ -38,15 +38,35 @@ public sealed class WorkItemFallbackTransitionService : IWorkItemFallbackTransit
         string? errorMessage, FailureReason? failureReason,
         CancellationToken ct)
     {
-        // Early-exit: if the item is already in Succeeded or Cancelled and the caller requests
-        // a different terminal state, skip the chain entirely. These states have no recovery path
-        // to another terminal state — all three fallback steps would be rejected immediately,
-        // generating spurious "Invalid transition" Warning logs (3B-001 fix).
+        // Early-exit: if the item is already in a terminal state that has no valid forward path
+        // to the requested target, skip the chain entirely. All three fallback steps would be
+        // rejected immediately, generating spurious "Invalid transition" Warning logs.
         //
-        // NOTE: Failed is intentionally excluded from this check — it has a legitimate recovery
-        // path via TryInfrastructureRecoveryAsync (Failed+InfrastructureFailure → Succeeded/Running),
-        // and Cancelled/Failed → Pending is a valid requeue path handled by TryDirectAsync.
+        // Covered cases:
+        //   • Succeeded or Cancelled → any different target: no recovery path (3B-001 fix).
+        //   • Failed → Failed: a no-op; the item is already at the target state. Returns false
+        //     (no transition was performed) without executing any fallback steps (issue #2139 fix).
+        //
+        // NOT covered (falls through to the fallback chain):
+        //   • Failed → Running: legitimate infra-failure recovery path via TryInfrastructureRecoveryAsync.
+        //   • Failed → Succeeded: ditto — timeout-race recovery (issue #2146).
         var currentStatus = await _workItemTransition.GetCurrentStatusAsync(workItemId, ct);
+
+        if (currentStatus is WorkItemStatus.Failed && status is WorkItemStatus.Failed)
+        {
+            if (_logger.IsEnabled(LogLevel.Debug))
+                _logger.LogDebug(
+                    "WorkItem {WorkItemId} already in Failed state, skipping fallback chain (Failed→Failed no-op)",
+                    workItemId);
+            return false;
+        }
+
+        // TODO: The condition below uses `currentStatus != status` rather than the symmetric form
+        // used by the Failed→Failed guard above. This means Succeeded→Succeeded and
+        // Cancelled→Cancelled calls fall through both guards and execute the full fallback chain,
+        // still emitting three "Invalid transition" warnings (same warning spam that issue #2139
+        // was filed to eliminate for Failed→Failed). Consider adding dedicated symmetric guards
+        // for Succeeded→Succeeded and Cancelled→Cancelled to close this gap.
         if (currentStatus is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled
             && currentStatus != status)
         {
