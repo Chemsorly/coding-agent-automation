@@ -44,6 +44,14 @@ public sealed class ReconciliationLoop
     /// status for jobs still present within the K8s retention window (default 600s).
     /// Cleared on leadership acquisition via <see cref="OnLeadershipAcquired"/>.
     /// </summary>
+    // TODO: _reconciledTerminalIds is a plain HashSet<Guid> with no thread-safety guarantees.
+    // In the current design ReconcileOnceAsync is only invoked once per OnPollCycleAsync (via
+    // Task.WhenAll with no parallel ReconcileOnceAsync calls), and OnLeadershipAcquired is called
+    // between leadership terms — so no concurrent access occurs in production. However,
+    // OnLeadershipAcquired is public and tests call ReconcileOnceAsync directly; any external
+    // caller that invokes these concurrently would cause undefined behaviour on HashSet.
+    // Consider replacing with a ConcurrentDictionary<Guid, byte> or adding a lock if the public
+    // surface of OnLeadershipAcquired is ever called from a different thread than ReconcileOnceAsync.
     private readonly HashSet<Guid> _reconciledTerminalIds = new();
 
     /// <summary>

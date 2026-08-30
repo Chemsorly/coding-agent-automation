@@ -227,6 +227,12 @@ public sealed class ReconciliationLoopTests
         await loop.ReconcileOnceAsync(CancellationToken.None);
 
         // Assert: PostStatusAsync called exactly once across both cycles
+        // TODO: ReconcileOnceAsync calls ListJobsAsync twice internally (once for the job watch loop
+        // in ReconcileOnceAsync, once for orphan cleanup in CleanupOrphansAsync), so the mock returns
+        // the completed job on all four ListJobsAsync calls (two cycles × two calls each). Verify that
+        // CleanupOrphansAsync cannot independently invoke PostStatusAsync for this terminal job. If it
+        // can, Times.Once would be insufficiently specific — deduplication via the primary path could
+        // be bypassed while orphan cleanup fires instead, and this assertion would not detect it.
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
@@ -251,6 +257,12 @@ public sealed class ReconciliationLoopTests
         await loop.ReconcileOnceAsync(CancellationToken.None);
         await loop.ReconcileOnceAsync(CancellationToken.None);
 
+        // TODO: Same caveat as TwoConsecutiveReconcileCycles_SameCompletedJob_PostStatusCalledOnce:
+        // ListJobsAsync is called twice per ReconcileOnceAsync (job watch + orphan cleanup), so the
+        // mock returns the failed job on all four calls across both cycles. If CleanupOrphansAsync
+        // can also invoke PostStatusAsync for this job, Times.Once would not prove that the primary
+        // deduplication path is working correctly — it could mask the primary path being suppressed
+        // while the orphan-cleanup path fires instead.
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),

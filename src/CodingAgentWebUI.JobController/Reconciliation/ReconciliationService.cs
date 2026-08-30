@@ -163,6 +163,13 @@ public class ReconciliationService : LeaderElectedPollingService, IReconciliatio
         Log.Debug("ReconciliationService: starting reconciliation cycle");
 
         // Run all reconciliation tasks concurrently within the same poll cycle
+        // TODO: ReconcileOnceAsync reads and writes _reconciledTerminalIds (a plain HashSet<Guid>
+        // in ReconciliationLoop) sequentially within its own iteration, so the Task.WhenAll here
+        // is safe as long as only one ReconcileOnceAsync runs per cycle. If ReconcileOnceAsync is
+        // ever invoked concurrently (e.g. an external trigger spawns a second call while this
+        // WhenAll is in flight), concurrent reads/writes to the non-thread-safe HashSet would
+        // produce undefined behaviour. Guard with a SemaphoreSlim in ReconcileOnceAsync or
+        // replace the HashSet with ConcurrentDictionary if concurrent invocation becomes possible.
         await Task.WhenAll(
             RunSafe(_loop.ReconcileOnceAsync(ct), "ReconcileOnce", ct),
             RunSafe(_loop.EnforceTimeoutsAsync(ct), "EnforceTimeouts", ct),
