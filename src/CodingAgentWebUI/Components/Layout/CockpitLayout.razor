@@ -1,0 +1,158 @@
+@inherits LayoutComponentBase
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Components.Shared
+@using Serilog
+@inject IPipelineApiConfigClient ConfigClient
+@inject IJSRuntime JS
+
+@*
+    Cockpit shell — the redesigned frontend's layout (see docs/frontend-redesign-handoff.md).
+    Opt in per-page with `@layout CockpitLayout`. Re-themes tokens via the `.cockpit` scope
+    (cockpit.css), so token-based components adopt the new look with no rewrite.
+    Nav destinations that aren't built yet render inert ("soon"); they light up as their slices land.
+*@
+
+<div class="cockpit">
+
+    <nav class="cockpit-sidebar" aria-label="Main navigation">
+        <div class="cockpit-brand">
+            <span class="cockpit-brand-mark"><Icon Name="bot" Size="19" /></span>
+            <span class="cockpit-brand-text">
+                <span class="cockpit-brand-name">Coding Agent</span>
+                <span class="cockpit-brand-sub">Automation</span>
+            </span>
+        </div>
+
+        <div class="cockpit-nav">
+            <NavLink class="cockpit-nav-link" href="overview" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="monitor" Size="18" /></span><span class="cockpit-nav-text">Overview</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="work" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="clipboard-list" Size="18" /></span><span class="cockpit-nav-text">Work</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="runs" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="scroll-text" Size="18" /></span><span class="cockpit-nav-text">Runs</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="fleet" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="bot" Size="18" /></span><span class="cockpit-nav-text">Fleet</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="attention" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="alert-triangle" Size="18" /></span><span class="cockpit-nav-text">Attention</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="insights" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="bar-chart-2" Size="18" /></span><span class="cockpit-nav-text">Insights</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="pipelines" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="refresh-cw" Size="18" /></span><span class="cockpit-nav-text">Pipelines</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="settings" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="settings" Size="18" /></span><span class="cockpit-nav-text">Settings</span>
+            </NavLink>
+
+            <div class="cockpit-nav-sep"></div>
+            <span class="cockpit-nav-group">Tools</span>
+            <NavLink class="cockpit-nav-link" href="knowledge" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="brain" Size="17" /></span><span class="cockpit-nav-text">Knowledge</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="agent-chat" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="message-circle" Size="17" /></span><span class="cockpit-nav-text">Agent Chat</span>
+            </NavLink>
+        </div>
+
+        <div class="cockpit-sidebar-footer">
+            <SidebarHealthIndicators />
+            <button class="cockpit-theme-toggle" @onclick="ToggleTheme" title="Toggle light / dark">
+                <Icon Name="@(_theme == "dark" ? "sun" : "moon")" Size="16" />
+                <span>@(_theme == "dark" ? "Light" : "Dark") mode</span>
+            </button>
+        </div>
+    </nav>
+
+    <div class="cockpit-main">
+        <div class="cockpit-topbar">
+            <label class="cockpit-project-switcher" title="Project scope">
+                <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+                <select @bind="SelectedProjectId" aria-label="Project scope">
+                    <option value="">All projects</option>
+                    @foreach (var p in _projects)
+                    {
+                        <option value="@p.Id">@p.Name</option>
+                    }
+                </select>
+            </label>
+
+            <div class="cockpit-search" aria-hidden="true">
+                <Icon Name="search" Size="15" />
+                <span>Search runs, issues, agents…</span>
+            </div>
+
+            <div class="cockpit-topbar-right">
+                @* Links to the Attention inbox. A live count would need shared aggregation state
+                   (a circuit-scoped service) — deferred rather than shown as a fake number. *@
+                <a href="/attention" class="cockpit-attention" title="Attention inbox" style="text-decoration: none;">
+                    <Icon Name="alert-triangle" Size="14" /> Attention
+                </a>
+            </div>
+        </div>
+
+        <div class="cockpit-body">
+            @Body
+        </div>
+    </div>
+</div>
+
+@code {
+    private IReadOnlyList<PipelineProject> _projects = [];
+
+    // Slice 1 holds project scope locally. TODO: promote to a circuit-scoped ProjectScopeState
+    // service when the first project-scoped screen (Overview) is built, so pages can read it.
+    private string _selectedProjectId = "";
+    private string SelectedProjectId
+    {
+        get => _selectedProjectId;
+        set => _selectedProjectId = value;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // The config API can be unavailable in some run modes — degrade to "All projects".
+            Log.Warning(ex, "CockpitLayout: failed to load projects for the scope switcher");
+            _projects = [];
+        }
+    }
+
+    // Theme follows the app's shared toggle (data-theme + localStorage). App.razor applies the
+    // stored theme before Blazor renders; this just syncs the button icon and flips it on click.
+    private string _theme = "dark";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            var t = await JS.InvokeAsync<string>("getTheme");
+            if (!string.IsNullOrEmpty(t) && t != _theme)
+            {
+                _theme = t;
+                StateHasChanged();
+            }
+        }
+        catch (JSException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    private async Task ToggleTheme()
+    {
+        _theme = _theme == "dark" ? "light" : "dark";
+        try { await JS.InvokeVoidAsync("setTheme", _theme); }
+        catch (JSException) { }
+        catch (InvalidOperationException) { }
+    }
+}

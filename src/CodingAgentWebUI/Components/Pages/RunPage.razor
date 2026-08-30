@@ -1,0 +1,222 @@
+@page "/runs/{RunId}"
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Components.Shared
+@inject IPipelineApiRunHistoryClient RunHistory
+@inject IConfigurationStore ConfigStore
+@inject NavigationManager Nav
+
+@*
+    Run Page — the deep-linkable run detail (see docs/frontend-redesign-handoff.md).
+    Data: IPipelineApiRunHistoryClient.GetRunAsync(Guid) → PipelineRunSummary.
+    Every field shown is a real property on the summary (tokens, cost, cache, phase
+    breakdown, review findings, feedback). Promoted from HistoryRunDetailModal.
+*@
+
+<PageTitle>Run - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <a href="/runs" class="cockpit-back"><Icon Name="chevrons-left" Size="14" /> Runs</a>
+
+    @if (_loading)
+    {
+        <div class="cockpit-empty">Loading run…</div>
+    }
+    else if (_run is null)
+    {
+        <div class="cockpit-empty">@(_error ?? "Run not found.")</div>
+    }
+    else
+    {
+        var run = _run;
+        var result = run.FinalStep switch
+        {
+            PipelineStep.Completed => "Completed",
+            PipelineStep.Failed => "Failed",
+            PipelineStep.Cancelled => "Cancelled",
+            _ => "Running"
+        };
+        var resultClass = run.FinalStep switch
+        {
+            PipelineStep.Completed => "step-completed",
+            PipelineStep.Cancelled => "step-cancelled",
+            PipelineStep.Failed => "step-failed",
+            _ => "step-running"
+        };
+
+        <div class="cockpit-page-header">
+            <div class="cockpit-page-titles">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    @if (run.RunType == PipelineRunType.Review)
+                    {
+                        <span class="run-type-badge run-type-review"><Icon Name="search" Size="14" /> Review</span>
+                    }
+                    else if (run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+                    {
+                        <span class="run-type-badge run-type-decomp"><Icon Name="puzzle" Size="14" /> Decomp</span>
+                    }
+                    else if (run.RunType == PipelineRunType.Consolidation)
+                    {
+                        <span class="run-type-badge run-type-consolidation"><Icon Name="refresh-cw" Size="14" /> Consolidation</span>
+                    }
+                    else
+                    {
+                        <span class="run-type-badge run-type-impl"><Icon Name="hammer" Size="14" /> Impl</span>
+                    }
+                    <span class="step-badge @resultClass">@result</span>
+                    @if (run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled)
+                    {
+                        <span class="cockpit-page-sub">at @run.FinalStep.ToDisplayName()</span>
+                    }
+                </div>
+                <h1>@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier @run.IssueTitle</h1>
+                <span class="cockpit-page-sub mono">run @Truncate(run.RunId, 12)</span>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(run.FailureReason))
+        {
+            <div class="summary-failure-callout" role="alert"><Icon Name="alert-triangle" Size="14" /> @run.FailureReason</div>
+        }
+
+        <div class="cockpit-card">
+            <div class="cockpit-card-pad cockpit-detail-grid">
+                <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset)</div></div>
+                <div class="cockpit-detail-item"><div class="k">Agent</div><div class="v mono">@(_resolvedAgentName ?? run.AgentId ?? "—")</div></div>
+                <div class="cockpit-detail-item"><div class="k">Initiated by</div><div class="v">@run.InitiatedBy</div></div>
+                @if (run.ModelName is not null)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Model</div><div class="v mono">@run.ModelName</div></div>
+                }
+                <div class="cockpit-detail-item"><div class="k">Tokens</div><div class="v">@CostFormatter.FormatTokens(run.TotalTokens)</div></div>
+                @if (run.TotalCost is not null and > 0m)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Cost</div><div class="v">@CostFormatter.FormatCost(run.TotalCost)</div></div>
+                }
+                @if (run.CacheReadTokens > 0 || run.CacheWriteTokens > 0)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Cache tokens</div><div class="v">@CostFormatter.FormatTokens(run.CacheReadTokens) r / @CostFormatter.FormatTokens(run.CacheWriteTokens) w</div></div>
+                }
+                @if (run.RetryCount > 0)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Retries</div><div class="v">@run.RetryCount</div></div>
+                }
+                @if (run.BrainRepoUsed)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Brain</div><div class="v">Used @(run.BrainUpdatesPushed ? "(updates pushed)" : "(read-only)")</div></div>
+                }
+                @if (run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition && run.DecompositionSubIssuesAttempted > 0)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Sub-issues</div><div class="v">@run.DecompositionSubIssuesCreated / @run.DecompositionSubIssuesAttempted created</div></div>
+                }
+                @if (run.RunType == PipelineRunType.Review && (run.CodeReviewCriticalCount > 0 || run.CodeReviewWarningCount > 0 || run.CodeReviewSuggestionCount > 0))
+                {
+                    <div class="cockpit-detail-item"><div class="k">Review findings</div><div class="v">@run.CodeReviewCriticalCount critical · @run.CodeReviewWarningCount warning · @run.CodeReviewSuggestionCount suggestion</div></div>
+                }
+                @if (run.RunType == PipelineRunType.Review && !string.IsNullOrEmpty(run.ReviewPrUrl))
+                {
+                    <div class="cockpit-detail-item"><div class="k">PR under review</div><div class="v"><a href="@run.ReviewPrUrl" target="_blank" rel="noopener">Open ↗</a></div></div>
+                }
+                @if (!string.IsNullOrEmpty(run.PullRequestUrl) && run.RunType != PipelineRunType.Review)
+                {
+                    <div class="cockpit-detail-item"><div class="k">Pull request</div><div class="v"><a href="@run.PullRequestUrl" target="_blank" rel="noopener">Open ↗</a></div></div>
+                }
+            </div>
+
+            @if (run.PhaseBreakdown is { Count: > 0 } phases)
+            {
+                <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);">
+                    <Collapsible CssClass="phase-breakdown" HeaderClass="phase-breakdown-header" BodyClass="phase-breakdown-body">
+                        <Header><span>Cost &amp; token breakdown (@phases.Count phases)</span></Header>
+                        <ChildContent>
+                            <div class="monitoring-table-wrap">
+                                <table class="monitoring-table" style="margin-top: 6px;">
+                                    <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var phase in phases.OrderByDescending(p => p.Value.Cost ?? 0m).ThenByDescending(p => p.Value.Tokens))
+                                        {
+                                            <tr>
+                                                <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
+                                                <td>@CostFormatter.FormatTokens(phase.Value.Tokens)</td>
+                                                <td>@CostFormatter.FormatCost(phase.Value.Cost)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </ChildContent>
+                    </Collapsible>
+                </div>
+            }
+        </div>
+
+        <FeedbackSection Feedback="run.Feedback" />
+    }
+</div>
+
+@code {
+    [Parameter] public string RunId { get; set; } = "";
+
+    private readonly CancellationTokenSource _cts = new();
+    private PipelineRunSummary? _run;
+    private string? _resolvedAgentName;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _error = null;
+        _run = null;
+        _resolvedAgentName = null;
+
+        if (!Guid.TryParse(RunId, out var id))
+        {
+            _error = "Invalid run id.";
+            _loading = false;
+            return;
+        }
+
+        try
+        {
+            _run = await RunHistory.GetRunAsync(id, _cts.Token);
+            if (_run?.AgentProviderConfigId is not null)
+            {
+                var cfg = await ConfigStore.GetProviderConfigByIdAsync(
+                    _run.AgentProviderConfigId, ProviderKind.Agent, _cts.Token);
+                _resolvedAgentName = cfg?.DisplayName;
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load run: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string Truncate(string? s, int n)
+        => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
+
+    private static string Dur(DateTimeOffset start, DateTimeOffset? end)
+    {
+        if (end is null) return "running";
+        var d = end.Value - start;
+        if (d.TotalHours >= 1) return $"{(int)d.TotalHours}h {d.Minutes}m";
+        if (d.TotalMinutes >= 1) return $"{(int)d.TotalMinutes}m {d.Seconds}s";
+        return $"{Math.Max(0, (int)d.TotalSeconds)}s";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

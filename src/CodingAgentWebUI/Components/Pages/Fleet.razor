@@ -1,0 +1,140 @@
+@page "/fleet"
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Components.Shared
+@inject IPipelineApiAgentClient AgentClient
+
+@*
+    Fleet — registered agents split out of Monitoring (see docs/frontend-redesign-handoff.md).
+    Data: IPipelineApiAgentClient.GetAgentsAsync → AgentEntry[]. Status is Idle / Busy / Disconnected.
+    (Per-agent credential-expiry from the design needs new backend surfacing — omitted, not faked.)
+*@
+
+<PageTitle>Fleet - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Fleet</h1>
+            <span class="cockpit-page-sub">Registered agents — status, capacity, and current work</span>
+        </div>
+        <button class="cockpit-pager-btn" @onclick="LoadAsync" disabled="@_loading">
+            <Icon Name="refresh-cw" Size="14" /> Refresh
+        </button>
+    </div>
+
+    @if (_loading && _agents is null)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">Loading agents…</div></div>
+    }
+    else if (_error is not null)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">@_error</div></div>
+    }
+    else
+    {
+        var agents = _agents ?? [];
+        var busy = agents.Count(a => a.Status == AgentStatus.Busy);
+        var idle = agents.Count(a => a.Status == AgentStatus.Idle);
+        var disconnected = agents.Count(a => a.Status == AgentStatus.Disconnected);
+        var utilization = agents.Count > 0 ? (int)Math.Round(100.0 * busy / agents.Count) : 0;
+
+        <div class="cockpit-stat-strip">
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Agents</span><span class="cockpit-stat-v">@agents.Count</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Busy</span><span class="cockpit-stat-v" style="color: var(--accent);">@busy</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Idle</span><span class="cockpit-stat-v" style="color: var(--success);">@idle</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Disconnected</span><span class="cockpit-stat-v" style="color: var(--text-faint);">@disconnected</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Utilization</span><span class="cockpit-stat-v">@utilization<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
+        </div>
+
+        <div class="cockpit-card">
+            @if (agents.Count == 0)
+            {
+                <div class="cockpit-empty">No agents registered.</div>
+            }
+            else
+            {
+                <div class="monitoring-table-wrap">
+                    <table class="monitoring-table">
+                        <thead>
+                            <tr>
+                                <th>Agent</th>
+                                <th>Labels</th>
+                                <th>Status</th>
+                                <th>Active job</th>
+                                <th>Heartbeat</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var a in agents.OrderBy(a => a.Status).ThenBy(a => a.AgentId.Value))
+                            {
+                                <tr>
+                                    <td>
+                                        <div class="monitoring-mono" style="font-weight: 600;">@a.AgentId.Value</div>
+                                        <div class="monitoring-mono monitoring-muted" style="font-size: 0.72rem;">@a.Hostname</div>
+                                    </td>
+                                    <td>
+                                        @foreach (var label in a.Labels)
+                                        {
+                                            <span class="cockpit-chip mono">@label</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        <span class="monitoring-status monitoring-status-@a.Status.ToString().ToLowerInvariant()">@a.Status</span>
+                                    </td>
+                                    <td class="monitoring-mono">@(string.IsNullOrEmpty(a.ActiveJobId) ? "—" : a.ActiveJobId)</td>
+                                    <td title="@a.LastHeartbeatAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(a.LastHeartbeatAt)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private readonly CancellationTokenSource _cts = new();
+    private IReadOnlyList<AgentEntry>? _agents;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            _agents = await AgentClient.GetAgentsAsync(_cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load agents: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string Ago(DateTimeOffset t)
+    {
+        var d = DateTimeOffset.UtcNow - t;
+        if (d.TotalSeconds < 60) return $"{Math.Max(0, (int)d.TotalSeconds)}s ago";
+        if (d.TotalMinutes < 60) return $"{(int)d.TotalMinutes}m ago";
+        if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
+        return $"{(int)d.TotalDays}d ago";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

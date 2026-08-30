@@ -1,0 +1,127 @@
+@page "/attention"
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Components.Shared
+@inject IPipelineApiRunHistoryClient RunHistory
+@inject NavigationManager Nav
+
+@*
+    Attention — things that may need a human (see docs/frontend-redesign-handoff.md).
+    Real from run history: needs-refinement (AnalysisRecommendation == NotReady), failed runs,
+    decomposition plans posted. Blocked-by-dependency needs issue-provider readiness (the drawer
+    flow) — deferred, not faked. Rows deep-link to the run (and its PR where present).
+*@
+
+<PageTitle>Attention - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Attention</h1>
+            <span class="cockpit-page-sub">@(_loading ? "…" : $"{_sections.Sum(s => s.Rows.Count)}") item(s) that may need a human — acted on in the issue tracker</span>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">Loading…</div></div>
+    }
+    else if (_error is not null)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">@_error</div></div>
+    }
+    else
+    {
+        @foreach (var sec in _sections.Where(s => s.Rows.Count > 0))
+        {
+            <div class="cockpit-card">
+                <div class="cockpit-card-header">
+                    <span style="display: inline-flex; align-items: center; gap: 9px;">
+                        <span style="width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: @sec.Color; background: @sec.Bg;"><Icon Name="@sec.Icon" Size="15" /></span>
+                        <h2>@sec.Title</h2>
+                    </span>
+                    <span style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; background: var(--surface-alt); padding: 1px 8px; border-radius: 999px;">@sec.Rows.Count</span>
+                </div>
+                @foreach (var r in sec.Rows)
+                {
+                    <div class="cockpit-run-row" @onclick="() => OpenRun(r.RunId)">
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@r.IssueIdentifier @r.IssueTitle</div>
+                            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">@sec.Subline(r)</div>
+                        </div>
+                        <span style="display: inline-flex; align-items: center; gap: 12px; flex-shrink: 0;">
+                            @if (!string.IsNullOrEmpty(r.PullRequestUrl))
+                            {
+                                <a href="@r.PullRequestUrl" target="_blank" rel="noopener" class="mono" style="font-size: 11.5px; font-weight: 600;" @onclick:stopPropagation="true">PR ↗</a>
+                            }
+                            <Icon Name="chevron-right" Size="16" Class="cockpit-row-chevron" />
+                        </span>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (_sections.Sum(s => s.Rows.Count) == 0)
+        {
+            <div class="cockpit-card"><div class="cockpit-empty">Nothing needs attention right now.</div></div>
+        }
+
+        <div class="cockpit-card cockpit-card-pad" style="font-size: 12px; color: var(--text-muted);">
+            <Icon Name="info" Size="14" /> Blocked-by-dependency issues aren't listed here yet — that readiness comes from the issue-provider check (the dispatch-drawer flow); folding it in is a follow-up.
+        </div>
+    }
+</div>
+
+@code {
+    private sealed record Section(string Icon, string Color, string Bg, string Title,
+        List<PipelineRunSummary> Rows, Func<PipelineRunSummary, string> Subline);
+
+    private readonly CancellationTokenSource _cts = new();
+    private bool _loading = true;
+    private string? _error;
+    private List<Section> _sections = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, ct: _cts.Token);
+            var items = runs.Items;
+
+            var needsRefinement = items.Where(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady).ToList();
+            var failed = items.Where(r => r.FinalStep == PipelineStep.Failed).ToList();
+            var plans = items.Where(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed).ToList();
+
+            _sections = new()
+            {
+                new("alert-triangle", "#B45309", "var(--warning-bg)", "Needs refinement", needsRefinement,
+                    _ => "Confidence gate: scope not ready — refine on the issue"),
+                new("x-circle", "#DC2626", "var(--error-bg)", "Failed runs", failed,
+                    r => string.IsNullOrEmpty(r.FailureReason)
+                        ? (r.RetryCount > 0 ? $"Failed after {r.RetryCount} retries" : "Failed")
+                        : r.FailureReason),
+                new("puzzle", "#4F46E5", "var(--bg-active)", "Decomposition plans posted", plans,
+                    _ => "Plan posted — approve by adding agent:epic-approved on the issue"),
+            };
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load attention items: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

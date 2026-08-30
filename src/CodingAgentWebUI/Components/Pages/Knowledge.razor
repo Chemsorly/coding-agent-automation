@@ -1,0 +1,57 @@
+@page "/knowledge"
+@layout CockpitLayout
+@using CodingAgentWebUI.Components.Shared
+
+@*
+    Knowledge — concept screen (see docs/frontend-redesign-handoff.md).
+    The agent brain is real (a git repo synced per run; consolidated via Pipelines), but the
+    impact / usage metrics this screen would show need per-run knowledge-usage instrumentation
+    that does not exist yet. So this ships as an honest placeholder — NO sample/fabricated data.
+*@
+
+<PageTitle>Knowledge - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <h1>Knowledge</h1>
+                <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: #6D28D9; background: var(--bg-active-alt); border: 1px solid #E4D9FB; padding: 3px 9px; border-radius: 999px;">Not instrumented yet</span>
+            </div>
+            <span class="cockpit-page-sub">Which brain knowledge actually influences runs</span>
+        </div>
+    </div>
+
+    <div class="cockpit-card cockpit-card-pad" style="display: flex; gap: 14px; align-items: flex-start;">
+        <span style="width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #6D28D9; background: var(--bg-active-alt);"><Icon Name="brain" Size="18" /></span>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+            <span style="font-size: 14px; font-weight: 700;">The brain is real — its impact metrics aren't measured yet</span>
+            <span style="font-size: 13px; color: var(--text-muted); line-height: 1.55; max-width: 720px;">
+                Each run syncs the agent brain (a git repo of knowledge files) before and after execution, and
+                <a href="/pipelines">Pipelines</a> consolidates it via Brain Consolidation. What this screen would add —
+                <strong>which files influence outcomes</strong>, what's stale or never loaded, and consolidation candidates —
+                needs per-run <em>knowledge-usage</em> instrumentation (record which brain files entered each run's context,
+                then join to the run outcome). That data isn't captured today, so nothing here is shown rather than
+                fabricating it.
+            </span>
+        </div>
+    </div>
+
+    <div class="cockpit-card">
+        <div class="cockpit-card-header"><h2>What it will show, once instrumented</h2></div>
+        <div class="cockpit-card-pad" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px;">
+            <div class="cockpit-detail-item">
+                <div style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px;"><Icon Name="bar-chart-2" Size="15" /> Highest-impact knowledge</div>
+                <div style="font-size: 12.5px; color: var(--text-muted); margin-top: 4px;">Success-rate lift on runs where a file was in context vs. not.</div>
+            </div>
+            <div class="cockpit-detail-item">
+                <div style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px;"><Icon Name="scroll" Size="15" /> Stale &amp; unused</div>
+                <div style="font-size: 12.5px; color: var(--text-muted); margin-top: 4px;">Files rarely loaded or with negative lift — prune or merge candidates.</div>
+            </div>
+            <div class="cockpit-detail-item">
+                <div style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px;"><Icon Name="refresh-cw" Size="15" /> Consolidation candidates</div>
+                <div style="font-size: 12.5px; color: var(--text-muted); margin-top: 4px;">Feeds the Brain Consolidation trigger in Pipelines.</div>
+            </div>
+        </div>
+    </div>
+</div>

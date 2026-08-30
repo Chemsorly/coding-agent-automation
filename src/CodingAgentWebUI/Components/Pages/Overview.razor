@@ -1,0 +1,207 @@
+@page "/overview"
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
+@using CodingAgentWebUI.Components.Shared
+@inject ILoopStatusService LoopService
+@inject IPipelineApiRunHistoryClient RunHistory
+@inject IPipelineApiAgentClient AgentClient
+@inject IPipelineApiWorkItemClient WorkItems
+@inject NavigationManager Nav
+
+@*
+    Overview — the cockpit landing (see docs/frontend-redesign-handoff.md).
+    Loop status is read-only here (control lives in Pipelines). Stats are computed from the
+    fetched run page and labelled "recent" — a true 24h aggregate needs a stats endpoint.
+*@
+
+<PageTitle>Overview - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Overview</h1>
+            <span class="cockpit-page-sub">Fleet status at a glance</span>
+        </div>
+    </div>
+
+    <!-- loop status hero -->
+    <div class="cockpit-card cockpit-card-pad" style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
+        <div style="display: flex; align-items: center; gap: 14px;">
+            <span style="width: 40px; height: 40px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: @LoopIconBg; color: @LoopIconColor;">
+                <Icon Name="refresh-cw" Size="20" />
+            </span>
+            <div style="display: flex; flex-direction: column; gap: 3px;">
+                <span style="font-size: 15px; font-weight: 700;">@LoopTitle</span>
+                <span style="font-size: 12.5px; color: var(--text-muted);">@LoopSubtitle</span>
+            </div>
+        </div>
+        <a href="/pipelines" class="cockpit-pager-btn" style="text-decoration: none;">Manage <Icon Name="chevrons-right" Size="14" /></a>
+    </div>
+
+    <!-- stat strip -->
+    <div class="cockpit-stat-strip">
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Active</span><span class="cockpit-stat-v">@_activeCount</span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Queue</span><span class="cockpit-stat-v">@_queueCount</span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Agents</span><span class="cockpit-stat-v">@_agentsOnline<span style="font-size: 15px; color: var(--text-faint);">/@_agentsTotal</span></span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Success · recent</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
+        <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens · recent</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start;">
+        <!-- active runs -->
+        <div class="cockpit-card">
+            <div class="cockpit-card-header"><h2>Active runs</h2><span style="font-size: 12px; color: var(--text-muted);">@_activeRuns.Count</span></div>
+            @if (_activeRuns.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">No runs in flight.</div>
+            }
+            else
+            {
+                @foreach (var run in _activeRuns.Take(5))
+                {
+                    <div class="cockpit-run-row" @onclick="() => OpenRun(run.RunId)">
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@run.IssueIdentifier @run.IssueTitle</div>
+                            <div class="mono" style="font-size: 11px; color: var(--text-muted);">@(run.AgentId ?? "—") · @run.FinalStep.ToDisplayName()</div>
+                        </div>
+                        <span class="step-badge step-running" style="flex-shrink: 0;">Running</span>
+                    </div>
+                }
+            }
+        </div>
+
+        <!-- recent activity -->
+        <div class="cockpit-card">
+            <div class="cockpit-card-header"><h2>Recent activity</h2><a href="/runs" style="font-size: 12.5px; font-weight: 600;">All runs →</a></div>
+            @if (_recentRuns.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">No completed runs yet.</div>
+            }
+            else
+            {
+                @foreach (var run in _recentRuns.Take(6))
+                {
+                    var cls = run.FinalStep switch
+                    {
+                        PipelineStep.Completed => "step-completed",
+                        PipelineStep.Cancelled => "step-cancelled",
+                        _ => "step-failed"
+                    };
+                    var label = run.FinalStep switch
+                    {
+                        PipelineStep.Completed => "Completed",
+                        PipelineStep.Cancelled => "Cancelled",
+                        _ => "Failed"
+                    };
+                    <div class="cockpit-run-row" @onclick="() => OpenRun(run.RunId)">
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@run.IssueIdentifier @run.IssueTitle</div>
+                            <div class="mono" style="font-size: 11px; color: var(--text-muted);">@(run.AgentId ?? "—") · @CostFormatter.FormatTokens(run.TotalTokens)</div>
+                        </div>
+                        <span class="step-badge @cls" style="flex-shrink: 0;">@label</span>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly CancellationTokenSource _cts = new();
+
+    private int _activeCount;
+    private int _queueCount;
+    private int _agentsOnline;
+    private int _agentsTotal;
+    private int _finishedCount;
+    private int _successRate;
+    private long _tokensRecent;
+    private List<PipelineRunSummary> _activeRuns = new();
+    private List<PipelineRunSummary> _recentRuns = new();
+
+    protected override void OnInitialized() => LoopService.OnChange += HandleLoopChanged;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Agents
+        try
+        {
+            var agents = await AgentClient.GetAgentsAsync(_cts.Token);
+            _agentsTotal = agents.Count;
+            _agentsOnline = agents.Count(a => a.Status != AgentStatus.Disconnected);
+        }
+        catch (OperationCanceledException) { return; }
+        catch { /* degrade — leave zeros */ }
+
+        // Queue (pending work items)
+        try
+        {
+            var pending = await WorkItems.GetPendingAsync(maxResults: 100, ct: _cts.Token);
+            _queueCount = pending.Count;
+        }
+        catch (OperationCanceledException) { return; }
+        catch { }
+
+        // Runs — one page, active + recent, aggregated client-side
+        try
+        {
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 50, feedbackOnly: false, includeActive: true, ct: _cts.Token);
+            var items = runs.Items;
+
+            _activeRuns = items.Where(IsActive).ToList();
+            _recentRuns = items.Where(r => !IsActive(r)).ToList();
+            _activeCount = _activeRuns.Count;
+
+            var finished = _recentRuns;
+            _finishedCount = finished.Count;
+            var succeeded = finished.Count(r => r.FinalStep == PipelineStep.Completed);
+            _successRate = _finishedCount > 0 ? (int)Math.Round(100.0 * succeeded / _finishedCount) : 0;
+            _tokensRecent = items.Sum(r => r.TotalTokens);
+        }
+        catch (OperationCanceledException) { return; }
+        catch { }
+    }
+
+    private static bool IsActive(PipelineRunSummary r)
+        => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
+
+    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+
+    // ── loop hero (read-only) ───────────────────────────────────────────────
+    private string LoopTitle => LoopService.IsSchedulerUnreachable ? "Scheduler unavailable"
+        : LoopService.IsCircuitBroken ? "Loop paused — circuit broken"
+        : LoopService.IsLoopActive ? "Closed-loop active" : "Loop idle";
+
+    private string LoopSubtitle
+    {
+        get
+        {
+            if (LoopService.IsSchedulerUnreachable) return "Loop controls are disabled until the scheduler is reachable.";
+            if (LoopService.IsLoopActive)
+                return $"Polling template {LoopService.CurrentCycleTemplateIndex + 1} of {LoopService.CurrentCycleTemplateCount} · processed {LoopService.ProcessedCount} · failed {LoopService.FailedCount}";
+            return "Start the closed loop from Pipelines to auto-dispatch queued work.";
+        }
+    }
+
+    private string LoopIconBg => LoopService.IsSchedulerUnreachable || LoopService.IsCircuitBroken ? "var(--warning-bg)"
+        : LoopService.IsLoopActive ? "var(--bg-info)" : "var(--surface-alt)";
+    private string LoopIconColor => LoopService.IsSchedulerUnreachable || LoopService.IsCircuitBroken ? "var(--warning)"
+        : LoopService.IsLoopActive ? "#0E7490" : "var(--text-muted)";
+
+    private async void HandleLoopChanged()
+    {
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        LoopService.OnChange -= HandleLoopChanged;
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

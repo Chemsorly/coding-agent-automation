@@ -1,0 +1,192 @@
+@page "/insights"
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Components.Shared
+@inject IPipelineApiRunHistoryClient RunHistory
+
+@*
+    Insights — trends over the most recent runs (see docs/frontend-redesign-handoff.md).
+    All figures are computed from the fetched run window and labelled as such (not a fake 24h).
+    Cost coverage is honest: TotalCost is null for Kiro, set for OpenCode.
+    Per-gate failure ranking needs QualityGateReport data that isn't on PipelineRunSummary — deferred.
+*@
+
+<PageTitle>Insights - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Insights</h1>
+            <span class="cockpit-page-sub">Trends across the last @_total run@(_total == 1 ? "" : "s")</span>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">Loading…</div></div>
+    }
+    else if (_error is not null)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">@_error</div></div>
+    }
+    else if (_total == 0)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">No completed runs yet.</div></div>
+    }
+    else
+    {
+        <div class="cockpit-stat-strip">
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Success rate</span><span class="cockpit-stat-v">@_successRate<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg cycle time</span><span class="cockpit-stat-v">@_avgCycle</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Retry rate</span><span class="cockpit-stat-v">@_retryRate<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg tokens / run</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_avgTokens)</span></div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start;">
+            <!-- outcome mix -->
+            <div class="cockpit-card cockpit-card-pad">
+                <h2 style="margin: 0 0 14px; font-size: 15px; font-weight: 700;">Outcome mix</h2>
+                <div style="display: flex; height: 14px; border-radius: 5px; overflow: hidden; background: var(--surface-alt);">
+                    @if (_completed > 0)
+                    {
+                        <div style="width: @Pct(_completed)%; background: #22C55E;" title="Completed: @_completed"></div>
+                    }
+                    @if (_failed > 0)
+                    {
+                        <div style="width: @Pct(_failed)%; background: #EF4444;" title="Failed: @_failed"></div>
+                    }
+                    @if (_cancelled > 0)
+                    {
+                        <div style="width: @Pct(_cancelled)%; background: var(--text-faint);" title="Cancelled: @_cancelled"></div>
+                    }
+                </div>
+                <div style="display: flex; gap: 18px; margin-top: 12px; font-size: 12.5px; color: var(--text-muted);">
+                    <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 9px; height: 9px; border-radius: 2px; background: #22C55E;"></span>Completed <strong style="color: var(--text);">@_completed</strong></span>
+                    <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 9px; height: 9px; border-radius: 2px; background: #EF4444;"></span>Failed <strong style="color: var(--text);">@_failed</strong></span>
+                    <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 9px; height: 9px; border-radius: 2px; background: var(--text-faint);"></span>Cancelled <strong style="color: var(--text);">@_cancelled</strong></span>
+                </div>
+
+                <div style="margin-top: 18px; border-top: 1px solid var(--hairline); padding-top: 14px;">
+                    <h2 style="margin: 0 0 10px; font-size: 13px; font-weight: 700; color: var(--text-muted);">By run type</h2>
+                    @foreach (var (type, count) in _byType.OrderByDescending(kv => kv.Value))
+                    {
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                            <span style="width: 130px; font-size: 12.5px; color: var(--text-muted); flex-shrink: 0;">@type</span>
+                            <div style="flex: 1; height: 12px; background: var(--surface-alt); border-radius: 4px; overflow: hidden;">
+                                <div style="width: @Pct(count)%; height: 100%; background: var(--accent); border-radius: 4px;"></div>
+                            </div>
+                            <span class="mono" style="font-size: 12px; font-weight: 600; width: 30px; text-align: right;">@count</span>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- cost -->
+            <div class="cockpit-card cockpit-card-pad">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <h2 style="margin: 0; font-size: 15px; font-weight: 700;">Cost</h2>
+                    <span style="font-size: 11px; font-weight: 600; color: var(--warning); background: var(--warning-bg); border: 1px solid var(--warning-border); padding: 2px 8px; border-radius: 999px;">OpenCode only</span>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px;">
+                    <div><div class="cockpit-stat-l">Total (reported)</div><div style="font-size: 20px; font-weight: 800;">@CostFormatter.FormatCost(_totalCost)</div></div>
+                    <div><div class="cockpit-stat-l">Runs with cost</div><div style="font-size: 20px; font-weight: 800;">@_costCoverage%</div></div>
+                </div>
+                <div style="margin-top: 14px; border-top: 1px solid var(--hairline); padding-top: 12px;">
+                    <div style="height: 8px; border-radius: 4px; background: var(--surface-alt); overflow: hidden;"><div style="width: @_costCoverage%; height: 100%; background: var(--accent);"></div></div>
+                    <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 9px; line-height: 1.5;">
+                        Kiro runs don't report cost — the rest show tokens only. Coverage grows as OpenCode usage does.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="cockpit-card cockpit-card-pad" style="font-size: 12px; color: var(--text-muted);">
+            <Icon Name="info" Size="14" /> Per-gate failure ranking (Build / Tests / Coverage / External CI) needs the quality-gate report, which isn't on the run summary yet — deferred until a gate-stats source is added.
+        </div>
+    }
+</div>
+
+@code {
+    private readonly CancellationTokenSource _cts = new();
+    private bool _loading = true;
+    private string? _error;
+
+    private int _total;
+    private int _completed, _failed, _cancelled;
+    private int _successRate, _retryRate, _costCoverage;
+    private string _avgCycle = "—";
+    private long _avgTokens;
+    private decimal _totalCost;
+    private Dictionary<string, int> _byType = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, ct: _cts.Token);
+            var items = runs.Items;
+            _total = items.Count;
+            if (_total == 0) { _loading = false; return; }
+
+            _completed = items.Count(r => r.FinalStep == PipelineStep.Completed);
+            _failed = items.Count(r => r.FinalStep == PipelineStep.Failed);
+            _cancelled = items.Count(r => r.FinalStep == PipelineStep.Cancelled);
+
+            _successRate = (int)Math.Round(100.0 * _completed / _total);
+            _retryRate = (int)Math.Round(100.0 * items.Count(r => r.RetryCount > 0) / _total);
+
+            var withCost = items.Count(r => r.TotalCost is > 0m);
+            _costCoverage = (int)Math.Round(100.0 * withCost / _total);
+            _totalCost = items.Sum(r => r.TotalCost ?? 0m);
+
+            _avgTokens = (long)items.Average(r => (double)r.TotalTokens);
+
+            var completedWithTime = items
+                .Where(r => r.FinalStep == PipelineStep.Completed && r.CompletedAtOffset is not null)
+                .Select(r => (r.CompletedAtOffset!.Value - r.StartedAtOffset).TotalSeconds)
+                .Where(s => s > 0)
+                .ToList();
+            _avgCycle = completedWithTime.Count > 0 ? FormatSeconds(completedWithTime.Average()) : "—";
+
+            _byType = items.GroupBy(r => RunTypeLabel(r.RunType)).ToDictionary(g => g.Key, g => g.Count());
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load insights: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private int Pct(int count) => _total > 0 ? (int)Math.Round(100.0 * count / _total) : 0;
+
+    private static string RunTypeLabel(PipelineRunType t) => t switch
+    {
+        PipelineRunType.Implementation => "Implementation",
+        PipelineRunType.Review => "Review",
+        PipelineRunType.DecompositionAnalysis => "Decomp. analysis",
+        PipelineRunType.Decomposition => "Decomposition",
+        PipelineRunType.Consolidation => "Consolidation",
+        _ => t.ToString()
+    };
+
+    private static string FormatSeconds(double totalSeconds)
+    {
+        var d = TimeSpan.FromSeconds(totalSeconds);
+        if (d.TotalHours >= 1) return $"{(int)d.TotalHours}h {d.Minutes}m";
+        if (d.TotalMinutes >= 1) return $"{(int)d.TotalMinutes}m {d.Seconds}s";
+        return $"{(int)d.TotalSeconds}s";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

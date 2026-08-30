@@ -1,0 +1,159 @@
+@page "/work"
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Components.Shared
+@inject IPipelineApiWorkItemClient WorkItems
+@inject NavigationManager Nav
+
+@*
+    Work — the app-side work queue (see docs/frontend-redesign-handoff.md).
+    Data: IPipelineApiWorkItemClient.GetPendingAsync (queued) + GetActiveAsync (in-flight).
+    Browsing the provider's issue backlog with dependency-based readiness + dispatch is the
+    dispatch-drawer flow (Pipelines → Browse Issues) — linked, not duplicated here.
+    Per-issue PriorityWeight is intentionally absent (no backend field).
+*@
+
+<PageTitle>Work - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Work</h1>
+            <span class="cockpit-page-sub">Queued and in-flight work items</span>
+        </div>
+        <a href="/pipelines" class="cockpit-pager-btn" style="text-decoration: none;">
+            <Icon Name="search" Size="14" /> Browse &amp; dispatch
+        </a>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">Loading work…</div></div>
+    }
+    else if (_error is not null)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">@_error</div></div>
+    }
+    else
+    {
+        <div class="cockpit-stat-strip">
+            <div class="cockpit-stat"><span class="cockpit-stat-l">In flight</span><span class="cockpit-stat-v">@_active.Count</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Queued</span><span class="cockpit-stat-v">@_pending.Count</span></div>
+        </div>
+
+        <!-- in flight -->
+        <div class="cockpit-card">
+            <div class="cockpit-card-header"><h2>In flight</h2><span style="font-size: 12px; color: var(--text-muted);">@_active.Count</span></div>
+            @if (_active.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">Nothing dispatched right now.</div>
+            }
+            else
+            {
+                <div class="monitoring-table-wrap">
+                    <table class="monitoring-table">
+                        <thead><tr><th>Issue</th><th>Status</th><th>Agent selector</th><th>Dispatched</th></tr></thead>
+                        <tbody>
+                            @foreach (var a in _active)
+                            {
+                                <tr>
+                                    <td class="monitoring-mono">#@a.IssueIdentifier</td>
+                                    <td><span class="cockpit-chip" style="color: @StatusColor(a.Status);">@a.Status</span></td>
+                                    <td class="monitoring-mono monitoring-muted">@a.AgentSelector</td>
+                                    <td>@(a.DispatchedAt is null ? "—" : Ago(a.DispatchedAt.Value))</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        <!-- queue -->
+        <div class="cockpit-card">
+            <div class="cockpit-card-header"><h2>Queue</h2><span style="font-size: 12px; color: var(--text-muted);">@_pending.Count</span></div>
+            @if (_pending.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">The queue is empty.</div>
+            }
+            else
+            {
+                <div class="monitoring-table-wrap">
+                    <table class="monitoring-table">
+                        <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th></tr></thead>
+                        <tbody>
+                            @foreach (var p in _pending)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="monitoring-mono" style="font-weight: 600;">#@p.IssueIdentifier</span>
+                                        <span style="color: var(--text-muted);">@Truncate(p.IssueTitle, 60)</span>
+                                    </td>
+                                    <td><span class="cockpit-chip">@p.TaskType</span></td>
+                                    <td>@(string.IsNullOrEmpty(p.ProjectName) ? "—" : p.ProjectName)</td>
+                                    <td>@(string.IsNullOrEmpty(p.InitiatedBy) ? "—" : p.InitiatedBy)</td>
+                                    <td>@(p.RetryCount > 0 ? p.RetryCount.ToString() : "—")</td>
+                                    <td title="@p.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(p.CreatedAt)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private readonly CancellationTokenSource _cts = new();
+    private IReadOnlyList<PendingWorkItemDto> _pending = [];
+    private IReadOnlyList<ActiveWorkItemDto> _active = [];
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, ct: _cts.Token);
+            _pending = await WorkItems.GetPendingAsync(maxResults: 100, ct: _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load work: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string StatusColor(WorkItemStatus s) => s switch
+    {
+        WorkItemStatus.Running => "var(--accent)",
+        WorkItemStatus.Dispatched => "var(--nav-active-fg)",
+        WorkItemStatus.Failed => "var(--error)",
+        _ => "var(--text-muted)"
+    };
+
+    private static string Truncate(string? s, int n)
+        => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
+
+    private static string Ago(DateTimeOffset t)
+    {
+        var d = DateTimeOffset.UtcNow - t;
+        if (d.TotalMinutes < 1) return "just now";
+        if (d.TotalMinutes < 60) return $"{(int)d.TotalMinutes}m ago";
+        if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
+        return $"{(int)d.TotalDays}d ago";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}
