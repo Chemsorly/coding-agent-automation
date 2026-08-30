@@ -5,6 +5,7 @@ using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
@@ -520,6 +521,63 @@ public sealed class WorkItemFallbackTransitionServiceTests : IDisposable
         //   recovered.FailureReason.Should().BeNull("recovery should clear the failure reason");
         //   recovered.CompletedAt.Should().BeNull("recovery should reset CompletedAt");
         // to make this regression guard more robust.
+    }
+
+    // ── Debug-logging path coverage (#2139 new code) ─────────────────────
+    // The two guards introduced in #2139 contain debug-level log calls behind
+    // IsEnabled(Debug) checks. NullLogger returns false for IsEnabled, so those
+    // branches are unreachable with the default fixture. These two tests create a
+    // WorkItemFallbackTransitionService backed by a real Debug-level logger to
+    // ensure the branches are executed and covered.
+
+    [Fact]
+    public async Task TryFallbackChainAsync_WhenAlreadyFailed_TargetFailed_WithDebugLogger_ExecutesDebugLogBranch()
+    {
+        // Arrange: use a debug-level logger so IsEnabled(Debug) returns true
+        using var loggerFactory = LoggerFactory.Create(b => b.SetMinimumLevel(LogLevel.Trace).AddConsole());
+        var debugLogger = loggerFactory.CreateLogger<WorkItemFallbackTransitionService>();
+        var sut = new WorkItemFallbackTransitionService(_transitionService, debugLogger);
+
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(id);
+            item!.Status = WorkItemStatus.Failed;
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        // Act: Failed→Failed with debug logger — covers the LogDebug branch inside the guard
+        var result = await sut.TryFallbackChainAsync(id, WorkItemStatus.Failed, null, null, CancellationToken.None);
+
+        // Assert: same outcome — early exit returns false
+        result.Should().BeFalse("Failed→Failed is a no-op regardless of logger level");
+    }
+
+    [Fact]
+    public async Task TryFallbackChainAsync_WhenSucceeded_TargetFailed_WithDebugLogger_ExecutesDebugLogBranch()
+    {
+        // Arrange: use a debug-level logger so IsEnabled(Debug) returns true for the
+        // Succeeded/Cancelled + different target guard branch
+        using var loggerFactory = LoggerFactory.Create(b => b.SetMinimumLevel(LogLevel.Trace).AddConsole());
+        var debugLogger = loggerFactory.CreateLogger<WorkItemFallbackTransitionService>();
+        var sut = new WorkItemFallbackTransitionService(_transitionService, debugLogger);
+
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(id);
+            item!.Status = WorkItemStatus.Succeeded;
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        // Act: Succeeded→Failed with debug logger — covers the LogDebug branch inside the
+        // Succeeded/Cancelled guard that was introduced alongside the Failed→Failed guard
+        var result = await sut.TryFallbackChainAsync(id, WorkItemStatus.Failed, null, null, CancellationToken.None);
+
+        // Assert: same outcome — early exit returns false
+        result.Should().BeFalse("Succeeded→Failed has no recovery path, early exit returns false");
     }
 
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
