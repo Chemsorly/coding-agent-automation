@@ -65,6 +65,11 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private readonly ConcurrentDictionary<string, WatcherEntry> _activeWatchers = new();
     private readonly CancellationTokenSource _shutdownCts = new();
 
+    // Idempotency guard for StopAsync: 0 = not yet stopped, 1 = stop in progress or completed.
+    // Prevents the double StopAsync call (IHostedService.StopAsync + DisposeAsync) from
+    // invoking _shutdownCts.CancelAsync() twice and racing with _shutdownCts.Dispose().
+    private int _stopped;
+
     private sealed class WatcherEntry
     {
         public Task WatcherTask = Task.CompletedTask; // assigned after construction; see RegisterWatcher
@@ -634,6 +639,21 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        // Idempotency guard: if StopAsync was already called (e.g. ASP.NET Core called both
+        // IHostedService.StopAsync and IAsyncDisposable.DisposeAsync → StopAsync in sequence),
+        // return immediately so _shutdownCts.CancelAsync() is never invoked twice and cannot
+        // race with _shutdownCts.Dispose() in DisposeAsync.
+        // TODO: The comment "1 = stop in progress or completed" slightly misrepresents the
+        // concurrent guarantee: a concurrent second caller returns immediately without waiting
+        // for the first caller to finish. In the ASP.NET Core host lifecycle Stop and Dispose
+        // are called strictly sequentially so this is safe in production, but a caller that
+        // invokes DisposeAsync concurrently with an in-progress StopAsync could trigger an
+        // ObjectDisposedException on _shutdownCts after DisposeAsync disposes it while StopAsync
+        // is still awaiting CancelAsync(). Consider adding a completion signal (e.g. TaskCompletionSource
+        // or SemaphoreSlim) so DisposeAsync can wait for any in-progress StopAsync before disposing.
+        if (Interlocked.Exchange(ref _stopped, 1) != 0)
+            return;
+
         _logger.Information("ChatJobDispatcher: stopping — cancelling {Count} active watcher(s)",
             _activeWatchers.Count);
 
@@ -814,6 +834,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        // TODO: If StopAsync is concurrently in progress (between Interlocked.Exchange and
+        // completion of CancelAsync) when DisposeAsync reaches _shutdownCts.Dispose(), the
+        // dispose can race with the in-progress cancel and produce an ObjectDisposedException.
+        // The ASP.NET Core host lifecycle is strictly sequential (Stop then Dispose) so this
+        // race cannot occur in production, but direct calls to DisposeAsync without awaiting
+        // StopAsync first could trigger it. A completion signal would eliminate this risk.
         await StopAsync(CancellationToken.None);
         _shutdownCts.Dispose();
     }
