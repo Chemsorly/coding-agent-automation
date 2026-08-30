@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RunSettings>
+  <!-- Exclude tests that require Docker (Testcontainers). These run in the
+       dedicated migration-integrity CI job that has Docker available.
+       The quality-gate and local dev runs do not have Docker. -->
+  <RunConfiguration>
+    <TestCaseFilter>Category!=Integration</TestCaseFilter>
+  </RunConfiguration>
   <DataCollectionRunSettings>
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">

@@ -12,6 +12,12 @@ namespace CodingAgentWebUI.UnitTests.Components;
 // Currently all tests pass Array.Empty<ConsolidationRun>() for QueuedConsolidationRuns,
 // leaving consolidation queue row rendering (~30 lines including badge, template name,
 // QueuedRequiredLabels, and cancel button wiring to OnCancelConsolidation) completely untested.
+
+// TODO: Add tests verifying that the correct badge is rendered for PipelineRunType.Review
+// ("run-type-review" / search icon) and PipelineRunType.DecompositionAnalysis ("run-type-decomp")
+// in JobQueueSection. The existing Renders_QueuedJobs_InTable test constructs a PendingJob without
+// a RunType, so a regression removing either branch in the Razor badge switch would go undetected.
+// Acceptance criteria from issue #2159 explicitly required these component-level tests.
 public class JobQueueSectionTests : BunitContext
 {
     [Fact]
