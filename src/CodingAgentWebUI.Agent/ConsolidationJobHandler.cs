@@ -45,7 +45,7 @@ public sealed class ConsolidationJobHandler
 
         using var receiveActivity = PipelineTelemetry.ActivitySource.StartActivity(
             "Agent.ReceiveJob",
-            ActivityKind.Server,
+            ActivityKind.Consumer,
             PipelineTelemetry.ExtractTraceContext(message.TraceContext));
         receiveActivity?.SetTag("job_id", message.JobId);
         receiveActivity?.SetTag("run_type", "consolidation");

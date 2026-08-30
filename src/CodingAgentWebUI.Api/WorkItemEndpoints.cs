@@ -289,7 +289,7 @@ public static class WorkItemEndpoints
             // Exception: when the request carries a pre-stored TraceContext (e.g., consolidation
             // rehydration at startup where Activity.Current is null), prefer that instead.
             TraceParent = request.TraceContext?.GetValueOrDefault("traceparent")
-                ?? FormatTraceParent(Activity.Current)
+                ?? PipelineTelemetry.FormatTraceParent(Activity.Current)
         };
 
         try
@@ -985,18 +985,6 @@ public static class WorkItemEndpoints
             || innerMessage.Contains("unique constraint", StringComparison.OrdinalIgnoreCase)
             // EF InMemory exact phrase
             || message.Contains("An item with the same key has already been added", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Formats a W3C traceparent string from the given <see cref="Activity"/>.
-    /// Returns null when no activity is active or tracing is not configured.
-    /// Format: 00-{traceId}-{spanId}-{flags}
-    /// </summary>
-    internal static string? FormatTraceParent(Activity? activity)
-    {
-        if (activity is null) return null;
-        var flags = activity.ActivityTraceFlags.HasFlag(ActivityTraceFlags.Recorded) ? "01" : "00";
-        return $"00-{activity.TraceId}-{activity.SpanId}-{flags}";
     }
 
     /// <summary>

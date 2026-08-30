@@ -94,7 +94,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
 
         using var activity = PipelineTelemetry.ActivitySource.StartActivity(
             "WorkItemAgent.Execute",
-            ActivityKind.Server,
+            ActivityKind.Consumer,
             parentContext);
         activity?.SetTag("work_item_id", _workItemId);
         activity?.SetTag("agent_id", _agentId.Value);
