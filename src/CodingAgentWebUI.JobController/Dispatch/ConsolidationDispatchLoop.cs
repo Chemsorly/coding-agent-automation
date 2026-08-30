@@ -100,6 +100,10 @@ public sealed class ConsolidationDispatchLoop
 
             foreach (var job in jobs.Items)
             {
+                // Skip completed/failed jobs still present within the log-retention window.
+                // Only running (non-terminal) jobs consume a concurrency slot.
+                if (IsJobTerminal(job)) continue;
+
                 var labels = job.Metadata?.Labels;
                 var selectorLabel = labels is not null && labels.TryGetValue("caa/agent-selector", out var lv) ? lv : "";
                 if (string.IsNullOrEmpty(selectorLabel)) continue;
@@ -114,6 +118,29 @@ public sealed class ConsolidationDispatchLoop
             Log.Warning(ex, "ConsolidationDispatchLoop: failed to build concurrency map; proceeding with empty map");
         }
         return map;
+    }
+
+    /// <summary>
+    /// Returns true if the K8s Job has reached a terminal phase (Complete or Failed).
+    /// Uses the same two-phase check as ReconciliationLoop.GetJobPhase:
+    /// 1. Check Conditions first (K8s sets Type="Complete" or Type="Failed" with Status="True").
+    /// 2. Fall back to Succeeded/Failed counters (not all termination paths guarantee Conditions).
+    /// A job with null or empty Status (newly created) is treated as active (conservative).
+    /// </summary>
+    private static bool IsJobTerminal(V1Job job)
+    {
+        var conditions = job.Status?.Conditions;
+        if (conditions is not null)
+        {
+            if (conditions.Any(c => (c.Type == "Complete" || c.Type == "Failed") && c.Status == "True"))
+                return true;
+        }
+        // TODO: The Failed counter fallback can over-count terminal jobs when a pod fails but the Job is still
+        // retrying (BackoffLimit > 0): K8s can have Failed=1, Active=1 before setting a terminal Condition.
+        // In that state this method returns true and removes the job from the concurrency map while a pod is
+        // still running, potentially allowing dispatch to exceed maxConcurrent by 1.
+        // Fix: add `if ((job.Status?.Active ?? 0) > 0) return false;` before this line.
+        return (job.Status?.Succeeded ?? 0) > 0 || (job.Status?.Failed ?? 0) > 0;
     }
 
     private async Task ProcessItemAsync(

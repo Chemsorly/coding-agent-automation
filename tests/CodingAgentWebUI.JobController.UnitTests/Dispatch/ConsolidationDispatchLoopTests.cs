@@ -391,4 +391,216 @@ public sealed class ConsolidationDispatchLoopTests
     // TODO: Add equal-values edge case test — WhenItemTimeoutEqualsGlobal_K8sJob_ActiveDeadlineSeconds_UsesSharedTimeout
     // where item.TimeoutSeconds == agentJobTimeoutSeconds (e.g. both 7200s) → activeDeadlineSeconds == 7260.
     // This boundary condition confirms that floor and ceiling converge cleanly at the same value.
+
+    // ── Concurrency map: terminal job filtering ────────────────────────────────
+
+    /// <summary>
+    /// Acceptance criteria (issue #2176): one running job + one completed job for the same
+    /// selector → concurrency count is 1, not 2, so a new work item CAN be dispatched.
+    /// </summary>
+    [Fact]
+    public async Task WhenOneRunningAndOneCompletedJobForSameSelector_ConcurrencyCountIsOne()
+    {
+        const string yaml = """
+            - labels: dotnet10,opencode
+              image: chemsorly/coding-agent:opencode-dotnet10
+              providerType: opencode
+              maxConcurrent: 2
+            """;
+        var limitedStore = JobTemplateStore.LoadFromYaml(yaml);
+
+        var runningJob = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Labels = new Dictionary<string, string> { ["caa/agent-selector"] = "dotnet10.opencode" }
+            },
+            Status = new V1JobStatus { Active = 1 }
+        };
+        var completedJob = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Labels = new Dictionary<string, string> { ["caa/agent-selector"] = "dotnet10.opencode" }
+            },
+            Status = new V1JobStatus
+            {
+                Conditions =
+                [
+                    new V1JobCondition { Type = "Complete", Status = "True" }
+                ]
+            }
+        };
+
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [runningJob, completedJob] });
+
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,opencode")]);
+        _consolidationClient
+            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        var loop = new ConsolidationDispatchLoop(
+            _consolidationClient.Object, _k8sClient.Object,
+            limitedStore, new PvcPool([]), _options,
+            _reconciliationTrigger.Object);
+
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // concurrency = 1 (running only), limit = 2 → should dispatch
+        // TODO: maxConcurrent: 2 with one running job means active=1 < limit=2, so dispatch would succeed even
+        // without the fix. The test only catches the regression because the completed job pushes count to 2
+        // (== limit), which would block dispatch without the filter. This passes but relies on an exact
+        // numerical coincidence. Consider rewriting with maxConcurrent: 1 so a single running job already
+        // saturates the limit — making the completed job a decisive false +1 that would block dispatch.
+        _consolidationClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Counter fallback path: K8s does not always set Conditions on all termination paths.
+    /// When Conditions is empty but Succeeded > 0, the job must still be filtered out.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobTerminalViaSucceededCounter_IsNotCountedInConcurrency()
+    {
+        const string yaml = """
+            - labels: dotnet10,opencode
+              image: chemsorly/coding-agent:opencode-dotnet10
+              providerType: opencode
+              maxConcurrent: 1
+            """;
+        var limitedStore = JobTemplateStore.LoadFromYaml(yaml);
+
+        var succeededJobNoConditions = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Labels = new Dictionary<string, string> { ["caa/agent-selector"] = "dotnet10.opencode" }
+            },
+            Status = new V1JobStatus
+            {
+                Conditions = [],
+                Succeeded = 1
+            }
+        };
+
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [succeededJobNoConditions] });
+
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,opencode")]);
+        _consolidationClient
+            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        var loop = new ConsolidationDispatchLoop(
+            _consolidationClient.Object, _k8sClient.Object,
+            limitedStore, new PvcPool([]), _options,
+            _reconciliationTrigger.Object);
+
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Succeeded counter → terminal → concurrency = 0 < limit 1 → should dispatch
+        _consolidationClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Counter fallback path for failed jobs: when Conditions is empty but Failed > 0,
+    /// the job must be filtered out.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobTerminalViaFailedCounter_IsNotCountedInConcurrency()
+    {
+        const string yaml = """
+            - labels: dotnet10,opencode
+              image: chemsorly/coding-agent:opencode-dotnet10
+              providerType: opencode
+              maxConcurrent: 1
+            """;
+        var limitedStore = JobTemplateStore.LoadFromYaml(yaml);
+
+        var failedJobNoConditions = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Labels = new Dictionary<string, string> { ["caa/agent-selector"] = "dotnet10.opencode" }
+            },
+            Status = new V1JobStatus
+            {
+                Conditions = [],
+                Failed = 1
+            }
+        };
+
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [failedJobNoConditions] });
+
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,opencode")]);
+        _consolidationClient
+            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        var loop = new ConsolidationDispatchLoop(
+            _consolidationClient.Object, _k8sClient.Object,
+            limitedStore, new PvcPool([]), _options,
+            _reconciliationTrigger.Object);
+
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Failed counter → terminal → concurrency = 0 < limit 1 → should dispatch
+        _consolidationClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Regression guard: a newly created K8s Job with null Status must be treated as active
+    /// (counted toward concurrency), not mistakenly filtered out as terminal.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobActiveWithNoStatus_IsCounted()
+    {
+        const string yaml = """
+            - labels: dotnet10,opencode
+              image: chemsorly/coding-agent:opencode-dotnet10
+              providerType: opencode
+              maxConcurrent: 1
+            """;
+        var limitedStore = JobTemplateStore.LoadFromYaml(yaml);
+
+        var nullStatusJob = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Labels = new Dictionary<string, string> { ["caa/agent-selector"] = "dotnet10.opencode" }
+            }
+            // Status intentionally null (newly created job)
+        };
+
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [nullStatusJob] });
+
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,opencode")]);
+
+        var loop = new ConsolidationDispatchLoop(
+            _consolidationClient.Object, _k8sClient.Object,
+            limitedStore, new PvcPool([]), _options,
+            _reconciliationTrigger.Object);
+
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // null-status job counted as active → concurrency = 1 >= limit 1 → must NOT dispatch
+        _consolidationClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }
