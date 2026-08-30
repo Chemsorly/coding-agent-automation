@@ -202,6 +202,110 @@ public sealed class ReconciliationLoopTests
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ─── Terminal deduplication guard ─────────────────────────────────────────
+
+    /// <summary>
+    /// AC: two consecutive ReconcileOnceAsync calls with the same completed K8s Job result
+    /// in exactly one PostStatusAsync call (the deduplication cache suppresses the second).
+    /// </summary>
+    [Fact]
+    public async Task TwoConsecutiveReconcileCycles_SameCompletedJob_PostStatusCalledOnce()
+    {
+        // Arrange: same succeeded job is returned on both cycles (simulates 30s poll with job
+        // still in the 600s K8s retention window)
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, succeeded: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+
+        // Act: two consecutive reconciliation cycles
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // Assert: PostStatusAsync called exactly once across both cycles
+        // TODO: ReconcileOnceAsync calls ListJobsAsync twice internally (once for the job watch loop
+        // in ReconcileOnceAsync, once for orphan cleanup in CleanupOrphansAsync), so the mock returns
+        // the completed job on all four ListJobsAsync calls (two cycles × two calls each). Verify that
+        // CleanupOrphansAsync cannot independently invoke PostStatusAsync for this terminal job. If it
+        // can, Times.Once would be insufficiently specific — deduplication via the primary path could
+        // be bypassed while orphan cleanup fires instead, and this assertion would not detect it.
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// AC: same deduplication behaviour for Failed jobs — two cycles, one PostStatusAsync call.
+    /// </summary>
+    [Fact]
+    public async Task TwoConsecutiveReconcileCycles_SameFailedJob_PostStatusCalledOnce()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // TODO: Same caveat as TwoConsecutiveReconcileCycles_SameCompletedJob_PostStatusCalledOnce:
+        // ListJobsAsync is called twice per ReconcileOnceAsync (job watch + orphan cleanup), so the
+        // mock returns the failed job on all four calls across both cycles. If CleanupOrphansAsync
+        // can also invoke PostStatusAsync for this job, Times.Once would not prove that the primary
+        // deduplication path is working correctly — it could mask the primary path being suppressed
+        // while the orphan-cleanup path fires instead.
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// AC: on leadership re-acquisition (OnLeadershipAcquired clears the cache), PostStatusAsync
+    /// is called once more for the same completed job still present in the K8s retention window.
+    /// </summary>
+    [Fact]
+    public async Task OnLeadershipAcquired_ClearsCacheAllowsRepost()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, succeeded: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        var loop = CreateLoop();
+
+        // First leadership term — item reconciled once
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+        _workItemClient.Verify(c => c.PostStatusAsync(ItemId, It.IsAny<WorkItemStatusUpdate>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // A second cycle in the same term must not re-post
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+        _workItemClient.Verify(c => c.PostStatusAsync(ItemId, It.IsAny<WorkItemStatusUpdate>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Simulate leadership re-acquisition — cache cleared
+        loop.OnLeadershipAcquired();
+
+        // New leadership term — same job still present, must post once more
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
     // ─── PVC release on job completion ────────────────────────────────────────
 
     [Fact]
@@ -415,6 +519,40 @@ public sealed class ReconciliationLoopErrorTests
 
         // PVC must still be released even when PostStatusAsync throws
         Assert.Equal(1, pool.AvailableCount);
+    }
+
+    /// <summary>
+    /// Regression: when PostStatusAsync throws a transient error, the WorkItem ID must NOT be
+    /// added to the deduplication cache so that the next reconciliation cycle retries the post.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_WhenPostStatusThrows_ItemNotCached_NextCycleRetries()
+    {
+        var id = Guid.NewGuid();
+        var jobName = $"caa-agent-{id:N}"[..21];
+        var job = MakeJob(jobName, id, succeeded: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        // First call throws a transient error; second call succeeds
+        _workItemClient.SetupSequence(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("Transient DB error"))
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+
+        // First cycle — PostStatusAsync throws
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        // Second cycle — item was NOT cached on failure, so the post must be retried
+        await loop.ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]

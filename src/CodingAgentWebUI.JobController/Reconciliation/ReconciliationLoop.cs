@@ -38,6 +38,29 @@ public sealed class ReconciliationLoop
     private readonly PvcPool _pvcPool;
     private readonly DispatchServiceOptions _options;
 
+    /// <summary>
+    /// Tracks WorkItem IDs that have been successfully transitioned to a terminal state in the
+    /// current leadership term. Prevents <see cref="HandleJobCompletedAsync"/> from re-posting
+    /// status for jobs still present within the K8s retention window (default 600s).
+    /// Cleared on leadership acquisition via <see cref="OnLeadershipAcquired"/>.
+    /// </summary>
+    // TODO: _reconciledTerminalIds is a plain HashSet<Guid> with no thread-safety guarantees.
+    // In the current design ReconcileOnceAsync is only invoked once per OnPollCycleAsync (via
+    // Task.WhenAll with no parallel ReconcileOnceAsync calls), and OnLeadershipAcquired is called
+    // between leadership terms — so no concurrent access occurs in production. However,
+    // OnLeadershipAcquired is public and tests call ReconcileOnceAsync directly; any external
+    // caller that invokes these concurrently would cause undefined behaviour on HashSet.
+    // Consider replacing with a ConcurrentDictionary<Guid, byte> or adding a lock if the public
+    // surface of OnLeadershipAcquired is ever called from a different thread than ReconcileOnceAsync.
+    private readonly HashSet<Guid> _reconciledTerminalIds = new();
+
+    /// <summary>
+    /// Called by <see cref="ReconciliationService"/> when this instance becomes the leader.
+    /// Clears the in-process deduplication cache so that any completed K8s Jobs still present
+    /// in the retention window are reconciled at least once by the new leadership term.
+    /// </summary>
+    public void OnLeadershipAcquired() => _reconciledTerminalIds.Clear();
+
     public ReconciliationLoop(
         IPipelineApiWorkItemClient workItemClient,
         IKubernetesJobClient k8sClient,
@@ -315,22 +338,40 @@ public sealed class ReconciliationLoop
         var workItemId = ParseWorkItemId(job);
         if (!workItemId.HasValue) return;
 
+        // Skip WorkItems already reconciled in this leadership term to avoid redundant
+        // PostStatusAsync calls and misleading log lines during the K8s job retention window.
+        if (_reconciledTerminalIds.Contains(workItemId.Value)) return;
+
         var phase = GetJobPhase(job);
 
         switch (phase)
         {
             case JobPhaseSucceeded:
-                await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseSucceeded, null, null, ct);
+                if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseSucceeded, null, null, ct))
+                    _reconciledTerminalIds.Add(workItemId.Value);
                 break;
             case JobPhaseFailed:
                 var errorMsg = GetFailureMessage(job);
-                await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, "AgentError", errorMsg, ct);
+                if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, "AgentError", errorMsg, ct))
+                    _reconciledTerminalIds.Add(workItemId.Value);
                 break;
             // Active/Unknown/Pending — no action needed
+            // TODO: If a JobPhaseCancelled case is ever added, remember to also add the workItemId
+            // to _reconciledTerminalIds on success — the guard comment says "Succeeded, Failed,
+            // Cancelled" but the current switch only covers Succeeded and Failed. Omitting it for
+            // a future Cancelled case would allow duplicate PostStatusAsync calls within the K8s
+            // job retention window.
         }
     }
 
-    private async Task HandleJobCompletedAsync(
+    /// <summary>
+    /// Posts a terminal status update for a completed K8s Job, releases the PVC, and records
+    /// telemetry. Returns <c>true</c> if <see cref="IPipelineApiWorkItemClient.PostStatusAsync"/>
+    /// succeeded (the caller should then cache the WorkItem ID to suppress duplicate posts on
+    /// subsequent reconciliation cycles), or <c>false</c> if it threw (the caller must NOT cache
+    /// the ID so that the next cycle retries the post).
+    /// </summary>
+    private async Task<bool> HandleJobCompletedAsync(
         Guid workItemId,
         V1Job job,
         string status,
@@ -341,6 +382,7 @@ public sealed class ReconciliationLoop
         // Release the PVC outside the try block so a transient PostStatusAsync failure
         // does not leak the claim until the next leadership acquisition rebuilds the pool.
         var pvcName = GetPvcFromJob(job);
+        var succeeded = false;
         try
         {
             await _workItemClient.PostStatusAsync(workItemId, new WorkItemStatusUpdate
@@ -364,6 +406,7 @@ public sealed class ReconciliationLoop
             WorkDistributionTelemetry.LogTerminalStatus(workItemId, workItemStatus, duration, agentId, failureReasonEnum);
 
             Log.Information("WorkItem {Id} marked {Status} from K8s Job {Job}", workItemId, status, job.Metadata?.Name);
+            succeeded = true;
         }
         catch (Exception ex)
         {
@@ -373,9 +416,19 @@ public sealed class ReconciliationLoop
         {
             // Release PVC unconditionally — idempotent on unknown names, ensures the pool slot
             // is freed even when PostStatusAsync throws a transient error.
+            // TODO: Verify PvcPool.Release is safe to call twice for the same name within a single
+            // leadership term. The retry path introduced by the _reconciledTerminalIds deduplication
+            // guard makes a double-release reachable: if PostStatusAsync throws on the first cycle
+            // (succeeded = false, ID not cached), this finally block still releases the PVC; on the
+            // retry cycle HandleJobCompletedAsync is invoked again and Release is called a second
+            // time. If a released PVC name is re-allocated between the two calls the second Release
+            // could corrupt the pool's accounting. The existing comment says "idempotent on unknown
+            // names" — confirm this also covers the already-released-and-potentially-reallocated case.
             if (pvcName is not null)
                 _pvcPool.Release(pvcName);
         }
+
+        return succeeded;
     }
 
     private async Task SafeDeleteJobAsync(string jobName, CancellationToken ct)
