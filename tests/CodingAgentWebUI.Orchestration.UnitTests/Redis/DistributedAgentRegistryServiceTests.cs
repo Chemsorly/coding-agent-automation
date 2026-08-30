@@ -177,18 +177,15 @@ public sealed class DistributedAgentRegistryServiceTests
     }
 
     [Fact]
-    public void GetIdleAgents_BeforeAnyAsyncCall_ReturnsEmpty()
+    public void GetIdleAgents_BeforeAnyAsyncCall_ReturnsAgentsFromRedis()
     {
         _sut.Register(Msg("agent-1"), "conn-1");
 
-        // Cold cache — no async call has been made yet
-        // TODO: This is a one-sided contract test. It does not verify that after a subsequent
-        // GetIdleAgentsAsync() call the sync overload returns the expected non-empty result.
-        // A bug that permanently retains the cold-cache short-circuit (e.g. _cachedIdle never
-        // written) would not be caught. Consider pairing with a warm-cache follow-up assertion.
-        // See TestQualityReviewer finding at line 175.
+        // Sync overload delegates to GetIdleAgentsAsync().GetAwaiter().GetResult(),
+        // so it always reads from Redis even without a prior async call.
         var idle = _sut.GetIdleAgents();
-        idle.Should().BeEmpty();
+        idle.Should().HaveCount(1);
+        idle[0].AgentId.Value.Should().Be("agent-1");
     }
 
     // ── GetAllAgentsAsync / GetByAgentIdAsync ─────────────────────────────────
@@ -288,17 +285,15 @@ public sealed class DistributedAgentRegistryServiceTests
     }
 
     [Fact]
-    public void GetAllAgents_BeforeAnyAsyncCall_ReturnsEmpty()
+    public void GetAllAgents_BeforeAnyAsyncCall_ReturnsAgentsFromRedis()
     {
         _sut.Register(Msg("agent-1"), "conn-1");
 
-        // Cold cache — no async call has been made yet
-        // TODO: One-sided contract test — does not verify that the cache becomes warm after
-        // GetAllAgentsAsync() is called. A bug permanently retaining the empty cold-cache
-        // would not be caught. Pair with a warm-cache assertion or confirm a related test
-        // covers it. See TestQualityReviewer finding at line 210.
+        // Sync overload delegates to GetAllAgentsAsync().GetAwaiter().GetResult(),
+        // so it always reads from Redis even without a prior async call.
         var all = _sut.GetAllAgents();
-        all.Should().BeEmpty();
+        all.Should().HaveCount(1);
+        all[0].AgentId.Value.Should().Be("agent-1");
     }
 
     // ── GetByConnectionId ─────────────────────────────────────────────────────

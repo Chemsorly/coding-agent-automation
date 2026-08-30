@@ -43,12 +43,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     // Same retention semantics as _connectionIndex: entry persists until explicit Deregister is called.
     private readonly ConcurrentDictionary<string, AgentEntry> _localSnapshot = new();
 
-    // Cached copies of the last successful async reads. Written by GetIdleAgentsAsync /
-    // GetAllAgentsAsync and read by the sync overloads (Blazor render paths, OTel gauges)
-    // so that those paths never block on Redis. Null until the first async read completes.
-    private volatile IReadOnlyList<AgentEntry>? _cachedAll;
-    private volatile IReadOnlyList<AgentEntry>? _cachedIdle;
-
     // Internal hooks for test determinism: fire-and-forget tasks are stored here so tests can
     // await them instead of using Thread.Sleep. Not used in production code paths.
     // TODO (WARNING): Consider a dedicated FlushAsync() or IAsyncDisposable pattern if more
@@ -455,9 +449,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetIdleAgents()
     {
-        // Return cached result so this sync overload never blocks on Redis.
-        // Cache is populated by GetIdleAgentsAsync, which is called by the hot path.
-        return _cachedIdle ?? Array.Empty<AgentEntry>();
+        // Delegate to the async path (batched HGETALL via Task.WhenAll) and block.
+        // This preserves the performance gain of the async batching while ensuring
+        // callers on synchronous paths always see a fresh result from Redis.
+        return GetIdleAgentsAsync().GetAwaiter().GetResult();
     }
 
     /// <inheritdoc />
@@ -470,7 +465,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var members = await _store.SetMembersAsync(AgentsIdleKey);
         if (members.Length == 0)
         {
-            _cachedIdle = Array.Empty<AgentEntry>();
             return Array.Empty<AgentEntry>();
         }
 
@@ -478,17 +472,16 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // requests on the multiplexed connection into a single network flush (one round-trip).
         var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id))).ToArray();
         var results = await Task.WhenAll(tasks);
-        var list = results.Select(HashToEntry).OfType<AgentEntry>().ToList().AsReadOnly();
-        _cachedIdle = list;
-        return list;
+        return results.Select(HashToEntry).OfType<AgentEntry>().ToList().AsReadOnly();
     }
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetAllAgents()
     {
-        // Return cached result so this sync overload never blocks on Redis.
-        // Cache is populated by GetAllAgentsAsync, which is called by the hot path.
-        return _cachedAll ?? Array.Empty<AgentEntry>();
+        // Delegate to the async path (batched HGETALL via Task.WhenAll) and block.
+        // This preserves the performance gain of the async batching while ensuring
+        // callers on synchronous paths always see a fresh result from Redis.
+        return GetAllAgentsAsync().GetAwaiter().GetResult();
     }
 
     /// <inheritdoc />
@@ -499,33 +492,24 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var members = await _store.SetMembersAsync(AgentsAllKey);
         if (members.Length == 0)
         {
-            _cachedAll = Array.Empty<AgentEntry>();
             return Array.Empty<AgentEntry>();
         }
 
         // Pipeline all HGETALL calls.
         var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id))).ToArray();
         var results = await Task.WhenAll(tasks);
-        var list = results.Select(HashToEntry).OfType<AgentEntry>().ToList().AsReadOnly();
-        _cachedAll = list;
-        return list;
+        return results.Select(HashToEntry).OfType<AgentEntry>().ToList().AsReadOnly();
     }
 
     /// <inheritdoc />
     public int GetBusyAgentCount()
-        => (_cachedAll ?? Array.Empty<AgentEntry>()).Count(a => a.Status == AgentStatus.Busy);
+        => GetAllAgents().Count(a => a.Status == AgentStatus.Busy);
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetAgentsByLabel(string labelKey, string labelValue)
     {
-        // TODO: GetAgentsByLabel reads from _cachedAll (in-process cache) with no Redis fallback.
-        // On cold start or after a service restart, _cachedAll is null until the first
-        // GetAllAgentsAsync call completes (dispatch cycle, monitoring page, or API endpoint).
-        // Any caller that invokes this before the cache warms will always get an empty result
-        // even if agents are present in Redis. Consider adding a Redis fallback or ensuring
-        // a cache warm-up occurs at startup. See Correctness review finding at line 500.
         var target = $"{labelKey}={labelValue}";
-        return (_cachedAll ?? Array.Empty<AgentEntry>())
+        return GetAllAgents()
             .Where(a => a.Labels?.Any(l => string.Equals(l, target, StringComparison.OrdinalIgnoreCase)) == true)
             .ToList()
             .AsReadOnly();
