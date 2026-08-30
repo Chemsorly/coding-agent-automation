@@ -45,6 +45,31 @@
             <div class="cockpit-stat"><span class="cockpit-stat-l">Avg tokens / run</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_avgTokens)</span></div>
         </div>
 
+        <div class="cockpit-card cockpit-card-pad">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+                <h2 style="margin: 0; font-size: 15px; font-weight: 700;">Run outcomes over time</h2>
+                <div style="display: flex; gap: 14px; font-size: 11.5px; color: var(--text-muted);">
+                    <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:9px;height:9px;border-radius:2px;background:#22C55E;"></span>Completed</span>
+                    <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:9px;height:9px;border-radius:2px;background:#EF4444;"></span>Failed</span>
+                    <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:9px;height:9px;border-radius:2px;background:var(--text-faint);"></span>Cancelled</span>
+                </div>
+            </div>
+            <div style="display: flex; align-items: flex-end; gap: 5px; height: 120px;">
+                @foreach (var day in _days)
+                {
+                    <div style="flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; min-width: 0;" title="@day.Date.ToString("MMM d") — @day.Total run(s)">
+                        @if (day.Cancelled > 0) { <div style="height: @Px(day.Cancelled)px; background: var(--text-faint);"></div> }
+                        @if (day.Failed > 0) { <div style="height: @Px(day.Failed)px; background: #EF4444;"></div> }
+                        @if (day.Completed > 0) { <div style="height: @Px(day.Completed)px; background: #22C55E;"></div> }
+                    </div>
+                }
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 10.5px; color: var(--text-faint);">
+                <span>@(_days.Count > 0 ? _days[0].Date.ToString("MMM d") : "")</span>
+                <span>@(_days.Count > 0 ? _days[^1].Date.ToString("MMM d") : "")</span>
+            </div>
+        </div>
+
         <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: start;">
             <!-- outcome mix -->
             <div class="cockpit-card cockpit-card-pad">
@@ -121,6 +146,8 @@
     private long _avgTokens;
     private decimal _totalCost;
     private Dictionary<string, int> _byType = new();
+    private List<DayBucket> _days = new();
+    private int _maxDay = 1;
 
     protected override async Task OnInitializedAsync()
     {
@@ -152,6 +179,20 @@
             _avgCycle = completedWithTime.Count > 0 ? FormatSeconds(completedWithTime.Average()) : "—";
 
             _byType = items.GroupBy(r => RunTypeLabel(r.RunType)).ToDictionary(g => g.Key, g => g.Count());
+
+            var today = DateTimeOffset.Now.Date;
+            _days = Enumerable.Range(0, 14)
+                .Select(i => today.AddDays(-13 + i))
+                .Select(d =>
+                {
+                    var dayItems = items.Where(r => r.StartedAtOffset.LocalDateTime.Date == d).ToList();
+                    return new DayBucket(DateOnly.FromDateTime(d),
+                        dayItems.Count(r => r.FinalStep == PipelineStep.Completed),
+                        dayItems.Count(r => r.FinalStep == PipelineStep.Failed),
+                        dayItems.Count(r => r.FinalStep == PipelineStep.Cancelled));
+                })
+                .ToList();
+            _maxDay = Math.Max(1, _days.Max(d => d.Total));
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -165,6 +206,12 @@
     }
 
     private int Pct(int count) => _total > 0 ? (int)Math.Round(100.0 * count / _total) : 0;
+    private int Px(int count) => (int)Math.Round(110.0 * count / _maxDay);
+
+    private sealed record DayBucket(DateOnly Date, int Completed, int Failed, int Cancelled)
+    {
+        public int Total => Completed + Failed + Cancelled;
+    }
 
     private static string RunTypeLabel(PipelineRunType t) => t switch
     {

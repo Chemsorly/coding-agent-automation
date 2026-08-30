@@ -28,6 +28,8 @@
         </a>
     </div>
 
+    <AutoRefresh IntervalSeconds="10" OnTick="RefreshQuietAsync" />
+
     @if (_loading)
     {
         <div class="cockpit-card"><div class="cockpit-empty">Loading work…</div></div>
@@ -129,6 +131,19 @@
         {
             _loading = false;
         }
+    }
+
+    // Quiet tick refresh — no spinner, keep stale data on a transient error.
+    private async Task RefreshQuietAsync()
+    {
+        try
+        {
+            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, ct: _cts.Token);
+            _pending = await WorkItems.GetPendingAsync(maxResults: 100, ct: _cts.Token);
+            _error = null;
+        }
+        catch (OperationCanceledException) { }
+        catch { /* keep last-known data until the next tick */ }
     }
 
     private static string StatusColor(WorkItemStatus s) => s switch

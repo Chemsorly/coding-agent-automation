@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Services;
 /// <summary>
 /// Read-only view of pipeline loop state for Blazor components.
 /// Mirrors the read-only surface of <see cref="CodingAgentWebUI.Pipeline.Interfaces.IPipelineLoopService"/>
-/// so <see cref="CodingAgentWebUI.Components.Layout.MainLayout"/> and
+/// so <see cref="CodingAgentWebUI.Components.Pages.Overview"/> and
 /// <see cref="CodingAgentWebUI.Components.Pages.AgentCoding"/> can bind without changes.
 /// <para>
 /// <see cref="IsSchedulerUnreachable"/> is added to expose transport-layer health so the UI

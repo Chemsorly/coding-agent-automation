@@ -25,6 +25,8 @@
         </button>
     </div>
 
+    <AutoRefresh IntervalSeconds="10" OnTick="RefreshQuietAsync" />
+
     @if (_loading && _agents is null)
     {
         <div class="cockpit-card"><div class="cockpit-empty">Loading agents…</div></div>
@@ -70,10 +72,16 @@
                         <tbody>
                             @foreach (var a in agents.OrderBy(a => a.Status).ThenBy(a => a.AgentId.Value))
                             {
-                                <tr>
+                                var isOpen = _expandedId == a.AgentId.Value;
+                                <tr class="monitoring-row-clickable" @onclick="() => Toggle(a.AgentId.Value)">
                                     <td>
-                                        <div class="monitoring-mono" style="font-weight: 600;">@a.AgentId.Value</div>
-                                        <div class="monitoring-mono monitoring-muted" style="font-size: 0.72rem;">@a.Hostname</div>
+                                        <div style="display: flex; align-items: center; gap: 9px;">
+                                            <span class="fleet-chevron"><Icon Name="@(isOpen ? "chevron-down" : "chevron-right")" Size="14" /></span>
+                                            <div>
+                                                <div class="monitoring-mono" style="font-weight: 600;">@a.AgentId.Value</div>
+                                                <div class="monitoring-mono monitoring-muted" style="font-size: 0.72rem;">@a.Hostname</div>
+                                            </div>
+                                        </div>
                                     </td>
                                     <td>
                                         @foreach (var label in a.Labels)
@@ -83,10 +91,52 @@
                                     </td>
                                     <td>
                                         <span class="monitoring-status monitoring-status-@a.Status.ToString().ToLowerInvariant()">@a.Status</span>
+                                        @if (a.Disabled)
+                                        {
+                                            <span class="cockpit-chip" style="color: var(--warning); background: var(--warning-bg); margin-left: 5px;">Disabled</span>
+                                        }
                                     </td>
                                     <td class="monitoring-mono">@(string.IsNullOrEmpty(a.ActiveJobId) ? "—" : a.ActiveJobId)</td>
-                                    <td title="@a.LastHeartbeatAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(a.LastHeartbeatAt)</td>
+                                    <td title="@Abs(a.LastHeartbeatAt)">@Ago(a.LastHeartbeatAt)</td>
                                 </tr>
+                                @if (isOpen)
+                                {
+                                    <tr class="fleet-detail-row">
+                                        <td colspan="5">
+                                            <div class="cockpit-detail-grid">
+                                                <div class="cockpit-detail-item"><div class="k">Hostname</div><div class="v mono">@a.Hostname</div></div>
+                                                <div class="cockpit-detail-item"><div class="k">Connection ID</div><div class="v mono">@a.ConnectionId</div></div>
+                                                <div class="cockpit-detail-item"><div class="k">Registered</div><div class="v" title="@Abs(a.RegisteredAt)">@Ago(a.RegisteredAt)</div></div>
+                                                <div class="cockpit-detail-item"><div class="k">Last heartbeat</div><div class="v" title="@Abs(a.LastHeartbeatAt)">@Ago(a.LastHeartbeatAt)</div></div>
+                                                @if (a.BusySince is not null)
+                                                {
+                                                    <div class="cockpit-detail-item"><div class="k">Busy since</div><div class="v" title="@Abs(a.BusySince.Value)">@Ago(a.BusySince.Value)</div></div>
+                                                }
+                                                @if (!string.IsNullOrEmpty(a.ActiveJobId))
+                                                {
+                                                    <div class="cockpit-detail-item"><div class="k">Active job</div><div class="v mono">@a.ActiveJobId</div></div>
+                                                }
+                                                @if (!string.IsNullOrEmpty(a.ActiveChatSessionId))
+                                                {
+                                                    <div class="cockpit-detail-item"><div class="k">Active chat</div><div class="v mono">@a.ActiveChatSessionId</div></div>
+                                                }
+                                                @if (a.LastJobCompletedAt is not null)
+                                                {
+                                                    <div class="cockpit-detail-item"><div class="k">Last job completed</div><div class="v" title="@Abs(a.LastJobCompletedAt.Value)">@Ago(a.LastJobCompletedAt.Value)</div></div>
+                                                }
+                                                @if (a.DisconnectedAt is not null)
+                                                {
+                                                    <div class="cockpit-detail-item"><div class="k">Disconnected</div><div class="v" title="@Abs(a.DisconnectedAt.Value)">@Ago(a.DisconnectedAt.Value)</div></div>
+                                                }
+                                                @if (a.OrphanRestoredAt is not null)
+                                                {
+                                                    <div class="cockpit-detail-item"><div class="k">Orphan restored</div><div class="v" title="@Abs(a.OrphanRestoredAt.Value)">@Ago(a.OrphanRestoredAt.Value)</div></div>
+                                                }
+                                                <div class="cockpit-detail-item"><div class="k">Disabled</div><div class="v">@(a.Disabled ? "Yes — excluded from job selection" : "No")</div></div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
                             }
                         </tbody>
                     </table>
@@ -101,8 +151,11 @@
     private IReadOnlyList<AgentEntry>? _agents;
     private bool _loading = true;
     private string? _error;
+    private string? _expandedId;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private void Toggle(string agentId) => _expandedId = _expandedId == agentId ? null : agentId;
 
     private async Task LoadAsync()
     {
@@ -123,6 +176,18 @@
         }
     }
 
+    // Quiet tick refresh — no spinner, keeps the expanded row and stale data on a transient error.
+    private async Task RefreshQuietAsync()
+    {
+        try
+        {
+            _agents = await AgentClient.GetAgentsAsync(_cts.Token);
+            _error = null;
+        }
+        catch (OperationCanceledException) { }
+        catch { /* keep last-known agents until the next tick */ }
+    }
+
     private static string Ago(DateTimeOffset t)
     {
         var d = DateTimeOffset.UtcNow - t;
@@ -131,6 +196,8 @@
         if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
         return $"{(int)d.TotalDays}d ago";
     }
+
+    private static string Abs(DateTimeOffset t) => t.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 
     public async ValueTask DisposeAsync()
     {

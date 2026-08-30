@@ -28,6 +28,8 @@
         </div>
     </div>
 
+    <AutoRefresh IntervalSeconds="10" OnTick="RefreshDataAsync" />
+
     <!-- loop status hero -->
     <div class="cockpit-card cockpit-card-pad" style="display: flex; align-items: center; justify-content: space-between; gap: 20px;">
         <div style="display: flex; align-items: center; gap: 14px;">
@@ -50,6 +52,27 @@
         <div class="cockpit-stat"><span class="cockpit-stat-l">Success · recent</span><span class="cockpit-stat-v">@(_finishedCount > 0 ? $"{_successRate}%" : "—")</span></div>
         <div class="cockpit-stat"><span class="cockpit-stat-l">Tokens · recent</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_tokensRecent)</span></div>
     </div>
+
+    @if (_attnNeedsRefinement + _attnFailed + _attnPlans > 0)
+    {
+        <div class="cockpit-card">
+            <div class="cockpit-card-header"><h2>Needs attention</h2><a href="/attention" style="font-size: 12.5px; font-weight: 600;">View all →</a></div>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr);">
+                <a href="/attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; border-right: 1px solid var(--hairline); text-decoration: none; color: inherit;">
+                    <span style="width: 34px; height: 34px; border-radius: 9px; background: var(--warning-bg); color: var(--warning); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><Icon Name="alert-triangle" Size="17" /></span>
+                    <div><div style="font-size: 18px; font-weight: 800;">@_attnNeedsRefinement</div><div style="font-size: 12px; color: var(--text-muted);">Needs refinement</div></div>
+                </a>
+                <a href="/attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; border-right: 1px solid var(--hairline); text-decoration: none; color: inherit;">
+                    <span style="width: 34px; height: 34px; border-radius: 9px; background: var(--error-bg); color: var(--error); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><Icon Name="x-circle" Size="17" /></span>
+                    <div><div style="font-size: 18px; font-weight: 800;">@_attnFailed</div><div style="font-size: 12px; color: var(--text-muted);">Failed runs</div></div>
+                </a>
+                <a href="/attention" style="display: flex; align-items: center; gap: 11px; padding: 14px 18px; text-decoration: none; color: inherit;">
+                    <span style="width: 34px; height: 34px; border-radius: 9px; background: var(--bg-active); color: var(--accent); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><Icon Name="puzzle" Size="17" /></span>
+                    <div><div style="font-size: 18px; font-weight: 800;">@_attnPlans</div><div style="font-size: 12px; color: var(--text-muted);">Plans to approve</div></div>
+                </a>
+            </div>
+        </div>
+    }
 
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start;">
         <!-- active runs -->
@@ -120,12 +143,16 @@
     private int _finishedCount;
     private int _successRate;
     private long _tokensRecent;
+    private int _attnNeedsRefinement, _attnFailed, _attnPlans;
     private List<PipelineRunSummary> _activeRuns = new();
     private List<PipelineRunSummary> _recentRuns = new();
 
     protected override void OnInitialized() => LoopService.OnChange += HandleLoopChanged;
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync() => await RefreshDataAsync();
+
+    // Re-fetched on load and on each auto-refresh tick. Degrades quietly (keeps prior values).
+    private async Task RefreshDataAsync()
     {
         // Agents
         try
@@ -161,6 +188,10 @@
             var succeeded = finished.Count(r => r.FinalStep == PipelineStep.Completed);
             _successRate = _finishedCount > 0 ? (int)Math.Round(100.0 * succeeded / _finishedCount) : 0;
             _tokensRecent = items.Sum(r => r.TotalTokens);
+
+            _attnNeedsRefinement = items.Count(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady);
+            _attnFailed = items.Count(r => r.FinalStep == PipelineStep.Failed);
+            _attnPlans = items.Count(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed);
         }
         catch (OperationCanceledException) { return; }
         catch { }

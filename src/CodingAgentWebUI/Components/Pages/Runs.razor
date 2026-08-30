@@ -25,13 +25,25 @@
     </div>
 
     <div class="cockpit-toolbar">
+        <div class="cockpit-segmented" role="tablist" aria-label="Filter runs on this page">
+            <button class="cockpit-seg-btn @(_filter == RunFilter.All ? "is-active" : "")" role="tab" aria-selected="@(_filter == RunFilter.All)" @onclick="() => _filter = RunFilter.All">All</button>
+            <button class="cockpit-seg-btn @(_filter == RunFilter.Running ? "is-active" : "")" role="tab" aria-selected="@(_filter == RunFilter.Running)" @onclick="() => _filter = RunFilter.Running">Running</button>
+            <button class="cockpit-seg-btn @(_filter == RunFilter.Consolidation ? "is-active" : "")" role="tab" aria-selected="@(_filter == RunFilter.Consolidation)" @onclick="() => _filter = RunFilter.Consolidation">Consolidation</button>
+            <button class="cockpit-seg-btn @(_filter == RunFilter.Failed ? "is-active" : "")" role="tab" aria-selected="@(_filter == RunFilter.Failed)" @onclick="() => _filter = RunFilter.Failed">Failed</button>
+        </div>
         <label class="cockpit-filter-toggle @(_feedbackOnly ? "is-on" : "")">
             <input type="checkbox" checked="@_feedbackOnly" @onchange="ToggleFeedbackOnly" />
             Feedback only
         </label>
-        @* TODO: RunType/status filter tabs (All / Running / Consolidation / Failed) from the design need
-           a server-side filter parameter on GetRunHistoryAsync — deferred so pagination stays correct. *@
     </div>
+    @* Interim: filters the loaded page client-side. Server-side RunType/status filtering (correct across
+       all pages) is the P3 GetRunHistoryAsync param — until then this is explicitly a current-page view. *@
+    @if (_filter != RunFilter.All)
+    {
+        <div class="cockpit-view-hint" style="margin-top: -8px;">Filtering the current page only — full server-side filtering is coming.</div>
+    }
+
+    <AutoRefresh IntervalSeconds="12" OnTick="RefreshQuietAsync" />
 
     <div class="cockpit-card">
         @if (_loading)
@@ -45,6 +57,10 @@
         else if (_result is null || _result.Items.Count == 0)
         {
             <div class="cockpit-empty">No runs @(_feedbackOnly ? "with feedback " : "")yet.</div>
+        }
+        else if (FilteredItems.Count == 0)
+        {
+            <div class="cockpit-empty">No @_filter.ToString().ToLowerInvariant() runs on this page.</div>
         }
         else
         {
@@ -62,7 +78,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var run in _result.Items)
+                        @foreach (var run in FilteredItems)
                         {
                             <tr class="monitoring-row-clickable" @onclick="() => OpenRun(run.RunId)">
                                 <td>
@@ -119,7 +135,7 @@
     </div>
 
     <div class="cockpit-pager">
-        <span class="cockpit-pager-info">Page @_page@(_result is { Items.Count: > 0 } ? $" · {_result.Items.Count} shown" : "")</span>
+        <span class="cockpit-pager-info">Page @_page@(FilteredItems.Count > 0 ? $" · {FilteredItems.Count} shown{(_filter == RunFilter.All ? "" : " (filtered)")}" : "")</span>
         <div class="cockpit-pager-buttons">
             <button class="cockpit-pager-btn" disabled="@(_page <= 1 || _loading)" @onclick="PrevPage">
                 <Icon Name="chevrons-left" Size="14" /> Prev
@@ -141,6 +157,20 @@
     private bool _loading = true;
     private string? _error;
 
+    private enum RunFilter { All, Running, Consolidation, Failed }
+    private RunFilter _filter = RunFilter.All;
+
+    // Interim client-side view filter over the loaded page (see the toolbar note). Server-side is P3.
+    private IReadOnlyList<PipelineRunSummary> FilteredItems => _result is null
+        ? []
+        : _filter switch
+        {
+            RunFilter.Running => _result.Items.Where(r => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled).ToList(),
+            RunFilter.Consolidation => _result.Items.Where(r => r.RunType == PipelineRunType.Consolidation).ToList(),
+            RunFilter.Failed => _result.Items.Where(r => r.FinalStep == PipelineStep.Failed).ToList(),
+            _ => _result.Items
+        };
+
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
     private async Task LoadAsync()
@@ -161,6 +191,19 @@
         {
             _loading = false;
         }
+    }
+
+    // Quiet tick refresh — reloads the current page + filter, no spinner, no page reset.
+    private async Task RefreshQuietAsync()
+    {
+        try
+        {
+            _result = await RunHistory.GetRunHistoryAsync(
+                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, ct: _cts.Token);
+            _error = null;
+        }
+        catch (OperationCanceledException) { }
+        catch { /* keep the current page until the next tick */ }
     }
 
     private async Task ToggleFeedbackOnly(ChangeEventArgs e)

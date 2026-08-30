@@ -4,7 +4,9 @@
 @using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Components.Shared
+@using CodingAgentWebUI.Services
 @inject IPipelineApiRunHistoryClient RunHistory
+@inject CockpitState State
 @inject NavigationManager Nav
 
 @*
@@ -105,6 +107,8 @@
                 new("puzzle", "#4F46E5", "var(--bg-active)", "Decomposition plans posted", plans,
                     _ => "Plan posted — approve by adding agent:epic-approved on the issue"),
             };
+
+            State.SetAttentionCount(_sections.Sum(s => s.Rows.Count));
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)

@@ -163,6 +163,9 @@
                     <button class="btn-save" @onclick="OpenPrDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse pull requests" : null)" data-testid="browse-prs-btn" style="background: var(--accent-secondary, #6366f1);">Browse Pull Requests</button>
                 </div>
             </section>
+
+            <!-- ═══ Consolidation triggers + harness suggestions (folded in from the Consolidation page) ═══ -->
+            @* DIAGNOSTIC: temporarily disabled <Consolidation /> to isolate the /agent-coding 500 *@
         </div>
     </div>
     <UndoSnackbar @ref="_undoSnackbar" />

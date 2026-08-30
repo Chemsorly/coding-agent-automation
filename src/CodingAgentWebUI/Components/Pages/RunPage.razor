@@ -83,6 +83,22 @@
             <div class="summary-failure-callout" role="alert"><Icon Name="alert-triangle" Size="14" /> @run.FailureReason</div>
         }
 
+        var implPr = run.RunType != PipelineRunType.Review ? run.PullRequestUrl : null;
+        var reviewPr = run.RunType == PipelineRunType.Review ? run.ReviewPrUrl : null;
+        @if (!string.IsNullOrEmpty(implPr) || !string.IsNullOrEmpty(reviewPr))
+        {
+            <div class="cockpit-links-rail">
+                @if (!string.IsNullOrEmpty(implPr))
+                {
+                    <a href="@implPr" target="_blank" rel="noopener" class="cockpit-link-chip"><Icon Name="link" Size="14" /> Pull request ↗</a>
+                }
+                @if (!string.IsNullOrEmpty(reviewPr))
+                {
+                    <a href="@reviewPr" target="_blank" rel="noopener" class="cockpit-link-chip"><Icon Name="search" Size="14" /> PR under review ↗</a>
+                }
+            </div>
+        }
+
         <div class="cockpit-card">
             <div class="cockpit-card-pad cockpit-detail-grid">
                 <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset)</div></div>
@@ -113,19 +129,25 @@
                 {
                     <div class="cockpit-detail-item"><div class="k">Sub-issues</div><div class="v">@run.DecompositionSubIssuesCreated / @run.DecompositionSubIssuesAttempted created</div></div>
                 }
-                @if (run.RunType == PipelineRunType.Review && (run.CodeReviewCriticalCount > 0 || run.CodeReviewWarningCount > 0 || run.CodeReviewSuggestionCount > 0))
-                {
-                    <div class="cockpit-detail-item"><div class="k">Review findings</div><div class="v">@run.CodeReviewCriticalCount critical · @run.CodeReviewWarningCount warning · @run.CodeReviewSuggestionCount suggestion</div></div>
-                }
-                @if (run.RunType == PipelineRunType.Review && !string.IsNullOrEmpty(run.ReviewPrUrl))
-                {
-                    <div class="cockpit-detail-item"><div class="k">PR under review</div><div class="v"><a href="@run.ReviewPrUrl" target="_blank" rel="noopener">Open ↗</a></div></div>
-                }
-                @if (!string.IsNullOrEmpty(run.PullRequestUrl) && run.RunType != PipelineRunType.Review)
-                {
-                    <div class="cockpit-detail-item"><div class="k">Pull request</div><div class="v"><a href="@run.PullRequestUrl" target="_blank" rel="noopener">Open ↗</a></div></div>
-                }
             </div>
+
+            @if (run.RunType == PipelineRunType.Review)
+            {
+                <div class="cockpit-card-pad" style="border-top: 1px solid var(--hairline);">
+                    <div class="cockpit-detail-sub-label">Review findings</div>
+                    <div class="cockpit-findings">
+                        <div class="cockpit-finding is-critical"><span class="cockpit-finding-v">@run.CodeReviewCriticalCount</span><span class="cockpit-finding-l">Critical</span></div>
+                        <div class="cockpit-finding is-warning"><span class="cockpit-finding-v">@run.CodeReviewWarningCount</span><span class="cockpit-finding-l">Warning</span></div>
+                        <div class="cockpit-finding is-suggestion"><span class="cockpit-finding-v">@run.CodeReviewSuggestionCount</span><span class="cockpit-finding-l">Suggestion</span></div>
+                    </div>
+                    @if (run.CodeReviewAgentsRun.Count > 0)
+                    {
+                        <div style="margin-top: 12px; font-size: 12.5px; color: var(--text-muted);">
+                            <span style="font-weight: 600;">Reviewers:</span> @string.Join(", ", run.CodeReviewAgentsRun)
+                        </div>
+                    }
+                </div>
+            }
 
             @if (run.PhaseBreakdown is { Count: > 0 } phases)
             {

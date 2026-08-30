@@ -126,6 +126,7 @@ builder.Services.AddScoped<CodingAgentWebUI.Services.AgentCodingPageService>();
 builder.Services.AddAgentMonitoringPageServiceDependencies();
 builder.Services.AddScoped<CodingAgentWebUI.Services.AgentMonitoringPageService>();
 builder.Services.AddScoped<CodingAgentWebUI.Services.NotificationService>();
+builder.Services.AddScoped<CodingAgentWebUI.Services.CockpitState>();
 builder.Services.AddScoped<CodingAgentWebUI.Services.IChatPromptBuilder, CodingAgentWebUI.Services.ChatPromptBuilder>();
 
 // SignalR — hub services with MessagePack protocol and agent authorization filter
