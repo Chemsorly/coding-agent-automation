@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Serilog;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -467,7 +468,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         StartedAtUtc = DateTimeOffset.UtcNow,
         Status = ConsolidationRunStatus.Running,
         AutoDispatch = autoDispatch,
-        ProjectName = projectName
+        ProjectName = projectName,
+        // Capture trace context at trigger time (inside the HTTP request span).
+        // Stored on the run so it survives restart/rehydration even when Activity.Current
+        // is null at drain time. CaptureTraceContext creates a short-lived Producer span
+        // to guarantee a valid traceparent even if no ambient span exists.
+        TraceParent = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation")
+            ?.GetValueOrDefault("traceparent")
     };
 
     private async Task<bool> TryEvictAndRetryAsync(

@@ -78,4 +78,12 @@ public sealed class ConsolidationRun
     // (including crafted JSON payloads via consolidation run endpoints) to overwrite AgentId.
     // If external mutation is never intentional, restrict the setter for defence-in-depth.
     public string? AgentId { get; set; }
+
+    /// <summary>
+    /// W3C traceparent captured when the run was first triggered.
+    /// Persisted in the JSONB blob so it survives restarts and can be used during rehydration
+    /// to link the worker's spans back to the originating trace even after a process restart.
+    /// Null for runs created before this field was introduced.
+    /// </summary>
+    public string? TraceParent { get; set; }
 }

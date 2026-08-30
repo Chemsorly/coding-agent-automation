@@ -149,8 +149,8 @@ public sealed class ReconciliationLoop
                 continue;
             }
 
-            Log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}) after {Seconds}s — marking Failed",
-                item.Id, item.Status, item.K8sJobName ?? "none", _options.AgentJobTimeoutSeconds);
+            Log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
+                item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", _options.AgentJobTimeoutSeconds);
 
             try
             {
@@ -234,8 +234,8 @@ public sealed class ReconciliationLoop
             var expectedJobName = item.K8sJobName ?? DispatchLoop.GenerateJobName(item.Id);
             if (liveJobNames.Contains(expectedJobName)) continue; // job exists, not orphaned
 
-            Log.Warning("WorkItem {Id} stuck in Dispatched for >{Seconds}s with no K8s Job — marking Failed",
-                item.Id, _options.ChatPodConnectTimeoutSeconds);
+            Log.Warning("WorkItem {Id} stuck in Dispatched for >{Seconds}s with no K8s Job (issue={IssueIdentifier}) — marking Failed",
+                item.Id, _options.ChatPodConnectTimeoutSeconds, item.IssueIdentifier ?? "unknown");
 
             try
             {

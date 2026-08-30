@@ -212,7 +212,8 @@ public sealed class LabelService : ILabelService
             (label, c) => issueProvider.RemoveLabelAsync(issueIdentifier, label, c),
             (label, c) => issueProvider.AddLabelAsync(issueIdentifier, label, c),
             newLabel,
-            ct);
+            ct,
+            identifier: issueIdentifier);
     }
 
     /// <summary>
@@ -247,6 +248,7 @@ public sealed class LabelService : ILabelService
             (label, c) => repoProvider.RemovePrLabelAsync(prNumber, label, c),
             (label, c) => repoProvider.AddPrLabelAsync(prNumber, label, c),
             newLabel,
-            ct);
+            ct,
+            identifier: prIdentifier);
     }
 }

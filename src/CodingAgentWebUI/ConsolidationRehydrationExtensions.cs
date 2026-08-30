@@ -81,7 +81,13 @@ internal static class ConsolidationRehydrationExtensions
                     ConsolidationTemplateId = run.TemplateId,
                     ConsolidationWorkspacePath = workspaceManager.GetWorkspacePath(run.RunId),
                     RunId = run.RunId,
-                    AutoDispatch = run.AutoDispatch
+                    AutoDispatch = run.AutoDispatch,
+                    // Carry the traceparent stored at trigger time so the resulting WorkItem
+                    // inherits the original trace even though Activity.Current is null here
+                    // (startup runs outside any HTTP request context).
+                    TraceContext = !string.IsNullOrEmpty(run.TraceParent)
+                        ? new Dictionary<string, string> { ["traceparent"] = run.TraceParent }
+                        : null
                 };
                 await workDistributor.DistributeAsync(request, CancellationToken.None);
             }
