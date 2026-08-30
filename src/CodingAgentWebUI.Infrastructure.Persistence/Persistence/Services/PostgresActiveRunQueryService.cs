@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -79,7 +78,12 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
             RunId = r.RunId?.ToString() ?? r.WorkItemId.ToString(),
             IssueIdentifier = r.IssueIdentifier,
             IssueTitle = r.IssueTitle ?? "",
-            RunType = r.RunType ?? MapTaskTypeToRunType(r.TaskType),
+            // TODO: The query pre-filters out WorkItemTaskType.Consolidation rows (via a .Where clause
+            // upstream), so Consolidation items never reach this mapper during active-run display.
+            // ToDefaultRunType() handles Consolidation correctly and harmlessly, but if that pre-filter
+            // is ever removed, Consolidation items would start appearing in the active-run list.
+            // Keep the pre-filter and this comment in sync when modifying the query. (review: #2159)
+            RunType = r.RunType ?? r.TaskType.ToDefaultRunType(),
             AgentId = !string.IsNullOrEmpty(agentIdStr) ? (AgentId)agentIdStr : (AgentId?)null,
             StartedAt = r.DispatchedAt ?? r.CreatedAt,
             ProjectName = r.ProjectName,
@@ -147,22 +151,6 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
         WorkItemStatus.Dispatched => PipelineStep.Created,
         WorkItemStatus.Running => PipelineStep.GeneratingCode,
         _ => PipelineStep.Created
-    };
-
-    /// <summary>
-    /// Maps WorkItemTaskType to PipelineRunType when no PipelineRun join exists.
-    /// Only invoked for WorkItems with no joined PipelineRun row (newly queued/dispatched items),
-    /// which are always Phase 1 jobs. Consolidation items are pre-filtered by the query
-    /// and never reach this method.
-    /// </summary>
-    private static PipelineRunType MapTaskTypeToRunType(WorkItemTaskType taskType) => taskType switch
-    {
-        WorkItemTaskType.Implementation => PipelineRunType.Implementation,
-        WorkItemTaskType.Review => PipelineRunType.Review,
-        WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
-        // WorkItemTaskType.Consolidation is pre-filtered by the query and never reaches this method.
-        // See the .Where(wi => wi.TaskType != WorkItemTaskType.Consolidation) clause in GetActiveRunsAsync.
-        _ => throw new UnreachableException($"Unhandled WorkItemTaskType: {taskType}")
     };
 
     private sealed record ActiveRunRow(
