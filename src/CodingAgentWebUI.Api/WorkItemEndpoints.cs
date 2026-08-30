@@ -45,10 +45,11 @@ public static class WorkItemEndpoints
             async (Guid id,
                    [FromServices] IDbContextFactory<PipelineDbContext> dbFactory,
                    [FromServices] IProjectStore projectStore,
+                   [FromServices] AssignmentEnricher? assignmentEnricher,
                    HttpContext httpContext,
                    CancellationToken ct) =>
                 await AuthorizeAgentForWorkItemAsync(httpContext, id, dbFactory, ct)
-                    ?? await GetAssignment(id, dbFactory, projectStore, ct));
+                    ?? await GetAssignment(id, dbFactory, projectStore, assignmentEnricher, ct));
 
         group.MapPost("/{id:guid}/status",
             async (Guid id, [FromBody] WorkItemStatusRequest request,
@@ -143,11 +144,35 @@ public static class WorkItemEndpoints
     /// GET /api/work-items/{id}/assignment
     /// Returns the job assignment payload for an agent.
     /// 200 with JobAssignmentMessage, 404 if not found or null payload, 410 if terminal.
+    /// <para>
+    /// Supports two payload schemas for backward compatibility:
+    /// <list type="bullet">
+    /// <item>
+    /// <term>Old schema (full snapshot)</term>
+    /// <description>
+    /// Work items created before #2171: <c>Payload</c> contains a full <see cref="JobDistributionRequest"/>
+    /// including <c>ProviderConfigs</c>, <c>QualityGateConfigs</c>, etc. Detected by
+    /// <c>ProviderConfigs != null</c>. Served directly from payload as before — the frozen
+    /// snapshot is returned as-is (tokens may be expired for long-queued items).
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <term>New schema (minimal identity)</term>
+    /// <description>
+    /// Work items created after #2171: <c>Payload</c> contains only identity fields
+    /// (<c>ProviderConfigs == null</c>). Mutable config is fetched fresh from the database
+    /// at assignment time via <see cref="AssignmentEnricher"/>, vending fresh tokens and
+    /// picking up the latest steering, QG, and pipeline configuration.
+    /// </description>
+    /// </item>
+    /// </list>
+    /// </para>
     /// </summary>
     internal static async Task<IResult> GetAssignment(
         Guid id,
         IDbContextFactory<PipelineDbContext> dbFactory,
         IProjectStore projectStore,
+        AssignmentEnricher? assignmentEnricher = null,
         CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -171,6 +196,41 @@ public static class WorkItemEndpoints
         if (request is null)
             return TypedResults.NotFound();
 
+        // ── Backward-compatibility: detect payload schema ─────────────────
+        // Old schema: ProviderConfigs != null → serve from frozen snapshot.
+        // New schema: ProviderConfigs == null → fresh-fetch all mutable config.
+        // TODO: [WARNING] The null-discriminator is fragile: an old-schema row where ProviderConfigs
+        // happened to deserialize as null (serialization bug, manually inserted row, future
+        // [JsonIgnore] refactor) would be misclassified as new-schema and enter the enrichment path.
+        // A versioned discriminator field (e.g., PayloadSchemaVersion) would eliminate the ambiguity.
+        if (request.ProviderConfigs is null && assignmentEnricher is not null)
+        {
+            // Resolve project for steering + config override context.
+            // Falls back to a minimal stub so enrichment still works for project-less items.
+            PipelineProject project;
+            if (request.ProjectId.HasValue)
+            {
+                project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct)
+                    ?? BuildMinimalProject(request);
+            }
+            else
+            {
+                project = BuildMinimalProject(request);
+            }
+
+            var enriched = await assignmentEnricher.EnrichAsync(request, project, ct);
+            if (enriched is not null)
+                request = enriched;
+            // If enrichment fails, fall through to serve the identity-only request as a
+            // best-effort degraded response (missing configs, but RunId/IssueIdentifier intact).
+            // TODO: [WARNING] assignmentEnricher is nullable ([FromServices] optional). If the DI
+            // container fails to resolve it at startup (transitive dependency missing), ASP.NET
+            // Core silently injects null and every new-schema work item gets a degraded identity-only
+            // 200 with no configs — no startup error, no warning log at this site. Add a startup
+            // validation or at minimum a warning log here when assignmentEnricher is null and
+            // request.ProviderConfigs is also null (new-schema work item with no enricher).
+        }
+
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
 
         // Inject project secrets at delivery time (not serialized in payload for security)
@@ -183,6 +243,17 @@ public static class WorkItemEndpoints
 
         return TypedResults.Ok(message);
     }
+
+    /// <summary>
+    /// Builds a minimal <see cref="PipelineProject"/> stub for work items without a project ID.
+    /// Prevents null-ref in <see cref="AssignmentEnricher.EnrichAsync"/> which requires a non-null project.
+    /// </summary>
+    private static PipelineProject BuildMinimalProject(JobDistributionRequest request)
+        => new()
+        {
+            Id = request.ProjectId?.ToString() ?? Guid.Empty.ToString(),
+            Name = request.ProjectName ?? string.Empty
+        };
 
     // ── POST /{id}/status — mirror of monolith ────────────────────────────
 
@@ -256,6 +327,12 @@ public static class WorkItemEndpoints
     /// Also materialises an in-memory <see cref="PipelineRun"/> in <see cref="IOrchestratorRunService"/>
     /// so the UI can show the run immediately (Option A, Req 1a.1).
     /// Returns 201 + new GUID. Maps Postgres 23505 unique violation to 409 Conflict.
+    /// <para>
+    /// Only identity fields are serialized to <c>WorkItems.Payload</c> (issue #2171).
+    /// Mutable config (ProviderConfigs, QualityGateConfigs, RepoSteeringContent, etc.) is stripped
+    /// from the stored payload; <c>GET /api/work-items/{id}/assignment</c> fetches it fresh at
+    /// dispatch time via <see cref="AssignmentEnricher"/>.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> CreateWorkItem(
         [FromBody] JobDistributionRequest request,
@@ -268,7 +345,13 @@ public static class WorkItemEndpoints
         var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
             ? parsedRunId
             : Guid.NewGuid();
-        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        // Serialize only identity fields to the payload (issue #2171).
+        // Mutable config (ProviderConfigs, QGs, steering, MCP servers, issue context) is fetched
+        // fresh at GetAssignment time. This prevents stale config being served to agents that
+        // were queued for extended periods.
+        var minimalPayload = BuildMinimalPayload(request);
+        var payloadJson = JsonSerializer.Serialize(minimalPayload, PipelineJsonOptions.Default);
 
         var entity = new WorkItemEntity
         {
@@ -326,6 +409,86 @@ public static class WorkItemEndpoints
             runService.AddRun(run);
 
         return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
+    }
+
+    /// <summary>
+    /// Builds a minimal <see cref="JobDistributionRequest"/> containing only identity fields
+    /// that are stored in <c>WorkItems.Payload</c>. Strips all mutable config that will be
+    /// re-fetched at assignment time.
+    /// </summary>
+    internal static JobDistributionRequest BuildMinimalPayload(JobDistributionRequest request)
+    {
+        return new JobDistributionRequest
+        {
+            // Identity / non-reconstructable fields
+            IssueIdentifier = request.IssueIdentifier,
+            IssueProviderConfigId = request.IssueProviderConfigId,
+            RepoProviderConfigId = request.RepoProviderConfigId,
+            BrainProviderConfigId = request.BrainProviderConfigId,
+            PipelineProviderConfigId = request.PipelineProviderConfigId,
+            InitiatedBy = request.InitiatedBy,
+            TaskType = request.TaskType,
+            AgentSelector = request.AgentSelector,
+            TimeoutSeconds = request.TimeoutSeconds,
+            ProjectId = request.ProjectId,
+            ProjectName = request.ProjectName,
+            RunType = request.RunType,
+            RunId = request.RunId,
+            TraceContext = request.TraceContext,
+
+            // Audit / routing identity
+            // (ProjectName and InitiatedBy also kept above for GetPendingWorkItems display)
+
+            // Review-specific identity (not trivially re-fetchable at assignment time)
+            LinkedPullRequest = request.LinkedPullRequest,
+            ReviewPrTargetBranch = request.ReviewPrTargetBranch,
+            ReviewPrDescription = request.ReviewPrDescription,
+            ReviewPrAuthor = request.ReviewPrAuthor,
+
+            // Decomposition identity
+            // ProjectContext is pre-built by DispatchOrchestrationService.BuildDecompositionProjectContextAsync
+            // and consumed by WriteProjectContextStep, CloneProjectRepositoriesStep, DecompositionAnalysisStep,
+            // CreateSubIssuesStep, and AgentProviderResolver. It cannot be reconstructed at assignment time.
+            ProjectContext = request.ProjectContext,
+            DecompositionSource = request.DecompositionSource,
+
+            // Review-specific pre-fetched context
+            // LinkedIssueContexts is pre-fetched by DispatchOrchestrationService and consumed by
+            // ExtractLinkedIssuesStep and JobAssignmentMessageFactory. It is not re-fetched by
+            // AssignmentEnricher.EnrichCoreAsync, so it must be preserved here.
+            LinkedIssueContexts = request.LinkedIssueContexts,
+
+            // Consolidation identity
+            ConsolidationRunType = request.ConsolidationRunType,
+            ConsolidationTemplateId = request.ConsolidationTemplateId,
+            ConsolidationWorkspacePath = request.ConsolidationWorkspacePath,
+            AutoDispatch = request.AutoDispatch,
+
+            // Issue title kept for GetPendingWorkItems display (not mutable config)
+            IssueDetail = request.IssueDetail is not null
+                ? new IssueDetail
+                {
+                    Identifier = request.IssueDetail.Identifier,
+                    Title = request.IssueDetail.Title,
+                    Description = string.Empty, // Strip body; re-fetched at assignment time
+                    Labels = []
+                }
+                : null,
+
+            // All mutable config intentionally omitted (null):
+            // ProviderConfigs = null           ← absence detected as new-schema signal in GetAssignment
+            // PipelineConfiguration = null
+            // QualityGateConfigs = null
+            // ReviewerConfigs = null
+            // McpServers = null
+            // RepoSteeringContent = null
+            // ProjectSteeringContent = null
+            // IssueComments = null
+            // ParsedIssue = null
+            // ExistingAnalysis = null
+            // ResolvedProfileId = null         (re-resolved at assignment time)
+            // AgentProviderConfigId = null     (re-resolved at assignment time)
+        };
     }
 
     // ── GET /pending ──────────────────────────────────────────────────────
