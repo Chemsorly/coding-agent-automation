@@ -655,6 +655,58 @@ public sealed class ApiBackedServicesTests
     }
 
     [Fact]
+    public async Task PendingWorkQuery_ReviewTask_MapsToReviewRunType()
+    {
+        var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>();
+        var dto = new PendingWorkItemDto
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = "PR-42",
+            IssueProviderConfigId = "github",
+            TaskType = WorkItemTaskType.Review,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "kiro",
+            RetryCount = 0,
+            TimeoutSeconds = 0
+        };
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
+
+        var query = new ApiBackedPendingWorkQuery(mockClient.Object);
+        var result = await query.GetPendingJobsAsync();
+
+        result.Should().HaveCount(1, because: "exactly one pending item was returned by the mock");
+        result[0].RunType.Should().Be(PipelineRunType.Review,
+            because: "a queued Review job must display the Review badge, not the Impl badge (regression: #2159)");
+    }
+
+    [Fact]
+    public async Task PendingWorkQuery_DecompositionTask_MapsToDecompositionAnalysisRunType()
+    {
+        var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>();
+        var dto = new PendingWorkItemDto
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = "GH-100",
+            IssueProviderConfigId = "github",
+            TaskType = WorkItemTaskType.Decomposition,
+            CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "kiro",
+            RetryCount = 0,
+            TimeoutSeconds = 0
+        };
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
+
+        var query = new ApiBackedPendingWorkQuery(mockClient.Object);
+        var result = await query.GetPendingJobsAsync();
+
+        result.Should().HaveCount(1, because: "exactly one pending item was returned by the mock");
+        result[0].RunType.Should().Be(PipelineRunType.DecompositionAnalysis,
+            because: "a pending Decomposition job is always Phase 1 (analysis) — must display 'Decomp (A)', not 'Impl' (regression: #2159)");
+    }
+
+    [Fact]
     public void PendingWorkQuery_PendingCountInitiallyZero()
     {
         var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>();

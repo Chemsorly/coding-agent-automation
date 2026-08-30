@@ -47,9 +47,7 @@ internal sealed class ApiBackedPendingWorkQuery : IPendingWorkQuery
             RequiredLabels = item.AgentSelector
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             TaskType = item.TaskType,
-            RunType = item.TaskType == WorkItemTaskType.Consolidation
-                ? PipelineRunType.Consolidation
-                : PipelineRunType.Implementation
+            RunType = item.TaskType.ToDefaultRunType()
         }).ToList();
     }
 }
