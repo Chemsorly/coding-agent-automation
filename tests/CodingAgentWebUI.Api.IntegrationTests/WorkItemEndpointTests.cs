@@ -1042,21 +1042,27 @@ public sealed class WorkItemEndpointTests
             .ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
         items.Should().NotBeNull();
 
-        // Find our two items in the response (other tests may have created items too)
-        var lowIndex = items!.FindIndex(i => i.Id == lowWeightEntity.Id);
-        var highIndex = items!.FindIndex(i => i.Id == highWeightEntity.Id);
+        // Verify both entities carry the expected PriorityWeight values in the response
+        // (confirms that UpdateEntityPriorityWeight persisted before the HTTP call was made)
+        var lowItem = items!.FirstOrDefault(i => i.Id == lowWeightEntity.Id);
+        var highItem = items!.FirstOrDefault(i => i.Id == highWeightEntity.Id);
 
-        lowIndex.Should().BeGreaterThan(-1, "low-weight item must be in pending list");
-        highIndex.Should().BeGreaterThan(-1, "high-weight item must be in pending list");
-        // TODO: This relative-index assertion is fragile in the shared InMemory DB: interleaved items from
-        // other tests can satisfy highIndex < lowIndex by coincidence even if ordering were broken.
-        // Fix: filter `items` to only the two fixture IDs before asserting their relative positions,
-        // or assert the universal ordering invariant across all returned items.
-        // TODO: UpdateEntityPriorityWeight is not verified to have persisted before the HTTP call.
-        // Add a read-back assertion on both entities' PriorityWeight before hitting the API to make
-        // failure diagnosis unambiguous.
-        highIndex.Should().BeLessThan(lowIndex,
+        lowItem.Should().NotBeNull("low-weight item must be in pending list");
+        highItem.Should().NotBeNull("high-weight item must be in pending list");
+        lowItem!.PriorityWeight.Should().Be(0, "low-weight item must have PriorityWeight=0 as seeded");
+        highItem!.PriorityWeight.Should().Be(100, "high-weight item must have PriorityWeight=100 as seeded");
+
+        // Filter to just the two fixture items and assert the ordering invariant directly,
+        // so interleaved items from other parallel tests cannot produce false positives.
+        var fixtureItems = items
+            .Where(i => i.Id == lowWeightEntity.Id || i.Id == highWeightEntity.Id)
+            .ToList();
+
+        fixtureItems.Should().HaveCount(2);
+        fixtureItems[0].Id.Should().Be(highWeightEntity.Id,
             "high-weight item must appear before low-weight item regardless of CreatedAt");
+        fixtureItems[1].Id.Should().Be(lowWeightEntity.Id,
+            "low-weight item must appear after high-weight item");
     }
 
     /// <summary>
@@ -1201,14 +1207,17 @@ public sealed class WorkItemEndpointTests
         var entity = SeedEntity(WorkItemStatus.Failed, failureReason: FailureReason.AgentError);
         UpdateEntityPriorityWeight(entity.Id, 100);
 
+        // Verify the weight was persisted before calling requeue, so a silent failure in
+        // UpdateEntityPriorityWeight cannot mask a bug in the requeue transition.
+        using (var dbBefore = _factory.CreateDbContext())
+        {
+            var before = await dbBefore.WorkItems.FindAsync(entity.Id);
+            before!.PriorityWeight.Should().Be(100, "PriorityWeight must be 100 before requeue is called");
+        }
+
         // Requeue Failed → Pending
         var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        // TODO: The before-state (PriorityWeight == 100 at the time the requeue endpoint is called)
-        // is not verified here. If UpdateEntityPriorityWeight were to fail silently, or if requeue
-        // somehow reset and then restored PriorityWeight, this test would not catch it.
-        // Fix: add a read-back assertion on the entity's PriorityWeight *before* the requeue call.
 
         // PriorityWeight must be preserved (requeue does not touch the column)
         using var db = _factory.CreateDbContext();
