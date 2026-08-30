@@ -96,8 +96,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 
         _logger.Information(
-            "RunLifecycleManager.FailRunAsync: run {RunId} terminal (status=Failed, step={Step}, highWater={HighWater}, reason={Reason}, agent={AgentId})",
-            runId, run.CurrentStep, run.HighWaterMark, failureReason, run.AgentId ?? "none");
+            "RunLifecycleManager.FailRunAsync: run {RunId} terminal (status=Failed, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, reason={Reason}, agent={AgentId})",
+            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, failureReason, run.AgentId ?? "none");
 
         return run;
     }
