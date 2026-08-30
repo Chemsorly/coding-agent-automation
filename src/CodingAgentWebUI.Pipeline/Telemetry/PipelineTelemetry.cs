@@ -300,19 +300,46 @@ public static class PipelineTelemetry
     /// <summary>
     /// Creates a short-lived <see cref="ActivityKind.Producer"/> span and captures its
     /// W3C trace context (traceparent + tracestate) into a dictionary suitable for serialization.
-    /// This guarantees a traceparent is always produced regardless of ambient Activity.Current.
+    /// When an ambient <see cref="Activity.Current"/> already exists, its context is used directly
+    /// rather than spawning an intermediate span — this prevents dead-branch orphan spans in the
+    /// trace backend. A new span is only minted when there is no ambient activity context.
     /// </summary>
     public static Dictionary<string, string>? CaptureTraceContext(string activityName)
     {
-        using var activity = ActivitySource.StartActivity(activityName, ActivityKind.Producer);
-        if (activity is null)
-            return null;
+        // Prefer the ambient span's context directly to avoid creating a short-lived dead-branch
+        // Producer span that appears as an orphan in Grafana Tempo.
+        var ctx = Activity.Current?.Context ?? default;
+        if (ctx == default)
+        {
+            using var span = ActivitySource.StartActivity(activityName, ActivityKind.Producer);
+            if (span is null)
+                return null;
+            ctx = span.Context;
+        }
 
+        var carrier = new Dictionary<string, string>();
+        TraceContextPropagator.Inject(
+            new PropagationContext(ctx, Baggage.Current),
+            carrier,
+            static (c, key, value) => c[key] = value);
+        return carrier.Count > 0 ? carrier : null;
+    }
+
+    /// <summary>
+    /// Serializes a W3C traceparent (and tracestate when present) from an existing
+    /// <see cref="Activity"/> using the OTel <see cref="TraceContextPropagator"/>.
+    /// Returns the <c>traceparent</c> header value, or <see langword="null"/> when
+    /// <paramref name="activity"/> is <see langword="null"/>.
+    /// Prefer this over manual string formatting to ensure <c>tracestate</c> is preserved.
+    /// </summary>
+    public static string? FormatTraceParent(Activity? activity)
+    {
+        if (activity is null) return null;
         var carrier = new Dictionary<string, string>();
         TraceContextPropagator.Inject(
             new PropagationContext(activity.Context, Baggage.Current),
             carrier,
             static (c, key, value) => c[key] = value);
-        return carrier.Count > 0 ? carrier : null;
+        return carrier.GetValueOrDefault("traceparent");
     }
 }

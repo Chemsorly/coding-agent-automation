@@ -215,7 +215,8 @@ public sealed class DispatchLoop
             AgentApiKeySecretName = _options.AgentApiKeySecretName,
             AgentServiceAccountName = _options.AgentServiceAccountName,
             Namespace = _options.Namespace,
-            OpencodeConfigSecretName = _options.OpencodeConfigSecretName
+            OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
+            TraceParent = item.TraceParent
         };
 
         var created = await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, pvcName, ct);

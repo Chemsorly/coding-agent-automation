@@ -37,4 +37,11 @@ public sealed record PendingWorkItemDto
 
     /// <summary>Project ID from the <c>WorkItemEntity.ProjectId</c> column. Null when item has no project.</summary>
     public Guid? ProjectId { get; init; }
+
+    /// <summary>
+    /// W3C traceparent captured at WorkItem creation time (API span).
+    /// Used by the Job Controller to inject TRACEPARENT into the worker K8s Job env so
+    /// worker spans attach to the originating API trace rather than starting a new root trace.
+    /// </summary>
+    public string? TraceParent { get; init; }
 }

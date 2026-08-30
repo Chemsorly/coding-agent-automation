@@ -96,6 +96,9 @@ These settings control the lifetime of ephemeral chat session pods dispatched by
 | `workDistribution.dispatch.agentJobTimeoutSeconds` | 7200 | Maximum lifetime (seconds) of any agent K8s Job (work-item agents, consolidation jobs, chat pods). Sets `activeDeadlineSeconds` on the Job spec — the pod is forcibly terminated by Kubernetes when this deadline passes. Minimum: 60s. |
 | `workDistribution.dispatch.chatPodConnectTimeoutSeconds` | 120 | Maximum time (seconds) the dispatcher waits for a chat pod to connect to the hub after the Job is created before aborting and returning an error to the caller. Minimum: 5s. |
 | `workDistribution.dispatch.chatTerminationGracePeriodSeconds` | 120 | `terminationGracePeriodSeconds` on the chat pod spec — time Kubernetes allows for graceful shutdown before SIGKILL. Minimum: 5s. |
+| `workDistribution.dispatch.chatIdleTimeoutSeconds` | 90 | Seconds a chat pod may remain idle (no client keepalive heartbeat) before the watcher terminates it automatically. The Blazor UI sends a heartbeat while the chat window is open; closed or crashed windows are cleaned up within this window. Minimum: 10s. |
+
+> **Note on `api.replicas`:** The `WorkDistribution:Dispatch:ChatReplicaCount` env var is automatically derived from `api.replicas` by the Helm chart — it is not a standalone `workDistribution.dispatch.*` key. When Redis is absent and `api.replicas > 1`, `ChatJobDispatcher` emits a startup warning that keepalive heartbeats may be silently lost on non-watcher replicas.
 
 ## Quality Gate Settings
 
@@ -295,7 +298,7 @@ The maintenance service is triggered by the Scheduler via `POST /api/scheduler/m
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
-| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-orchestrator`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`) |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-orchestrator`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). For the Orchestrator, configure via `otel.orchestratorServiceName` in `values.yaml`. Other processes use fixed names set in their own deployment templates. |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
 
 ### Agent Containers

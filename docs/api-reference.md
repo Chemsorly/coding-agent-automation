@@ -185,7 +185,7 @@ Download the full pipeline configuration as a JSON file.
 **Example request:**
 
 ```bash
-curl -H "Authorization: Bearer $AGENT_API_KEY" \
+curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
   -o pipeline-config-export.json \
   http://localhost:8080/api/config/export
 ```
@@ -267,7 +267,7 @@ Upload a configuration bundle to replace all existing pipeline configuration.
 
 ```bash
 curl -X POST \
-  -H "Authorization: Bearer $AGENT_API_KEY" \
+  -H "Authorization: Bearer $OPERATOR_API_KEY" \
   -F "file=@pipeline-config-export.json" \
   http://localhost:8080/api/config/import
 ```

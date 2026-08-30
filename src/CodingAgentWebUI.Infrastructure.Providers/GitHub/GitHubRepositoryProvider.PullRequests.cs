@@ -2,6 +2,7 @@ using Octokit;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using Serilog;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
@@ -427,8 +428,13 @@ public partial class GitHubRepositoryProvider
 
             foreach (var evt in events)
             {
-                // Look for cross-referenced events that indicate closing references
-                if (evt.Event == EventInfoState.Crossreferenced && evt.Source?.Issue != null)
+                // Look for cross-referenced events that indicate closing references.
+                // Filter out events where the source is a PR (evt.Source.Issue.PullRequest != null):
+                // GitHub fires these when another PR mentions this one, but we only want linked
+                // *issues*, not back-references from other PRs (which can include the PR's own number).
+                if (evt.Event == EventInfoState.Crossreferenced
+                    && evt.Source?.Issue != null
+                    && evt.Source.Issue.PullRequest == null)
                 {
                     issueNumbers.Add(evt.Source.Issue.Number.ToString());
                 }
@@ -446,14 +452,19 @@ public partial class GitHubRepositoryProvider
             Log.Warning(ex, "Failed to extract linked issues via timeline API for PR #{PrNumber}, falling back to parsing", prNumber);
         }
 
-        // Priority (b) and (c): Parse PR title and body for issue references
+        // Priority (b) and (c): Parse PR title and body for issue references.
+        // Title uses full ParseIssueReferences (short, unambiguous, always contains (#N)).
+        // Body uses ParseClosingKeywords only (Closes/Fixes/Resolves #N) — the broad SimpleHashPattern
+        // picks up any bare #N in the body prose (e.g., "PR #2194" in AI review text), which can
+        // return spurious numbers including the PR's own number.
         var pr = await ExecuteWithResilienceAsync(
             client => client.PullRequest.Get(Owner, Repo, prNumber),
             "ExtractLinkedIssues.GetPr", ct);
 
-        // Parse title first (priority b), then body (priority c)
+        // Title first (priority b) — full patterns including (#N) parenthetical convention
         ParseIssueReferences(pr.Title, issueNumbers);
-        ParseIssueReferences(pr.Body, issueNumbers);
+        // Body (priority c) — closing keywords only to avoid false positives from prose mentions
+        IssueReferenceParser.ParseClosingKeywords(pr.Body, issueNumbers);
 
         return issueNumbers.ToList().AsReadOnly();
     }

@@ -215,7 +215,8 @@ public sealed class ConsolidationDispatchLoop
             AgentServiceAccountName = _options.AgentServiceAccountName,
             Namespace = _options.Namespace,
             OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
-            ProjectSecrets = claimed.ProjectSecrets
+            ProjectSecrets = claimed.ProjectSecrets,
+            TraceParent = item.TraceParent
         };
 
         var job = JobSpecBuilder.Build(template, buildContext);

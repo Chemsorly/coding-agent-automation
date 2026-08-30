@@ -43,6 +43,12 @@ public static class JobSpecBuilder
         public Dictionary<string, string>? ProjectSecrets { get; init; }
 
         /// <summary>
+        /// W3C traceparent captured at WorkItem creation time (API span).
+        /// When non-null, injected as TRACEPARENT env var so the worker can restore the trace context.
+        /// </summary>
+        public string? TraceParent { get; init; }
+
+        /// <summary>
         /// Name of the per-Job K8s Secret that holds the derived agent API key (Spec 043 Req 8a).
         /// When set, the Job container receives <c>AGENT_API_KEY</c> from this Secret instead of
         /// mounting the master <c>agent-api-key</c> Secret. This prevents compromised agent pods
@@ -241,6 +247,11 @@ public static class JobSpecBuilder
 
         // Per-job service name for trace/metric attribution
         envVars.Add(new V1EnvVar { Name = "OTEL_SERVICE_NAME", Value = $"coding-agent-worker-{ctx.JobName}" });
+
+        // Propagate the originating W3C traceparent so the worker's spans attach to the upstream
+        // API trace rather than starting a disconnected root trace.
+        if (!string.IsNullOrEmpty(ctx.TraceParent))
+            envVars.Add(new V1EnvVar { Name = "TRACEPARENT", Value = ctx.TraceParent });
 
         // Propagate log level so worker pods use the same verbosity as the orchestrator
         var logLevel = Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel);
