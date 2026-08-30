@@ -675,10 +675,9 @@ public sealed class ApiBackedServicesTests
         var query = new ApiBackedPendingWorkQuery(mockClient.Object);
         var result = await query.GetPendingJobsAsync();
 
+        result.Should().HaveCount(1, because: "exactly one pending item was returned by the mock");
         result[0].RunType.Should().Be(PipelineRunType.Review,
             because: "a queued Review job must display the Review badge, not the Impl badge (regression: #2159)");
-        // TODO: Add result.Should().HaveCount(1) guard before indexing result[0] so that an empty
-        // list produces a clear assertion failure rather than an ArgumentOutOfRangeException. (#2159)
     }
 
     [Fact]
@@ -702,10 +701,9 @@ public sealed class ApiBackedServicesTests
         var query = new ApiBackedPendingWorkQuery(mockClient.Object);
         var result = await query.GetPendingJobsAsync();
 
+        result.Should().HaveCount(1, because: "exactly one pending item was returned by the mock");
         result[0].RunType.Should().Be(PipelineRunType.DecompositionAnalysis,
             because: "a pending Decomposition job is always Phase 1 (analysis) — must display 'Decomp (A)', not 'Impl' (regression: #2159)");
-        // TODO: Add result.Should().HaveCount(1) guard before indexing result[0] so that an empty
-        // list produces a clear assertion failure rather than an ArgumentOutOfRangeException. (#2159)
     }
 
     [Fact]
