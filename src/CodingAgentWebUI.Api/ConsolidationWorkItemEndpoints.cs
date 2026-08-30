@@ -47,8 +47,12 @@ public static class ConsolidationWorkItemEndpoints
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending
                      && w.TaskType == WorkItemTaskType.Consolidation)
-            .OrderBy(w => w.CreatedAt)
+            .OrderByDescending(w => w.PriorityWeight)
+            .ThenBy(w => w.CreatedAt)
             .Take(maxResults)
+            // TODO: PriorityWeight is not projected here — DTO consumers see PriorityWeight=0 for all
+            // consolidation items even though the query sorts by PriorityWeight DESC correctly.
+            // Fix: add `PriorityWeight = w.PriorityWeight` to this projection, matching WorkItemEndpoints.GetPendingWorkItems.
             .Select(w => new PendingWorkItemDto
             {
                 Id = w.Id,

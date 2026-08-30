@@ -22,6 +22,12 @@ public sealed record PendingWorkItemDto
     /// </summary>
     public required int TimeoutSeconds { get; init; }
 
+    /// <summary>
+    /// Intra-queue dispatch priority. Higher values are dispatched first (ORDER BY PriorityWeight DESC, CreatedAt ASC).
+    /// Manual dispatches receive 100; closed-loop dispatches receive 0 (the default). Range: 0–1000.
+    /// </summary>
+    public int PriorityWeight { get; init; }
+
     // ── Display fields for the Agent Monitoring Job Queue UI ──────────────
     // Populated by the API from the Payload JSONB column and the ProjectId column.
     // The Job Controller claim path never reads these fields; they are null-safe additions.

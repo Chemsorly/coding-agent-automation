@@ -5,35 +5,44 @@ using FsCheck.Xunit;
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Property-based tests for DispatchService FIFO dispatch ordering.
-/// **Validates: Requirements 5.7**
+/// Property-based tests for DispatchService dispatch ordering.
+/// Validates the two-key sort invariant: ORDER BY PriorityWeight DESC, CreatedAt ASC.
+/// Higher-priority items are always dispatched first; equal-weight items fall back to FIFO.
+/// **Validates: Requirements 5.7 (updated for #2172)**
 /// </summary>
+// TODO: These property tests sort an in-memory list and do not exercise DispatchStateBuilder.BuildStateAsync
+// or any LINQ-to-EF query. If the OrderByDescending(w => w.PriorityWeight).ThenBy(w => w.CreatedAt) in
+// DispatchStateBuilder.cs were reverted, none of these tests would catch it.
+// Fix: add a test that exercises DispatchStateBuilder directly (or update DispatchStateBuilderTests to
+// assert on the ordering of state.PendingItems when items have different PriorityWeight values).
 public class DispatchServiceFifoOrderingPropertyTests
 {
     /// <summary>
-    /// Property 9: FIFO Dispatch Ordering
-    /// For any list of pending work items with random CreatedAt timestamps,
-    /// the dispatch order (ORDER BY CreatedAt ASC) always produces a
-    /// non-decreasing sequence of CreatedAt values.
-    /// This validates that the DispatchService processes items in FIFO order.
+    /// Property: For any list of pending work items with random PriorityWeight and CreatedAt values,
+    /// dispatch order (ORDER BY PriorityWeight DESC, CreatedAt ASC) is non-decreasing by PriorityWeight
+    /// in DESC direction (i.e. each item's weight is ≤ the previous item's weight).
     /// </summary>
     [Property(MaxTest = 20)]
-    public bool DispatchOrder_AlwaysMatchesCreatedAtAscending(int[] offsets)
+    public bool DispatchOrder_PriorityWeightDescending(int[] weights)
     {
-        // Generate work items from random second offsets
-        var items = offsets.Select((offset, i) => new
+        // Generate work items with random weights and arbitrary timestamps
+        var items = weights.Select((w, i) => new
         {
             Id = Guid.NewGuid(),
-            CreatedAt = DateTimeOffset.UnixEpoch.AddSeconds(Math.Abs(offset) % 10_000_000)
+            PriorityWeight = Math.Abs(w) % 1001, // clamp to valid range 0–1000
+            CreatedAt = DateTimeOffset.UnixEpoch.AddSeconds(i * 60)
         }).ToList();
 
-        // Simulate the DispatchService query: ORDER BY CreatedAt ASC
-        var dispatchOrder = items.OrderBy(x => x.CreatedAt).ToList();
+        // Simulate the dispatch query: ORDER BY PriorityWeight DESC, CreatedAt ASC
+        var dispatchOrder = items
+            .OrderByDescending(x => x.PriorityWeight)
+            .ThenBy(x => x.CreatedAt)
+            .ToList();
 
-        // Assert: dispatch order is non-decreasing by CreatedAt
+        // Assert: PriorityWeight is non-increasing across the dispatch sequence
         for (var i = 1; i < dispatchOrder.Count; i++)
         {
-            if (dispatchOrder[i].CreatedAt < dispatchOrder[i - 1].CreatedAt)
+            if (dispatchOrder[i].PriorityWeight > dispatchOrder[i - 1].PriorityWeight)
                 return false;
         }
 
@@ -42,40 +51,108 @@ public class DispatchServiceFifoOrderingPropertyTests
     }
 
     /// <summary>
-    /// Property 9 (supplementary): The first dispatched item always has the
-    /// earliest CreatedAt among all pending items.
+    /// Property: Among items with equal PriorityWeight, dispatch order is FIFO (CreatedAt ASC).
     /// </summary>
     [Property(MaxTest = 20)]
-    public bool FirstDispatchedItem_HasEarliestCreatedAt(NonEmptyArray<int> offsets)
+    public bool DispatchOrder_EqualWeightItemsAreFifo(NonEmptyArray<int> offsets)
     {
+        // All items have the same PriorityWeight — tie-break is FIFO
+        const int sameWeight = 50;
         var items = offsets.Get.Select((offset, i) => new
         {
-            Id = Guid.NewGuid(),
+            Id = i,
+            PriorityWeight = sameWeight,
             CreatedAt = DateTimeOffset.UnixEpoch.AddSeconds(Math.Abs(offset) % 10_000_000)
         }).ToList();
 
-        var dispatchOrder = items.OrderBy(x => x.CreatedAt).ToList();
-        var earliest = items.Min(x => x.CreatedAt);
+        var dispatchOrder = items
+            .OrderByDescending(x => x.PriorityWeight)
+            .ThenBy(x => x.CreatedAt)
+            .ToList();
 
-        return dispatchOrder[0].CreatedAt == earliest;
+        // CreatedAt should be non-decreasing within the same weight group
+        for (var i = 1; i < dispatchOrder.Count; i++)
+        {
+            if (dispatchOrder[i].CreatedAt < dispatchOrder[i - 1].CreatedAt)
+                return false;
+        }
+
+        return dispatchOrder.Count == items.Count;
     }
 
     /// <summary>
-    /// Property 9 (supplementary): Dispatch ordering is deterministic —
-    /// sorting the same list twice yields the same sequence.
+    /// Property: The first dispatched item always has the maximum PriorityWeight among all pending items.
     /// </summary>
     [Property(MaxTest = 20)]
-    public bool DispatchOrder_IsDeterministic(int[] offsets)
+    public bool FirstDispatchedItem_HasMaxPriorityWeight(NonEmptyArray<int> weights)
     {
-        var items = offsets.Select((offset, i) => new
+        var items = weights.Get.Select((w, i) => new
         {
-            Id = i, // Use index as stable ID
-            CreatedAt = DateTimeOffset.UnixEpoch.AddSeconds(Math.Abs(offset) % 10_000_000)
+            Id = i,
+            PriorityWeight = Math.Abs(w) % 1001,
+            CreatedAt = DateTimeOffset.UnixEpoch.AddSeconds(i * 60)
         }).ToList();
 
-        var order1 = items.OrderBy(x => x.CreatedAt).Select(x => x.Id).ToList();
-        var order2 = items.OrderBy(x => x.CreatedAt).Select(x => x.Id).ToList();
+        var dispatchOrder = items
+            .OrderByDescending(x => x.PriorityWeight)
+            .ThenBy(x => x.CreatedAt)
+            .ToList();
+
+        var maxWeight = items.Max(x => x.PriorityWeight);
+        return dispatchOrder[0].PriorityWeight == maxWeight;
+    }
+
+    /// <summary>
+    /// Property: Dispatch ordering is deterministic — sorting the same list twice yields the same sequence.
+    /// </summary>
+    [Property(MaxTest = 20)]
+    public bool DispatchOrder_IsDeterministic(int[] weights)
+    {
+        var items = weights.Select((w, i) => new
+        {
+            Id = i, // stable ID
+            PriorityWeight = Math.Abs(w) % 1001,
+            CreatedAt = DateTimeOffset.UnixEpoch.AddSeconds(i * 60)
+        }).ToList();
+
+        var order1 = items
+            .OrderByDescending(x => x.PriorityWeight)
+            .ThenBy(x => x.CreatedAt)
+            .Select(x => x.Id)
+            .ToList();
+
+        var order2 = items
+            .OrderByDescending(x => x.PriorityWeight)
+            .ThenBy(x => x.CreatedAt)
+            .Select(x => x.Id)
+            .ToList();
 
         return order1.SequenceEqual(order2);
+    }
+
+    /// <summary>
+    /// Property: A high-weight item (PriorityWeight > 0) always appears before a low-weight item
+    /// (PriorityWeight == 0) in dispatch order, regardless of CreatedAt.
+    /// </summary>
+    [Property(MaxTest = 20)]
+    public bool HighWeightItem_AlwaysDispatchedBeforeLowWeightItem(PositiveInt highWeight, int createdAtOffsetSeconds)
+    {
+        var high = highWeight.Get % 1000 + 1; // 1–1000
+        var lowCreatedAt = DateTimeOffset.UnixEpoch; // created first (earliest)
+        var highCreatedAt = DateTimeOffset.UnixEpoch.AddSeconds(Math.Abs(createdAtOffsetSeconds)); // created after
+
+        var items = new[]
+        {
+            new { Id = "low",  PriorityWeight = 0,    CreatedAt = lowCreatedAt  }, // lower weight, older
+            new { Id = "high", PriorityWeight = high, CreatedAt = highCreatedAt }  // higher weight, newer
+        };
+
+        var dispatchOrder = items
+            .OrderByDescending(x => x.PriorityWeight)
+            .ThenBy(x => x.CreatedAt)
+            .ToList();
+
+        // High-weight item must come first despite being created later
+        return dispatchOrder[0].Id == "high";
     }
 }

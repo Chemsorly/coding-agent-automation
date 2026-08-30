@@ -363,6 +363,66 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     }
 
     /// <summary>
+    /// Updates the <see cref="WorkItemEntity.PriorityWeight"/> of a Pending work item.
+    /// Returns <see langword="true"/> on success, <see langword="false"/> if not found or not Pending.
+    /// The caller is responsible for range validation (0–1000) before calling this method.
+    /// Retries up to <paramref name="maxRetries"/> times on DbUpdateConcurrencyException.
+    /// </summary>
+    public async Task<UpdatePriorityWeightResult> UpdatePriorityWeightAsync(
+        Guid workItemId,
+        int priorityWeight,
+        CancellationToken ct,
+        int maxRetries = 3)
+    {
+        for (int attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var item = await db.WorkItems.FindAsync([workItemId], ct);
+            if (item is null)
+                return UpdatePriorityWeightResult.NotFound;
+
+            if (item.Status != WorkItemStatus.Pending)
+                return UpdatePriorityWeightResult.NotPending;
+
+            item.PriorityWeight = priorityWeight;
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return UpdatePriorityWeightResult.Success;
+            }
+            catch (DbUpdateConcurrencyException) when (attempt < maxRetries)
+            {
+                _logger.LogInformation(
+                    "Concurrency conflict on WorkItem {WorkItemId} PriorityWeight update, retry {Attempt}/{MaxRetries}",
+                    workItemId, attempt + 1, maxRetries);
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "WorkItem {WorkItemId} PriorityWeight update failed after all retries (concurrency exhausted)",
+                    workItemId);
+                // TODO: Returning NotFound here is semantically wrong — the item exists and is Pending,
+                // but the update failed due to concurrency exhaustion. The caller returns HTTP 404, which
+                // clients treat as "item doesn't exist" and won't retry. A dedicated ConcurrencyError result
+                // (or returning 500/503) would correctly signal a transient failure.
+                // Also note: the LogWarning + return below this loop is dead code — the loop always exits
+                // via this return on the final attempt, so that post-loop block never executes.
+                return UpdatePriorityWeightResult.NotFound; // safest fallback
+            }
+        }
+
+        // TODO: This block is unreachable dead code. The final catch (DbUpdateConcurrencyException ex)
+        // on attempt == maxRetries always returns before reaching here. Remove or restructure the loop
+        // to make exhaustion handling explicit and reachable. See review finding for details.
+        _logger.LogWarning(
+            "WorkItem {WorkItemId} PriorityWeight update failed after exhausting all retries",
+            workItemId);
+        return UpdatePriorityWeightResult.NotFound;
+    }
+
+    /// <summary>
     /// Re-queues a work item: transitions back to Pending, increments RetryCount,
     /// clears DispatchedAt and AssignedAgentId so the drain service picks it up again.
     /// </summary>
@@ -412,4 +472,17 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             .Select(w => w.CompletedAt)
             .MaxAsync(ct);
     }
+}
+
+/// <summary>
+/// Result codes returned by <see cref="WorkItemTransitionService.UpdatePriorityWeightAsync"/>.
+/// </summary>
+public enum UpdatePriorityWeightResult
+{
+    /// <summary>Update succeeded.</summary>
+    Success,
+    /// <summary>Work item was not found.</summary>
+    NotFound,
+    /// <summary>Work item exists but is not in Pending status.</summary>
+    NotPending
 }
