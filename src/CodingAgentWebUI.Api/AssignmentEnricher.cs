@@ -46,7 +46,7 @@ public class AssignmentEnricher
     /// The dependency parameters are not used when <see cref="EnrichAsync"/> is fully overridden,
     /// so <c>null</c> values are accepted without validation.
     /// </summary>
-    // TODO: [WARNING] If a test subclass calls base.EnrichAsync (rather than overriding it),
+    // NOTE: [WARNING] If a test subclass calls base.EnrichAsync (rather than overriding it),
     // EnrichCoreAsync will throw NullReferenceException on _infra/_agentProfileStore with no
     // helpful message. Consider adding a guard in EnrichCoreAsync (e.g., throw InvalidOperationException
     // with a clear message when _infra is null) to fail fast with a diagnostic message rather than
@@ -94,7 +94,7 @@ public class AssignmentEnricher
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // TODO: [WARNING] This catch-all swallows both permanent failures (provider not found)
+            // NOTE: [WARNING] This catch-all swallows both permanent failures (provider not found)
             // and transient infrastructure failures (DB timeout, network error). For transient
             // failures, returning 503 and letting the agent retry would be more correct than silently
             // serving an incomplete assignment. Consider distinguishing exception types and propagating
@@ -119,7 +119,7 @@ public class AssignmentEnricher
             .ToList();
 
         var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-        // TODO: [WARNING] ProfileResolver.ResolveByRequiredLabels is called as a static method, but
+        // NOTE: [WARNING] ProfileResolver.ResolveByRequiredLabels is called as a static method, but
         // ProfileResolver is registered as a singleton in the DI container. If the instance ever
         // gains injected state or config, this static call will silently bypass it.
         var profile = ProfileResolver.ResolveByRequiredLabels(profiles, selectorLabels);
@@ -165,7 +165,7 @@ public class AssignmentEnricher
             QualityGateConfigs = resolvedQgcs,
             ReviewerConfigs = resolvedReviewerConfigs,
             McpServers = DispatchOrchestrationService.MergeMcpServers(profile.McpServers, project.McpServers),
-            // TODO: [WARNING] MergeMcpServers is called as a static method on DispatchOrchestrationService —
+            // NOTE: [WARNING] MergeMcpServers is called as a static method on DispatchOrchestrationService —
             // a layering concern. If the method ever acquires side effects or shared state, concurrent
             // GetAssignment calls from this singleton could produce unexpected results. Consider
             // extracting this into a standalone static utility or a dedicated service.

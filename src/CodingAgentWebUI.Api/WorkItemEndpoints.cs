@@ -199,7 +199,7 @@ public static class WorkItemEndpoints
         // ── Backward-compatibility: detect payload schema ─────────────────
         // Old schema: ProviderConfigs != null → serve from frozen snapshot.
         // New schema: ProviderConfigs == null → fresh-fetch all mutable config.
-        // TODO: [WARNING] The null-discriminator is fragile: an old-schema row where ProviderConfigs
+        // NOTE: [WARNING] The null-discriminator is fragile: an old-schema row where ProviderConfigs
         // happened to deserialize as null (serialization bug, manually inserted row, future
         // [JsonIgnore] refactor) would be misclassified as new-schema and enter the enrichment path.
         // A versioned discriminator field (e.g., PayloadSchemaVersion) would eliminate the ambiguity.
@@ -223,7 +223,7 @@ public static class WorkItemEndpoints
                 request = enriched;
             // If enrichment fails, fall through to serve the identity-only request as a
             // best-effort degraded response (missing configs, but RunId/IssueIdentifier intact).
-            // TODO: [WARNING] assignmentEnricher is nullable ([FromServices] optional). If the DI
+            // NOTE: [WARNING] assignmentEnricher is nullable ([FromServices] optional). If the DI
             // container fails to resolve it at startup (transitive dependency missing), ASP.NET
             // Core silently injects null and every new-schema work item gets a degraded identity-only
             // 200 with no configs — no startup error, no warning log at this site. Add a startup
