@@ -525,6 +525,85 @@ public class WorkItemTransitionServiceAdditionalTests
         act.Should().NotThrow("constructor catches the exception and runs without Polly");
     }
 
+    // ── UpdatePriorityWeightAsync ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdatePriorityWeightAsync_ItemNotFound_ReturnsNotFound()
+    {
+        var opts = CreateDbOptions();
+        await using var ctx = new TestPipelineDbContext(opts);
+        ctx.Database.EnsureCreated();
+
+        var svc = CreateService(opts);
+        var result = await svc.UpdatePriorityWeightAsync(Guid.NewGuid(), 50, CancellationToken.None);
+
+        result.Should().Be(UpdatePriorityWeightResult.NotFound);
+    }
+
+    [Fact]
+    public async Task UpdatePriorityWeightAsync_ItemNotPending_ReturnsNotPending()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, status: WorkItemStatus.Running);
+
+        var svc = CreateService(opts);
+        var result = await svc.UpdatePriorityWeightAsync(item.Id, 50, CancellationToken.None);
+
+        result.Should().Be(UpdatePriorityWeightResult.NotPending);
+    }
+
+    [Fact]
+    public async Task UpdatePriorityWeightAsync_PendingItem_UpdatesWeightAndReturnsSuccess()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, status: WorkItemStatus.Pending);
+
+        var svc = CreateService(opts);
+        var result = await svc.UpdatePriorityWeightAsync(item.Id, 250, CancellationToken.None);
+
+        result.Should().Be(UpdatePriorityWeightResult.Success);
+
+        await using var verify = new TestPipelineDbContext(opts);
+        var updated = await verify.WorkItems.FindAsync(item.Id);
+        updated!.PriorityWeight.Should().Be(250);
+    }
+
+    [Fact]
+    public async Task UpdatePriorityWeightAsync_AllRetriesExhausted_ReturnsNotFound()
+    {
+        // Arrange: factory throws DbUpdateConcurrencyException on both save calls.
+        // maxRetries=1 means loop runs: attempt=0 (throws, caught by when(attempt<maxRetries), logs, continues),
+        // then attempt=1 (throws, caught by final catch, returns NotFound).
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, status: WorkItemStatus.Pending);
+
+        var factory = new ThrowingOnSaveDbContextFactory(opts, [1, 2]); // throw on 1st and 2nd save
+        var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        var result = await svc.UpdatePriorityWeightAsync(item.Id, 50, CancellationToken.None, maxRetries: 1);
+
+        result.Should().Be(UpdatePriorityWeightResult.NotFound);
+    }
+
+    [Fact]
+    public async Task UpdatePriorityWeightAsync_FirstAttemptThrows_SecondSucceeds_ReturnsSuccess()
+    {
+        // Arrange: only the first SaveChanges call throws; the retry succeeds
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, status: WorkItemStatus.Pending);
+
+        var factory = new ThrowingOnSaveDbContextFactory(opts, [1]); // first save throws, second succeeds
+        var svc = new WorkItemTransitionService(factory, NullLogger<WorkItemTransitionService>.Instance);
+
+        var result = await svc.UpdatePriorityWeightAsync(item.Id, 75, CancellationToken.None, maxRetries: 3);
+
+        result.Should().Be(UpdatePriorityWeightResult.Success);
+
+        await using var verify = new TestPipelineDbContext(opts);
+        var updated = await verify.WorkItems.FindAsync(item.Id);
+        updated!.PriorityWeight.Should().Be(75);
+    }
+
     // ── Test Infrastructure ───────────────────────────────────────────────────
 
     private class TestPipelineDbContext : PipelineDbContext

@@ -374,6 +374,8 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
         CancellationToken ct,
         int maxRetries = 3)
     {
+        Exception? lastConcurrencyEx = null;
+
         for (int attempt = 0; attempt <= maxRetries; attempt++)
         {
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
@@ -391,26 +393,23 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
                 await db.SaveChangesAsync(ct);
                 return UpdatePriorityWeightResult.Success;
             }
-            catch (DbUpdateConcurrencyException ex) when (attempt < maxRetries)
-            {
-                _logger.LogInformation(
-                    ex,
-                    "Concurrency conflict on WorkItem {WorkItemId} PriorityWeight update, retry {Attempt}/{MaxRetries}",
-                    workItemId, attempt + 1, maxRetries);
-            }
             catch (DbUpdateConcurrencyException ex)
             {
-                _logger.LogWarning(
-                    ex,
-                    "WorkItem {WorkItemId} PriorityWeight update failed after all retries (concurrency exhausted)",
-                    workItemId);
-                return UpdatePriorityWeightResult.NotFound;
+                lastConcurrencyEx = ex;
+                if (attempt < maxRetries)
+                {
+                    _logger.LogInformation(
+                        ex,
+                        "Concurrency conflict on WorkItem {WorkItemId} PriorityWeight update, retry {Attempt}/{MaxRetries}",
+                        workItemId, attempt + 1, maxRetries);
+                }
             }
         }
 
         _logger.LogWarning(
-            "WorkItem {WorkItemId} PriorityWeight update failed after exhausting all retries",
-            workItemId);
+            lastConcurrencyEx,
+            "WorkItem {WorkItemId} PriorityWeight update failed after all {MaxRetries} retries (concurrency exhausted)",
+            workItemId, maxRetries);
         return UpdatePriorityWeightResult.NotFound;
     }
 
