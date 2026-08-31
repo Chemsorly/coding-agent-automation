@@ -1,8 +1,9 @@
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Kubernetes;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using k8s.Models;
 using Serilog;
 
 namespace CodingAgentWebUI.JobController.Dispatch;
@@ -10,7 +11,7 @@ namespace CodingAgentWebUI.JobController.Dispatch;
 /// <summary>
 /// Core poll-claim-create logic for the Job Controller dispatch cycle.
 /// Called once per poll cycle by <see cref="DispatchService"/>.
-/// Stateless aside from the PVC select lock and startup-validation flag.
+/// Stateless aside from the in-memory PVC pool and startup-validation flag.
 /// </summary>
 public sealed class DispatchLoop
 {
@@ -20,17 +21,9 @@ public sealed class DispatchLoop
     private readonly IPipelineApiConfigClient _configClient;
     private readonly IKubernetesJobClient _k8sClient;
     private readonly JobTemplateStore _templateStore;
+    private readonly PvcPool _pvcPool;
     private readonly DispatchServiceOptions _options;
-
-    /// <summary>
-    /// Shared process-wide lock that guards the check-available-PVC → create-K8s-Job critical
-    /// section across BOTH <see cref="DispatchLoop"/> and <see cref="ConsolidationDispatchLoop"/>.
-    /// A single <see cref="PvcSelectLock"/> singleton is injected by DI so that the two loops
-    /// cannot race each other and select the same free PVC concurrently (cross-loop TOCTOU).
-    /// </summary>
-    private readonly PvcSelectLock _pvcSelectLock;
-
-    private readonly IProviderFactory _providerFactory;
+    private readonly IReconciliationTrigger _reconciliationTrigger;
 
     private bool _startupValidationDone;
 
@@ -39,24 +32,24 @@ public sealed class DispatchLoop
         IPipelineApiConfigClient configClient,
         IKubernetesJobClient k8sClient,
         JobTemplateStore templateStore,
+        PvcPool pvcPool,
         DispatchServiceOptions options,
-        PvcSelectLock pvcSelectLock,
-        IProviderFactory providerFactory)
+        IReconciliationTrigger reconciliationTrigger)
     {
         ArgumentNullException.ThrowIfNull(workItemClient);
         ArgumentNullException.ThrowIfNull(configClient);
         ArgumentNullException.ThrowIfNull(k8sClient);
         ArgumentNullException.ThrowIfNull(templateStore);
+        ArgumentNullException.ThrowIfNull(pvcPool);
         ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(pvcSelectLock);
-        ArgumentNullException.ThrowIfNull(providerFactory);
+        ArgumentNullException.ThrowIfNull(reconciliationTrigger);
         _workItemClient = workItemClient;
         _configClient = configClient;
         _k8sClient = k8sClient;
         _templateStore = templateStore;
+        _pvcPool = pvcPool;
         _options = options;
-        _pvcSelectLock = pvcSelectLock;
-        _providerFactory = providerFactory;
+        _reconciliationTrigger = reconciliationTrigger;
     }
 
     /// <summary>
@@ -92,16 +85,10 @@ public sealed class DispatchLoop
         // Refresh concurrency map from live K8s Jobs each cycle
         var activeConcurrency = await BuildConcurrencyMapAsync(ct);
 
-        // Per-cycle eligibility cache: keyed by (IssueProviderConfigId, IssueIdentifier).
-        // Prevents N HTTP calls for N WorkItems referencing the same issue in one cycle.
-        // Uses a discriminated result to avoid null-ambiguity between "issue closed" and "config not found".
-        var eligibilityCache = new Dictionary<(string IssueProviderConfigId, string IssueIdentifier), (EligibilityResult Result, string? Reason)>(
-            capacity: pending.Count);
-
         foreach (var item in pending)
         {
             if (ct.IsCancellationRequested) break;
-            await ProcessItemAsync(item, activeConcurrency, eligibilityCache, ct);
+            await ProcessItemAsync(item, activeConcurrency, ct);
         }
     }
 
@@ -132,13 +119,72 @@ public sealed class DispatchLoop
         }
     }
 
-    private Task<Dictionary<string, int>> BuildConcurrencyMapAsync(CancellationToken ct) =>
-        DispatchLoopHelpers.BuildConcurrencyMapAsync(_k8sClient, _options.Namespace, nameof(DispatchLoop), ct);
+    private async Task<Dictionary<string, int>> BuildConcurrencyMapAsync(CancellationToken ct)
+    {
+        var map = new Dictionary<string, int>(StringComparer.Ordinal);
+        try
+        {
+            var jobs = await _k8sClient.ListJobsAsync(
+                _options.Namespace,
+                "app.kubernetes.io/managed-by=caa-orchestrator",
+                ct);
+
+            foreach (var job in jobs.Items)
+            {
+                // Skip completed/failed jobs that are still present within the log-retention window
+                // (CleanupOrphansAsync keeps them for 600s so kubectl logs remain accessible).
+                // Counting terminal jobs as active would inflate the concurrency count and block
+                // dispatch of new work items even though no agent is running (issue #2176).
+                if (IsJobTerminal(job)) continue;
+
+                var labels = job.Metadata?.Labels;
+                var selectorLabel = labels is not null && labels.TryGetValue("caa/agent-selector", out var lv) ? lv : "";
+                if (string.IsNullOrEmpty(selectorLabel)) continue;
+
+                // Label stores dots (e.g. "dotnet10.kiro"); convert back to comma-separated form
+                var normalizedSelector = selectorLabel.Replace('.', ',');
+                var key = JobTemplateStore.NormalizeLabels(normalizedSelector);
+                map[key] = (map.TryGetValue(key, out var cnt) ? cnt : 0) + 1;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to build concurrency map from live Jobs; proceeding with empty map");
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> if the K8s Job has reached a terminal phase (Complete or Failed).
+    /// Terminal jobs within the log-retention window must not count toward the concurrency limit.
+    /// Mirrors the phase-detection logic in <see cref="ReconciliationLoop.GetJobPhase"/>.
+    /// </summary>
+    // TODO: This internal method has no null guard (ArgumentNullException.ThrowIfNull(job)).
+    // While V1Job items from jobs.Items are not expected to be null in practice, the method is
+    // internal (reachable from other dispatch loops), so a null job reference would produce a
+    // NullReferenceException on job.Status?.Conditions rather than a clear ArgumentNullException.
+    // Per coding standards, internal method parameters should use ArgumentNullException.ThrowIfNull.
+    internal static bool IsJobTerminal(V1Job job)
+    {
+        var conditions = job.Status?.Conditions;
+        if (conditions is not null)
+        {
+            if (conditions.Any(c => (c.Type == "Complete" || c.Type == "Failed") && c.Status == "True"))
+                return true;
+        }
+        // Fall back to counters when conditions are not yet populated.
+        // NOTE: Only treat Failed > 0 as terminal when there are no active pods — a job whose
+        // first pod attempt failed still has Failed=1 while Kubernetes is creating the next retry
+        // pod (Active=1). The "Failed" condition type is only set once all retries are exhausted,
+        // so relying on Failed > 0 alone would falsely evict a retrying job from the concurrency map.
+        // Succeeded > 0 is always terminal (a succeeded job never retries).
+        if ((job.Status?.Succeeded ?? 0) > 0) return true;
+        return (job.Status?.Failed ?? 0) > 0 && (job.Status?.Active ?? 0) == 0;
+    }
 
     private async Task ProcessItemAsync(
         PendingWorkItemDto item,
         Dictionary<string, int> activeConcurrency,
-        Dictionary<(string IssueProviderConfigId, string IssueIdentifier), (EligibilityResult Result, string? Reason)> eligibilityCache,
         CancellationToken ct)
     {
         var selector = JobTemplateStore.NormalizeLabels(item.AgentSelector);
@@ -163,49 +209,53 @@ public sealed class DispatchLoop
             return;
         }
 
-        // Eligibility gate: verify the upstream issue is still open and has no ineligible labels.
-        // Fires before ClaimAsync — read-only check precedes any mutation.
-        // On failure (network error, missing config): fail open — skip without cancelling.
-        try
-        {
-            var (eligibility, reason) = await GetEligibilityCachedAsync(item, eligibilityCache, ct);
-            if (eligibility == EligibilityResult.Ineligible)
-            {
-                Log.Information(
-                    "DispatchLoop: issue {IssueIdentifier} is no longer eligible ({Reason}) — cancelling WorkItem {Id}",
-                    item.IssueIdentifier, reason, item.Id);
-                await SafeCancelWorkItemAsync(item.Id, reason!, ct);
-                return;
-            }
-            if (eligibility == EligibilityResult.FailOpen)
-            {
-                // Config missing or provider error — already logged inside GetEligibilityCachedAsync.
-                return; // skip this cycle without cancelling
-            }
-            // EligibilityResult.Eligible — proceed to dispatch
-        }
-        catch (Exception ex)
-        {
-            // TODO: OperationCanceledException on graceful shutdown is caught here and logged as
-            // Warning. Re-throw OCE (or check ct.IsCancellationRequested) to avoid shutdown noise.
-            Log.Warning(ex,
-                "DispatchLoop: eligibility check failed for issue {IssueIdentifier} (WorkItem {Id}) — skipping this cycle",
-                item.IssueIdentifier, item.Id);
-            return; // fail open — do NOT cancel
-        }
-
         // The K8s Job name is deterministic from the WorkItem id and doubles as the pod's
         // AGENT_ID (metadata.name field ref). Compute it before claiming so the claim records
         // which agent identity owns this item — the API binds the agent's derived key to the
         // WorkItem through AssignedAgentId when serving /assignment and /status.
         var jobName = GenerateJobName(item.Id);
 
-        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-        var dispatched = isKiroAgent
-            ? await DispatchKiroAgentAsync(item, selector, jobName, template, ct)
-            : await DispatchNonKiroAgentAsync(item, selector, jobName, template, ct);
+        // PVC assignment for kiro agents — checked BEFORE ClaimAsync to avoid the
+        // claim-then-return pattern that would strand the item in Dispatched state with no
+        // K8s Job and no path back to Pending (issue #2129).
+        // TODO [WARNING]: TryClaimPvcForKiroAgent returns null for two semantically distinct reasons:
+        // (1) not a kiro agent — no PVC needed, proceed; (2) kiro agent, pool empty — hold/return early.
+        // The caller must duplicate the "is kiro?" check to discriminate between them. If the helper's
+        // internal condition is ever widened (new provider type that also uses PVCs), the caller's guard
+        // will silently fail to hold the item. ConsolidationDispatchLoop avoids this by keeping an
+        // explicit isKiroAgent variable in scope. Consider returning a discriminated value (enum or
+        // bool isPvcRequired out-parameter) rather than overloading null for two different outcomes.
+        var pvcName = TryClaimPvcForKiroAgent(item.Id, template.ProviderType);
+        if (pvcName is null && string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase))
+            return; // PVC unavailable — item stays Pending, next cycle retries
 
-        if (!dispatched) return;
+        // Claim the item (atomic — 409 if already claimed by another instance)
+        var claimed = await TryClaimWorkItemAsync(item.Id, jobName, pvcName, ct);
+        if (claimed is null) return;
+
+        // Build and create K8s Job
+        // Do NOT set DerivedKeySecretName — work-item pods use the master key file mount.
+        // Key derivation happens inside the agent at runtime: HubConnectionManager and
+        // WorkItemHttpClient both call HMAC(AGENT_API_KEY, AGENT_ID) internally.
+        // Setting DerivedKeySecretName would cause double-derivation: the pod would
+        // receive an already-derived key and the agent would derive it again.
+        var buildContext = new JobSpecBuilder.BuildContext
+        {
+            WorkItemId = item.Id,
+            AgentSelector = selector,
+            TimeoutSeconds = Math.Max(item.TimeoutSeconds, _options.AgentJobTimeoutSeconds),
+            JobName = jobName,
+            ClaimedPvc = pvcName,
+            OrchestratorUrl = _options.OrchestratorUrl,
+            AgentApiKeySecretName = _options.AgentApiKeySecretName,
+            AgentServiceAccountName = _options.AgentServiceAccountName,
+            Namespace = _options.Namespace,
+            OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
+            TraceParent = item.TraceParent
+        };
+
+        var created = await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, pvcName, ct);
+        if (!created) return;
 
         activeConcurrency[selector] = currentConcurrency + 1;
 
@@ -229,108 +279,45 @@ public sealed class DispatchLoop
     }
 
     /// <summary>
-    /// Dispatches a kiro-type work item: selects a PVC under the shared lock, claims the item,
-    /// and creates the K8s Job — all within the PVC select lock to prevent TOCTOU races.
-    /// Returns <c>true</c> on success, <c>false</c> to skip this item.
+    /// For kiro agents, tries to claim a PVC from the pool before claiming the work item.
+    /// Returns the PVC name if claimed, null if unavailable (callers must return early) or not applicable.
+    /// Side effect: triggers an immediate reconciliation cycle when no PVC is available so freed
+    /// slots are picked up quickly rather than waiting for the next 30s poll interval.
     /// </summary>
-    private async Task<bool> DispatchKiroAgentAsync(
-        PendingWorkItemDto item, string selector, string jobName, JobTemplate template, CancellationToken ct)
+    private string? TryClaimPvcForKiroAgent(Guid workItemId, string? providerType)
     {
-        // NOTE: _pvcSelectLock.WaitAsync(ct) throws OperationCanceledException if ct is cancelled
-        // before the semaphore is acquired. In that case the finally block must NOT call Release() —
-        // tracking `acquired` guards against corrupting the semaphore count above its maximum (1)
-        // on graceful shutdown.
-        var acquired = false;
-        try
-        {
-            await _pvcSelectLock.WaitAsync(ct);
-            acquired = true;
+        if (!string.Equals(providerType, "kiro", StringComparison.OrdinalIgnoreCase))
+            return null; // Not a kiro agent — no PVC needed
 
-            var pvcName = await SelectAvailablePvcAsync(ct);
-            if (pvcName is null)
-            {
-                Log.Information(
-                    "DispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
-                    item.Id);
-                // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
-                // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting
-                // the field (issue #2129). Simply return; the next dispatch cycle will retry.
-                // NOTE: _reconciliationTrigger.RequestImmediateCycle() is no longer called on PVC
-                // starvation. Re-add the call here if PVC starvation latency is unacceptable.
-                return false;
-            }
+        var pvcName = _pvcPool.TryClaim(workItemId);
+        if (pvcName is not null) return pvcName;
 
-            // NOTE: TryClaimWorkItemAsync (ClaimAsync HTTP call) is made while holding
-            // _pvcSelectLock. A slow or timing-out ClaimAsync call serializes ALL kiro dispatch items
-            // for the duration of the network round-trip (N × latency per cycle under load).
-            // Accepted trade-off: throughput may degrade under sustained network latency.
-            var claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct);
-            if (claimed is null) return false;
-
-            // Build and create K8s Job inside the lock so no other cycle can claim the same PVC
-            // between our availability check and the actual Job creation.
-            var buildContext = BuildJobContext(item, selector, jobName, pvcName);
-            return await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, ct);
-        }
-        finally
-        {
-            if (acquired) _pvcSelectLock.Release();
-        }
+        Log.Information(
+            "DispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
+            workItemId);
+        // Signal ReconciliationService to run an immediate cycle so any completed-but-not-yet-
+        // reconciled K8s Jobs release their PVC slots quickly, rather than waiting up to 30s.
+        // The call is non-blocking and idempotent.
+        _reconciliationTrigger.RequestImmediateCycle();
+        // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
+        // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting the
+        // field (issue #2129). Simply return null; the caller returns early.
+        return null;
     }
-
-    /// <summary>
-    /// Dispatches a non-kiro work item (no PVC required): claims the item and creates the K8s Job
-    /// without acquiring the PVC select lock.
-    /// Returns <c>true</c> on success, <c>false</c> to skip this item.
-    /// </summary>
-    private async Task<bool> DispatchNonKiroAgentAsync(
-        PendingWorkItemDto item, string selector, string jobName, JobTemplate template, CancellationToken ct)
-    {
-        var claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct);
-        if (claimed is null) return false;
-
-        var buildContext = BuildJobContext(item, selector, jobName, pvcName: null);
-        return await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, ct);
-    }
-
-    /// <summary>
-    /// Queries live K8s Jobs to find the first PVC name from the configured pool that is
-    /// not already mounted by a running Job. Returns <c>null</c> if all configured PVCs
-    /// are claimed or the pool is empty.
-    /// Must be called under <see cref="_pvcSelectLock"/>.
-    /// </summary>
-    private Task<string?> SelectAvailablePvcAsync(CancellationToken ct) =>
-        DispatchLoopHelpers.SelectAvailablePvcAsync(_k8sClient, _options.Namespace, _options.KiroPvcPool, ct);
-
-    private JobSpecBuilder.BuildContext BuildJobContext(
-        PendingWorkItemDto item, string selector, string jobName, string? pvcName) =>
-        new()
-        {
-            WorkItemId = item.Id,
-            AgentSelector = selector,
-            // Guard against legacy rows where TimeoutSeconds was not yet populated (DB column default 0).
-            // A zero timeout would produce activeDeadlineSeconds = 60, killing the agent after 60s.
-            // Match the same fallback used by ReconciliationLoop.EnforceTimeoutsAsync.
-            TimeoutSeconds = item.TimeoutSeconds > 0
-                ? item.TimeoutSeconds
-                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
-            JobName = jobName,
-            ClaimedPvc = pvcName,
-            OrchestratorUrl = _options.OrchestratorUrl,
-            AgentApiKeySecretName = _options.AgentApiKeySecretName,
-            AgentServiceAccountName = _options.AgentServiceAccountName,
-            Namespace = _options.Namespace,
-            OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
-            TraceParent = item.TraceParent
-        };
 
     /// <summary>
     /// Atomically claims a work item. Returns the claim response on success, null to signal the
-    /// caller should skip this item (contention or deletion).
+    /// caller should skip this item (contention or deletion). Releases the PVC on failure.
     /// </summary>
     private async Task<WorkItemClaimResponse?> TryClaimWorkItemAsync(
-        Guid workItemId, string jobName, CancellationToken ct)
+        Guid workItemId, string jobName, string? pvcName, CancellationToken ct)
     {
+        // TODO [WARNING]: Only WorkItemNotFoundException is explicitly caught here. An unexpected
+        // exception from ClaimAsync (e.g. HttpRequestException on network timeout, TaskCanceledException
+        // on shutdown) will propagate without releasing the PVC, keeping it in the _claimed set until
+        // controller restart. Repeated occurrences exhaust the pool (same symptom as issue #2129 but
+        // from a different cause). Consider adding a general catch (Exception) that releases the PVC
+        // before re-throwing, or wrapping ClaimAsync in a try/finally that releases on non-success paths.
         try
         {
             var claimed = await _workItemClient.ClaimAsync(
@@ -340,6 +327,7 @@ public sealed class DispatchLoop
 
             if (claimed is null)
             {
+                if (pvcName is not null) _pvcPool.Release(pvcName);
                 Log.Debug("WorkItem {Id} already claimed by another instance (409), skipping", workItemId);
             }
             return claimed;
@@ -349,6 +337,7 @@ public sealed class DispatchLoop
             // Item was in the pending list but no longer exists — data race (deleted between
             // GetPendingAsync and ClaimAsync) or a bug in the pending query. Skip with a
             // warning so it is distinguishable from normal 409 contention in the logs.
+            if (pvcName is not null) _pvcPool.Release(pvcName);
             Log.Warning("WorkItem {Id} not found during claim (404) — item may have been deleted between poll and claim, skipping", workItemId);
             return null;
         }
@@ -356,11 +345,11 @@ public sealed class DispatchLoop
 
     /// <summary>
     /// Creates the K8s Job for a claimed work item. Returns true on success, false on failure
-    /// (in which case the work item is re-queued).
+    /// (in which case the work item is re-queued and the PVC released).
     /// </summary>
     private async Task<bool> TryCreateK8sJobAsync(
         Guid workItemId, string jobName, JobTemplate template,
-        JobSpecBuilder.BuildContext buildContext, CancellationToken ct)
+        JobSpecBuilder.BuildContext buildContext, string? pvcName, CancellationToken ct)
     {
         var job = JobSpecBuilder.Build(template, buildContext);
         try
@@ -374,6 +363,7 @@ public sealed class DispatchLoop
         catch (Exception ex)
         {
             Log.Error(ex, "K8s Job creation failed for WorkItem {Id}, requeuing", workItemId);
+            if (pvcName is not null) _pvcPool.Release(pvcName);
             await SafeRequeueAsync(workItemId, ct);
             return false;
         }
@@ -388,153 +378,6 @@ public sealed class DispatchLoop
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to requeue WorkItem {Id}", workItemId);
-        }
-    }
-
-    // ─── Eligibility gate ─────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Discriminated result of a per-cycle issue eligibility check.
-    /// Eligible:   issue is open and has no ineligible labels — safe to dispatch.
-    /// Ineligible: issue is closed or has a blocking label — cancel the WorkItem.
-    /// FailOpen:   check could not be completed (missing config, wrong kind, provider error) — skip this cycle.
-    /// </summary>
-    private enum EligibilityResult { Eligible, Ineligible, FailOpen }
-
-    /// <summary>
-    /// Returns the cached eligibility result for the issue referenced by <paramref name="item"/>,
-    /// performing the live check on first access and caching the result for the remainder of the cycle.
-    /// </summary>
-    private async Task<(EligibilityResult Result, string? Reason)> GetEligibilityCachedAsync(
-        PendingWorkItemDto item,
-        Dictionary<(string, string), (EligibilityResult, string?)> cache,
-        CancellationToken ct)
-    {
-        var key = (item.IssueProviderConfigId, item.IssueIdentifier);
-        if (cache.TryGetValue(key, out var cached))
-            return cached;
-
-        var result = await FetchEligibilityAsync(item, ct);
-        cache[key] = result;
-        return result;
-    }
-
-    /// <summary>
-    /// Performs the live issue eligibility check for a single WorkItem.
-    /// Uses a two-call approach: <see cref="IIssueProvider.IsIssueClosedAsync"/> first
-    /// (short-circuits if closed), then <see cref="IIssueProvider.GetIssueAsync"/> for label
-    /// state (only if open). Provider configs are fetched with secrets so credentials are valid.
-    /// </summary>
-    private async Task<(EligibilityResult Result, string? Reason)> FetchEligibilityAsync(
-        PendingWorkItemDto item, CancellationToken ct)
-    {
-        // TODO: Consider hoisting GetProviderConfigsWithSecretsAsync to RunOneCycleAsync (once per
-        // cycle) to avoid fetching the config list once per distinct issue when all items share the
-        // same provider config. Current behaviour: one HTTP call per unique (ConfigId, IssueId) key.
-        var configs = await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
-        var config = configs.FirstOrDefault(c => c.Id == item.IssueProviderConfigId);
-        if (config is null)
-        {
-            Log.Warning(
-                "DispatchLoop: no Issue provider config found for id '{ConfigId}' (WorkItem {Id}) — skipping this cycle",
-                item.IssueProviderConfigId, item.Id);
-            return (EligibilityResult.FailOpen, null);
-        }
-
-        // Defensive guard: API filters by ProviderKind.Issue above, but protect against
-        // unexpected results — ProviderFactory.CreateIssueProvider would throw on wrong-kind config.
-        if (config.Kind != ProviderKind.Issue)
-        {
-            Log.Warning(
-                "DispatchLoop: provider config '{ConfigId}' has Kind={Kind}, expected Issue — skipping WorkItem {Id}",
-                item.IssueProviderConfigId, config.Kind, item.Id);
-            return (EligibilityResult.FailOpen, null);
-        }
-
-        await using var provider = _providerFactory.CreateIssueProvider(config);
-
-        // Two-call approach (IssueDetail has no IsClosed field):
-        //   1. IsIssueClosedAsync — short-circuits if closed, avoiding the second call.
-        //   2. GetIssueAsync — label state, only called when issue is confirmed open.
-        // AC #5: subsequent WorkItems for the same (ConfigId, Identifier) pair hit the per-cycle
-        // cache and make zero HTTP calls, so N WorkItems → at most 2 calls per distinct issue.
-        var isClosed = await provider.IsIssueClosedAsync(item.IssueIdentifier, ct);
-        if (isClosed)
-            return (EligibilityResult.Ineligible, "Issue closed");
-
-        var detail = await provider.GetIssueAsync(item.IssueIdentifier, ct);
-        if (!IsIssueEligible(detail, out var reason))
-            return (EligibilityResult.Ineligible, reason);
-
-        return (EligibilityResult.Eligible, null);
-    }
-
-    /// <summary>
-    /// Returns <c>true</c> when the issue has no ineligible agent labels (per AC #2).
-    /// Checks for the four terminal/error labels explicitly named in the acceptance criteria.
-    /// Absence of <c>agent:next</c> alone is NOT checked — the issue could legitimately have
-    /// <c>agent:in-progress</c> (already dispatched by another WorkItem), which is not grounds
-    /// for cancellation.
-    /// </summary>
-    private static bool IsIssueEligible(IssueDetail issue, out string reason)
-    {
-        // Cancel only on the four ineligible labels named in AC #2.
-        ReadOnlySpan<string> ineligibleLabels =
-        [
-            AgentLabels.Error,           // "agent:error"
-            AgentLabels.NeedsRefinement, // "agent:needs-refinement"
-            AgentLabels.WontDo,          // "agent:wont-do"
-            AgentLabels.Cancelled        // "agent:cancelled"
-        ];
-
-        foreach (var label in issue.Labels)
-        {
-            foreach (var ineligible in ineligibleLabels)
-            {
-                if (string.Equals(label, ineligible, StringComparison.OrdinalIgnoreCase))
-                {
-                    reason = $"Issue has ineligible label: {label}";
-                    return false;
-                }
-            }
-        }
-
-        reason = null!;
-        return true;
-    }
-
-    /// <summary>
-    /// Cancels a WorkItem by posting a Cancelled status update.
-    /// Uses <see cref="IPipelineApiWorkItemClient.PostStatusAsync"/> (not <see cref="IPipelineApiWorkItemClient.RequeueAsync"/>)
-    /// so that <c>RetryCount</c> is NOT incremented — this is not a transient failure.
-    /// <para>
-    /// <c>WorkItemTransitionService.IsValidTransition</c> allows <c>Pending → Cancelled</c>.
-    /// </para>
-    /// <para>
-    /// Exceptions are swallowed: if the item was claimed by another instance between
-    /// <c>GetPendingAsync</c> and here, <c>PostStatusAsync</c> returns 400 (invalid transition)
-    /// which <c>EnsureSuccessStatusCode</c> raises as <see cref="System.Net.Http.HttpRequestException"/>.
-    /// That race is safe to swallow — the item is already moving.
-    /// </para>
-    /// </summary>
-    private async Task SafeCancelWorkItemAsync(Guid workItemId, string reason, CancellationToken ct)
-    {
-        try
-        {
-            // nameof(WorkItemStatus.Cancelled) matches the established codebase pattern
-            // (ReconciliationLoop uses nameof throughout) and is refactor-safe.
-            await _workItemClient.PostStatusAsync(workItemId,
-                new WorkItemStatusUpdate
-                {
-                    Status = nameof(WorkItemStatus.Cancelled),
-                    ErrorMessage = reason
-                }, ct);
-        }
-        catch (Exception ex)
-        {
-            // TODO: OperationCanceledException on graceful shutdown is caught here and logged at
-            // Error level, producing misleading noise. Log at Debug/Info or re-throw OCE.
-            Log.Error(ex, "Failed to cancel WorkItem {Id}", workItemId);
         }
     }
 

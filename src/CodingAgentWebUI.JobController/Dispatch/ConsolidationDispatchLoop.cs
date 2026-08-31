@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
@@ -24,33 +25,30 @@ public sealed class ConsolidationDispatchLoop
     private readonly IPipelineApiConsolidationWorkItemClient _consolidationClient;
     private readonly IKubernetesJobClient _k8sClient;
     private readonly JobTemplateStore _templateStore;
+    private readonly PvcPool _pvcPool;
     private readonly DispatchServiceOptions _options;
-
-    /// <summary>
-    /// Shared process-wide lock that guards the check-available-PVC → create-K8s-Job critical
-    /// section across BOTH <see cref="ConsolidationDispatchLoop"/> and <see cref="DispatchLoop"/>.
-    /// A single <see cref="PvcSelectLock"/> singleton is injected by DI so that the two loops
-    /// cannot race each other and select the same free PVC concurrently (cross-loop TOCTOU).
-    /// </summary>
-    private readonly PvcSelectLock _pvcSelectLock;
+    private readonly IReconciliationTrigger _reconciliationTrigger;
 
     public ConsolidationDispatchLoop(
         IPipelineApiConsolidationWorkItemClient consolidationClient,
         IKubernetesJobClient k8sClient,
         JobTemplateStore templateStore,
+        PvcPool pvcPool,
         DispatchServiceOptions options,
-        PvcSelectLock pvcSelectLock)
+        IReconciliationTrigger reconciliationTrigger)
     {
         ArgumentNullException.ThrowIfNull(consolidationClient);
         ArgumentNullException.ThrowIfNull(k8sClient);
         ArgumentNullException.ThrowIfNull(templateStore);
+        ArgumentNullException.ThrowIfNull(pvcPool);
         ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(pvcSelectLock);
+        ArgumentNullException.ThrowIfNull(reconciliationTrigger);
         _consolidationClient = consolidationClient;
         _k8sClient = k8sClient;
         _templateStore = templateStore;
+        _pvcPool = pvcPool;
         _options = options;
-        _pvcSelectLock = pvcSelectLock;
+        _reconciliationTrigger = reconciliationTrigger;
     }
 
     /// <summary>
@@ -90,8 +88,37 @@ public sealed class ConsolidationDispatchLoop
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    private Task<Dictionary<string, int>> BuildConcurrencyMapAsync(CancellationToken ct) =>
-        DispatchLoopHelpers.BuildConcurrencyMapAsync(_k8sClient, _options.Namespace, nameof(ConsolidationDispatchLoop), ct);
+    private async Task<Dictionary<string, int>> BuildConcurrencyMapAsync(CancellationToken ct)
+    {
+        var map = new Dictionary<string, int>(StringComparer.Ordinal);
+        try
+        {
+            var jobs = await _k8sClient.ListJobsAsync(
+                _options.Namespace,
+                "app.kubernetes.io/managed-by=caa-orchestrator",
+                ct);
+
+            foreach (var job in jobs.Items)
+            {
+                // Skip completed/failed jobs that are still present within the log-retention window.
+                // Same fix as DispatchLoop.BuildConcurrencyMapAsync (issue #2176).
+                if (DispatchLoop.IsJobTerminal(job)) continue;
+
+                var labels = job.Metadata?.Labels;
+                var selectorLabel = labels is not null && labels.TryGetValue("caa/agent-selector", out var lv) ? lv : "";
+                if (string.IsNullOrEmpty(selectorLabel)) continue;
+
+                var normalizedSelector = selectorLabel.Replace('.', ',');
+                var key = JobTemplateStore.NormalizeLabels(normalizedSelector);
+                map[key] = (map.TryGetValue(key, out var cnt) ? cnt : 0) + 1;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "ConsolidationDispatchLoop: failed to build concurrency map; proceeding with empty map");
+        }
+        return map;
+    }
 
     private async Task ProcessItemAsync(
         PendingWorkItemDto item,
@@ -121,123 +148,66 @@ public sealed class ConsolidationDispatchLoop
 
         var jobName = GenerateJobName(item.Id);
 
-        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-
+        // PVC assignment for kiro agents — checked BEFORE ClaimAsync to avoid the
+        // claim-then-requeue churn that previously caused spurious ConsolidationRunStatus.Failed
+        // transitions on every starvation cycle (issue #2129).
         string? pvcName = null;
-        ConsolidationWorkItemClaimResponse? claimed;
-
+        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
         if (isKiroAgent)
         {
-            // PVC assignment for kiro agents: query live K8s Jobs under a shared process-wide
-            // semaphore to prevent TOCTOU races between ConsolidationDispatchLoop and DispatchLoop.
-            // The lock wraps both the availability check AND the K8s Job creation so no other
-            // dispatch loop can sneak in between "PVC available" and "Job created".
-            //
-            // NOTE: _pvcSelectLock.WaitAsync(ct) throws OperationCanceledException if ct is
-            // cancelled before the semaphore is acquired. In that case the finally block must NOT
-            // call Release() — tracking `acquired` guards against corrupting the semaphore count
-            // above its maximum (1) on graceful shutdown.
-            var acquired = false;
-            try
+            pvcName = _pvcPool.TryClaim(item.Id);
+            if (pvcName is null)
             {
-                await _pvcSelectLock.WaitAsync(ct);
-                acquired = true;
-
-                pvcName = await SelectAvailablePvcAsync(ct);
-                if (pvcName is null)
-                {
-                    Log.Information(
-                        "ConsolidationDispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
-                        item.Id);
-                    // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
-                    // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting
-                    // the field (issue #2129). Simply return; the next dispatch cycle will retry.
-                    // NOTE: _reconciliationTrigger.RequestImmediateCycle() is no longer called on PVC
-                    // starvation. The old TryClaimPvcForKiroAgent path called it unconditionally to
-                    // unblock stalled items immediately after a Job completes. Without it, the next
-                    // dispatch opportunity is the natural 30 s reconciliation poll, introducing latency
-                    // under load. Re-add the call here if this latency is unacceptable.
-                    return;
-                }
-
-                // NOTE: TryClaimAsync (ClaimAsync HTTP call) is made while holding _pvcSelectLock.
-                // A slow or timing-out ClaimAsync call serializes ALL kiro consolidation items for
-                // the duration of the network round-trip. Consider narrowing the critical section to
-                // SelectAvailablePvcAsync + CreateJobAsync only, releasing and re-acquiring the
-                // semaphore around the ClaimAsync call.
-                // Claim (API does payload enrichment + token vending server-side)
-                claimed = await TryClaimAsync(item.Id, jobName, ct);
-                if (claimed is null) return;
-
-                // Build K8s Job spec — pass ProjectSecrets so JobSpecBuilder creates the volume mount
-                var buildContext = BuildJobContext(item, selector, jobName, pvcName, claimed);
-
-                var job = JobSpecBuilder.Build(template, buildContext);
-                try
-                {
-                    await _k8sClient.CreateJobAsync(job, _options.Namespace, ct);
-                    Log.Information("ConsolidationDispatchLoop: K8s Job {JobName} created for consolidation WorkItem {Id}", jobName, item.Id);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "ConsolidationDispatchLoop: K8s Job creation failed for WorkItem {Id}, requeuing", item.Id);
-                    await SafeRequeueAsync(item.Id, claimed.RunId, $"K8s Job creation failed: {ex.Message}", ct);
-                    return;
-                }
-            }
-            finally
-            {
-                if (acquired) _pvcSelectLock.Release();
-            }
-        }
-        else
-        {
-            // Non-kiro agents: no PVC required — claim and create without the PVC select lock.
-            claimed = await TryClaimAsync(item.Id, jobName, ct);
-            if (claimed is null) return;
-
-            var buildContext = BuildJobContext(item, selector, jobName, pvcName: null, claimed);
-            var job = JobSpecBuilder.Build(template, buildContext);
-            try
-            {
-                await _k8sClient.CreateJobAsync(job, _options.Namespace, ct);
-                Log.Information("ConsolidationDispatchLoop: K8s Job {JobName} created for consolidation WorkItem {Id}", jobName, item.Id);
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "ConsolidationDispatchLoop: K8s Job creation failed for WorkItem {Id}, requeuing", item.Id);
-                await SafeRequeueAsync(item.Id, claimed.RunId, $"K8s Job creation failed: {ex.Message}", ct);
+                Log.Information(
+                    "ConsolidationDispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
+                    item.Id);
+                // Signal ReconciliationService to run an immediate cycle so any completed-but-not-yet-
+                // reconciled K8s Jobs release their PVC slots quickly, rather than waiting up to 30s.
+                // The call is non-blocking and idempotent.
+                _reconciliationTrigger.RequestImmediateCycle();
+                // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
+                // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting the
+                // field (issue #2129). Simply return; the next dispatch cycle will retry.
                 return;
             }
         }
 
-        // Create project-secrets K8s Secret (owner-referenced to Job) if secrets were returned
-        if (claimed.ProjectSecrets is { Count: > 0 })
-            await SafeCreateProjectSecretsAsync(jobName, item.Id, claimed.ProjectSecrets, ct);
+        // Claim (API does payload enrichment + token vending server-side)
+        // TODO [WARNING]: Only WorkItemNotFoundException is explicitly caught here. An unexpected
+        // exception from ClaimAsync (e.g. HttpRequestException on network timeout, TaskCanceledException
+        // on shutdown) will propagate without releasing the PVC claimed above, leaking it permanently
+        // until controller restart. The old code was immune because PVC was claimed after ClaimAsync;
+        // moving PVC before claim introduced this new failure surface. Consider adding a general
+        // catch (Exception) that releases the PVC before re-throwing, or a try/finally on non-success paths.
+        ConsolidationWorkItemClaimResponse? claimed;
+        try
+        {
+            claimed = await _consolidationClient.ClaimAsync(
+                item.Id,
+                new ClaimWorkItemRequest
+                {
+                    AssignedAgentId = jobName,
+                    K8sJobName = jobName,
+                    DispatchedAt = DateTimeOffset.UtcNow
+                },
+                ct);
+        }
+        catch (WorkItemNotFoundException)
+        {
+            if (pvcName is not null) _pvcPool.Release(pvcName);
+            Log.Warning("ConsolidationDispatchLoop: WorkItem {Id} not found during claim (404) — skipping", item.Id);
+            return;
+        }
 
-        activeConcurrency[selector] = (activeConcurrency.TryGetValue(selector, out var curr) ? curr : 0) + 1;
+        if (claimed is null)
+        {
+            if (pvcName is not null) _pvcPool.Release(pvcName);
+            Log.Debug("ConsolidationDispatchLoop: WorkItem {Id} already claimed by another instance (409), skipping", item.Id);
+            return;
+        }
 
-        // Transition ConsolidationRun Queued → Running (best-effort; non-fatal if it fails)
-        if (!string.IsNullOrEmpty(claimed.RunId))
-            await SafeTransitionRunAsync(claimed.RunId, ConsolidationRunStatus.Running, null, ct);
-    }
-
-    /// <summary>
-    /// Queries live K8s Jobs to find the first PVC name from the configured pool that is
-    /// not already mounted by a running Job. Returns <c>null</c> if all configured PVCs
-    /// are claimed or the pool is empty.
-    /// Must be called under <see cref="_pvcSelectLock"/>.
-    /// </summary>
-    private Task<string?> SelectAvailablePvcAsync(CancellationToken ct) =>
-        DispatchLoopHelpers.SelectAvailablePvcAsync(_k8sClient, _options.Namespace, _options.KiroPvcPool, ct);
-
-    private JobSpecBuilder.BuildContext BuildJobContext(
-        PendingWorkItemDto item,
-        string selector,
-        string jobName,
-        string? pvcName,
-        ConsolidationWorkItemClaimResponse claimed) =>
-        new()
+        // Build K8s Job spec — pass ProjectSecrets so JobSpecBuilder creates the volume mount
+        var buildContext = new JobSpecBuilder.BuildContext
         {
             WorkItemId = item.Id,
             AgentSelector = selector,
@@ -258,34 +228,30 @@ public sealed class ConsolidationDispatchLoop
             TraceParent = item.TraceParent
         };
 
-    /// <summary>
-    /// Claims the consolidation work item. Returns <c>null</c> on 409 (already claimed) or 404 (deleted).
-    /// </summary>
-    private async Task<ConsolidationWorkItemClaimResponse?> TryClaimAsync(
-        Guid workItemId, string jobName, CancellationToken ct)
-    {
+        var job = JobSpecBuilder.Build(template, buildContext);
+
         try
         {
-            var claimed = await _consolidationClient.ClaimAsync(
-                workItemId,
-                new ClaimWorkItemRequest
-                {
-                    AssignedAgentId = jobName,
-                    K8sJobName = jobName,
-                    DispatchedAt = DateTimeOffset.UtcNow
-                },
-                ct);
-
-            if (claimed is null)
-                Log.Debug("ConsolidationDispatchLoop: WorkItem {Id} already claimed by another instance (409), skipping", workItemId);
-
-            return claimed;
+            await _k8sClient.CreateJobAsync(job, _options.Namespace, ct);
+            Log.Information("ConsolidationDispatchLoop: K8s Job {JobName} created for consolidation WorkItem {Id}", jobName, item.Id);
         }
-        catch (WorkItemNotFoundException ex)
+        catch (Exception ex)
         {
-            Log.Warning(ex, "ConsolidationDispatchLoop: WorkItem {Id} not found during claim (404) — skipping", workItemId);
-            return null;
+            Log.Error(ex, "ConsolidationDispatchLoop: K8s Job creation failed for WorkItem {Id}, requeuing", item.Id);
+            if (pvcName is not null) _pvcPool.Release(pvcName);
+            await SafeRequeueAsync(item.Id, claimed.RunId, $"K8s Job creation failed: {ex.Message}", ct);
+            return;
         }
+
+        // Create project-secrets K8s Secret (owner-referenced to Job) if secrets were returned
+        if (claimed.ProjectSecrets is { Count: > 0 })
+            await SafeCreateProjectSecretsAsync(jobName, item.Id, claimed.ProjectSecrets, ct);
+
+        activeConcurrency[selector] = (activeConcurrency.TryGetValue(selector, out var curr) ? curr : 0) + 1;
+
+        // Transition ConsolidationRun Queued → Running (best-effort; non-fatal if it fails)
+        if (!string.IsNullOrEmpty(claimed.RunId))
+            await SafeTransitionRunAsync(claimed.RunId, ConsolidationRunStatus.Running, null, ct);
     }
 
     // ── Project-secrets K8s Secret ─────────────────────────────────────────────
