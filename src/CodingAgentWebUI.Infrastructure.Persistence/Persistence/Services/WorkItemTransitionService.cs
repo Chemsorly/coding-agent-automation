@@ -119,12 +119,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             catch (DbUpdateConcurrencyException ex)
             {
                 // Final attempt exhausted — all retries consumed by concurrency conflicts
-                // TODO: Pass `ex` to LogWarning so the stack trace is captured, matching the pattern used in
-                // TransitionIfCoreAsync (line ~216) and TryRecoverFromInfrastructureFailureCoreAsync. Without it,
-                // the stack trace is silently dropped and diagnosing which concurrent writer caused the conflict
-                // becomes harder. Example fix: _logger.LogWarning(ex, "WorkItem {WorkItemId} ...", workItemId, target);
-                _ = ex; // suppress unused-variable warning until the TODO above is addressed
-                _logger.LogWarning(
+                _logger.LogWarning(ex,
                     "WorkItem {WorkItemId} transition to {Target} failed after all retries (concurrency exhausted)",
                     workItemId, target);
                 return false;
@@ -331,12 +326,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             catch (DbUpdateConcurrencyException ex)
             {
                 // Final attempt exhausted — all retries consumed by concurrency conflicts
-                // TODO: Pass `ex` to LogWarning so the stack trace is captured, matching the pattern used in
-                // TransitionIfCoreAsync. Without it, the stack trace is silently dropped and diagnosing which
-                // concurrent writer caused the conflict becomes harder.
-                // Example fix: _logger.LogWarning(ex, "WorkItem {WorkItemId} ...", workItemId, desiredStatus);
-                _ = ex; // suppress unused-variable warning until the TODO above is addressed
-                _logger.LogWarning(
+                _logger.LogWarning(ex,
                     "WorkItem {WorkItemId} recovery to {DesiredStatus} failed after all retries (concurrency exhausted)",
                     workItemId, desiredStatus);
                 return false;

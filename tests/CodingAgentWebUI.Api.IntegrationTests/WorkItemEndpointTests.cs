@@ -957,4 +957,35 @@ public sealed class WorkItemEndpointTests
         updated.DispatchedAt.Should().BeNull("DispatchedAt must be cleared on requeue");
         updated.RetryCount.Should().Be(1, "RetryCount must be incremented by requeue");
     }
+
+    // ── Fix C primary: FailureReason metric tag (issue #2202) ────────────────
+
+    /// <summary>
+    /// Regression test for issue #2202 Fix C (primary).
+    /// PostStatus with failureReason="Timeout" must return 200 and the FailureReason must be
+    /// persisted. The fix ensures EmitTerminalStatusTelemetryAsync parses request.FailureReason
+    /// and passes it to LogTerminalStatus instead of null, so workdistribution_workitems_terminated
+    /// emits failure_reason="Timeout" instead of "none".
+    /// </summary>
+    [Fact]
+    public async Task PostStatus_FailedWithTimeoutReason_Returns200AndPersistsFailureReason()
+    {
+        var entity = SeedEntity(WorkItemStatus.Running);
+        var update = new
+        {
+            status = "Failed",
+            failureReason = "Timeout",
+            errorMessage = "agent timed out"
+        };
+
+        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/status", update,
+            PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(entity.Id);
+        updated!.FailureReason.Should().Be(FailureReason.Timeout,
+            "FailureReason=Timeout must be persisted so the metric tag is accurate");
+    }
 }

@@ -169,6 +169,31 @@ public class LocalPipelineExecutorPayloadTests
     }
 
     [Fact]
+    public void WhenRunHasFailureCategorySet_FailedOutcomePath_PayloadContainsFailureCategory()
+    {
+        // TODO: This test is tautological — it calls BuildFailurePayload directly with run.FailureCategory
+        // as the third argument, then asserts the returned payload contains that value. It verifies the
+        // BuildFailurePayload method stores its argument correctly, but does NOT verify that the call site
+        // in LocalPipelineExecutor's exception-handling path (FailedOutcome case) actually passes
+        // run.FailureCategory as the third argument. If that call site were reverted to
+        // BuildFailurePayload(run, ex.Message) (dropping the third arg), this test would still pass.
+        // A proper regression test should drive the full FailedOutcome path through LocalPipelineExecutor
+        // and assert the emitted payload carries the correct FailureCategory.
+        // (Issue #2202 review, TestQualityReviewer)
+        // Regression test for issue #2202 Fix C (secondary).
+        // Verifies that when run.FailureCategory is set (e.g. by ReconciliationService for Timeout),
+        // BuildFailurePayload is called with run.FailureCategory so the metric tag reflects the
+        // actual failure reason instead of null/"unknown".
+        var run = MakeRun();
+        run.FailureCategory = FailureReason.QualityGateExhausted;
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "Quality gate retries exhausted", run.FailureCategory);
+
+        payload.FailureCategory.Should().Be(FailureReason.QualityGateExhausted,
+            "FailureCategory set on run must be forwarded to the payload so metric tags are accurate");
+    }
+
+    [Fact]
     public void BuildFailurePayload_CopiesRetryCount()
     {
         var run = MakeRun();
