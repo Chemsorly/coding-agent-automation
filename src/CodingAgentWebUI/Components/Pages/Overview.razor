@@ -10,6 +10,7 @@
 @inject IPipelineApiRunHistoryClient RunHistory
 @inject IPipelineApiAgentClient AgentClient
 @inject IPipelineApiWorkItemClient WorkItems
+@inject CockpitState State
 @inject NavigationManager Nav
 
 @*
@@ -147,9 +148,24 @@
     private List<PipelineRunSummary> _activeRuns = new();
     private List<PipelineRunSummary> _recentRuns = new();
 
-    protected override void OnInitialized() => LoopService.OnChange += HandleLoopChanged;
+    protected override void OnInitialized()
+    {
+        LoopService.OnChange += HandleLoopChanged;
+        State.OnProjectChanged += HandleProjectChanged;
+    }
 
     protected override async Task OnInitializedAsync() => await RefreshDataAsync();
+
+    // Re-fetch when the top-bar project scope changes.
+    private async void HandleProjectChanged()
+    {
+        try
+        {
+            await RefreshDataAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+    }
 
     // Re-fetched on load and on each auto-refresh tick. Degrades quietly (keeps prior values).
     private async Task RefreshDataAsync()
@@ -176,7 +192,7 @@
         // Runs — one page, active + recent, aggregated client-side
         try
         {
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 50, feedbackOnly: false, includeActive: true, ct: _cts.Token);
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 50, feedbackOnly: false, includeActive: true, projectId: State.SelectedProjectId, ct: _cts.Token);
             var items = runs.Items;
 
             _activeRuns = items.Where(IsActive).ToList();
@@ -232,6 +248,7 @@
     public async ValueTask DisposeAsync()
     {
         LoopService.OnChange -= HandleLoopChanged;
+        State.OnChange -= HandleProjectChanged;
         await _cts.CancelAsync();
         _cts.Dispose();
     }

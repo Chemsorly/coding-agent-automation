@@ -172,7 +172,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             // Spec 045: IPipelineApiRunHistoryClient is registered by AddPipelineApiClient() and would
             // try to connect to localhost:9999. Replace with a mock to prevent real HTTP calls.
             var runHistoryMock = new Mock<IPipelineApiRunHistoryClient>();
-            runHistoryMock.Setup(s => s.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(), It.IsAny<CancellationToken>()))
+            runHistoryMock.Setup(s => s.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = Array.Empty<PipelineRunSummary>(), Page = 1, PageSize = 50, HasMore = false });
             runHistoryMock.Setup(s => s.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((PipelineRunSummary?)null);

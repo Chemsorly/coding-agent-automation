@@ -4,8 +4,10 @@
 @using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
 @using CodingAgentWebUI.Components.Shared
 @inject IPipelineApiRunHistoryClient RunHistory
+@inject CockpitState State
 
 @*
     Insights — trends over the most recent runs (see docs/frontend-redesign-handoff.md).
@@ -149,11 +151,33 @@
     private List<DayBucket> _days = new();
     private int _maxDay = 1;
 
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized() => State.OnChange += HandleProjectChanged;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    // Re-compute when the top-bar project scope changes.
+    private async void HandleProjectChanged()
     {
         try
         {
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, ct: _cts.Token);
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadAsync()
+    {
+        // Reset so switching to a project with fewer/no runs never shows stale figures.
+        _loading = true;
+        _error = null;
+        _total = 0; _completed = 0; _failed = 0; _cancelled = 0;
+        _successRate = 0; _retryRate = 0; _costCoverage = 0;
+        _avgCycle = "—"; _avgTokens = 0; _totalCost = 0;
+        _byType = new(); _days = new(); _maxDay = 1;
+        try
+        {
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
             var items = runs.Items;
             _total = items.Count;
             if (_total == 0) { _loading = false; return; }
@@ -233,6 +257,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        State.OnChange -= HandleProjectChanged;
         await _cts.CancelAsync();
         _cts.Dispose();
     }

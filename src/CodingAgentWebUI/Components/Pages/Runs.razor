@@ -4,8 +4,10 @@
 @using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
 @using CodingAgentWebUI.Components.Shared
 @inject IPipelineApiRunHistoryClient RunHistory
+@inject CockpitState State
 @inject NavigationManager Nav
 
 @*
@@ -168,7 +170,21 @@
         await LoadAsync();
     }
 
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
     protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    // Re-query when the top-bar project scope changes (reset to the first page for the new scope).
+    private async void HandleProjectChanged()
+    {
+        _page = 1;
+        try
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+    }
 
     private async Task LoadAsync()
     {
@@ -177,7 +193,7 @@
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
-                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, finalStep: FinalStepFilter, ct: _cts.Token);
+                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -196,7 +212,7 @@
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
-                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, finalStep: FinalStepFilter, ct: _cts.Token);
+                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
             _error = null;
         }
         catch (OperationCanceledException) { }
@@ -249,6 +265,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        State.OnProjectChanged -= HandleProjectChanged;
         await _cts.CancelAsync();
         _cts.Dispose();
     }

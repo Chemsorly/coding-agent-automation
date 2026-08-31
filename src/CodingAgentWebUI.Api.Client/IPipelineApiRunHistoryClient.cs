@@ -8,7 +8,8 @@ namespace CodingAgentWebUI.Api.Client;
 public interface IPipelineApiRunHistoryClient
 {
     /// <param name="finalStep">Optional outcome filter (e.g. <see cref="PipelineStep.Failed"/>); null returns all outcomes. Applied DB-side by the API so pagination stays correct.</param>
-    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page = 1, int pageSize = 50, bool feedbackOnly = false, bool includeActive = false, PipelineStep? finalStep = null, CancellationToken ct = default);
+    /// <param name="projectId">Optional project scope; null returns all projects. Applied DB-side by the API.</param>
+    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page = 1, int pageSize = 50, bool feedbackOnly = false, bool includeActive = false, PipelineStep? finalStep = null, string? projectId = null, CancellationToken ct = default);
     Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default);
 
     /// <summary>
