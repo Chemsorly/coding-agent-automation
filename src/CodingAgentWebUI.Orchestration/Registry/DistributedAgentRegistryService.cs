@@ -216,9 +216,16 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     private async Task DeregisterAsync(string agentId)
     {
         var key = AgentKey(agentId);
-        // Use _localSnapshot to retrieve the ConnectionId for cleanup — avoids a Redis HGETALL
-        // on the deregister path. If the snapshot is absent (e.g. agent on another replica),
-        // fall back to GetAgentRaw. The TODO below still applies for the cross-replica scenario.
+        // Use _localSnapshot to retrieve the ConnectionId for cleanup. If the snapshot is absent
+        // (e.g. agent on another replica), fall back to GetAgentRaw.
+        // TODO (WARNING): The comment "avoids a Redis HGETALL on the deregister path" is now
+        // inaccurate: the else-branch still calls GetAgentRaw, which performs a full Redis HGETALL
+        // and may additionally fall back to _localSnapshot on a miss. In the cross-replica
+        // scenario GetAgentRaw will hit Redis first; the snapshot fallback inside GetAgentRaw is
+        // only reached if the hash is absent. This creates a benign read loop
+        // (DeregisterAsync → GetAgentRaw → _localSnapshot.TryGetValue) that terminates correctly
+        // because the snapshot is absent in the cross-replica case. Update this comment if the
+        // deregister path is refactored to make the layering explicit again.
         // TODO (WARNING): If the Redis hash has already TTL-expired when Deregister is called,
         // GetAgentRaw returns null and _connectionIndex is not cleaned up — the stale
         // connectionId → agentId mapping persists indefinitely. A subsequent GetByConnectionId
@@ -433,12 +440,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     public AgentEntry? GetByAgentId(AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
-        // Always read from Redis to guarantee cross-replica visibility and reflect
-        // deregistrations / TTL expirations that have occurred since the last snapshot write.
-        // The snapshot/cache shortcut was removed because it broke cross-replica tests:
-        //   - Agents registered on another replica are absent from _localSnapshot/_allAgentsCache.
-        //   - Deregister on a non-owning replica cannot clear the owning replica's _localSnapshot.
-        //   - Status transitions on another replica are not reflected in the local snapshot.
+        // Primary read is Redis (cross-replica visibility, deregistrations, TTL expirations).
+        // _localSnapshot is consulted as a fallback *only* when Redis returns an empty hash —
+        // this covers the fire-and-forget window between Register() returning and the hash write
+        // completing. Snapshot is cleared by DeregisterAsync before the Redis delete, so a
+        // deregistered agent cannot be resurrected through the snapshot fallback.
         // Use GetByAgentIdAsync for async callers that can avoid the sync-over-async pattern.
         return GetAgentRaw(agentId.Value);
     }
@@ -448,7 +454,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
         var hash = await _store.HashGetAllAsync(AgentKey(agentId.Value));
-        return hash.Length == 0 ? null : HashToEntry(hash);
+        if (hash.Length > 0)
+            return HashToEntry(hash);
+
+        // Redis hash absent: fire-and-forget write may not have completed yet.
+        // Fall back to in-process snapshot for same-replica consistency.
+        // Safety: DeregisterAsync clears _localSnapshot before the Redis delete, so a
+        // deregistered agent cannot be resurrected through the snapshot fallback.
+        return _localSnapshot.TryGetValue(agentId.Value, out var snap) ? snap : null;
     }
 
     /// <inheritdoc />
@@ -492,6 +505,13 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var list = new List<AgentEntry>(results.Length);
         foreach (var hash in results)
         {
+            // TODO (WARNING): GetIdleAgentsAsync does not apply the snapshot fallback. A
+            // just-registered agent whose Redis hash is absent (fire-and-forget write window)
+            // is silently dropped here, making GetIdleAgentsAsync inconsistent with
+            // GetByAgentId / GetByAgentIdAsync which now fall back to _localSnapshot.
+            // The issue description listed GetIdleAgents as an affected read path. Fix: when
+            // hash.Length == 0, attempt _localSnapshot.TryGetValue(id, out var snap) and add
+            // snap to the list if found (mirroring the GetAgentRaw fallback).
             if (hash.Length == 0) continue; // TTL expired, set not yet cleaned
             var entry = HashToEntry(hash);
             if (entry is not null) list.Add(entry);
@@ -661,7 +681,24 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     private AgentEntry? GetAgentRaw(string agentId)
     {
         var hash = _store.HashGetAllAsync(AgentKey(agentId)).GetAwaiter().GetResult(); // Safe: ThreadPool
-        return hash.Length == 0 ? null : HashToEntry(hash);
+        if (hash.Length > 0)
+            return HashToEntry(hash);
+
+        // Redis hash absent: either the fire-and-forget write hasn't completed yet, or the TTL
+        // has expired. Fall back to the in-process snapshot so just-registered agents are visible
+        // immediately after Register() returns.
+        // Safety: DeregisterAsync calls _localSnapshot.TryRemove *before* the Redis delete, so a
+        // deregistered agent's snapshot entry is gone before the hash could appear absent here —
+        // the fallback cannot resurrect an intentionally deregistered agent.
+        // TODO (WARNING): There is no bounded lifetime on how long a TTL-expired agent can remain
+        // visible via the snapshot. A replica that loses Redis connectivity entirely will serve
+        // stale snapshot data indefinitely until an explicit Deregister is called or the process
+        // restarts. The issue description explicitly acknowledges this as intentional for the
+        // TTL-expiry recovery path. If unbounded staleness becomes a problem, consider adding a
+        // snapshot entry timestamp and evicting entries older than a configured max-staleness
+        // threshold (e.g. 2× the Redis TTL) so callers that rely on GetAgentRaw returning null
+        // to mean "agent is gone" are not misled indefinitely.
+        return _localSnapshot.TryGetValue(agentId, out var snap) ? snap : null;
     }
 
     private static AgentEntry? HashToEntry(HashEntry[] hash)

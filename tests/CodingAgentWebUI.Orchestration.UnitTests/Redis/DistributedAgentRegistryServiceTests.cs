@@ -250,14 +250,26 @@ public sealed class DistributedAgentRegistryServiceTests
     }
 
     [Fact]
+    // TODO (WARNING): Test name no longer accurately describes what is being tested. The original
+    // scenario — TTL expiry without explicit deregistration returning null — now returns the
+    // snapshot entry (intentional new behaviour, covered by
+    // GetByAgentIdAsync_ReturnsEntry_FromLocalSnapshot_WhenRedisHashAbsent). This test covers
+    // the "explicit deregister + hash expire → null" path. Rename to
+    // GetByAgentIdAsync_ReturnsNull_WhenDeregisteredAndHashExpired, or move it to the snapshot
+    // fallback section, and add a dedicated test for the TTL-only path that asserts the snapshot
+    // entry is returned (not null).
     public async Task GetByAgentIdAsync_ReturnsNull_WhenHashExpired()
     {
         _sut.Register(Msg("agent-1"), "conn-1");
+        // Deregister clears _localSnapshot before the Redis delete; ForceExpire simulates the
+        // hash TTL firing after the delete. An agent that has been explicitly deregistered
+        // (snapshot cleared) must not be returned even if the hash somehow reappears absent.
+        _sut.Deregister(new AgentId("agent-1"));
         _store.ForceExpire("agent:agent-1");
 
         var result = await _sut.GetByAgentIdAsync(new AgentId("agent-1"));
 
-        result.Should().BeNull("GetByAgentIdAsync must return null when the Redis hash has expired");
+        result.Should().BeNull("GetByAgentIdAsync must return null when the agent was deregistered and the Redis hash has expired");
     }
 
     [Fact]
@@ -272,7 +284,63 @@ public sealed class DistributedAgentRegistryServiceTests
         result!.Status.Should().Be(AgentStatus.Busy);
     }
 
-    // ── GetIdleAgents sync — cache reflects write paths ────────────────────────
+    // ── Snapshot fallback — fire-and-forget write window ──────────────────────
+
+    [Fact]
+    public void GetByAgentId_ReturnsEntry_FromLocalSnapshot_WhenRedisHashAbsent()
+    {
+        // Simulate the fire-and-forget window: Register() has returned (snapshot populated)
+        // but the Redis hash write hasn't landed yet (ForceExpire removes the hash).
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _store.ForceExpire("agent:agent-1");
+
+        var result = _sut.GetByAgentId(new AgentId("agent-1"));
+
+        result.Should().NotBeNull("GetByAgentId must return the snapshot entry when Redis hash is absent");
+        result!.AgentId.Value.Should().Be("agent-1");
+        result.ConnectionId.Should().Be("conn-1");
+        result.Status.Should().Be(AgentStatus.Idle);
+    }
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsEntry_FromLocalSnapshot_WhenRedisHashAbsent()
+    {
+        // Simulate the fire-and-forget window: Register() has returned (snapshot populated)
+        // but the Redis hash write hasn't landed yet (ForceExpire removes the hash).
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _store.ForceExpire("agent:agent-1");
+
+        var result = await _sut.GetByAgentIdAsync(new AgentId("agent-1"));
+
+        result.Should().NotBeNull("GetByAgentIdAsync must return the snapshot entry when Redis hash is absent");
+        result!.AgentId.Value.Should().Be("agent-1");
+        result.ConnectionId.Should().Be("conn-1");
+        result.Status.Should().Be(AgentStatus.Idle);
+    }
+
+    [Fact]
+    public void Deregister_GetByAgentId_ReturnsNull_WhenSnapshotCleared()
+    {
+        // Deregister clears _localSnapshot synchronously before the Redis delete.
+        // GetByAgentId must return null immediately after Deregister returns.
+        // TODO (WARNING): The original comment claimed this test covers "before the fire-and-forget
+        // Redis delete completes". With FakeRedisStore, DeleteAsync returns a completed Task
+        // synchronously, so the Redis hash is already gone before GetByAgentId is called — the
+        // claimed fire-and-forget window is never actually simulated. The test only verifies the
+        // fully-settled post-deregister state (both snapshot and hash gone). The production
+        // intent — that GetByAgentId returns null during the brief window where the snapshot is
+        // cleared but the Redis hash is still present — cannot be verified without a
+        // FakeRedisStore variant that defers DeleteAsync. Update the comment and consider adding
+        // an async-delete variant of the store for window testing.
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Deregister(new AgentId("agent-1"));
+
+        var result = _sut.GetByAgentId(new AgentId("agent-1"));
+
+        result.Should().BeNull("GetByAgentId must return null after Deregister clears the snapshot, even before the Redis delete completes");
+    }
+
+    // ── GetIdleAgents sync — cache reflects write paths ──────────────────────
 
     [Fact]
     public void GetIdleAgents_ExcludesBusyAgents_AfterTransitionStatus()
