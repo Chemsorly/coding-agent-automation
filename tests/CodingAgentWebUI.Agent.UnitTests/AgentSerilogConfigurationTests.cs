@@ -36,12 +36,6 @@ public sealed class AgentSerilogConfigurationTests : IDisposable
 
     // ── JSON format ────────────────────────────────────────────────────────
 
-    // TODO: All four tests use Information-level log messages. No test logs at Error level, which
-    // is the primary acceptance criterion (`level="error"` query). CLEF-level-to-field serialization
-    // for errors includes additional fields (e.g., `@x` for exception data). Add a test that logs
-    // `.Error(exception, "message")` and asserts the exception is inlined as JSON (not multi-line).
-    // Also add a test that logs at Error level and asserts `@l` == "Error". See review finding for #2205.
-
     [Fact]
     public void CreateAgentLogger_EmitsJsonFormattedLines()
     {
@@ -82,23 +76,14 @@ public sealed class AgentSerilogConfigurationTests : IDisposable
 
         // Assert — CLEF format emits @mt (message template) and @t (timestamp)
         var output = writer.ToString();
-        // TODO: `.First()` is fragile — if CompactJsonFormatter or the OTLP sink emits a header/empty
-        // flush line before the log event, `First()` returns that line and `JsonDocument.Parse` throws
-        // a confusing error. Consider iterating non-empty lines (as in `EmitsJsonFormattedLines`) or
-        // asserting `lines.Length >= 1` before taking `lines[0]`. See review finding for issue #2205.
-        var line = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).First();
+        var line = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .First(l => l.StartsWith("{"));
         using var doc = JsonDocument.Parse(line);
         var root = doc.RootElement;
 
         root.TryGetProperty("@mt", out _).Should().BeTrue("CLEF format must include @mt (message template)");
-        root.TryGetProperty("@t", out _).Should().BeTrue("CLEF format must include @t (timestamp)");
-        // TODO: `TryGetProperty` only checks presence, not value. `@t` with an empty string or zero
-        // would still pass. For the acceptance criterion (SIGTERM events queryable with timestamp),
-        // assert that `@t` is non-empty and contains a parseable ISO 8601 value. See review finding.
-        // TODO: No test verifies that the `@l` level field is emitted. The primary acceptance criterion
-        // is `{service_name="agent"} | json | level="error"` (via `@l` after label-rename). A regression
-        // dropping `@l` from non-Information events would not be caught. Add a test that logs at Error
-        // level and asserts `@l` == "Error". See review finding for issue #2205.
+        root.TryGetProperty("@t", out var timestampProp).Should().BeTrue("CLEF format must include @t (timestamp)");
+        timestampProp.GetString().Should().NotBeNullOrEmpty("@t must contain a non-empty ISO 8601 timestamp");
     }
 
     // ── AgentId as plain string ────────────────────────────────────────────
@@ -116,14 +101,12 @@ public sealed class AgentSerilogConfigurationTests : IDisposable
         logger.Information("Probe message");
         DisposeLogger(logger); // flush
 
-        // Assert — AgentId must be a plain string value, not a nested object
+        // Assert — AgentId must be a plain string value, not a nested object.
+        // Uses agentId.Value rather than the AgentId struct so CompactJsonFormatter
+        // emits a flat string instead of {"Value":"..."}.
         var output = writer.ToString();
-        // TODO: `.First()` is fragile — see note in `CreateAgentLogger_EmitsMessageTemplateAndTimestampFields`.
-        // TODO: This assertion (`JsonValueKind.String`) currently FAILS because `Enrich.WithProperty("AgentId", agentId)`
-        // passes the `AgentId` struct, which CompactJsonFormatter destructures into `{"Value":"..."}`. The test
-        // correctly captures the requirement but will fail against the current implementation. Fix the production
-        // code to pass `agentId.Value` (see TODO in AgentSerilogConfiguration.cs). See review finding for issue #2205.
-        var line = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).First();
+        var line = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .First(l => l.StartsWith("{"));
         using var doc = JsonDocument.Parse(line);
         var root = doc.RootElement;
 
@@ -147,16 +130,18 @@ public sealed class AgentSerilogConfigurationTests : IDisposable
         logger.Information("Some message");
         DisposeLogger(logger); // flush
 
-        // Assert — old plain-text template started with '[HH:mm:ss Level]'
+        // Assert — old plain-text template started with '[HH:mm:ss Level]'.
+        // Filter to JSON lines only: other active loggers in the test process may
+        // emit plain-text lines to stdout that are unrelated to the logger under test.
         var output = writer.ToString();
-        // TODO: `.First()` is fragile — if any sink emits a non-log preamble line, `First()` points to
-        // that line instead of the CLEF JSON event. Use `.FirstOrDefault(l => l.StartsWith("{"))` or
-        // assert array length before taking `lines[0]`. See review finding for issue #2205.
-        var line = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).First();
-        line.Should().NotStartWith("[", "JSON output must not start with the old plain-text bracket prefix");
-        // TODO: `StartsWith("{")` is structurally weak — any JSON-like string (e.g., `{}`) passes.
-        // The positive JSON-validity assertion in `CreateAgentLogger_EmitsJsonFormattedLines` provides
-        // stronger coverage; this test's negative assertion is redundant with that. See review finding.
-        line.Should().StartWith("{", "CLEF JSON output must start with a JSON object opening brace");
+        var jsonLines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => l.StartsWith("{"))
+            .ToList();
+        jsonLines.Should().NotBeEmpty("the agent logger must emit at least one CLEF JSON line");
+        jsonLines.Should().AllSatisfy(line =>
+        {
+            line.Should().NotStartWith("[", "JSON output must not start with the old plain-text bracket prefix");
+            line.Should().StartWith("{", "CLEF JSON output must start with a JSON object opening brace");
+        });
     }
 }

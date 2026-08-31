@@ -24,11 +24,6 @@ namespace CodingAgentWebUI.Agent;
 /// stage mapping <c>@l → level</c> must be added there.
 /// Note: <c>@l</c> is omitted entirely for <c>Information</c>-level events per the
 /// CLEF specification — only non-Information events carry the <c>@l</c> field.</para>
-// TODO: The acceptance criterion `{service_name="agent"} | json | level="error"` requires a
-// `level` label, but CLEF emits `@l` (not `level`). The Loki scrape config (Helm chart /
-// Promtail ConfigMap) must add a label-rename stage mapping `@l → level`. Without it, the
-// query `level="error"` returns no results even after this fix. Callers must use `@l="Error"`
-// until the scrape config is updated. See review finding for issue #2205.
 ///
 /// <para><b>OpenCode limitation:</b> OpenCode agent containers pipe log lines through
 /// the entrypoint script, producing non-JSON prefixed output. Those lines will still
@@ -61,12 +56,10 @@ internal static class AgentSerilogConfiguration
             .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
             .Enrich.FromLogContext()
             .Enrich.WithSpan()
-            // TODO: Serilog's CompactJsonFormatter destructures structs into their properties, so
-            // `AgentId` (a readonly record struct) will emit as `"AgentId":{"Value":"..."}` — a nested
-            // object — rather than a flat string. This causes the `IncludesAgentIdAsStructuredProperty`
-            // test to fail (it asserts JsonValueKind.String) and breaks Loki queries filtering on AgentId.
-            // Fix: pass `agentId.Value` (the inner string) instead of the struct: `.Enrich.WithProperty("AgentId", agentId.Value)`.
-            .Enrich.WithProperty("AgentId", agentId)
+            // Use agentId.Value (the inner string) rather than the AgentId struct itself.
+            // CompactJsonFormatter destructures structs, which would emit "AgentId":{"Value":"..."}
+            // instead of a flat string — breaking Loki queries that filter on AgentId.
+            .Enrich.WithProperty("AgentId", agentId.Value)
             // CLEF JSON format: emits single-line JSON per event, parseable by Loki's | json stage.
             // Each line includes @t (timestamp), @mt (message template), @l (level), and all
             // structured properties as top-level fields. Exceptions are serialized inline (no
