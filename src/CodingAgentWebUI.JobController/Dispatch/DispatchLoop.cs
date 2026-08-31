@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -21,7 +20,6 @@ public sealed class DispatchLoop
     private readonly IKubernetesJobClient _k8sClient;
     private readonly JobTemplateStore _templateStore;
     private readonly DispatchServiceOptions _options;
-    private readonly IReconciliationTrigger _reconciliationTrigger;
 
     /// <summary>
     /// Shared process-wide lock that guards the check-available-PVC → create-K8s-Job critical
@@ -39,7 +37,6 @@ public sealed class DispatchLoop
         IKubernetesJobClient k8sClient,
         JobTemplateStore templateStore,
         DispatchServiceOptions options,
-        IReconciliationTrigger reconciliationTrigger,
         PvcSelectLock pvcSelectLock)
     {
         ArgumentNullException.ThrowIfNull(workItemClient);
@@ -47,14 +44,12 @@ public sealed class DispatchLoop
         ArgumentNullException.ThrowIfNull(k8sClient);
         ArgumentNullException.ThrowIfNull(templateStore);
         ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(reconciliationTrigger);
         ArgumentNullException.ThrowIfNull(pvcSelectLock);
         _workItemClient = workItemClient;
         _configClient = configClient;
         _k8sClient = k8sClient;
         _templateStore = templateStore;
         _options = options;
-        _reconciliationTrigger = reconciliationTrigger;
         _pvcSelectLock = pvcSelectLock;
     }
 
@@ -188,71 +183,11 @@ public sealed class DispatchLoop
         var jobName = GenerateJobName(item.Id);
 
         var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+        var dispatched = isKiroAgent
+            ? await DispatchKiroAgentAsync(item, selector, jobName, template, ct)
+            : await DispatchNonKiroAgentAsync(item, selector, jobName, template, ct);
 
-        if (isKiroAgent)
-        {
-            // PVC assignment for kiro agents: query live K8s Jobs under a shared process-wide
-            // semaphore to prevent TOCTOU races between DispatchLoop and ConsolidationDispatchLoop.
-            // The lock wraps both the availability check AND the K8s Job creation so no other
-            // dispatch loop can sneak in between "PVC available" and "Job created".
-            //
-            // TODO [WARNING] (DotNetSpecialist): _pvcSelectLock.WaitAsync(ct) throws
-            // OperationCanceledException if ct is cancelled before the semaphore is acquired.
-            // In that case the finally block must NOT call Release() — tracking `acquired` guards
-            // against corrupting the semaphore count above its maximum (1) on graceful shutdown.
-            var acquired = false;
-            try
-            {
-                await _pvcSelectLock.WaitAsync(ct);
-                acquired = true;
-
-                var pvcName = await SelectAvailablePvcAsync(ct);
-                if (pvcName is null)
-                {
-                    Log.Information(
-                        "DispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
-                        item.Id);
-                    // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
-                    // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting
-                    // the field (issue #2129). Simply return; the next dispatch cycle will retry.
-                    // TODO [WARNING]: _reconciliationTrigger.RequestImmediateCycle() is no longer called
-                    // on PVC starvation. The old TryClaimPvcForKiroAgent path called it unconditionally
-                    // to unblock stalled items immediately after a Job completes. Without it, the next
-                    // dispatch opportunity is the natural 30 s reconciliation poll, introducing latency
-                    // under load. Re-add the call here if this latency is unacceptable.
-                    return;
-                }
-
-                // TODO [WARNING]: TryClaimWorkItemAsync (ClaimAsync HTTP call) is made while holding
-                // _pvcSelectLock. A slow or timing-out ClaimAsync call serializes ALL kiro dispatch items
-                // for the duration of the network round-trip (N × latency per cycle under load).
-                // Consider releasing the semaphore after SelectAvailablePvcAsync, then re-acquiring before
-                // CreateJobAsync (and re-checking availability), to narrow the critical section.
-                // Accepted trade-off: throughput may degrade under sustained network latency.
-                var claimed = await TryClaimWorkItemAsync(item.Id, jobName, pvcName, ct);
-                if (claimed is null) return;
-
-                // Build and create K8s Job inside the lock so no other cycle can claim the same PVC
-                // between our availability check and the actual Job creation.
-                var buildContext = BuildJobContext(item, selector, jobName, pvcName);
-                var created = await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, ct);
-                if (!created) return;
-            }
-            finally
-            {
-                if (acquired) _pvcSelectLock.Release();
-            }
-        }
-        else
-        {
-            // Non-kiro agents: no PVC required — claim and create without the PVC select lock.
-            var claimed = await TryClaimWorkItemAsync(item.Id, jobName, pvcName: null, ct);
-            if (claimed is null) return;
-
-            var buildContext = BuildJobContext(item, selector, jobName, pvcName: null);
-            var created = await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, ct);
-            if (!created) return;
-        }
+        if (!dispatched) return;
 
         activeConcurrency[selector] = currentConcurrency + 1;
 
@@ -273,6 +208,71 @@ public sealed class DispatchLoop
             createdAt: item.CreatedAt,
             agentSelector: item.AgentSelector);
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+    }
+
+    /// <summary>
+    /// Dispatches a kiro-type work item: selects a PVC under the shared lock, claims the item,
+    /// and creates the K8s Job — all within the PVC select lock to prevent TOCTOU races.
+    /// Returns <c>true</c> on success, <c>false</c> to skip this item.
+    /// </summary>
+    private async Task<bool> DispatchKiroAgentAsync(
+        PendingWorkItemDto item, string selector, string jobName, JobTemplate template, CancellationToken ct)
+    {
+        // TODO [WARNING] (DotNetSpecialist): _pvcSelectLock.WaitAsync(ct) throws
+        // OperationCanceledException if ct is cancelled before the semaphore is acquired.
+        // In that case the finally block must NOT call Release() — tracking `acquired` guards
+        // against corrupting the semaphore count above its maximum (1) on graceful shutdown.
+        var acquired = false;
+        try
+        {
+            await _pvcSelectLock.WaitAsync(ct);
+            acquired = true;
+
+            var pvcName = await SelectAvailablePvcAsync(ct);
+            if (pvcName is null)
+            {
+                Log.Information(
+                    "DispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
+                    item.Id);
+                // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
+                // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting
+                // the field (issue #2129). Simply return; the next dispatch cycle will retry.
+                // TODO [WARNING]: _reconciliationTrigger.RequestImmediateCycle() is no longer called
+                // on PVC starvation. Re-add the call here if PVC starvation latency is unacceptable.
+                return false;
+            }
+
+            // TODO [WARNING]: TryClaimWorkItemAsync (ClaimAsync HTTP call) is made while holding
+            // _pvcSelectLock. A slow or timing-out ClaimAsync call serializes ALL kiro dispatch items
+            // for the duration of the network round-trip (N × latency per cycle under load).
+            // Accepted trade-off: throughput may degrade under sustained network latency.
+            var claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct);
+            if (claimed is null) return false;
+
+            // Build and create K8s Job inside the lock so no other cycle can claim the same PVC
+            // between our availability check and the actual Job creation.
+            var buildContext = BuildJobContext(item, selector, jobName, pvcName);
+            return await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, ct);
+        }
+        finally
+        {
+            if (acquired) _pvcSelectLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Dispatches a non-kiro work item (no PVC required): claims the item and creates the K8s Job
+    /// without acquiring the PVC select lock.
+    /// Returns <c>true</c> on success, <c>false</c> to skip this item.
+    /// </summary>
+    private async Task<bool> DispatchNonKiroAgentAsync(
+        PendingWorkItemDto item, string selector, string jobName, JobTemplate template, CancellationToken ct)
+    {
+        var claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct);
+        if (claimed is null) return false;
+
+        var buildContext = BuildJobContext(item, selector, jobName, pvcName: null);
+        return await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, ct);
     }
 
     /// <summary>
@@ -321,7 +321,7 @@ public sealed class DispatchLoop
     /// caller should skip this item (contention or deletion).
     /// </summary>
     private async Task<WorkItemClaimResponse?> TryClaimWorkItemAsync(
-        Guid workItemId, string jobName, string? pvcName, CancellationToken ct)
+        Guid workItemId, string jobName, CancellationToken ct)
     {
         try
         {

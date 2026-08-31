@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
-using CodingAgentWebUI.JobController.Reconciliation;
 using k8s.Models;
 using System.Collections.Concurrent;
 
@@ -15,7 +14,6 @@ public sealed class DispatchLoopTests
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
     private readonly Mock<IPipelineApiConfigClient> _configClient = new();
     private readonly Mock<IKubernetesJobClient> _k8sClient = new();
-    private readonly Mock<IReconciliationTrigger> _reconciliationTrigger = new();
     private readonly JobTemplateStore _templateStore;
     private readonly DispatchServiceOptions _options;
 
@@ -78,7 +76,7 @@ public sealed class DispatchLoopTests
 
     private DispatchLoop CreateLoop() =>
         new(_workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            _templateStore, _options, _reconciliationTrigger.Object, _pvcSelectLock);
+            _templateStore, _options, _pvcSelectLock);
 
     // ─── Happy path ───────────────────────────────────────────────────────────
 
@@ -184,7 +182,7 @@ public sealed class DispatchLoopTests
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            kiroStore, twoVcOptions, _reconciliationTrigger.Object, _pvcSelectLock);
+            kiroStore, twoVcOptions, _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -194,11 +192,6 @@ public sealed class DispatchLoopTests
         // PVC check must happen BEFORE ClaimAsync — if ClaimAsync fires, the item transitions
         // Pending→Dispatched server-side with no K8s Job, stranding it indefinitely (issue #2129).
         _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-        // TODO [WARNING]: _reconciliationTrigger.RequestImmediateCycle() is no longer called on PVC
-        // starvation (the call was removed with TryClaimPvcForKiroAgent). The old behaviour called it
-        // unconditionally on exhaustion to unblock stalled items quickly. A future developer re-adding
-        // the call would not be caught by this test. Add a Times.Never verification on the trigger if
-        // the absence of the call is intentional and must be guarded.
     }
 
     /// <summary>
@@ -241,7 +234,7 @@ public sealed class DispatchLoopTests
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            kiroStore, twoVcOptions, _reconciliationTrigger.Object, _pvcSelectLock);
+            kiroStore, twoVcOptions, _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -329,7 +322,7 @@ public sealed class DispatchLoopTests
             .Returns(Task.CompletedTask);
 
         var loop = new DispatchLoop(workItemClient.Object, configClient.Object, k8sClient.Object,
-            kiroStore, twoVcOptions, _reconciliationTrigger.Object, _pvcSelectLock);
+            kiroStore, twoVcOptions, _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -428,7 +421,7 @@ public sealed class DispatchLoopTests
             });
 
         var loop = new DispatchLoop(workItemClient.Object, configClient.Object, k8sClient.Object,
-            kiroStore, twoVcOptions, _reconciliationTrigger.Object, _pvcSelectLock);
+            kiroStore, twoVcOptions, _pvcSelectLock);
 
         // Start cycle 1 — it will enter the semaphore and block at CreateJobAsync
         var cycle1 = loop.RunOneCycleAsync(CancellationToken.None);
@@ -536,9 +529,9 @@ public sealed class DispatchLoopTests
         // Both loops share the SAME PvcSelectLock — this is the fix under test.
         var sharedLock = new PvcSelectLock();
         var dispatchLoop = new DispatchLoop(workItemClient.Object, configClient.Object, k8sClient.Object,
-            kiroStore, twoVcOptions, _reconciliationTrigger.Object, sharedLock);
+            kiroStore, twoVcOptions, sharedLock);
         var consolidationLoop = new ConsolidationDispatchLoop(consolidationClient.Object, k8sClient.Object,
-            kiroStore, twoVcOptions, _reconciliationTrigger.Object, sharedLock);
+            kiroStore, twoVcOptions, sharedLock);
 
         // Start DispatchLoop — it enters the lock and blocks at CreateJobAsync
         var dispatchCycle = dispatchLoop.RunOneCycleAsync(CancellationToken.None);
@@ -592,7 +585,7 @@ public sealed class DispatchLoopTests
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            limitedStore, _options, _reconciliationTrigger.Object, _pvcSelectLock);
+            limitedStore, _options, _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 

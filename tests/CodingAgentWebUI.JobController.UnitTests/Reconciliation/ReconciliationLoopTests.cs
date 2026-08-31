@@ -518,14 +518,10 @@ public sealed class ReconciliationLoopErrorTests
         // Reconciliation must not propagate the exception from PostStatusAsync
         var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
-        // If we reach here, the exception was swallowed as expected
-        // TODO [WARNING]: This test only verifies that the exception does not propagate. The original
-        // test also verified that the PVC was released even when PostStatusAsync threw — that invariant
-        // was removed along with PvcPool (issue #2200) and has not been replaced with an equivalent
-        // observable post-failure guarantee. The test currently passes trivially (reaches end of method
-        // without throwing) and would pass even if ReconcileOnceAsync were a no-op. Consider adding an
-        // assertion about a meaningful post-failure side effect (e.g. the item is not cached and will
-        // be retried on the next cycle — covered by ReconcileOnce_WhenPostStatusThrows_ItemNotCached_NextCycleRetries).
+        // The DB error is swallowed — verify the status call was attempted (once, for the succeeded job)
+        // but no further status calls were made (the item is not cached, so the next cycle will retry).
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>

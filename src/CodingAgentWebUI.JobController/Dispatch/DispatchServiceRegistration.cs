@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using Microsoft.Extensions.Configuration;
@@ -37,7 +36,6 @@ public static class DispatchServiceRegistration
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<JobTemplateStore>(),
             sp.GetRequiredService<DispatchServiceOptions>(),
-            sp.GetRequiredService<IReconciliationTrigger>(),
             sp.GetRequiredService<PvcSelectLock>()));
 
         services.AddSingleton<DispatchService>(sp => new DispatchService(
@@ -56,7 +54,6 @@ public static class DispatchServiceRegistration
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<JobTemplateStore>(),
             sp.GetRequiredService<DispatchServiceOptions>(),
-            sp.GetRequiredService<IReconciliationTrigger>(),
             sp.GetRequiredService<PvcSelectLock>()));
 
         services.AddSingleton<ConsolidationDispatchService>(sp => new ConsolidationDispatchService(

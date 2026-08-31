@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
@@ -26,7 +25,6 @@ public sealed class ConsolidationDispatchLoop
     private readonly IKubernetesJobClient _k8sClient;
     private readonly JobTemplateStore _templateStore;
     private readonly DispatchServiceOptions _options;
-    private readonly IReconciliationTrigger _reconciliationTrigger;
 
     /// <summary>
     /// Shared process-wide lock that guards the check-available-PVC → create-K8s-Job critical
@@ -41,20 +39,17 @@ public sealed class ConsolidationDispatchLoop
         IKubernetesJobClient k8sClient,
         JobTemplateStore templateStore,
         DispatchServiceOptions options,
-        IReconciliationTrigger reconciliationTrigger,
         PvcSelectLock pvcSelectLock)
     {
         ArgumentNullException.ThrowIfNull(consolidationClient);
         ArgumentNullException.ThrowIfNull(k8sClient);
         ArgumentNullException.ThrowIfNull(templateStore);
         ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(reconciliationTrigger);
         ArgumentNullException.ThrowIfNull(pvcSelectLock);
         _consolidationClient = consolidationClient;
         _k8sClient = k8sClient;
         _templateStore = templateStore;
         _options = options;
-        _reconciliationTrigger = reconciliationTrigger;
         _pvcSelectLock = pvcSelectLock;
     }
 

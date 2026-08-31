@@ -1,7 +1,6 @@
 using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
-using CodingAgentWebUI.JobController.Reconciliation;
 using k8s.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -23,7 +22,6 @@ public sealed class DispatchServiceTests
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
     private readonly Mock<IPipelineApiConfigClient>   _configClient   = new();
     private readonly Mock<IKubernetesJobClient>        _k8sClient      = new();
-    private readonly Mock<IReconciliationTrigger>      _reconciliationTrigger = new();
     private readonly JobTemplateStore                  _templateStore;
     private readonly DispatchServiceOptions            _options;
 
@@ -74,7 +72,7 @@ public sealed class DispatchServiceTests
     {
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            _templateStore, _options, _reconciliationTrigger.Object, new PvcSelectLock());
+            _templateStore, _options, new PvcSelectLock());
 
         return new DispatchService(leaderElection, loop, _options);
     }

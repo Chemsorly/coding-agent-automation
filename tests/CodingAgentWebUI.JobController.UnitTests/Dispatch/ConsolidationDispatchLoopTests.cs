@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
-using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
 
@@ -17,7 +16,6 @@ public sealed class ConsolidationDispatchLoopTests
 {
     private readonly Mock<IPipelineApiConsolidationWorkItemClient> _consolidationClient = new();
     private readonly Mock<IKubernetesJobClient> _k8sClient = new();
-    private readonly Mock<IReconciliationTrigger> _reconciliationTrigger = new();
     private readonly JobTemplateStore _templateStore;
     private readonly DispatchServiceOptions _options;
 
@@ -80,7 +78,7 @@ public sealed class ConsolidationDispatchLoopTests
         };
 
     private ConsolidationDispatchLoop CreateLoop() =>
-        new(_consolidationClient.Object, _k8sClient.Object, _templateStore, _options, _reconciliationTrigger.Object, _pvcSelectLock);
+        new(_consolidationClient.Object, _k8sClient.Object, _templateStore, _options, _pvcSelectLock);
 
     // ── Happy path ─────────────────────────────────────────────────────────────
 
@@ -205,7 +203,7 @@ public sealed class ConsolidationDispatchLoopTests
         var loop = new ConsolidationDispatchLoop(
             _consolidationClient.Object, _k8sClient.Object,
             kiroStore, twoVcOptions,
-            _reconciliationTrigger.Object, _pvcSelectLock);
+            _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -217,11 +215,6 @@ public sealed class ConsolidationDispatchLoopTests
             It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
         // PVC check is before ClaimAsync, so no claim should have been attempted
         _consolidationClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-        // TODO [WARNING]: _reconciliationTrigger.RequestImmediateCycle() is no longer called on PVC
-        // starvation (the call was removed with TryClaimPvcForKiroAgent). The old behaviour called it
-        // unconditionally on exhaustion to unblock stalled items quickly. A future developer re-adding
-        // the call would not be caught by this test. Add a Times.Never verification on the trigger if
-        // the absence of the call is intentional and must be guarded.
     }
 
     /// <summary>
@@ -267,7 +260,7 @@ public sealed class ConsolidationDispatchLoopTests
         var loop = new ConsolidationDispatchLoop(
             _consolidationClient.Object, _k8sClient.Object,
             kiroStore, twoVcOptions,
-            _reconciliationTrigger.Object, _pvcSelectLock);
+            _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -312,7 +305,7 @@ public sealed class ConsolidationDispatchLoopTests
         var loop = new ConsolidationDispatchLoop(
             _consolidationClient.Object, _k8sClient.Object,
             limitedStore, _options,
-            _reconciliationTrigger.Object, _pvcSelectLock);
+            _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
