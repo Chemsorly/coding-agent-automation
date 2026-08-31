@@ -25,9 +25,8 @@ public interface IAgentRegistryService
     /// <summary>
     /// Looks up an agent by its unique agent identifier.
     /// <para>
-    /// <b>Sync callers:</b> reads from the node-local snapshot for locally-registered agents.
-    /// For agents on other replicas, falls back to a best-effort in-process cache.
-    /// Use <see cref="GetByAgentIdAsync"/> for fresh Redis data on the distributed dispatch hot path.
+    /// Reads from Redis to guarantee cross-replica visibility and reflect deregistrations
+    /// or TTL expirations. Prefer <see cref="GetByAgentIdAsync"/> from async code paths.
     /// </para>
     /// </summary>
     AgentEntry? GetByAgentId(AgentId agentId);

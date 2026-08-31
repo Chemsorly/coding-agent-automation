@@ -433,15 +433,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     public AgentEntry? GetByAgentId(AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
-        // Fast path: node-local snapshot (populated by Register/TransitionStatus/UpdateAgentFieldAsync).
-        // Covers the common case of looking up an agent registered on this replica.
-        if (_localSnapshot.TryGetValue(agentId.Value, out var local))
-            return local;
-
-        // Fallback: read from the cross-replica all-agents cache.
-        // Slightly stale but avoids blocking on Redis for Blazor / auth filter callers.
-        var cached = _allAgentsCache;
-        return cached.FirstOrDefault(a => a.AgentId.Value == agentId.Value);
+        // Always read from Redis to guarantee cross-replica visibility and reflect
+        // deregistrations / TTL expirations that have occurred since the last snapshot write.
+        // The snapshot/cache shortcut was removed because it broke cross-replica tests:
+        //   - Agents registered on another replica are absent from _localSnapshot/_allAgentsCache.
+        //   - Deregister on a non-owning replica cannot clear the owning replica's _localSnapshot.
+        //   - Status transitions on another replica are not reflected in the local snapshot.
+        // Use GetByAgentIdAsync for async callers that can avoid the sync-over-async pattern.
+        return GetAgentRaw(agentId.Value);
     }
 
     /// <inheritdoc />
