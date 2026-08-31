@@ -6,7 +6,10 @@ metadata:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
     app.kubernetes.io/component: orchestrator
 rules:
-  # Leader election via Lease — PipelineLoopService and ConsolidationWorkItemDispatchService (Spec 043).
+  # Leader election via Lease — the Orchestrator holds a lease for the deprecated
+  # pipeline-loop lock (caa-{release}-pipeline-loop-lock). PipelineLoopService moved
+  # to the Scheduler in Spec 047; this lease is now unused operationally but retained
+  # to avoid disrupting existing deployments.
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["create", "get", "update"]

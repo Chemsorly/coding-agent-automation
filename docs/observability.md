@@ -372,3 +372,20 @@ ExecuteConsolidation
 └── HarnessSuggestion.AdversarialReview
 ```
 
+
+## Frontend Observability (Grafana Faro)
+
+In addition to backend OTLP telemetry, the Orchestrator (Blazor Server app) supports [Grafana Faro](https://grafana.com/oss/faro/) for frontend Real User Monitoring (RUM).
+
+When `Faro__CollectorUrl` is set, `faro-init.js` (loaded in `App.razor`) asynchronously loads the Faro Web SDK from the unpkg.com CDN and starts collecting:
+- Page load performance
+- JavaScript errors and unhandled promise rejections
+- User interactions
+
+When the env var is absent or empty, Faro is disabled and the `faroApi` stub no-ops silently — no errors are thrown and there is no page-load impact.
+
+See [Configuration — Frontend Observability](configuration.md#frontend-observability-grafana-faro) for the `Faro__CollectorUrl` env var and Helm setup.
+
+### Air-Gapped Deployments
+
+In environments without outbound internet access, the CDN bundles fail to load silently. To use Faro in firewalled deployments: download the pinned bundle files locally, place them in `wwwroot/js/faro/`, and update `SDK_URL` / `TRACING_URL` in `faro-init.js` to relative paths.

@@ -20,7 +20,7 @@ namespace CodingAgentWebUI.Api;
 /// doing either.
 /// </para>
 /// </summary>
-public static class ChatEndpoints
+public static partial class ChatEndpoints
 {
     /// <summary>Request body for <c>POST /api/chat/dispatch</c>.</summary>
     public sealed record DispatchChatPodRequest(
@@ -104,9 +104,21 @@ public static class ChatEndpoints
     /// Resets the idle clock for the chat session, preventing automatic termination.
     /// Called by the Blazor UI every <c>ChatKeepaliveIntervalSeconds</c> while the chat
     /// window is open. Always 200 — idempotent and no-op for unknown sessions.
+    /// Returns 400 if <paramref name="agentId"/> contains characters outside <c>[a-z0-9_.-]</c>.
     /// </summary>
-    internal static Ok ChatKeepalive(string agentId, IChatJobDispatcher dispatcher)
+    // TODO: This pattern is lowercase-only ([a-z0-9_.-]), which is a strict subset of K8s label value
+    // rules (K8sLabelValuePattern in ChatJobDispatcher accepts [a-zA-Z0-9._-]). If agent IDs generated
+    // by the system ever contain uppercase letters, valid keepalive calls will receive 400s and cause
+    // premature session termination. Confirm whether all agent IDs in the system are guaranteed lowercase,
+    // or widen to [a-zA-Z0-9_.\-]{1,63} to match K8sLabelValuePattern. (Issue #2202 review, DotNetSpecialist)
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[a-z0-9_.\-]{1,63}$")]
+    private static partial System.Text.RegularExpressions.Regex AgentIdPattern();
+
+    internal static Results<Ok, BadRequest> ChatKeepalive(string agentId, IChatJobDispatcher dispatcher)
     {
+        if (!AgentIdPattern().IsMatch(agentId))
+            return TypedResults.BadRequest();
+
         dispatcher.SendClientKeepalive(agentId);
         return TypedResults.Ok();
     }
