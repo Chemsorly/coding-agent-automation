@@ -1141,6 +1141,16 @@ public class ChatJobDispatcherTests
     /// When the client never sends a keepalive after dispatch, the watcher should
     /// terminate the pod once ChatIdleTimeoutSeconds elapses with no heartbeat.
     /// </summary>
+    /// <remarks>
+    /// This test uses a FakeRedisStore with no key set, which means GetAsync returns null (key not found).
+    /// That is the "Redis healthy but no heartbeat written" path — the watcher falls back to local ticks
+    /// and idle-kill fires. This is intentionally distinct from the Redis-exception path tested in
+    /// <see cref="WatcherIdleKill_RedisThrows_DoesNotIdleKillDuringOutage"/>.
+    /// TODO [WARNING]: If the key-not-found and exception paths ever converge again, this test would
+    /// no longer guard the key-not-found → local-ticks-fallback → idle-kill sequence. Keep the
+    /// FakeRedisStore healthy (SimulateUnavailable = false) here so it continues to test the
+    /// correct path.
+    /// </remarks>
     [Fact]
     public async Task WatcherIdleKill_NoHeartbeatReceived_TerminatesPodAfterIdleTimeout()
     {
@@ -1337,5 +1347,95 @@ public class ChatJobDispatcherTests
             It.IsAny<CancellationToken>()),
             Times.Once,
             "pod must be force-deleted when cross-replica heartbeats stop");
+    }
+
+    // ─── Redis-outage idle-kill tests ─────────────────────────────────────────
+
+    /// <summary>
+    /// When <see cref="IRedisStore.GetAsync"/> throws (Redis unavailable), the watcher must NOT
+    /// call <see cref="IKubernetesJobClient.DeleteJobAsync"/> for that cycle, even if local ticks
+    /// are stale (which would normally trigger an idle-kill in a healthy system).
+    ///
+    /// Scenario:
+    ///  - Local LastClientHeartbeatTicks = StartedAt (immediately stale after dispatch — no local heartbeat).
+    ///  - FakeRedisStore.SimulateUnavailable = true → GetAsync throws.
+    ///  - Watcher must skip idle-kill for all cycles while Redis is unavailable.
+    ///  - Once Redis recovers (SimulateUnavailable = false), the watcher must resume normal behavior
+    ///    and idle-kill when no heartbeat has been written to Redis either.
+    /// </summary>
+    [Fact]
+    public async Task WatcherIdleKill_RedisThrows_DoesNotIdleKillDuringOutage()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? createdJobName = null;
+
+        // ReadJobAsync always returns non-terminal — pod won't exit on its own
+        jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, createdJobName!, dispatchId, "conn-redis-outage");
+            })
+            .Returns(Task.CompletedTask);
+
+        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
+        // TODO [WARNING]: ChatIdleTimeoutSeconds is set via post-construction assignment rather than
+        // a CreateOptions parameter, consistent with other idle-kill tests. If the default value of
+        // ChatIdleTimeoutSeconds changes (or becomes ≤ 2), this override could silently be a no-op.
+        // Consider adding a chatIdleTimeoutSeconds parameter to CreateOptions for explicit intent.
+        options.ChatIdleTimeoutSeconds = 2; // local ticks go stale after 2s
+
+        var fakeRedis = new CodingAgentWebUI.TestUtilities.FakeRedisStore();
+        // Simulate Redis being unavailable from the start — GetAsync will throw
+        fakeRedis.SimulateUnavailable = true;
+
+        var dispatcher = CreateDispatcher(
+            jobClient: jobClientMock.Object,
+            registry: registry,
+            options: options,
+            redis: fakeRedis);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // Wait beyond ChatIdleTimeoutSeconds — local ticks are stale, but Redis is throwing.
+        // The watcher must NOT idle-kill the pod while Redis is unavailable.
+        // TODO [WARNING]: This is a timing-dependent negative assertion. The 5s window assumes two
+        // full poll cycles (≈0.67s each) complete within 5s, which may be insufficient under heavy
+        // load. The authoritative guard is the Times.Never verify below; killedDuringOutage.BeFalse
+        // only confirms the watcher hasn't exited, which could be vacuously true if the watcher
+        // exits early for a non-idle-kill reason. Consider consolidating to Times.Never alone.
+        var killedDuringOutage = await dispatcher.WaitForWatcherAsync(
+            createdJobName!, TimeSpan.FromSeconds(5));
+        killedDuringOutage.Should().BeFalse(
+            "watcher must NOT idle-kill the pod while Redis is throwing, even if local ticks are stale");
+
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
+            Times.Never,
+            "DeleteJobAsync must not be called while Redis is unavailable");
+
+        // Now let Redis recover — no heartbeat was written, so idle-kill should fire normally
+        fakeRedis.SimulateUnavailable = false;
+        // TODO [WARNING]: Acceptance criterion #2 ("recent heartbeat after recovery keeps pod alive")
+        // is not exercised here. The recovery path falls through to the key-not-found / local-ticks
+        // idle-kill path (same as WatcherIdleKill_NoHeartbeatReceived). Add a separate test that
+        // writes a recent heartbeat to Redis after recovery and asserts DeleteJobAsync is NOT called.
+
+        var idleKillAfterRecovery = await dispatcher.WaitForWatcherAsync(
+            createdJobName!, TimeSpan.FromSeconds(10));
+        idleKillAfterRecovery.Should().BeTrue(
+            "watcher must idle-kill after Redis recovers and no heartbeat is present");
+
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.Is<string>(n => n == createdJobName),
+            TestNamespace,
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "pod must be force-deleted once Redis recovers and idle timeout is confirmed");
     }
 }

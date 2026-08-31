@@ -30,6 +30,14 @@ public sealed class FakeRedisStore : IRedisStore
     // For tracking the last Lua EXPIREAT value per key (for test assertions)
     public readonly ConcurrentDictionary<string, DateTimeOffset> ExpireAtCalls = new();
 
+    // ── Fault injection ───────────────────────────────────────────────
+
+    /// <summary>
+    /// When set to <c>true</c>, <see cref="GetAsync"/> throws <see cref="InvalidOperationException"/>
+    /// to simulate a Redis connection failure. Set back to <c>false</c> to simulate recovery.
+    /// </summary>
+    public bool SimulateUnavailable { get; set; }
+
     // ── String operations ─────────────────────────────────────────────
 
     public Task<bool> SetAsync(string key, string value, TimeSpan? expiry = null, When when = When.Always)
@@ -49,6 +57,16 @@ public sealed class FakeRedisStore : IRedisStore
 
     public Task<string?> GetAsync(string key)
     {
+        if (SimulateUnavailable)
+            // TODO [WARNING]: This throws synchronously rather than returning a faulted Task.
+            // Production IRedisStore throws from within an async method, returning a faulted Task.
+            // Both are caught correctly by the current await in TryGetRedisHeartbeatAsync, but if
+            // that method is ever refactored to a non-async wrapper the call stacks will differ.
+            // Prefer: return Task.FromException<string?>(new InvalidOperationException(...))
+            // TODO [WARNING]: SimulateUnavailable only faults GetAsync. Other IRedisStore methods
+            // (SetAsync, HashSetAsync, etc.) succeed normally, which is misleading given the name
+            // implies a full connection failure. Extend to other methods if future tests require it.
+            throw new InvalidOperationException("FakeRedisStore: simulated Redis unavailability");
         if (_strings.TryGetValue(key, out var entry) && !IsExpired(key))
             return Task.FromResult<string?>(entry.Value);
         return Task.FromResult<string?>(null);

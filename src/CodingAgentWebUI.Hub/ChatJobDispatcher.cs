@@ -423,23 +423,33 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     /// <summary>
     /// Reads the cross-replica heartbeat timestamp from Redis.
-    /// Returns null on Redis failure (watcher falls back to local ticks).
+    /// Returns <c>(Available: true, Heartbeat: value)</c> when Redis is reachable and the key exists.
+    /// Returns <c>(Available: true, Heartbeat: null)</c> when Redis is reachable but the key is absent
+    /// (no heartbeat has been written yet, or TTL expired) — the caller should fall back to local ticks.
+    /// Returns <c>(Available: false, Heartbeat: null)</c> when Redis threw an exception — the caller
+    /// must skip the idle-kill for this cycle to avoid falsely terminating an active session during
+    /// a Redis outage.
     /// </summary>
-    private async Task<DateTimeOffset?> TryGetRedisHeartbeatAsync(string jobName, WatcherEntry entry)
+    // TODO [WARNING]: update this comment if the contract or return type changes further.
+    private async Task<(bool Available, DateTimeOffset? Heartbeat)> TryGetRedisHeartbeatAsync(
+        string jobName, WatcherEntry entry)
     {
         try
         {
             var raw = await _redis!.GetAsync(HeartbeatKey(entry.AgentId));
             if (raw is not null && long.TryParse(raw, out var ms))
-                return DateTimeOffset.FromUnixTimeMilliseconds(ms);
+                return (true, DateTimeOffset.FromUnixTimeMilliseconds(ms));
+            // Key not found or unparseable — Redis is healthy, heartbeat absent
+            return (true, null);
         }
         catch (Exception ex)
         {
             _logger.Warning(ex,
-                "ChatJobDispatcher: Redis heartbeat read failed for {JobName} — falling back to local ticks",
+                "ChatJobDispatcher: Redis heartbeat read failed for {JobName} — skipping idle-kill this cycle",
                 jobName);
+            // Redis is unavailable — do not fall back to stale local ticks; skip this cycle
+            return (false, null);
         }
-        return null;
     }
 
     // ─── Background watcher ───────────────────────────────────────────────────
@@ -464,8 +474,28 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             DateTimeOffset lastHeartbeat;
             if (_redis is not null)
             {
-                var raw = await TryGetRedisHeartbeatAsync(jobName, entry);
-                lastHeartbeat = raw ?? new DateTimeOffset(
+                var (available, redisHeartbeat) = await TryGetRedisHeartbeatAsync(jobName, entry);
+                if (!available)
+                {
+                    // Redis threw — skip idle-kill this cycle to avoid falsely terminating
+                    // an active session during a Redis outage. Try again next poll interval.
+                    _logger.Debug(
+                        "ChatJobDispatcher: Redis unavailable for {JobName} — skipping idle-kill check this cycle",
+                        jobName);
+                    // TODO [WARNING]: OperationCanceledException is swallowed here — cleanup is deferred to the
+                    // post-loop CleanupSession fallthrough rather than an explicit catch. Functionally correct,
+                    // but asymmetric with the bottom-of-loop Task.Delay which calls CleanupSession on cancellation.
+                    // Consider: catch OCE, call CleanupSession, return — to match the existing shutdown pattern
+                    // and ensure shutdown-reason observability during a Redis outage.
+                    // TODO [WARNING]: No back-off on repeated Redis failures — each poll cycle logs a Warning,
+                    // which can flood logs during extended outages. Consider capping repeated-failure log level
+                    // to Debug after the first occurrence, or tracking failure count.
+                    try { await Task.Delay(pollInterval, ct); } catch (OperationCanceledException) { }
+                    continue;
+                }
+                // Redis healthy: use its timestamp if present, otherwise fall back to local ticks
+                // (key-not-found means no keepalive has been written yet on any replica).
+                lastHeartbeat = redisHeartbeat ?? new DateTimeOffset(
                     Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
             }
             else

@@ -43,7 +43,12 @@ public class QualityGateValidatorIntegrationTests : IDisposable
         CopyDirectory(fixtureSource, tempDir);
         _tempDirs.Add(tempDir);
 
-        // Restore NuGet packages so --no-restore builds work
+        // Restore NuGet packages so --no-restore builds work.
+        // Use a generous timeout (5 minutes) — under heavy parallel load (e.g. when multiple large
+        // test assemblies run concurrently during the QG run), dotnet restore can be slow due to
+        // MSBuild/NuGet contention. A too-short timeout here silently leaves packages unrestored,
+        // causing the subsequent --no-restore build to fail with a misleading compilation error.
+        const int RestoreTimeoutMs = 300_000; // 5 minutes
         var psi = new System.Diagnostics.ProcessStartInfo("dotnet", "restore")
         {
             WorkingDirectory = tempDir,
@@ -52,7 +57,26 @@ public class QualityGateValidatorIntegrationTests : IDisposable
             UseShellExecute = false
         };
         using var proc = System.Diagnostics.Process.Start(psi)!;
-        proc.WaitForExit(60_000);
+
+        // Read stdout/stderr asynchronously to avoid deadlock when pipe buffers fill up.
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+
+        var completed = proc.WaitForExit(RestoreTimeoutMs);
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
+
+        if (!completed)
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            throw new TimeoutException(
+                $"dotnet restore timed out after {RestoreTimeoutMs / 1000}s for fixture '{fixtureName}' in '{tempDir}'");
+        }
+        if (proc.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"dotnet restore failed (exit {proc.ExitCode}) for fixture '{fixtureName}'.\nStdout: {stdout}\nStderr: {stderr}");
+        }
 
         return tempDir;
     }
