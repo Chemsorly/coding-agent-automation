@@ -90,9 +90,15 @@ public static class WorkDistributionTelemetry
     public static readonly ObservableGauge<double> DispatcherLastPollEpoch =
         Meter.CreateObservableGauge<double>(
             "workdistribution.dispatcher_last_poll_epoch_seconds",
-            observeValues: () => _pollEpochRecorded
-                ? [new Measurement<double>(_lastPollEpochSeconds)]
-                : [],
+            observeValues: () =>
+            {
+                // Single volatile read — no torn-read possible between a "recorded" flag
+                // and the epoch value. Zero means RecordLastPollEpoch has not been called yet.
+                var ms = Volatile.Read(ref _pollEpochMillis);
+                return ms > 0
+                    ? [new Measurement<double>(ms / 1000.0)]
+                    : [];
+            },
             unit: "s",
             description: "Epoch seconds of the last DispatchService poll cycle");
 
@@ -173,8 +179,14 @@ public static class WorkDistributionTelemetry
 
     // ── Observable gauge backing state ──────────────────────────────────────
 
-    private static double _lastPollEpochSeconds;
-    private static bool _pollEpochRecorded;  // explicit init flag — avoids magic zero sentinel
+    // Single long encodes both "has been recorded" and "value":
+    //   0   → RecordLastPollEpoch has never been called (no measurement emitted)
+    //   > 0 → Unix epoch milliseconds of the last poll (divided by 1000.0 on read)
+    // Using a single field (accessed via Volatile.Read/Write) eliminates the two-field
+    // torn-read race that existed with the former (_lastPollEpochSeconds, _pollEpochRecorded) pair.
+    // Note: the C# 'volatile' keyword is restricted to types ≤ 4 bytes (CS0677), so
+    // Volatile.Read/Write are used instead for correct acquire/release memory ordering.
+    private static long _pollEpochMillis;
     private static int _credentialPoolAvailable;
     private static int _credentialPoolClaimed;
     private static Func<IEnumerable<Measurement<long>>>? _workItemsByStatusCallback;
@@ -195,8 +207,11 @@ public static class WorkDistributionTelemetry
     /// </summary>
     public static void RecordLastPollEpoch()
     {
-        _lastPollEpochSeconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
-        _pollEpochRecorded = true;
+        // Volatile.Write provides a release fence, ensuring that any preceding writes
+        // are visible to other threads before they observe the new epoch value.
+        // Collapses the old two-field (_lastPollEpochSeconds / _pollEpochRecorded) pattern
+        // into one field to prevent the export thread from observing an inconsistent pair.
+        Volatile.Write(ref _pollEpochMillis, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
     }
 
     /// <summary>

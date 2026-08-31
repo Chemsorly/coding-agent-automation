@@ -7,11 +7,13 @@ The pipeline is a state machine that progresses through a fixed sequence of step
 3. **Epic decomposition pipeline** — Processes epics through a two-phase workflow producing implementation-ready sub-issues (see [Epic Decomposition Pipeline](#epic-decomposition-pipeline) below)
 4. **Consolidation pipeline** — Brain consolidation, refactoring detection, and harness suggestion runs. Dispatched on-demand via the Consolidation page, not by the label-based loop. See [Feedback & Consolidation](feedback-and-consolidation.md) for details.
 
-The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are dispatched by a separate `ConsolidationWorkItemDispatchService` and do not go through the label loop.
+The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are dispatched by `ConsolidationDispatchService` (in the Job Controller, leader-elected via `caa-{release}-dispatch-lock`) and do not go through the label loop.
 
 ## Dispatch Mode
 
 The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService` prepares each request (resolves providers, vends tokens), then `KubernetesWorkDistributor` creates a `WorkItem` row. The Job Controller polls for pending WorkItems, claims each one, and creates a K8s Job — the resulting ephemeral agent pod picks up the full assignment via `GET /api/work-items/{id}/assignment` and reports terminal status via `POST /api/work-items/{id}/status`. The PipelineRun is created by the Pipeline API's `POST /api/work-items` handler.
+
+**Payload snapshot:** When `POST /api/work-items` creates the row, only identity fields (issue identifier, provider config IDs, run ID, task type) are stored in `WorkItems.Payload`. Mutable configuration — provider settings, quality gate configs, steering content, MCP servers, issue context — is **not** stored at enqueue time. Instead, `GET /api/work-items/{id}/assignment` fetches all mutable config fresh via `AssignmentEnricher` at the moment the agent pod claims the job. This means configuration changes take effect immediately for queued but not-yet-claimed work items, with no risk of serving stale credentials or settings to long-queued jobs.
 
 **K8s Job naming** uses three formats depending on the dispatch path:
 
@@ -442,7 +444,7 @@ When multiple work types are queued in the same poll cycle, the loop uses a fixe
 | 2 | Decomposition | Phase 1 and Phase 2 epics |
 | 3 | Issues (Implementation) | Dispatched last |
 
-The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are handled by a separate `ConsolidationWorkItemDispatchService` and do not participate in this scheduler.
+The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are handled by `ConsolidationDispatchService` (in the Job Controller) and do not participate in this scheduler.
 
 ### Dispatch Budget Sharing
 
