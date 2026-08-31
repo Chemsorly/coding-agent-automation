@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
-using CodingAgentWebUI.JobController.Reconciliation;
 using k8s.Models;
 
 namespace CodingAgentWebUI.JobController.UnitTests.Dispatch;
@@ -14,7 +13,10 @@ public sealed class DispatchLoopTests
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
     private readonly Mock<IPipelineApiConfigClient> _configClient = new();
     private readonly Mock<IKubernetesJobClient> _k8sClient = new();
-    private readonly Mock<IReconciliationTrigger> _reconciliationTrigger = new();
+
+    // Shared process-wide PVC selection lock — same singleton that would be injected by DI in production.
+    private readonly PvcSelectLock _pvcSelectLock = new();
+
     private readonly JobTemplateStore _templateStore;
     private readonly DispatchServiceOptions _options;
 
@@ -74,7 +76,7 @@ public sealed class DispatchLoopTests
 
     private DispatchLoop CreateLoop() =>
         new(_workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            _templateStore, new PvcPool(_options.KiroPvcPool), _options, _reconciliationTrigger.Object);
+            _templateStore, _options, _pvcSelectLock);
 
     // ─── Happy path ───────────────────────────────────────────────────────────
 
@@ -132,18 +134,13 @@ public sealed class DispatchLoopTests
 
     // ─── PVC pool exhausted ───────────────────────────────────────────────────
 
-    // TODO [WARNING]: No tests cover the PVC-release paths when TryClaimWorkItemAsync fails for a kiro
-    // agent in DispatchLoop. Two cases need coverage:
-    //   1. ClaimAsync throws WorkItemNotFoundException (404) — _pvcPool.Release(pvcName) must be called
-    //   2. ClaimAsync returns null (409 contention)          — _pvcPool.Release(pvcName) must be called
-    // Without these tests, a future regression that drops either Release call would cause a permanent
-    // PVC leak on every 404/409 event and would not be caught by the test suite. ConsolidationDispatchLoopTests
-    // has an equivalent TODO comment; DispatchLoopTests should have the same coverage.
-
     /// <summary>
     /// PVC starvation must NOT call RequeueAsync — the item is already Pending and should
     /// be held there silently until a PVC becomes available. Calling RequeueAsync would
     /// increment RetryCount on every 10s poll cycle, corrupting the field (issue #2129).
+    ///
+    /// PVC starvation is detected by SelectAvailablePvcAsync returning null when all configured
+    /// PVCs are mounted by live K8s Jobs.
     /// </summary>
     [Fact]
     public async Task WhenPvcPoolExhausted_ShouldNotCallRequeueAsync_AndShouldNotCreateJob()
@@ -156,22 +153,29 @@ public sealed class DispatchLoopTests
               maxConcurrent: 0
             """;
         var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
-        var emptyPoolOptions = new DispatchServiceOptions
+        var oneVcOptions = new DispatchServiceOptions
         {
             Namespace = "test-ns",
             RateLimitPerSecond = 100,
-            KiroPvcPool = [] // empty pool — TryClaim returns null
+            KiroPvcPool = ["kiro-pvc-0"] // pool has one PVC
         };
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
-        // No ClaimAsync setup — PVC check runs before claim, so Moq will throw MockException
-        // on any unexpected ClaimAsync call, giving an early and explicit failure signal.
+
+        // The only PVC is already mounted by a live job
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList
+            {
+                Items =
+                [
+                    MakeJobWithPvc("existing-job", "kiro-pvc-0")
+                ]
+            });
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            kiroStore, new PvcPool(emptyPoolOptions.KiroPvcPool), emptyPoolOptions,
-            _reconciliationTrigger.Object);
+            kiroStore, oneVcOptions, _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -183,10 +187,12 @@ public sealed class DispatchLoopTests
         _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    /// <summary>
+    /// When a PVC is available, the kiro agent should have its Job created with that PVC mounted.
+    /// </summary>
     [Fact]
-    public async Task WhenPvcPoolExhausted_ShouldCallRequestImmediateCycle()
+    public async Task WhenPvcAvailable_ShouldCreateJobWithCorrectPvcName()
     {
-        // Template with kiro providerType so PVC is required
         const string kiroYaml = """
             - labels: dotnet10,kiro
               image: chemsorly/coding-agent:kiro-dotnet10
@@ -194,34 +200,41 @@ public sealed class DispatchLoopTests
               maxConcurrent: 0
             """;
         var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
-        var emptyPoolOptions = new DispatchServiceOptions
+        var twoVcOptions = new DispatchServiceOptions
         {
             Namespace = "test-ns",
             RateLimitPerSecond = 100,
-            KiroPvcPool = [] // empty pool — TryClaim returns null
+            AgentJobTimeoutSeconds = 7200,
+            ChatPodConnectTimeoutSeconds = 120,
+            KiroPvcPool = ["kiro-pvc-0", "kiro-pvc-1"]
         };
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
-        // TODO [WARNING]: The ClaimAsync setup above is now dead — the PVC check (TryClaimPvcForKiroAgent)
-        // returns early before ClaimAsync is ever reached. A reader would incorrectly conclude ClaimAsync
-        // is expected to be called in this path. Remove this setup and add a ClaimAsync: Times.Never
-        // verification (as the sibling test WhenPvcPoolExhausted_ShouldNotCallRequeueAsync does) to
-        // explicitly document the PVC-before-claim ordering.
+
+        // kiro-pvc-0 is claimed; kiro-pvc-1 is free
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [MakeJobWithPvc("existing-job", "kiro-pvc-0")] });
+
+        V1Job? capturedJob = null;
+        _k8sClient.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
+            .Returns(Task.CompletedTask);
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            kiroStore, new PvcPool(emptyPoolOptions.KiroPvcPool), emptyPoolOptions,
-            _reconciliationTrigger.Object);
+            kiroStore, twoVcOptions, _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
-        // Trigger must fire exactly once — not zero (no-op) and not more than once per cycle
-        _reconciliationTrigger.Verify(t => t.RequestImmediateCycle(), Times.Once);
-        // No K8s Job should be created
-        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        capturedJob.Should().NotBeNull();
+        var mountedPvc = capturedJob!.Spec.Template.Spec.Volumes
+            .FirstOrDefault(v => v.PersistentVolumeClaim?.ClaimName is not null)
+            ?.PersistentVolumeClaim?.ClaimName;
+        mountedPvc.Should().Be("kiro-pvc-1");
     }
 
     // ─── Concurrency limit reached ────────────────────────────────────────────
@@ -256,7 +269,7 @@ public sealed class DispatchLoopTests
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            limitedStore, new PvcPool([]), _options, _reconciliationTrigger.Object);
+            limitedStore, _options, _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -562,10 +575,6 @@ public sealed class DispatchLoopTests
     /// The limit is set to 2 so that count=1 leaves headroom, confirming the completed job was
     /// not counted. (If it were counted, count=2 would equal the limit and dispatch would be blocked.)
     /// </summary>
-    // TODO: The test proves count=1 indirectly (dispatch proceeds with maxConcurrent=2, implying
-    // active count < 2). It does not directly assert count=1 as a numeric value. A complementary
-    // test using maxConcurrent=1 with the same two jobs would more directly verify the acceptance
-    // criterion: with count=1 == limit=1, ClaimAsync must NOT be called.
     [Fact]
     public async Task WhenOneRunningAndOneCompletedJobForSameSelector_ConcurrencyCountIsOne()
     {
@@ -578,10 +587,6 @@ public sealed class DispatchLoopTests
         var store = JobTemplateStore.LoadFromYaml(yaml);
 
         // Running job — no conditions, no succeeded/failed counters
-        // TODO: This running job does not set Active = 1, which would reflect the real K8s shape of
-        // an active job. If IsJobTerminal were later refactored to also check Active == 0 as a terminal
-        // signal, this test would not catch the regression because Active is already null (equivalent to 0).
-        // Consider setting Status = new V1JobStatus { Active = 1, Succeeded = 0, Failed = 0 }.
         var runningJob = new V1Job
         {
             Metadata = new V1ObjectMeta
@@ -593,6 +598,7 @@ public sealed class DispatchLoopTests
             },
             Status = new V1JobStatus
             {
+                Active = 1,
                 Succeeded = 0,
                 Failed = 0
             }
@@ -628,7 +634,7 @@ public sealed class DispatchLoopTests
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            store, new PvcPool([]), _options, _reconciliationTrigger.Object);
+            store, _options, _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -636,6 +642,12 @@ public sealed class DispatchLoopTests
         _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Once);
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // TODO: Add a tighter boundary variant of WhenOneRunningAndOneCompletedJobForSameSelector_ConcurrencyCountIsOne
+    // using maxConcurrent=1 with one running job + one completed job. Count must equal exactly 1 to
+    // block dispatch (not proceed). This distinguishes a count of 1 from a count of 0 — the current
+    // maxConcurrent=2 test only verifies dispatch proceeds (count < 2) but would also pass if the active
+    // job were incorrectly excluded (count=0, also < 2). A maxConcurrent=1 variant would fail in that case.
 
     /// <summary>
     /// Regression test for issue #2176 — boundary at the concurrency limit.
@@ -683,7 +695,7 @@ public sealed class DispatchLoopTests
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            store, new PvcPool([]), _options, _reconciliationTrigger.Object);
+            store, _options, _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -737,7 +749,7 @@ public sealed class DispatchLoopTests
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            store, new PvcPool([]), _options, _reconciliationTrigger.Object);
+            store, _options, _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -746,16 +758,102 @@ public sealed class DispatchLoopTests
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // TODO: Add test for the counter-only fallback path where Status.Failed=1, Status.Active=1,
-    // Status.Conditions=null — this is the retrying-job scenario from review finding #3 (issue #2176).
-    // IsJobTerminal must return false (job is not terminal), so it should still be counted toward
-    // concurrency. A test with maxConcurrent=1 and one such retrying job should assert that
-    // ClaimAsync is NOT called (dispatch blocked by the in-flight retry pod).
-    // Example: Status = new V1JobStatus { Failed = 1, Active = 1, Conditions = null }
+    // TODO: Add counter-fallback path tests for IsJobTerminal where Conditions is null or empty.
+    // The current WhenOnlyJobIsFailed test sets both a "Failed" condition AND Failed=1 in counters,
+    // so IsJobTerminal returns true via the conditions branch and the counter-fallback
+    // (Failed > 0 && Active == 0) is never exercised. Add:
+    //   - WhenOnlyJobIsFailed_NoConditions_ConcurrencyCountIsZero: Conditions=null, Failed=1, Active=0
+    //   - WhenOnlyJobIsSucceeded_NoConditions_ConcurrencyCountIsZero: Conditions=null, Succeeded=1
+    // to cover the fallback paths that IsJobTerminal documents as necessary.
 
-    // TODO: Add test asserting that a truly running job at the concurrency limit blocks dispatch
-    // (i.e. ClaimAsync is NOT called). Currently all three #2176 tests only verify terminal jobs
-    // do NOT block dispatch; there is no complementary test proving a non-terminal job DOES block.
-    // This gap means a regression where IsJobTerminal incorrectly returns true for all jobs would
-    // not be caught. Use maxConcurrent=1 with one running job (no conditions, Succeeded=0, Failed=0).
+    /// <summary>
+    /// Regression test for issue #2176 — retrying job variant.
+    /// A job with Failed=1, Active=1 and no terminal condition is still retrying (Kubernetes
+    /// is creating a new pod). It must NOT be treated as terminal and must count toward concurrency.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobIsRetrying_ConcurrencyCountIsOne_AndDispatchIsBlocked()
+    {
+        const string yaml = """
+            - labels: dotnet10,opencode
+              image: chemsorly/coding-agent:opencode-dotnet10
+              providerType: opencode
+              maxConcurrent: 1
+            """;
+        var store = JobTemplateStore.LoadFromYaml(yaml);
+
+        // Retrying job — first pod attempt failed but Active=1 means a retry pod is running
+        var retryingJob = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Labels = new Dictionary<string, string>
+                {
+                    ["caa/agent-selector"] = "dotnet10.opencode"
+                }
+            },
+            Status = new V1JobStatus
+            {
+                Failed = 1,
+                Active = 1,
+                Conditions = null // "Failed" condition is only set after all retries are exhausted
+            }
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [retryingJob] });
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,opencode")]);
+
+        var loop = new DispatchLoop(
+            _workItemClient.Object, _configClient.Object, _k8sClient.Object,
+            store, _options, _pvcSelectLock);
+
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Retrying job still occupies a concurrency slot — dispatch must be blocked
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // TODO: Restore concurrent PVC-selection tests now that the lock scope has been extended to cover
+    // SelectAvailablePvcAsync + ClaimAsync + CreateJobAsync atomically (TOCTOU fix for issue #2176).
+    // The previously deleted tests (ConcurrentDispatch_PicksDistinctPvcs,
+    // SameLoop_ConcurrentCycles_SemaphoreSerializesSelection,
+    // CrossLoop_DispatchAndConsolidation_SharedLock_PicksDistinctPvcs) validated the old invariant
+    // that SelectAvailablePvcAsync + CreateJobAsync ran atomically. The new wider lock scope
+    // provides the same invariant — new tests should verify that two concurrent kiro dispatches
+    // (same loop or cross-loop) select distinct PVCs even when both observe identical K8s state
+    // before either creates a Job.
+
+    // TODO: Add equal-values edge case test — WhenItemTimeoutEqualsGlobal_K8sJob_ActiveDeadlineSeconds_UsesSharedTimeout
+    // where item.TimeoutSeconds == agentJobTimeoutSeconds (e.g. both 7200s) → activeDeadlineSeconds == 7260.
+    // This boundary condition confirms that floor and ceiling converge cleanly at the same value.
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    private static V1Job MakeJobWithPvc(string jobName, string pvcName) =>
+        new()
+        {
+            Metadata = new V1ObjectMeta { Name = jobName },
+            Spec = new V1JobSpec
+            {
+                Template = new V1PodTemplateSpec
+                {
+                    Spec = new V1PodSpec
+                    {
+                        Volumes =
+                        [
+                            new V1Volume
+                            {
+                                Name = "kiro-data",
+                                PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource { ClaimName = pvcName }
+                            }
+                        ]
+                    }
+                }
+            },
+            Status = new V1JobStatus { Active = 1 }
+        };
 }

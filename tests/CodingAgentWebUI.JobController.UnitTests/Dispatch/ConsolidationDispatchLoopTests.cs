@@ -311,6 +311,14 @@ public sealed class ConsolidationDispatchLoopTests
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // TODO: Add completed-job exclusion tests for ConsolidationDispatchLoop equivalent to the
+    // DispatchLoopTests concurrency-map coverage added for issue #2176. BuildConcurrencyMapAsync is
+    // shared by both loops; if the call site in ConsolidationDispatchLoop ever diverges (different
+    // label filter, result wrapping, etc.) a regression would not be caught. Add at minimum:
+    //   - WhenOneRunningAndOneCompletedJobForSameSelector_ConcurrencyCountIsOne (mirror of DispatchLoopTests)
+    //   - WhenOnlyJobIsCompleted_ConcurrencyCountIsZero_AndDispatchProceeds
+    // to ensure the terminal-job filtering behaviour is verified through the ConsolidationDispatchLoop call path.
+
     // ── Project secrets → K8s Secret created ──────────────────────────────────
 
     [Fact]
