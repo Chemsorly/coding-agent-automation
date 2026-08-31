@@ -65,17 +65,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private readonly ConcurrentDictionary<string, WatcherEntry> _activeWatchers = new();
     private readonly CancellationTokenSource _shutdownCts = new();
 
-    // Idempotency guard for StopAsync: 0 = not yet stopped, 1 = stop in progress or completed.
-    // Prevents the double StopAsync call (IHostedService.StopAsync + DisposeAsync) from
-    // invoking _shutdownCts.CancelAsync() twice and racing with _shutdownCts.Dispose().
-    private int _stopped;
-
-    // Completion signal: set when StopAsync finishes its entire body (including CancelAsync and
-    // watcher drain). DisposeAsync awaits this before calling _shutdownCts.Dispose(), ensuring
-    // that even if DisposeAsync is called concurrently with an in-progress StopAsync, Dispose
-    // never races with CancelAsync.
-    private readonly TaskCompletionSource _stopCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
     private sealed class WatcherEntry
     {
         public Task WatcherTask = Task.CompletedTask; // assigned after construction; see RegisterWatcher
@@ -464,72 +453,118 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         // Wake up no later than idleTimeout/3 so we react promptly to window-close.
         var pollInterval = TimeSpan.FromSeconds(Math.Min(10, Math.Max(1, _options.ChatIdleTimeoutSeconds / 3)));
 
-        while (!ct.IsCancellationRequested)
+        try
         {
-            // ── Circuit-based idle-kill check ──────────────────────────────────
-            // If the client has not sent a keepalive within ChatIdleTimeoutSeconds, the
-            // chat window is presumed closed (navigate-away, tab crash, browser close).
-            // When Redis is configured: read the cross-replica authoritative timestamp so
-            // a keepalive that landed on a different replica is visible here. Fall back to
-            // the local in-process ticks when Redis is absent (local dev, single replica).
-            DateTimeOffset lastHeartbeat;
-            if (_redis is not null)
+            while (!ct.IsCancellationRequested)
             {
-                var raw = await TryGetRedisHeartbeatAsync(jobName, entry);
-                lastHeartbeat = raw ?? new DateTimeOffset(
-                    Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
-            }
-            else
-            {
-                lastHeartbeat = new DateTimeOffset(
-                    Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
-            }
-
-            var idleSince = DateTimeOffset.UtcNow - lastHeartbeat;
-            if (idleSince > idleTimeout)
-            {
-                // Only fire idle-kill if TerminateChatSessionAsync hasn't already been called.
-                // Interlocked.CompareExchange: set Terminating from 0 → 1; if it was already 1,
-                // someone else is handling termination — back off and let the watcher drain.
-                if (Interlocked.CompareExchange(ref entry.Terminating, 1, 0) != 0)
+                // ── Circuit-based idle-kill check ──────────────────────────────────
+                // If the client has not sent a keepalive within ChatIdleTimeoutSeconds, the
+                // chat window is presumed closed (navigate-away, tab crash, browser close).
+                // When Redis is configured: read the cross-replica authoritative timestamp so
+                // a keepalive that landed on a different replica is visible here. Fall back to
+                // the local in-process ticks when Redis is absent (local dev, single replica).
+                DateTimeOffset lastHeartbeat;
+                if (_redis is not null)
                 {
-                    _logger.Debug(
-                        "ChatJobDispatcher: idle-kill skipped for {JobName} — termination already in progress",
-                        jobName);
-                    // Let the watcher loop continue; the in-flight termination will clean up.
-                    try { await Task.Delay(pollInterval, ct); } catch (OperationCanceledException) { }
-                    continue;
+                    var raw = await TryGetRedisHeartbeatAsync(jobName, entry);
+                    lastHeartbeat = raw ?? new DateTimeOffset(
+                        Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
+                }
+                else
+                {
+                    lastHeartbeat = new DateTimeOffset(
+                        Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
                 }
 
-                _logger.Warning(
-                    "ChatJobDispatcher: chat pod {JobName} idle for {IdleSeconds:F0}s (threshold={Threshold}s) — terminating",
-                    jobName, idleSince.TotalSeconds, _options.ChatIdleTimeoutSeconds);
-                // Run termination asynchronously but wait for it to complete before exiting.
-                await TerminateChatSessionAsync(new AgentId(entry.AgentId), CancellationToken.None);
-                return;
-            }
+                var idleSince = DateTimeOffset.UtcNow - lastHeartbeat;
+                if (idleSince > idleTimeout)
+                {
+                    // Only fire idle-kill if TerminateChatSessionAsync hasn't already been called.
+                    // Interlocked.CompareExchange: set Terminating from 0 → 1; if it was already 1,
+                    // someone else is handling termination — back off and let the watcher drain.
+                    if (Interlocked.CompareExchange(ref entry.Terminating, 1, 0) != 0)
+                    {
+                        _logger.Debug(
+                            "ChatJobDispatcher: idle-kill skipped for {JobName} — termination already in progress",
+                            jobName);
+                        // Let the watcher loop continue; the in-flight termination will clean up.
+                        try { await Task.Delay(pollInterval, ct); } catch (OperationCanceledException) { }
+                        continue;
+                    }
 
-            var (job, readError) = await TryReadJobAsync(jobName);
+                    _logger.Warning(
+                        "ChatJobDispatcher: chat pod {JobName} idle for {IdleSeconds:F0}s (threshold={Threshold}s) — terminating",
+                        jobName, idleSince.TotalSeconds, _options.ChatIdleTimeoutSeconds);
+                    // Run termination asynchronously but wait for it to complete before exiting.
+                    await TerminateChatSessionAsync(new AgentId(entry.AgentId), CancellationToken.None);
+                    // TerminateChatSessionAsync's force-delete path calls CleanupSession("force_deleted").
+                    // The clean idle-kill path (watcher exits within grace period) does NOT call
+                    // CleanupSession — it expects the watcher to exit via its own cancellation.
+                    // Since we return unconditionally here, call CleanupSession with the correct
+                    // outcome. CleanupSession is gated by Interlocked.CompareExchange(ref entry.Cleaned,
+                    // 1, 0), so if force-delete already ran it, this is a safe no-op.
+                    // TODO [WARNING]: The "shutdown" outcome tag here covers both the clean-exit path
+                    // (watcher drained within grace, no force-delete) and the force-expired path (where
+                    // this CleanupSession call is a CAS-gated no-op because force-delete already called
+                    // CleanupSession("force_deleted")). The double-call pattern is safe but subtle;
+                    // consider introducing an "idle_killed" outcome to distinguish idle termination
+                    // from clean shutdown initiated by the user or orchestrator. See review finding:
+                    // Correctness WARNING @ line 499.
+                    CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
+                    return;
+                }
 
-            if (!readError && (job is null || IsTerminal(job)))
-            {
-                LogJobTermination(job, entry.JobName, entry.ClaimedPvc);
-                CleanupSession(entry.AgentId, entry, selectorEncoded, "completed");
-                return;
-            }
+                var (job, readError) = await TryReadJobAsync(jobName);
 
-            try
-            {
-                await Task.Delay(pollInterval, ct);
+                if (!readError && (job is null || IsTerminal(job)))
+                {
+                    LogJobTermination(job, entry.JobName, entry.ClaimedPvc);
+                    CleanupSession(entry.AgentId, entry, selectorEncoded, "completed");
+                    return;
+                }
+
+                try
+                {
+                    await Task.Delay(pollInterval, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
+                    return;
+                }
             }
-            catch (OperationCanceledException)
-            {
-                CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
-                return;
-            }
+            // ct was already cancelled when the while-condition was evaluated
+            CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
         }
-        // ct was already cancelled when the while-condition was evaluated
-        CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
+        catch (OperationCanceledException)
+        {
+            // Normal cancellation (e.g. _shutdownCts fired, or WatcherCts cancelled by
+            // TerminateChatSessionAsync). Not an error — no Error log.
+            // CleanupSession is idempotent via the entry.Cleaned CAS gate, so this call
+            // is a safe no-op if an inner exit path already ran CleanupSession.
+            // TODO [WARNING]: If an awaited call inside the try block (e.g. TryReadJobAsync) throws
+            // OperationCanceledException for an unrelated reason (K8s client internal timeout) even
+            // though CancellationToken.None was passed, that exception is caught here and silently
+            // treated as normal shutdown with no Error log. The correct fix is to pass ct into
+            // TryReadJobAsync so cancellation is intentional and distinguishable. This is a
+            // pre-existing gap — not introduced by this diff — but this handler now makes it silent.
+            // See review finding: Correctness WARNING @ line 547.
+            CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex,
+                "ChatJobDispatcher: watcher for job {JobName} faulted unexpectedly", jobName);
+        }
+        finally
+        {
+            // CleanupSession is idempotent via the entry.Cleaned CAS gate: every normal exit
+            // path inside the try block already calls it, so this is a no-op for those paths.
+            // The finally ensures CleanupSession executes even if _logger.Error (or any other
+            // call in the catch body) throws — preventing the session counter and _activeWatchers
+            // entry leaks that this issue (#2203) was filed to fix.
+            CleanupSession(entry.AgentId, entry, selectorEncoded, "faulted");
+        }
     }
 
     private async Task<(V1Job? job, bool readError)> TryReadJobAsync(string jobName)
@@ -645,68 +680,41 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        // Idempotency guard: if StopAsync was already called (e.g. ASP.NET Core called both
-        // IHostedService.StopAsync and IAsyncDisposable.DisposeAsync → StopAsync in sequence),
-        // return immediately so _shutdownCts.CancelAsync() is never invoked twice and cannot
-        // race with _shutdownCts.Dispose() in DisposeAsync.
-        // TODO: A concurrent second StopAsync caller (not DisposeAsync) returns immediately as a
-        // silent no-op rather than waiting for the first call to finish. The comment below about
-        // "DisposeAsync guards against this" is only true for DisposeAsync specifically — any other
-        // code path that calls StopAsync twice concurrently and then depends on "stopped" state may
-        // proceed prematurely. In the current ASP.NET Core host lifecycle this is not exercised
-        // (Stop and Dispose are sequential), but it is a latent correctness issue if StopAsync is
-        // ever called from outside the hosted service lifecycle.
-        // A concurrent second caller returns immediately without waiting for the first to finish;
-        // DisposeAsync guards against this by awaiting _stopCompleted before calling Dispose.
-        if (Interlocked.Exchange(ref _stopped, 1) != 0)
-            return;
-
+        // TODO [WARNING]: StopAsync is no longer idempotent — the previous _stopped Interlocked guard
+        // and _stopCompleted TaskCompletionSource were removed by this diff. If StopAsync is called
+        // twice concurrently (or DisposeAsync is called concurrently with an in-progress StopAsync),
+        // _shutdownCts.CancelAsync() may be awaited while _shutdownCts.Dispose() races on another
+        // thread, causing ObjectDisposedException. CancellationTokenSource.CancelAsync() is safe to
+        // call multiple times after cancellation, so the sequential ASP.NET Core lifecycle (StopAsync
+        // then DisposeAsync) is unaffected. However the concurrent case is unguarded. Re-add an
+        // idempotency guard (Interlocked.Exchange or similar) if StopAsync is ever invoked outside
+        // the sequential hosted-service lifecycle. See review findings: Correctness WARNING @ line 680,
+        // DotNetSpecialist WARNING @ line 863.
         _logger.Information("ChatJobDispatcher: stopping — cancelling {Count} active watcher(s)",
             _activeWatchers.Count);
 
-        // Outer try/finally ensures _stopCompleted is always signalled, even if CancelAsync()
-        // throws an unexpected exception (e.g. ObjectDisposedException from an unusual teardown
-        // path). Without this guard, any exception thrown before the inner finally block would
-        // leave _stopCompleted unset, causing DisposeAsync's `await _stopCompleted.Task` to hang
-        // indefinitely and block pod shutdown until the host's ShutdownTimeout kills the process.
-        // TODO: The comment above is misleading — the outer try/finally already ensures
-        // _stopCompleted.TrySetResult() is called on any exception path, so the "would leave
-        // _stopCompleted unset" scenario described cannot actually occur with the current structure.
-        // The comment describes the motivation for the try/finally but overstates the risk by
-        // implying a gap that the surrounding code already closes. Consider revising to describe
-        // the protection that IS provided rather than a failure mode that no longer exists.
+        // Signal all watchers to stop
+        await _shutdownCts.CancelAsync();
+
+        // Collect current entries before they drain
+        var entries = _activeWatchers.ToArray();
+
+        // Await all watchers with 5s deadline
         try
         {
-            // Signal all watchers to stop.
-            await _shutdownCts.CancelAsync();
-
-            // Collect current entries before they drain
-            var entries = _activeWatchers.ToArray();
-
-            // Await all watchers with 5s deadline
-            try
-            {
-                await Task.WhenAll(entries.Select(e => e.Value.WatcherTask))
-                    .WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
-            }
-            catch
-            {
-                // Timeout or aggregate watcher failure on shutdown — manual cleanup follows
-            }
-
-            // Clean up any sessions whose watchers didn't finish in time.
-            foreach (var (_, entry) in entries)
-            {
-                var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
-                CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
-            }
+            await Task.WhenAll(entries.Select(e => e.Value.WatcherTask))
+                .WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
         }
-        finally
+        catch
         {
-            // Signal DisposeAsync that StopAsync has fully completed. This ensures that even if
-            // DisposeAsync is called concurrently with an in-progress StopAsync, _shutdownCts.Dispose()
-            // is never called while CancelAsync() is still in flight.
-            _stopCompleted.TrySetResult();
+            // Timeout or aggregate watcher failure on shutdown — manual cleanup follows
+        }
+
+        // Clean up any sessions whose watchers didn't finish in time
+        foreach (var (_, entry) in entries)
+        {
+            var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
+            CleanupSession(entry.AgentId, entry, selectorEncoded, "shutdown");
         }
     }
 
@@ -772,20 +780,23 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             // TryReadJobAsync returns readError=true (e.g. K8s API outage), because Dispose() on a
             // CancellationTokenSource does not cancel it; only Cancel() does.
             //
+            // Known follow-up (race): CleanupSession (called via WatchJobUntilTerminalAsync's own
+            // OperationCanceledException path, e.g. from _shutdownCts) may have already Disposed WatcherCts
+            // before we reach this line, causing CancelAsync() to throw ObjectDisposedException. A future
+            // hardening pass should wrap this call in try/catch(ObjectDisposedException) to handle the
+            // concurrent-cleanup race gracefully. See review finding: DotNetSpecialist WARNING @ line 711.
+            // TODO [WARNING]: The new catch (Exception) fault path in WatchJobUntilTerminalAsync calls
+            // CleanupSession (which disposes WatcherCts) slightly earlier than before, widening this race
+            // window. Add try/catch(ObjectDisposedException) around entry.WatcherCts.CancelAsync() here.
+            // See review finding: Correctness WARNING @ line 761.
+            //
             // Known follow-up (blocking): WatchJobUntilTerminalAsync uses CancellationToken.None for the
             // inner TryReadJobAsync call, so if the K8s API is hanging (e.g. slow TCP timeout ~30s), the
             // watcher will not exit promptly after WatcherCts cancellation — it can block for up to one full
             // TCP-timeout before observing cancellation at the next Task.Delay. Fixing this requires passing
             // WatcherCts.Token into TryReadJobAsync, which is a pre-existing design gap not introduced here.
             // See review finding: DotNetSpecialist WARNING @ line 711.
-            try
-            {
-                await entry.WatcherCts.CancelAsync();
-            }
-            catch (ObjectDisposedException)
-            {
-                // WatcherCts was already disposed by CleanupSession — disposed = already cancelled, safe to ignore.
-            }
+            await entry.WatcherCts.CancelAsync();
             activity?.SetTag(TagOutcome, "force_delete");
             await ForceDeleteAndCleanupAsync(agentId.Value, entry);
         }
@@ -862,15 +873,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        // StopAsync sets _stopCompleted when it finishes. Awaiting it here ensures that
-        // _shutdownCts.Dispose() is never called while a concurrent in-progress StopAsync
-        // is still awaiting CancelAsync() — eliminating a potential ObjectDisposedException
-        // in that race window. In the sequential ASP.NET Core lifecycle (Stop then Dispose)
-        // this completes immediately because StopAsync already finished.
+        // TODO [WARNING]: DisposeAsync calls StopAsync directly. If DisposeAsync is invoked
+        // concurrently with an in-progress StopAsync (e.g., host teardown races), _shutdownCts.Dispose()
+        // below can race with _shutdownCts.CancelAsync() still in flight, causing ObjectDisposedException.
+        // The removed _stopCompleted TaskCompletionSource previously guarded against this by having
+        // DisposeAsync await _stopCompleted.Task before calling Dispose. In the sequential ASP.NET Core
+        // lifecycle this is safe, but the guard has been removed. See review findings: Correctness WARNING
+        // @ line 680, DotNetSpecialist WARNING @ line 863.
         await StopAsync(CancellationToken.None);
-        // Awaits the first in-flight StopAsync when the idempotency guard returned early above;
-        // no-op in the sequential ASP.NET Core lifecycle where StopAsync already set _stopCompleted.
-        await _stopCompleted.Task;
         _shutdownCts.Dispose();
     }
 
@@ -922,6 +932,15 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             return false;
         }
     }
+
+    /// <summary>
+    /// Returns the watcher task for the given agentId, or null if no watcher is active.
+    /// Used by tests to await the watcher task directly without going through
+    /// <see cref="WaitForWatcherAsync"/> (which short-circuits when the entry has already
+    /// been removed from <c>_activeWatchers</c> by <see cref="CleanupSession"/>).
+    /// </summary>
+    internal Task? TryGetWatcherTask(string agentId)
+        => _activeWatchers.TryGetValue(agentId, out var entry) ? entry.WatcherTask : null;
 
     private static readonly HashSet<string> ValidEffortValues =
         new(["high", "medium", "low"], StringComparer.OrdinalIgnoreCase);
