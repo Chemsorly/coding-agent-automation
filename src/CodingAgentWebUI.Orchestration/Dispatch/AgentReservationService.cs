@@ -153,36 +153,15 @@ public sealed class AgentReservationService
     }
 
     private List<AgentEntry>? GetCompatibleCandidates(IReadOnlyList<string> requiredLabels)
-    {
-        var idleAgents = _registry.GetIdleAgents();
-
-        if (idleAgents.Count == 0)
-        {
-            _logger.Debug("SelectAgent: no idle agents available (requiredLabels=[{Labels}])",
-                string.Join(", ", requiredLabels));
-            return null;
-        }
-
-        var compatible = idleAgents
-            .Where(agent => !agent.Disabled)
-            .Where(agent => LabelMatchHelper.IsLabelMatch(agent.Labels, requiredLabels))
-            .OrderBy(agent => agent.LastJobCompletedAt ?? agent.RegisteredAt)
-            .ToList();
-
-        if (compatible.Count == 0)
-        {
-            _logger.Debug("SelectAgent: {IdleCount} idle agent(s) but none match requiredLabels=[{Labels}]",
-                idleAgents.Count, string.Join(", ", requiredLabels));
-            return null;
-        }
-
-        return compatible;
-    }
+        => FilterCompatibleCandidates(_registry.GetIdleAgents(), requiredLabels);
 
     private async Task<List<AgentEntry>?> GetCompatibleCandidatesAsync(IReadOnlyList<string> requiredLabels)
-    {
-        var idleAgents = await _registry.GetIdleAgentsAsync();
+        => FilterCompatibleCandidates(await _registry.GetIdleAgentsAsync(), requiredLabels);
 
+    private List<AgentEntry>? FilterCompatibleCandidates(
+        IReadOnlyList<AgentEntry> idleAgents,
+        IReadOnlyList<string> requiredLabels)
+    {
         if (idleAgents.Count == 0)
         {
             _logger.Debug("SelectAgent: no idle agents available (requiredLabels=[{Labels}])",
