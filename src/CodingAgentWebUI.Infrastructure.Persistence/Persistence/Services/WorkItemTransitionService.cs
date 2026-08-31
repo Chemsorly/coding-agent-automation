@@ -410,6 +410,10 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             lastConcurrencyEx,
             "WorkItem {WorkItemId} PriorityWeight update failed after all {MaxRetries} retries (concurrency exhausted)",
             workItemId, maxRetries);
+        // TODO: Returning NotFound here is semantically incorrect — the item exists and is Pending; only the
+        // save failed due to repeated concurrency conflicts. The caller maps NotFound → HTTP 404, so clients
+        // receive a misleading 404 instead of a conflict/retry signal. Introduce a distinct
+        // UpdatePriorityWeightResult.ConcurrencyConflict value (or throw) and map it to HTTP 409 in the endpoint.
         return UpdatePriorityWeightResult.NotFound;
     }
 

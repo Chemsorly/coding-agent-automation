@@ -582,6 +582,11 @@ public class WorkItemTransitionServiceAdditionalTests
 
         var result = await svc.UpdatePriorityWeightAsync(item.Id, 50, CancellationToken.None, maxRetries: 1);
 
+        // TODO: This assertion validates the current (incorrect) behavior. When all retries are exhausted,
+        // the item still exists and is Pending — the failure is a concurrency conflict, not "not found".
+        // Returning NotFound here causes the endpoint to return HTTP 404 to clients instead of 409.
+        // When UpdatePriorityWeightResult.ConcurrencyConflict is introduced, update this assertion to
+        // expect ConcurrencyConflict instead of NotFound.
         result.Should().Be(UpdatePriorityWeightResult.NotFound);
     }
 

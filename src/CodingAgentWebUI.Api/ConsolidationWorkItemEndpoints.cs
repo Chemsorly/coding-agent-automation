@@ -60,6 +60,11 @@ public static class ConsolidationWorkItemEndpoints
                 AgentSelector = w.AgentSelector,
                 RetryCount = w.RetryCount,
                 TimeoutSeconds = w.TimeoutSeconds,
+                // TODO: TraceParent was removed from this projection when PriorityWeight was added. If
+                // PendingWorkItemDto.TraceParent is consumed by the Job Controller for trace propagation,
+                // consolidation work items will silently lose their trace context. Verify whether any
+                // consumer reads TraceParent from this endpoint's response and restore the mapping
+                // (TraceParent = w.TraceParent) if so.
                 PriorityWeight = w.PriorityWeight
             })
             .ToListAsync(ct);
