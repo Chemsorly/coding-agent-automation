@@ -441,10 +441,9 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
         // Primary read is Redis (cross-replica visibility, deregistrations, TTL expirations).
-        // _localSnapshot is consulted as a fallback *only* when Redis returns an empty hash —
-        // this covers the fire-and-forget window between Register() returning and the hash write
-        // completing. Snapshot is cleared by DeregisterAsync before the Redis delete, so a
-        // deregistered agent cannot be resurrected through the snapshot fallback.
+        // _localSnapshot is consulted as a fallback *only* when Redis returns an empty hash AND
+        // this replica owns the agent's connection — covering the fire-and-forget write window
+        // on the owning replica without creating ghost entries on non-owning replicas.
         // Use GetByAgentIdAsync for async callers that can avoid the sync-over-async pattern.
         return GetAgentRaw(agentId.Value);
     }
@@ -458,10 +457,15 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             return HashToEntry(hash);
 
         // Redis hash absent: fire-and-forget write may not have completed yet.
-        // Fall back to in-process snapshot for same-replica consistency.
+        // Fall back to in-process snapshot ONLY if this replica owns the agent's connection,
+        // to avoid cross-replica ghost reads (same guard as GetAgentRaw).
         // Safety: DeregisterAsync clears _localSnapshot before the Redis delete, so a
         // deregistered agent cannot be resurrected through the snapshot fallback.
-        return _localSnapshot.TryGetValue(agentId.Value, out var snap) ? snap : null;
+        if (_localSnapshot.TryGetValue(agentId.Value, out var snap) &&
+            _connectionIndex.ContainsKey(snap.ConnectionId))
+            return snap;
+
+        return null;
     }
 
     /// <inheritdoc />
@@ -685,11 +689,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             return HashToEntry(hash);
 
         // Redis hash absent: either the fire-and-forget write hasn't completed yet, or the TTL
-        // has expired. Fall back to the in-process snapshot so just-registered agents are visible
-        // immediately after Register() returns.
+        // has expired. Fall back to the in-process snapshot ONLY if this replica owns the agent's
+        // connection (i.e., the snapshot's connectionId appears in _connectionIndex).
+        // This guards against cross-replica ghost reads: if the agent is registered on another
+        // replica, _connectionIndex has no entry for that connection and we return null, matching
+        // the expected "agent is gone" semantics for Deregister/ForceExpire on non-owning replicas.
         // Safety: DeregisterAsync calls _localSnapshot.TryRemove *before* the Redis delete, so a
         // deregistered agent's snapshot entry is gone before the hash could appear absent here —
-        // the fallback cannot resurrect an intentionally deregistered agent.
+        // the fallback cannot resurrect an intentionally deregistered agent on the owning replica.
         // TODO (WARNING): There is no bounded lifetime on how long a TTL-expired agent can remain
         // visible via the snapshot. A replica that loses Redis connectivity entirely will serve
         // stale snapshot data indefinitely until an explicit Deregister is called or the process
@@ -698,7 +705,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // snapshot entry timestamp and evicting entries older than a configured max-staleness
         // threshold (e.g. 2× the Redis TTL) so callers that rely on GetAgentRaw returning null
         // to mean "agent is gone" are not misled indefinitely.
-        return _localSnapshot.TryGetValue(agentId, out var snap) ? snap : null;
+        if (_localSnapshot.TryGetValue(agentId, out var snap) &&
+            _connectionIndex.ContainsKey(snap.ConnectionId))
+            return snap;
+
+        return null;
     }
 
     private static AgentEntry? HashToEntry(HashEntry[] hash)
