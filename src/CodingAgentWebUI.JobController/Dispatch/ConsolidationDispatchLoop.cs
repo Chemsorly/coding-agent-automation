@@ -158,10 +158,10 @@ public sealed class ConsolidationDispatchLoop
             // The lock wraps both the availability check AND the K8s Job creation so no other
             // dispatch loop can sneak in between "PVC available" and "Job created".
             //
-            // TODO [WARNING] (DotNetSpecialist): _pvcSelectLock.WaitAsync(ct) throws
-            // OperationCanceledException if ct is cancelled before the semaphore is acquired.
-            // In that case the finally block must NOT call Release() — tracking `acquired` guards
-            // against corrupting the semaphore count above its maximum (1) on graceful shutdown.
+            // NOTE: _pvcSelectLock.WaitAsync(ct) throws OperationCanceledException if ct is
+            // cancelled before the semaphore is acquired. In that case the finally block must NOT
+            // call Release() — tracking `acquired` guards against corrupting the semaphore count
+            // above its maximum (1) on graceful shutdown.
             var acquired = false;
             try
             {
@@ -177,19 +177,19 @@ public sealed class ConsolidationDispatchLoop
                     // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
                     // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting
                     // the field (issue #2129). Simply return; the next dispatch cycle will retry.
-                    // TODO [WARNING]: _reconciliationTrigger.RequestImmediateCycle() is no longer called
-                    // on PVC starvation. The old TryClaimPvcForKiroAgent path called it unconditionally
-                    // to unblock stalled items immediately after a Job completes. Without it, the next
+                    // NOTE: _reconciliationTrigger.RequestImmediateCycle() is no longer called on PVC
+                    // starvation. The old TryClaimPvcForKiroAgent path called it unconditionally to
+                    // unblock stalled items immediately after a Job completes. Without it, the next
                     // dispatch opportunity is the natural 30 s reconciliation poll, introducing latency
                     // under load. Re-add the call here if this latency is unacceptable.
                     return;
                 }
 
-                // TODO [WARNING]: TryClaimAsync (ClaimAsync HTTP call) is made while holding
-                // _pvcSelectLock. A slow or timing-out ClaimAsync call serializes ALL kiro consolidation
-                // items for the duration of the network round-trip. Consider narrowing the critical
-                // section to SelectAvailablePvcAsync + CreateJobAsync only, releasing and re-acquiring
-                // the semaphore around the ClaimAsync call.
+                // NOTE: TryClaimAsync (ClaimAsync HTTP call) is made while holding _pvcSelectLock.
+                // A slow or timing-out ClaimAsync call serializes ALL kiro consolidation items for
+                // the duration of the network round-trip. Consider narrowing the critical section to
+                // SelectAvailablePvcAsync + CreateJobAsync only, releasing and re-acquiring the
+                // semaphore around the ClaimAsync call.
                 // Claim (API does payload enrichment + token vending server-side)
                 claimed = await TryClaimAsync(item.Id, jobName, ct);
                 if (claimed is null) return;
@@ -316,9 +316,9 @@ public sealed class ConsolidationDispatchLoop
 
             return claimed;
         }
-        catch (WorkItemNotFoundException)
+        catch (WorkItemNotFoundException ex)
         {
-            Log.Warning("ConsolidationDispatchLoop: WorkItem {Id} not found during claim (404) — skipping", workItemId);
+            Log.Warning(ex, "ConsolidationDispatchLoop: WorkItem {Id} not found during claim (404) — skipping", workItemId);
             return null;
         }
     }

@@ -47,7 +47,7 @@ public sealed class DispatchService : LeaderElectedPollingService
     {
         Log.Debug("DispatchService: starting poll cycle");
         WorkDistributionTelemetry.RecordLastPollEpoch();
-        // TODO [WARNING]: claimed count is hardcoded to 0. The old PvcPool.AvailableCount-based calculation
+        // NOTE: claimed count is hardcoded to 0. The old PvcPool.AvailableCount-based calculation
         // was removed with the PvcPool and has not been replaced. Dashboards and alerts consuming the
         // credential pool claimed gauge will permanently show zero, masking PVC starvation events.
         // To fix: derive the claimed count from a live ListJobsAsync query (counting distinct PVC

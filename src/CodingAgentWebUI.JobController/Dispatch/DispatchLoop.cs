@@ -218,10 +218,10 @@ public sealed class DispatchLoop
     private async Task<bool> DispatchKiroAgentAsync(
         PendingWorkItemDto item, string selector, string jobName, JobTemplate template, CancellationToken ct)
     {
-        // TODO [WARNING] (DotNetSpecialist): _pvcSelectLock.WaitAsync(ct) throws
-        // OperationCanceledException if ct is cancelled before the semaphore is acquired.
-        // In that case the finally block must NOT call Release() — tracking `acquired` guards
-        // against corrupting the semaphore count above its maximum (1) on graceful shutdown.
+        // NOTE: _pvcSelectLock.WaitAsync(ct) throws OperationCanceledException if ct is cancelled
+        // before the semaphore is acquired. In that case the finally block must NOT call Release() —
+        // tracking `acquired` guards against corrupting the semaphore count above its maximum (1)
+        // on graceful shutdown.
         var acquired = false;
         try
         {
@@ -237,12 +237,12 @@ public sealed class DispatchLoop
                 // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
                 // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting
                 // the field (issue #2129). Simply return; the next dispatch cycle will retry.
-                // TODO [WARNING]: _reconciliationTrigger.RequestImmediateCycle() is no longer called
-                // on PVC starvation. Re-add the call here if PVC starvation latency is unacceptable.
+                // NOTE: _reconciliationTrigger.RequestImmediateCycle() is no longer called on PVC
+                // starvation. Re-add the call here if PVC starvation latency is unacceptable.
                 return false;
             }
 
-            // TODO [WARNING]: TryClaimWorkItemAsync (ClaimAsync HTTP call) is made while holding
+            // NOTE: TryClaimWorkItemAsync (ClaimAsync HTTP call) is made while holding
             // _pvcSelectLock. A slow or timing-out ClaimAsync call serializes ALL kiro dispatch items
             // for the duration of the network round-trip (N × latency per cycle under load).
             // Accepted trade-off: throughput may degrade under sustained network latency.
