@@ -76,17 +76,9 @@ public class DatabaseMaintenanceService
         {
             return await sweep(ct);
         }
-        // TODO [WARNING]: Swallowing OperationCanceledException here means cancellation is not
-        // propagated to the caller. All remaining sweeps in RunRetentionSweepAsync will still
-        // execute even after the CancellationToken is cancelled, because each RunSweepAsync call
-        // absorbs the cancellation rather than short-circuiting. Callers cannot distinguish
-        // "sweep returned zero rows" from "sweep was cancelled". Consider re-throwing the
-        // OperationCanceledException so the general Exception catch handles only non-cancellation
-        // faults, and cooperative shutdown (e.g. IHostedService stopping) works correctly.
-        // (review-findings.md: Correctness line 77, DotNetSpecialist line 79)
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            return 0;
+            throw;
         }
         catch (Exception ex)
         {

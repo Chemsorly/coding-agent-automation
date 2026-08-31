@@ -364,25 +364,14 @@ public class RetentionSweepIntegrationTests : IDisposable
     public async Task RunRetentionSweep_WhenPipelineRunSweepFaults_WorkItemSweepStillCompletes()
     {
         // Arrange: seed 5 terminal WorkItems for ProjA (retention=3 → expect 2 deleted, 3 survive).
-        // Use UtcNow-based timestamps so the rows fall within the 7-day stale retention window and
-        // are not deleted by CleanupStaleWorkItemsAsync before the count-based sweep runs.
-        // TODO [WARNING]: wall-clock timestamps introduce fragility — a future configuration change
-        // reducing StaleRetentionDays, or extreme clock skew on CI, could cause
-        // CleanupStaleWorkItemsAsync to delete the seeded rows before the count-based sweep runs,
-        // turning the test into a spurious failure. Use a fixed historical timestamp (as other
-        // tests in this class do) to make this test hermetic. (review-findings.md: Correctness line 369)
-        var t = DateTimeOffset.UtcNow.AddHours(-5);  // oldest is ~5h ago, newest ~1h ago
+        // Use a recent timestamp within the 7-day stale retention window so CleanupStaleWorkItemsAsync
+        // never deletes them before the count-based sweep runs.
+        var t = DateTimeOffset.UtcNow.AddDays(-1);
         var workItemIds = Enumerable.Range(0, 5)
             .Select(i => (Id: Guid.NewGuid(), CompletedAt: t.AddHours(i)))
             .ToList();
         foreach (var (id, completedAt) in workItemIds)
             await InsertWorkItem(id, ProjA, WorkItemStatus.Succeeded, completedAt);
-
-        // TODO [WARNING]: no PipelineRun rows are seeded here even though pipelineRunRetentionCount=3
-        // is active. The CleanupStalePipelineRunsAsync stale-retention pass runs before the fault and
-        // silently processes zero rows. If the fault injection point were moved later in the PipelineRun
-        // sweep (past DB access), absent seeded data could mask unexpected behaviour. Consider seeding
-        // a few PipelineRun rows to make the stale-cleanup pass more realistic. (review-findings.md line 349)
 
         // Both sweeps active: PipelineRun retention=3, WorkItem retention=3
         SetupConfig(pipelineRunRetentionCount: 3, workItemRetentionCount: 3);
@@ -395,10 +384,11 @@ public class RetentionSweepIntegrationTests : IDisposable
             _dbFactory, _mockConsolidation.Object, _configuration, _mockConfigStore.Object);
 
         // Act: call the orchestrator method, not individual sweep methods.
-        // TODO [WARNING]: consider wrapping with Invoking(...).Should().NotThrowAsync() to make a
-        // regression (exception propagating out of RunRetentionSweepAsync) produce a clear assertion
-        // failure rather than an ambiguous xUnit exception. (review-findings.md line 363)
-        var result = await svc.RunRetentionSweepAsync(CancellationToken.None);
+        // NotThrowAsync makes a regression (exception escaping RunRetentionSweepAsync) produce a
+        // clear assertion failure rather than an ambiguous xUnit exception.
+        var result = await svc.Invoking(s => s.RunRetentionSweepAsync(CancellationToken.None))
+            .Should().NotThrowAsync();
+        var sweepResult = result.Subject;
 
         // Assert: WorkItem sweep ran and deleted the 2 oldest rows (5 - 3 = 2 deleted)
         await using var db = await _dbFactory.CreateDbContextAsync();
@@ -412,9 +402,9 @@ public class RetentionSweepIntegrationTests : IDisposable
         survivingWorkItems.Should().NotContain(workItemIds[1].Id, "second-oldest WorkItem beyond retention deleted");
 
         // PipelineRun sweep threw and was absorbed by RunSweepAsync → returned 0
-        result.RetentionPipelineRunsDeleted.Should().Be(0, "PipelineRun sweep faulted and RunSweepAsync returned 0");
+        sweepResult.RetentionPipelineRunsDeleted.Should().Be(0, "PipelineRun sweep faulted and RunSweepAsync returned 0");
         // WorkItem sweep ran successfully
-        result.RetentionWorkItemsDeleted.Should().Be(2, "WorkItem sweep deleted 2 rows");
+        sweepResult.RetentionWorkItemsDeleted.Should().Be(2, "WorkItem sweep deleted 2 rows");
     }
 
     /// <summary>
@@ -427,14 +417,9 @@ public class RetentionSweepIntegrationTests : IDisposable
     public async Task RunRetentionSweep_WhenWorkItemSweepFaults_PipelineRunSweepStillCompletes()
     {
         // Arrange: seed 5 completed PipelineRuns for proj-a (retention=3 → expect 2 deleted, 3 survive).
-        // Use UtcNow-based timestamps so the rows fall within the 90-day stale retention window and
-        // are not deleted by CleanupStalePipelineRunsAsync before the count-based sweep runs.
-        // TODO [WARNING]: wall-clock timestamps introduce fragility — a future configuration change
-        // or extreme clock skew could cause CleanupStalePipelineRunsAsync to delete the seeded rows
-        // before SweepPipelineRunRetentionAsync runs, causing a spurious failure. Use a fixed
-        // historical timestamp (as other tests in this class do) to make this test hermetic.
-        // (review-findings.md: Correctness line 421)
-        var t = DateTimeOffset.UtcNow.AddHours(-5);  // oldest is ~5h ago, newest ~1h ago
+        // Use a recent timestamp within the stale retention window so CleanupStalePipelineRunsAsync
+        // never deletes them before the count-based sweep runs.
+        var t = DateTimeOffset.UtcNow.AddDays(-1);
         var runIds = Enumerable.Range(0, 5)
             .Select(i => (Id: Guid.NewGuid(), StartedAt: t.AddHours(i)))
             .ToList();
@@ -451,12 +436,12 @@ public class RetentionSweepIntegrationTests : IDisposable
         var svc = new WorkItemFaultingRetentionService(
             _dbFactory, _mockConsolidation.Object, _configuration, _mockConfigStore.Object);
 
-        // Act: call the orchestrator method, not individual sweep methods
-        // TODO [WARNING]: consider wrapping with Invoking(...).Should().NotThrowAsync() to produce
-        // a clear assertion failure rather than an ambiguous xUnit exception if the RunSweepAsync
-        // try/catch were removed and the injected exception propagated out of RunRetentionSweepAsync.
-        // (review-findings.md: Correctness line 366, TestQualityReviewer line 363)
-        var result = await svc.RunRetentionSweepAsync(CancellationToken.None);
+        // Act: call the orchestrator method, not individual sweep methods.
+        // NotThrowAsync makes a regression (exception escaping RunRetentionSweepAsync) produce a
+        // clear assertion failure rather than an ambiguous xUnit exception.
+        var result = await svc.Invoking(s => s.RunRetentionSweepAsync(CancellationToken.None))
+            .Should().NotThrowAsync();
+        var sweepResult = result.Subject;
 
         // Assert: PipelineRun sweep ran and deleted the 2 oldest rows (5 - 3 = 2 deleted)
         await using var db = await _dbFactory.CreateDbContextAsync();
@@ -470,9 +455,9 @@ public class RetentionSweepIntegrationTests : IDisposable
         survivingRuns.Should().NotContain(runIds[1].Id, "second-oldest PipelineRun beyond retention deleted");
 
         // WorkItem sweep threw and was absorbed by RunSweepAsync → returned 0
-        result.RetentionWorkItemsDeleted.Should().Be(0, "WorkItem sweep faulted and RunSweepAsync returned 0");
+        sweepResult.RetentionWorkItemsDeleted.Should().Be(0, "WorkItem sweep faulted and RunSweepAsync returned 0");
         // PipelineRun sweep ran successfully
-        result.RetentionPipelineRunsDeleted.Should().Be(2, "PipelineRun sweep deleted 2 rows");
+        sweepResult.RetentionPipelineRunsDeleted.Should().Be(2, "PipelineRun sweep deleted 2 rows");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────
