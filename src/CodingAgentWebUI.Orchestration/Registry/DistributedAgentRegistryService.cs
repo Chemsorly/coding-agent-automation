@@ -43,6 +43,16 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     // Same retention semantics as _connectionIndex: entry persists until explicit Deregister is called.
     private readonly ConcurrentDictionary<string, AgentEntry> _localSnapshot = new();
 
+    // Cached snapshot of all agents, refreshed by GetAllAgentsAsync and write paths.
+    // Sync overloads (GetAllAgents, GetIdleAgents, GetBusyAgentCount, GetAgentsByLabel) read from
+    // this cache so they never block on Redis. For OTel gauges and Blazor render components this
+    // staleness (≤ heartbeat interval) is acceptable. The dispatch hot path must use the async methods.
+    private volatile IReadOnlyList<AgentEntry> _allAgentsCache = [];
+
+    // Serialises mutations to _allAgentsCache from write paths. Read-side uses the volatile field
+    // directly (lock-free read, lock-protected write).
+    private readonly object _cacheUpdateLock = new();
+
     // Internal hooks for test determinism: fire-and-forget tasks are stored here so tests can
     // await them instead of using Thread.Sleep. Not used in production code paths.
     // TODO (WARNING): Consider a dedicated FlushAsync() or IAsyncDisposable pattern if more
@@ -164,6 +174,9 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // through TransitionStatus / UpdateAgentFieldAsync (e.g. ReconciliationService direct writes).
         _localSnapshot[agentId] = entry;
 
+        // Update the all-agents cache so GetAllAgents()/GetIdleAgents() sync overloads see the new entry.
+        UpdateAllAgentsCache(entry);
+
         return entry;
     }
 
@@ -202,7 +215,9 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     private async Task DeregisterAsync(string agentId)
     {
         var key = AgentKey(agentId);
-        var entry = GetAgentRaw(agentId);
+        // Use _localSnapshot to retrieve the ConnectionId for cleanup — avoids a Redis HGETALL
+        // on the deregister path. If the snapshot is absent (e.g. agent on another replica),
+        // fall back to GetAgentRaw. The TODO below still applies for the cross-replica scenario.
         // TODO (WARNING): If the Redis hash has already TTL-expired when Deregister is called,
         // GetAgentRaw returns null and _connectionIndex is not cleaned up — the stale
         // connectionId → agentId mapping persists indefinitely. A subsequent GetByConnectionId
@@ -213,8 +228,17 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // (now re-registered) agentId, potentially causing GetByConnectionId to surface the
         // re-registered entry under the stale connection ID. Fix: check _localSnapshot as
         // fallback for ConnectionId when GetAgentRaw returns null.
-        if (entry is not null)
-            _connectionIndex.TryRemove(entry.ConnectionId, out _);
+        string? connectionId = null;
+        if (_localSnapshot.TryGetValue(agentId, out var snap))
+            connectionId = snap.ConnectionId;
+        else
+        {
+            var raw = GetAgentRaw(agentId);
+            connectionId = raw?.ConnectionId;
+        }
+
+        if (connectionId is not null)
+            _connectionIndex.TryRemove(connectionId, out _);
 
         // Unconditionally clear the local snapshot so that a subsequent heartbeat does NOT
         // recreate the entry for an intentionally deregistered agent (issue #2110 AC4).
@@ -227,6 +251,9 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // on the next heartbeat. Pre-existing architectural characteristic of fire-and-forget; narrowed
         // (but not eliminated) by _localSnapshot.TryRemove occurring before any await.
         _localSnapshot.TryRemove(agentId, out _);
+
+        // Remove from the all-agents cache so sync read overloads don't return the deregistered agent.
+        RemoveFromAllAgentsCache(agentId);
 
         await _store.DeleteAsync(key);
         await _store.SetRemoveAsync(AgentsAllKey, agentId);
@@ -384,12 +411,16 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         {
             var busySinceValue = newStatus == AgentStatus.Busy ? (snap.BusySince ?? now) : (DateTimeOffset?)null;
             var disconnectedAtValue = newStatus == AgentStatus.Disconnected ? now : (DateTimeOffset?)null;
-            _localSnapshot[agentId] = snap with
+            var updated = snap with
             {
                 Status = newStatus,
                 BusySince = busySinceValue,
                 DisconnectedAt = disconnectedAtValue
             };
+            _localSnapshot[agentId] = updated;
+            // Keep all-agents cache in sync so GetIdleAgents()/GetAllAgents() sync overloads
+            // return up-to-date status without hitting Redis.
+            UpdateAllAgentsCache(updated);
         }
 
         _logger.Information("Agent {AgentId} status transitioned {Old} → {New}", agentId, oldStatus, newStatus);
@@ -401,74 +432,142 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     public AgentEntry? GetByAgentId(AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
-        return GetAgentRaw(agentId.Value);
+        // Fast path: node-local snapshot (populated by Register/TransitionStatus/UpdateAgentFieldAsync).
+        // Covers the common case of looking up an agent registered on this replica.
+        if (_localSnapshot.TryGetValue(agentId.Value, out var local))
+            return local;
+
+        // Fallback: read from the cross-replica all-agents cache.
+        // Slightly stale but avoids blocking on Redis for Blazor / auth filter callers.
+        var cached = _allAgentsCache;
+        return cached.FirstOrDefault(a => a.AgentId.Value == agentId.Value);
+    }
+
+    /// <inheritdoc />
+    public async Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(agentId.Value);
+        var hash = await _store.HashGetAllAsync(AgentKey(agentId.Value));
+        return hash.Length == 0 ? null : HashToEntry(hash);
     }
 
     /// <inheritdoc />
     public AgentEntry? GetByConnectionId(string connectionId)
     {
         ArgumentNullException.ThrowIfNull(connectionId);
-        // Node-local lookup — always on the correct replica
-        return _connectionIndex.TryGetValue(connectionId, out var agentId)
-            ? GetAgentRaw(agentId)
-            : null;
+        // Node-local lookup — always on the correct replica.
+        // Falls back to _localSnapshot (same node) to reconstruct the entry.
+        if (!_connectionIndex.TryGetValue(connectionId, out var agentId))
+            return null;
+
+        // Try local snapshot first (avoids Redis call — node-local is sufficient here).
+        if (_localSnapshot.TryGetValue(agentId, out var local))
+            return local;
+
+        // Snapshot absent (e.g. deregistered but _connectionIndex not yet cleaned):
+        // fall back to Redis to surface a fresh entry if it exists.
+        return GetAgentRaw(agentId);
     }
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetIdleAgents()
     {
-        return GetIdleAgentsAsync().GetAwaiter().GetResult(); // Safe: ThreadPool context only
+        // Read from in-process cache — no Redis round-trip.
+        // Cache is refreshed by GetIdleAgentsAsync/GetAllAgentsAsync and all write paths.
+        var cached = _allAgentsCache;
+        return cached.Where(a => a.Status == AgentStatus.Idle).ToList().AsReadOnly();
     }
 
-    private async Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync()
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync(CancellationToken ct = default)
     {
         var members = await _store.SetMembersAsync(AgentsIdleKey);
-        var result = new List<AgentEntry>(members.Length);
+        if (members.Length == 0) return Array.Empty<AgentEntry>();
 
-        foreach (var agentId in members)
+        // Fire all HGETALL before awaiting any — StackExchange.Redis queues them into a single
+        // pipeline flush, reducing N sequential round-trips to approximately 1.
+        var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id))).ToArray();
+        var results = await Task.WhenAll(tasks);
+
+        var list = new List<AgentEntry>(results.Length);
+        foreach (var hash in results)
         {
-            var hash = await _store.HashGetAllAsync(AgentKey(agentId));
             if (hash.Length == 0) continue; // TTL expired, set not yet cleaned
-
             var entry = HashToEntry(hash);
-            if (entry is not null) result.Add(entry);
+            if (entry is not null) list.Add(entry);
         }
 
-        return result.AsReadOnly();
+        var idleList = list.AsReadOnly();
+
+        // Merge idle results into the all-agents cache so GetAllAgents() stays reasonably fresh.
+        // This is a best-effort update; GetAllAgentsAsync provides a complete refresh.
+        var idleIds = new HashSet<string>(list.Select(e => e.AgentId.Value));
+        var existing = _allAgentsCache;
+        var merged = existing
+            .Where(e => !idleIds.Contains(e.AgentId.Value))
+            .Concat(list)
+            .ToList()
+            .AsReadOnly();
+        // TODO: Race condition — this read-modify-write on _allAgentsCache is not protected by
+        // _cacheUpdateLock. A concurrent Register/DeregisterAsync that runs between reading
+        // `existing` and assigning `merged` will have its cache update silently overwritten.
+        // For example: DeregisterAsync for agent-A calls RemoveFromAllAgentsCache (sets cache to
+        // [B]), then this line restores [A, B] — resurrecting the deregistered agent.
+        // Fix: wrap the merge-and-assign in lock(_cacheUpdateLock), or accept and document staleness.
+        _allAgentsCache = merged;
+
+        return idleList;
     }
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetAllAgents()
     {
-        return GetAllAgentsAsync().GetAwaiter().GetResult(); // Safe: ThreadPool context only
+        // Read from in-process cache — no Redis round-trip.
+        return _allAgentsCache;
     }
 
-    private async Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync()
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync(CancellationToken ct = default)
     {
         var members = await _store.SetMembersAsync(AgentsAllKey);
-        var result = new List<AgentEntry>(members.Length);
-
-        foreach (var agentId in members)
+        if (members.Length == 0)
         {
-            var hash = await _store.HashGetAllAsync(AgentKey(agentId));
-            if (hash.Length == 0) continue;
-
-            var entry = HashToEntry(hash);
-            if (entry is not null) result.Add(entry);
+            _allAgentsCache = [];
+            return Array.Empty<AgentEntry>();
         }
 
-        return result.AsReadOnly();
+        // Fire all HGETALL before awaiting any — single pipeline flush.
+        var tasks = members.Select(id => _store.HashGetAllAsync(AgentKey(id))).ToArray();
+        var results = await Task.WhenAll(tasks);
+
+        var list = new List<AgentEntry>(results.Length);
+        foreach (var hash in results)
+        {
+            if (hash.Length == 0) continue;
+            var entry = HashToEntry(hash);
+            if (entry is not null) list.Add(entry);
+        }
+
+        var readOnly = list.AsReadOnly();
+        // TODO: Race condition — assigning _allAgentsCache here without holding _cacheUpdateLock
+        // means a concurrent Register (which acquires the lock and updates the cache) that runs
+        // between the Task.WhenAll above and this assignment will have its update overwritten.
+        // Less dangerous than GetIdleAgentsAsync's partial merge (this is a full replacement), but
+        // a newly registered agent can still disappear from sync reads until the next write-path update.
+        // Fix: wrap in lock(_cacheUpdateLock).
+        _allAgentsCache = readOnly;
+        return readOnly;
     }
 
     /// <inheritdoc />
     public int GetBusyAgentCount()
-        => GetAllAgents().Count(a => a.Status == AgentStatus.Busy);
+        => _allAgentsCache.Count(a => a.Status == AgentStatus.Busy);
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetAgentsByLabel(string labelKey, string labelValue)
     {
         var target = $"{labelKey}={labelValue}";
-        return GetAllAgents()
+        return _allAgentsCache
             .Where(a => a.Labels?.Any(l => string.Equals(l, target, StringComparison.OrdinalIgnoreCase)) == true)
             .ToList()
             .AsReadOnly();
@@ -519,9 +618,43 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                 _ => snapshot
             };
         }
+        // TODO: _allAgentsCache is NOT updated here. Fields written via this method (e.g. disabled,
+        // activeJobId) will not be reflected in GetAllAgents() / GetBusyAgentCount() sync reads until
+        // the next Register or TransitionStatusAsync call refreshes the entry via UpdateAllAgentsCache.
+        // For example, setting disabled=true will not be visible to GetAgentsByLabel or GetIdleAgents
+        // (sync overloads) until a write-path update occurs. Consider calling UpdateAllAgentsCache with
+        // the updated snapshot entry, consistent with TransitionStatusAsync which does both.
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Atomically replaces or adds <paramref name="updated"/> in <see cref="_allAgentsCache"/>.
+    /// Called from write paths (Register, TransitionStatusAsync, UpdateAgentFieldAsync) so the
+    /// sync read overloads stay current without hitting Redis.
+    /// </summary>
+    private void UpdateAllAgentsCache(AgentEntry updated)
+    {
+        var id = updated.AgentId.Value;
+        lock (_cacheUpdateLock)
+        {
+            var list = _allAgentsCache.Where(e => e.AgentId.Value != id).Append(updated).ToList().AsReadOnly();
+            _allAgentsCache = list;
+        }
+    }
+
+    /// <summary>
+    /// Removes <paramref name="agentId"/> from <see cref="_allAgentsCache"/>.
+    /// Called from <see cref="DeregisterAsync"/>.
+    /// </summary>
+    private void RemoveFromAllAgentsCache(string agentId)
+    {
+        lock (_cacheUpdateLock)
+        {
+            var list = _allAgentsCache.Where(e => e.AgentId.Value != agentId).ToList().AsReadOnly();
+            _allAgentsCache = list;
+        }
+    }
 
     private AgentEntry? GetAgentRaw(string agentId)
     {

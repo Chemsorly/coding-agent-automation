@@ -100,7 +100,7 @@ public sealed class AgentReservationService
 
     private async Task<AgentEntry?> SelectAgentDistributed(IReadOnlyList<string> requiredLabels)
     {
-        var compatible = GetCompatibleCandidates(requiredLabels);
+        var compatible = await GetCompatibleCandidatesAsync(requiredLabels);
         if (compatible is null) return null;
 
         foreach (var candidate in compatible)
@@ -120,11 +120,11 @@ public sealed class AgentReservationService
 
             try
             {
-                // Double-check: re-read status after acquiring lock
+                // Double-check: re-read status after acquiring lock using async method for fresh Redis data.
                 // NOTE: TransitionStatus does NOT acquire this lock, so there is a tiny race window
                 // where an agent disconnects between HGETALL and HSET Busy. This is accepted:
                 // ReconciliationService recovers the wasted dispatch within its interval.
-                var fresh = _registry.GetByAgentId(candidate.AgentId);
+                var fresh = await _registry.GetByAgentIdAsync(candidate.AgentId);
                 if (fresh is null || fresh.Status != AgentStatus.Idle || fresh.Disabled)
                 {
                     _logger.Debug("SelectAgent: agent {AgentId} status changed to {Status} between lock and double-check — skipping",
@@ -155,6 +155,33 @@ public sealed class AgentReservationService
     private List<AgentEntry>? GetCompatibleCandidates(IReadOnlyList<string> requiredLabels)
     {
         var idleAgents = _registry.GetIdleAgents();
+
+        if (idleAgents.Count == 0)
+        {
+            _logger.Debug("SelectAgent: no idle agents available (requiredLabels=[{Labels}])",
+                string.Join(", ", requiredLabels));
+            return null;
+        }
+
+        var compatible = idleAgents
+            .Where(agent => !agent.Disabled)
+            .Where(agent => LabelMatchHelper.IsLabelMatch(agent.Labels, requiredLabels))
+            .OrderBy(agent => agent.LastJobCompletedAt ?? agent.RegisteredAt)
+            .ToList();
+
+        if (compatible.Count == 0)
+        {
+            _logger.Debug("SelectAgent: {IdleCount} idle agent(s) but none match requiredLabels=[{Labels}]",
+                idleAgents.Count, string.Join(", ", requiredLabels));
+            return null;
+        }
+
+        return compatible;
+    }
+
+    private async Task<List<AgentEntry>?> GetCompatibleCandidatesAsync(IReadOnlyList<string> requiredLabels)
+    {
+        var idleAgents = await _registry.GetIdleAgentsAsync();
 
         if (idleAgents.Count == 0)
         {

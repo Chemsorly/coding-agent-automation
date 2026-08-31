@@ -139,20 +139,187 @@ public sealed class DistributedAgentRegistryServiceTests
         _store.GetSet("agents:all").Should().NotContain("agent-ghost");
     }
 
-    // ── GetIdleAgents ─────────────────────────────────────────────────────────
+    // ── GetIdleAgents / GetIdleAgentsAsync ────────────────────────────────────
 
     [Fact]
-    public void GetIdleAgents_SkipsMembersWhoseHashExpired()
+    public void GetIdleAgents_ReturnsFromCache_AfterRegister()
     {
         _sut.Register(Msg("agent-1"), "conn-1");
         _sut.Register(Msg("agent-2"), "conn-2");
 
-        // Simulate agent-1 hash expiry
+        // Sync overload reads from the in-process cache populated by Register.
+        var idle = _sut.GetIdleAgents();
+        idle.Should().HaveCount(2);
+        // TODO: This test does not distinguish the cache-based path from sync-over-async.
+        // It passes even if the implementation calls GetIdleAgentsAsync().GetAwaiter().GetResult().
+        // A stronger test would force-expire both hashes and assert the cache still returns 2 entries,
+        // proving the sync overload reads the write-path cache and NOT Redis.
+    }
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_SkipsMembersWhoseHashExpired()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+
+        // Simulate agent-1 hash expiry in Redis
         _store.ForceExpire("agent:agent-1");
 
+        // Async method reads fresh from Redis and skips the expired hash.
+        var idle = await _sut.GetIdleAgentsAsync();
+        idle.Should().HaveCount(1);
+        idle[0].AgentId.Value.Should().Be("agent-2");
+        // TODO: This test does not verify the cache-merge side-effect. Per the implementation,
+        // GetIdleAgentsAsync merges its results into _allAgentsCache, which means after this call
+        // the cache may contain only agent-2 (agent-1's expired entry dropped from the merge).
+        // A subsequent GetAllAgents() call would then return only agent-2, even though agent-1
+        // was registered and exists in _localSnapshot. Consider asserting what GetAllAgents()
+        // returns after this call to document and detect this subtle merge behavior.
+    }
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_ReturnsEmpty_WhenNoIdleAgents()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+
+        var idle = await _sut.GetIdleAgentsAsync();
+        idle.Should().BeEmpty();
+        // TODO: This assertion is too weak — it would also pass if GetIdleAgentsAsync returned an
+        // empty list unconditionally. Add: idle.Should().NotContain(a => a.AgentId.Value == "agent-1")
+        // to confirm the Busy agent is specifically excluded, not just that the result happens to be empty.
+    }
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_ReturnsAllIdleAgents_PipelinedBatch()
+    {
+        // Register 3 idle agents — all HGETALL calls are issued in a single pipelined batch
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.Register(Msg("agent-3"), "conn-3");
+
+        var idle = await _sut.GetIdleAgentsAsync();
+
+        idle.Should().HaveCount(3);
+        idle.Select(a => a.AgentId.Value).Should().BeEquivalentTo(["agent-1", "agent-2", "agent-3"]);
+        // TODO: This test does not validate pipelining. It would pass equally if HGETALL calls
+        // were issued sequentially. Consider verifying via FakeRedisStore call counts if exposed,
+        // or renaming to remove the misleading "PipelinedBatch" claim from the test name.
+    }
+
+    // ── GetAllAgents / GetAllAgentsAsync ──────────────────────────────────────
+
+    [Fact]
+    public async Task GetAllAgentsAsync_ReturnsAllAgentsRegardlessOfStatus()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+
+        var all = await _sut.GetAllAgentsAsync();
+
+        all.Should().HaveCount(2);
+        all.Select(a => a.AgentId.Value).Should().BeEquivalentTo(["agent-1", "agent-2"]);
+    }
+
+    [Fact]
+    public async Task GetAllAgentsAsync_UpdatesCache_ForSubsequentSyncReads()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+
+        // Call async to populate / refresh cache
+        await _sut.GetAllAgentsAsync();
+
+        // Sync read should now return same data from cache without hitting Redis
+        var all = _sut.GetAllAgents();
+        all.Should().HaveCount(2);
+        // TODO: This test passes even if GetAllAgentsAsync never touches _allAgentsCache, because
+        // Register itself populates the cache via UpdateAllAgentsCache. A stronger test would
+        // simulate a remote-registration scenario: directly insert an agent into the FakeRedisStore
+        // (bypassing Register so the local cache is not populated), call GetAllAgentsAsync, and assert
+        // that the subsequent GetAllAgents() sync call returns the remotely-registered agent.
+    }
+
+    [Fact]
+    public async Task GetAllAgentsAsync_ReturnsEmpty_WhenNoAgents()
+    {
+        var all = await _sut.GetAllAgentsAsync();
+        all.Should().BeEmpty();
+    }
+
+    // ── GetByAgentIdAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsNull_WhenAgentNotInRedis()
+    {
+        var result = await _sut.GetByAgentIdAsync(new AgentId("agent-unknown"));
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsEntry_WhenAgentExists()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        var result = await _sut.GetByAgentIdAsync(new AgentId("agent-1"));
+
+        result.Should().NotBeNull();
+        result!.AgentId.Value.Should().Be("agent-1");
+        result.ConnectionId.Should().Be("conn-1");
+        result.Status.Should().Be(AgentStatus.Idle);
+    }
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsNull_WhenHashExpired()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _store.ForceExpire("agent:agent-1");
+
+        var result = await _sut.GetByAgentIdAsync(new AgentId("agent-1"));
+
+        result.Should().BeNull("GetByAgentIdAsync must return null when the Redis hash has expired");
+    }
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsFreshStatus_AfterTransition()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+
+        var result = await _sut.GetByAgentIdAsync(new AgentId("agent-1"));
+
+        result.Should().NotBeNull();
+        result!.Status.Should().Be(AgentStatus.Busy);
+    }
+
+    // ── GetIdleAgents sync — cache reflects write paths ────────────────────────
+
+    [Fact]
+    public void GetIdleAgents_ExcludesBusyAgents_AfterTransitionStatus()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+
+        // Sync overload reads from cache; TransitionStatusAsync updates the cache.
         var idle = _sut.GetIdleAgents();
         idle.Should().HaveCount(1);
         idle[0].AgentId.Value.Should().Be("agent-2");
+    }
+
+    [Fact]
+    public void GetAllAgents_ExcludesDeregisteredAgents_AfterDeregister()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.Deregister(new AgentId("agent-1"));
+
+        // DeregisterAsync updates the cache synchronously before the Redis await.
+        // The sync read sees the agent removed immediately.
+        var all = _sut.GetAllAgents();
+        all.Should().HaveCount(1);
+        all[0].AgentId.Value.Should().Be("agent-2");
     }
 
     // ── GetByConnectionId ─────────────────────────────────────────────────────

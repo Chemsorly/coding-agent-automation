@@ -24,8 +24,18 @@ public interface IAgentRegistryService
 
     /// <summary>
     /// Looks up an agent by its unique agent identifier.
+    /// <para>
+    /// <b>Sync callers:</b> reads from the node-local snapshot for locally-registered agents.
+    /// For agents on other replicas, falls back to a best-effort in-process cache.
+    /// Use <see cref="GetByAgentIdAsync"/> for fresh Redis data on the distributed dispatch hot path.
+    /// </para>
     /// </summary>
     AgentEntry? GetByAgentId(AgentId agentId);
+
+    /// <summary>
+    /// Looks up an agent by its unique agent identifier, reading fresh data from Redis.
+    /// </summary>
+    Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default);
 
     /// <summary>
     /// Looks up an agent by its current SignalR connection ID.
@@ -44,13 +54,36 @@ public interface IAgentRegistryService
 
     /// <summary>
     /// Returns all agents currently in <see cref="AgentStatus.Idle"/> status.
+    /// <para>
+    /// <b>Sync callers (Blazor render, OTel gauges):</b> reads from a best-effort in-process cache.
+    /// The cache may be slightly stale (up to one heartbeat interval). Use
+    /// <see cref="GetIdleAgentsAsync"/> for fresh data on the dispatch hot path.
+    /// </para>
     /// </summary>
     IReadOnlyList<AgentEntry> GetIdleAgents();
 
     /// <summary>
+    /// Returns all agents currently in <see cref="AgentStatus.Idle"/> status.
+    /// Issues all HGETALL commands in a single pipelined batch, giving O(1) round-trips
+    /// regardless of agent count.
+    /// </summary>
+    Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Returns all registered agents regardless of status.
+    /// <para>
+    /// <b>Sync callers (Blazor render, OTel gauges):</b> reads from a best-effort in-process cache.
+    /// Use <see cref="GetAllAgentsAsync"/> for fresh data.
+    /// </para>
     /// </summary>
     IReadOnlyList<AgentEntry> GetAllAgents();
+
+    /// <summary>
+    /// Returns all registered agents regardless of status.
+    /// Issues all HGETALL commands in a single pipelined batch, giving O(1) round-trips
+    /// regardless of agent count.
+    /// </summary>
+    Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync(CancellationToken ct = default);
 
     /// <summary>
     /// Returns the count of agents currently in <see cref="AgentStatus.Busy"/> status.
