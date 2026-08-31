@@ -569,11 +569,10 @@ public class WorkItemTransitionServiceAdditionalTests
     }
 
     [Fact]
-    public async Task UpdatePriorityWeightAsync_AllRetriesExhausted_ReturnsNotFound()
+    public async Task UpdatePriorityWeightAsync_AllRetriesExhausted_ReturnsConcurrencyConflict()
     {
         // Arrange: factory throws DbUpdateConcurrencyException on both save calls.
-        // maxRetries=1 means loop runs: attempt=0 (throws, caught by when(attempt<maxRetries), logs, continues),
-        // then attempt=1 (throws, caught by final catch, returns NotFound).
+        // maxRetries=1 means loop runs: attempt=0 (throws, retry logged), attempt=1 (throws, returns ConcurrencyConflict).
         var opts = CreateDbOptions();
         var item = await SeedWorkItemAsync(opts, status: WorkItemStatus.Pending);
 
@@ -582,12 +581,8 @@ public class WorkItemTransitionServiceAdditionalTests
 
         var result = await svc.UpdatePriorityWeightAsync(item.Id, 50, CancellationToken.None, maxRetries: 1);
 
-        // TODO: This assertion validates the current (incorrect) behavior. When all retries are exhausted,
-        // the item still exists and is Pending — the failure is a concurrency conflict, not "not found".
-        // Returning NotFound here causes the endpoint to return HTTP 404 to clients instead of 409.
-        // When UpdatePriorityWeightResult.ConcurrencyConflict is introduced, update this assertion to
-        // expect ConcurrencyConflict instead of NotFound.
-        result.Should().Be(UpdatePriorityWeightResult.NotFound);
+        result.Should().Be(UpdatePriorityWeightResult.ConcurrencyConflict,
+            "exhausting retries due to concurrent saves should return ConcurrencyConflict, not NotFound");
     }
 
     [Fact]

@@ -1139,9 +1139,6 @@ public sealed class WorkItemEndpointTests
     /// <summary>
     /// AC: POST /api/work-items/{id}/priority on a non-Pending item returns 409.
     /// </summary>
-    // TODO: This theory covers only the five statuses listed below. If new non-Pending statuses are
-    // added to WorkItemStatus (e.g. Aborted, WontDo), they will be silently untested. Consider
-    // driving this test from all WorkItemStatus values except Pending to automatically cover additions.
     [Theory]
     [InlineData(WorkItemStatus.Dispatched)]
     [InlineData(WorkItemStatus.Running)]

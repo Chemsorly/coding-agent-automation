@@ -1215,16 +1215,21 @@ public static class WorkItemEndpoints
         WorkItemTransitionService transitionService,
         CancellationToken ct)
     {
+        if (request.PriorityWeight is null)
+            return TypedResults.BadRequest("priorityWeight is required.");
+
         if (request.PriorityWeight < 0 || request.PriorityWeight > 1000)
             return TypedResults.BadRequest("priorityWeight must be between 0 and 1000 (inclusive).");
 
-        var result = await transitionService.UpdatePriorityWeightAsync(id, request.PriorityWeight, ct);
+        var result = await transitionService.UpdatePriorityWeightAsync(id, request.PriorityWeight.Value, ct);
 
         return result switch
         {
             Infrastructure.Persistence.Services.UpdatePriorityWeightResult.Success => TypedResults.Ok(),
             Infrastructure.Persistence.Services.UpdatePriorityWeightResult.NotPending =>
                 TypedResults.Conflict("Cannot update PriorityWeight: work item is not in Pending status."),
+            Infrastructure.Persistence.Services.UpdatePriorityWeightResult.ConcurrencyConflict =>
+                TypedResults.Conflict("Cannot update PriorityWeight: concurrent update conflict, please retry."),
             _ => TypedResults.NotFound()
         };
     }
@@ -1235,11 +1240,10 @@ public static class WorkItemEndpoints
 /// </summary>
 public sealed class PriorityWeightRequest
 {
-    // TODO: A missing or omitted `priorityWeight` field in the request body silently defaults to 0, which
-    // passes the range check (0 is valid) and zeroes out the item's priority without any error. Add
-    // [Required] (or mark the property as `required`) and ensure request-body validation is enabled so
-    // an empty body returns HTTP 400 rather than silently applying weight=0.
-    public int PriorityWeight { get; init; }
+    /// <summary>
+    /// Dispatch priority weight. Must be between 0 and 1000 (inclusive). Required.
+    /// </summary>
+    public int? PriorityWeight { get; init; }
 }
 
 /// <summary>

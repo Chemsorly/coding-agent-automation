@@ -10,11 +10,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Higher-priority items are always dispatched first; equal-weight items fall back to FIFO.
 /// **Validates: Requirements 5.7 (updated for #2172)**
 /// </summary>
-// TODO: These property tests sort an in-memory list and do not exercise DispatchStateBuilder.BuildStateAsync
-// or any LINQ-to-EF query. If the OrderByDescending(w => w.PriorityWeight).ThenBy(w => w.CreatedAt) in
-// DispatchStateBuilder.cs were reverted, none of these tests would catch it.
-// Fix: add a test that exercises DispatchStateBuilder directly (or update DispatchStateBuilderTests to
-// assert on the ordering of state.PendingItems when items have different PriorityWeight values).
 public class DispatchServiceFifoOrderingPropertyTests
 {
     /// <summary>
