@@ -244,6 +244,7 @@ public record JobDistributionRequest
         IssueSummary issue,
         PipelineRunType phase,
         string initiatedBy,
+        string runId,
         int timeoutSeconds = 0,
         Guid? projectId = null,
         string? projectName = null,
@@ -251,6 +252,7 @@ public record JobDistributionRequest
     {
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(issue);
+        ArgumentException.ThrowIfNullOrEmpty(runId);
 
         return CreateBase(new JobDistributionRequestBaseParams(
             template, issue.Identifier, initiatedBy,
@@ -259,6 +261,7 @@ public record JobDistributionRequest
         with
         {
             DecompositionSource = decompositionSource,
+            RunId = runId,
             IssueDetail = new IssueDetail
             {
                 Identifier = issue.Identifier,
