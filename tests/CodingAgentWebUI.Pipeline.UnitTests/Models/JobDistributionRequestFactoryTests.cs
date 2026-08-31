@@ -254,9 +254,10 @@ public class JobDistributionRequestFactoryTests
     {
         var template = MakeTemplate();
         var issue = MakeIssue();
+        var runId = Guid.NewGuid().ToString();
 
         var result = JobDistributionRequest.FromTemplate(
-            template, issue, PipelineRunType.DecompositionAnalysis, initiatedBy: "loop");
+            template, issue, PipelineRunType.DecompositionAnalysis, initiatedBy: "loop", runId: runId);
 
         Assert.Equal(PipelineRunType.DecompositionAnalysis, result.RunType);
         Assert.Equal(WorkItemTaskType.Decomposition, result.TaskType);
@@ -267,10 +268,11 @@ public class JobDistributionRequestFactoryTests
     {
         var template = MakeTemplate();
         var issue = MakeIssue();
+        var runId = Guid.NewGuid().ToString();
 
         var result = JobDistributionRequest.FromTemplate(
             template, issue, PipelineRunType.Decomposition,
-            initiatedBy: "loop", decompositionSource: "project-level");
+            initiatedBy: "loop", runId: runId, decompositionSource: "project-level");
 
         Assert.Equal("project-level", result.DecompositionSource);
     }
@@ -280,9 +282,10 @@ public class JobDistributionRequestFactoryTests
     {
         var template = MakeTemplate();
         var issue = MakeIssue();
+        var runId = Guid.NewGuid().ToString();
 
         var result = JobDistributionRequest.FromTemplate(
-            template, issue, PipelineRunType.Decomposition, initiatedBy: "loop");
+            template, issue, PipelineRunType.Decomposition, initiatedBy: "loop", runId: runId);
 
         Assert.Null(result.DecompositionSource);
     }
@@ -292,10 +295,11 @@ public class JobDistributionRequestFactoryTests
     {
         var template = MakeTemplate();
         var issue = MakeIssue();
+        var runId = Guid.NewGuid().ToString();
 
         var result = JobDistributionRequest.FromTemplate(
             template, issue, PipelineRunType.DecompositionAnalysis,
-            initiatedBy: "manual", projectId: new Guid("33330000-0000-0000-0000-000000000002"), projectName: "Epic Project");
+            initiatedBy: "manual", runId: runId, projectId: new Guid("33330000-0000-0000-0000-000000000002"), projectName: "Epic Project");
 
         Assert.Equal(new Guid("33330000-0000-0000-0000-000000000002"), result.ProjectId);
         Assert.Equal("Epic Project", result.ProjectName);
@@ -306,15 +310,35 @@ public class JobDistributionRequestFactoryTests
     {
         var template = MakeTemplate();
         var issue = MakeIssue(identifier: "77", title: "Epic", description: "Epic body", labels: ["epic"]);
+        var runId = Guid.NewGuid().ToString();
 
         var result = JobDistributionRequest.FromTemplate(
-            template, issue, PipelineRunType.DecompositionAnalysis, initiatedBy: "loop");
+            template, issue, PipelineRunType.DecompositionAnalysis, initiatedBy: "loop", runId: runId);
 
         Assert.NotNull(result.IssueDetail);
         Assert.Equal("77", result.IssueDetail.Identifier);
         Assert.Equal("Epic", result.IssueDetail.Title);
         Assert.Equal("Epic body", result.IssueDetail.Description);
         Assert.Equal(["epic"], result.IssueDetail.Labels);
+    }
+
+    [Fact]
+    public void FromTemplate_Decomposition_SetsRunId()
+    {
+        var template = MakeTemplate();
+        var issue = MakeIssue();
+        var runId = Guid.NewGuid().ToString();
+
+        var result = JobDistributionRequest.FromTemplate(
+            template, issue, PipelineRunType.DecompositionAnalysis,
+            initiatedBy: "loop", runId: runId);
+
+        Assert.Equal(runId, result.RunId);
+        // TODO: [WARNING] No test covers PipelineRunType.Decomposition (Phase 2 / execution phase).
+        // Both phases share the same overload and RunId assignment, but if a future refactor splits
+        // the paths, RunId propagation could regress for the execution phase silently.
+        // Add a companion test: FromTemplate_Decomposition_SetsRunId_ExecutionPhase using
+        // PipelineRunType.Decomposition to close this coverage gap.
     }
 
     // ── Regression tests (compare against old construction patterns) ──
@@ -338,6 +362,7 @@ public class JobDistributionRequestFactoryTests
         Assert.Equal(expected.ProjectId, actual.ProjectId);
         Assert.Equal(expected.ProjectName, actual.ProjectName);
         Assert.Equal(expected.RunType, actual.RunType);
+        Assert.Equal(expected.RunId, actual.RunId);
         Assert.Equal(expected.DecompositionSource, actual.DecompositionSource);
         Assert.Equal(expected.ReviewPrTargetBranch, actual.ReviewPrTargetBranch);
         Assert.Equal(expected.ReviewPrDescription, actual.ReviewPrDescription);
@@ -504,6 +529,7 @@ public class JobDistributionRequestFactoryTests
     {
         var template = MakeTemplate(pipelineProviderId: null);
         var issue = new IssueSummary { Identifier = "50", Title = "Epic task", Labels = [], Description = null };
+        var runId = Guid.NewGuid().ToString();
 
         // Old construction pattern from loop decomposition
         var legacy = new JobDistributionRequest
@@ -517,16 +543,23 @@ public class JobDistributionRequestFactoryTests
             AgentSelector = "",
             TimeoutSeconds = 0,
             RunType = PipelineRunType.DecompositionAnalysis,
+            RunId = runId,
             IssueDetail = new IssueDetail { Identifier = issue.Identifier, Title = issue.Title ?? "", Description = "", Labels = [] }
         };
 
         var factory = JobDistributionRequest.FromTemplate(
-            template, issue, PipelineRunType.DecompositionAnalysis, initiatedBy: "loop");
+            template, issue, PipelineRunType.DecompositionAnalysis, initiatedBy: "loop", runId: runId);
 
         AssertRequestsEqual(legacy, factory);
     }
 
     // ── Null-guard tests ──
+
+    // TODO: [WARNING] No null/empty-guard test exists for the `runId` parameter on the decomposition
+    // overload. Production code guards it with ArgumentException.ThrowIfNullOrEmpty(runId), but this
+    // is not verified by any test. Existing null-guard tests cover `template` and `issue` for the
+    // implementation overload and `pr` for the review overload — add symmetrical coverage here:
+    // FromTemplate_Decomposition_ThrowsOnNullRunId and FromTemplate_Decomposition_ThrowsOnEmptyRunId.
 
     [Fact]
     public void FromTemplate_Implementation_ThrowsOnNullTemplate()
