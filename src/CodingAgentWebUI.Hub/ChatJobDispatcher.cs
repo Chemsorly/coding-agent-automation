@@ -680,6 +680,16 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        // TODO [WARNING]: StopAsync is no longer idempotent — the previous _stopped Interlocked guard
+        // and _stopCompleted TaskCompletionSource were removed by this diff. If StopAsync is called
+        // twice concurrently (or DisposeAsync is called concurrently with an in-progress StopAsync),
+        // _shutdownCts.CancelAsync() may be awaited while _shutdownCts.Dispose() races on another
+        // thread, causing ObjectDisposedException. CancellationTokenSource.CancelAsync() is safe to
+        // call multiple times after cancellation, so the sequential ASP.NET Core lifecycle (StopAsync
+        // then DisposeAsync) is unaffected. However the concurrent case is unguarded. Re-add an
+        // idempotency guard (Interlocked.Exchange or similar) if StopAsync is ever invoked outside
+        // the sequential hosted-service lifecycle. See review findings: Correctness WARNING @ line 680,
+        // DotNetSpecialist WARNING @ line 863.
         _logger.Information("ChatJobDispatcher: stopping — cancelling {Count} active watcher(s)",
             _activeWatchers.Count);
 
@@ -863,6 +873,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        // TODO [WARNING]: DisposeAsync calls StopAsync directly. If DisposeAsync is invoked
+        // concurrently with an in-progress StopAsync (e.g., host teardown races), _shutdownCts.Dispose()
+        // below can race with _shutdownCts.CancelAsync() still in flight, causing ObjectDisposedException.
+        // The removed _stopCompleted TaskCompletionSource previously guarded against this by having
+        // DisposeAsync await _stopCompleted.Task before calling Dispose. In the sequential ASP.NET Core
+        // lifecycle this is safe, but the guard has been removed. See review findings: Correctness WARNING
+        // @ line 680, DotNetSpecialist WARNING @ line 863.
         await StopAsync(CancellationToken.None);
         _shutdownCts.Dispose();
     }
