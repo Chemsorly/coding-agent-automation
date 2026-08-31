@@ -1278,12 +1278,6 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // Assert — canary counter incremented with correct tag
-        // TODO: [WARNING] This assertion uses Contain (at-least-one match) against the accumulated
-        // _recordings bag without a pre-act snapshot. If a prior test in the same fixture left a
-        // timeout_canary_violations recording with LongValue == 1L and AgentSelector == "test",
-        // this assertion would pass even if the act under test emitted no new increment. The other
-        // canary tests in this class use a canaryCountBefore snapshot for a delta assertion — this
-        // test should follow the same pattern for consistency and robustness.
         _recordings.Should().Contain(
             r => r.InstrumentName == "workdistribution.timeout_canary_violations"
                  && r.LongValue == 1L

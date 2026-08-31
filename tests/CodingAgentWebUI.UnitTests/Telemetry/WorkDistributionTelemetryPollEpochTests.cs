@@ -21,18 +21,6 @@ namespace CodingAgentWebUI.UnitTests.Telemetry;
 /// in isolation-dependency order. All three share [Collection("Metrics")] to prevent
 /// MeterListener collisions with the other metric tests in this assembly.
 /// </summary>
-// TODO: [WARNING] xUnit does not guarantee alphabetical ordering of test methods within a class.
-// The default order is reflection metadata order (typically source order), not alphabetical.
-// The A_/B_/C_ prefix naming expresses intent but does not enforce ordering. Consider using
-// [TestCaseOrderer] if the A_-first dependency is required. The current design is safe because
-// xUnit creates a new class instance per test (fresh _gaugeReadings bag) and A_ resets the
-// static field unconditionally, but the comment overstates the guarantee.
-// TODO: [WARNING] The MeterListener subscribes to the static WorkDistributionTelemetry Meter at
-// class load time via InstrumentPublished. If the static Meter instance is disposed by another
-// test's teardown path (e.g. a test in [Collection("Metrics")] that calls Meter.Dispose()),
-// the listener will silently receive no callbacks and the Should().NotBeEmpty() assertion in
-// C_GaugeEpochIsNonZero_AfterRecordLastPollEpoch will fail with a misleading error. Consider
-// adding a guard after _listener.Start() to verify the Meter is still live.
 [Collection("Metrics")]
 [Trait("Feature", "DispatcherLastPollEpoch")]
 public sealed class WorkDistributionTelemetryPollEpochTests : IDisposable
@@ -81,12 +69,6 @@ public sealed class WorkDistributionTelemetryPollEpochTests : IDisposable
     public void A_GaugeEmitsNoMeasurement_BeforeRecordLastPollEpoch()
     {
         // Arrange: reset the backing field so this test is independent of execution order
-        // TODO: [WARNING] This reflection SetValue does not issue a memory barrier (no Volatile.Write).
-        // On weakly-ordered architectures (ARM) or with aggressive JIT reordering, the 0L written here
-        // may not be visible to the gauge lambda running on another thread when RecordObservableInstruments
-        // is called synchronously below. In practice this passes on x86-64 (TSO model), but could
-        // transiently fail on ARM or under heavy thread preemption. Consider resetting via a helper that
-        // uses System.Threading.Volatile.Write, or expose a test-only reset API on WorkDistributionTelemetry.
         PollEpochMillisField.SetValue(null, 0L);
 
         // Act: trigger observable instrument callbacks
@@ -107,11 +89,6 @@ public sealed class WorkDistributionTelemetryPollEpochTests : IDisposable
     public void B_GaugeEmitsMeasurement_AfterRecordLastPollEpoch()
     {
         // Arrange
-        // TODO: [WARNING] beforeCallEpochSeconds uses ToUnixTimeSeconds() (integer seconds), while
-        // emittedEpoch is _pollEpochMillis / 1000.0 (double). If the call fires within the same
-        // integer second, the comparison is fine. To be more precise and avoid any fractional-second
-        // rounding edge case, capture beforeCallEpochMillis = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-        // and compare emittedEpoch >= beforeCallEpochMillis / 1000.0.
         var beforeCallEpochSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         // Act
@@ -121,22 +98,12 @@ public sealed class WorkDistributionTelemetryPollEpochTests : IDisposable
         var afterCallEpochSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         // Assert: exactly one measurement emitted, value in [beforeCall, afterCall+5]
-        // TODO: [WARNING] _gaugeReadings is a ConcurrentBag instance field; each xUnit test instance
-        // gets a fresh bag, so cross-test accumulation is not expected. However, if this test runs
-        // after A_ and A_ somehow caused a measurement to be emitted (which it should not, given
-        // the 0L reset), the bag would not be empty at this point. Adding an explicit _gaugeReadings
-        // clear or using Count delta assertions would make the precondition explicit.
         _gaugeReadings.Should().HaveCount(1,
             "the gauge should emit exactly one measurement after RecordLastPollEpoch is called");
 
         var emittedEpoch = _gaugeReadings.Single().Value;
         emittedEpoch.Should().BeGreaterThanOrEqualTo(beforeCallEpochSeconds,
             "emitted epoch must be at or after the epoch recorded immediately before the call");
-        // TODO: [WARNING] The +5.0 upper-bound tolerance silently permits an implementation that
-        // records a timestamp up to 5 seconds in the future. Since RecordLastPollEpoch records
-        // UtcNow at call time and afterCallEpochSeconds is captured immediately after, the emitted
-        // epoch (ms / 1000.0) can never legitimately exceed afterCallEpochSeconds + 1 (one full
-        // second of integer truncation). Consider tightening to afterCallEpochSeconds + 2.0.
         emittedEpoch.Should().BeLessThanOrEqualTo(afterCallEpochSeconds + 5.0,
             "emitted epoch must not be far in the future — value should reflect the call time");
     }
