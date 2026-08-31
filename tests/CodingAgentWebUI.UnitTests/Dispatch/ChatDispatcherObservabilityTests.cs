@@ -61,7 +61,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
         AgentApiKeySecretName = "caa-secret",
         AgentServiceAccountName = "caa-agent",
         ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
-        AgentJobTimeoutSeconds = 7200,
+        ChatAgentJobTimeoutSeconds = 7200,
         ChatTerminationGracePeriodSeconds = 120
     };
 
@@ -340,7 +340,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
-            AgentJobTimeoutSeconds = 7200,
+            ChatAgentJobTimeoutSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 120
         };
 

@@ -166,7 +166,7 @@ workDistribution:
   dispatch:
     intervalSeconds: 10
     rateLimitPerSecond: 10
-    agentJobTimeoutSeconds: 7200
+    chatAgentJobTimeoutSeconds: 7200
     chatPodConnectTimeoutSeconds: 120
     chatTerminationGracePeriodSeconds: 120
     # Maximum seconds a chat pod may remain idle (no client keepalive) before automatic termination.

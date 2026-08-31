@@ -17,9 +17,13 @@ public sealed record PendingWorkItemDto
 
     /// <summary>
     /// Per-item software-level timeout in seconds. Used by the Job Controller to compute
-    /// <c>activeDeadlineSeconds</c> on the K8s Job: <c>Max(TimeoutSeconds, agentJobTimeoutSeconds) + 60</c>.
+    /// <c>activeDeadlineSeconds</c> on the K8s Job: <c>(TimeoutSeconds > 0 ? TimeoutSeconds : DefaultAgentTimeout) + 60</c>.
     /// Populated from <c>WorkItemEntity.TimeoutSeconds</c> by the pending-items API endpoint.
+    /// Zero indicates a legacy row — callers fall back to <c>PipelineConstants.DefaultAgentTimeout</c> (30 min).
     /// </summary>
+    // TODO: [WARNING] #2179 — Doc comment previously referenced the removed agentJobTimeoutSeconds and the
+    // old Math.Max logic. Updated to reflect the new fallback-only semantics. If the fallback constant changes,
+    // update this comment accordingly.
     public required int TimeoutSeconds { get; init; }
 
     // ── Display fields for the Agent Monitoring Job Queue UI ──────────────

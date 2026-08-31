@@ -824,7 +824,8 @@ public static class WorkItemEndpoints
                 DispatchedAt = w.DispatchedAt,
                 AgentSelector = w.AgentSelector,
                 IssueIdentifier = w.IssueIdentifier,
-                K8sJobName = w.K8sJobName
+                K8sJobName = w.K8sJobName,
+                TimeoutSeconds = w.TimeoutSeconds
             })
             .ToListAsync(ct);
 

@@ -70,7 +70,8 @@ public sealed class WorkItemEndpointTests
         WorkItemTaskType taskType = WorkItemTaskType.Implementation,
         FailureReason? failureReason = null,
         DateTimeOffset? completedAt = null,
-        DateTimeOffset? createdAt = null)
+        DateTimeOffset? createdAt = null,
+        int timeoutSeconds = 3600)
     {
         using var db = _factory.CreateDbContext();
         var entity = new WorkItemEntity
@@ -82,7 +83,7 @@ public sealed class WorkItemEndpointTests
             Status = status,
             Payload = JsonSerializer.Serialize(MakeRequest(issueIdentifier), PipelineJsonOptions.Default),
             AgentSelector = "",
-            TimeoutSeconds = 3600,
+            TimeoutSeconds = timeoutSeconds,
             CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
             FailureReason = failureReason,
             CompletedAt = completedAt
@@ -656,6 +657,32 @@ public sealed class WorkItemEndpointTests
         items!.Should().NotContain(i => i.Id == pending.Id);
         items.Should().NotContain(i => i.Id == succeeded.Id);
         items.Should().NotContain(i => i.Id == failed.Id);
+    }
+
+    [Fact]
+    public async Task GetActiveWorkItems_IncludesTimeoutSeconds()
+    {
+        // AC: ActiveWorkItemDto must carry TimeoutSeconds so ReconciliationLoop can enforce
+        // per-project timeouts without a global fallback.
+        const int expectedTimeout = 900; // 15-min project timeout
+        var running = SeedEntity(WorkItemStatus.Running, timeoutSeconds: expectedTimeout);
+
+        using (var db = _factory.CreateDbContext())
+        {
+            var r = await db.WorkItems.FindAsync(running.Id);
+            r!.DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-60);
+            await db.SaveChangesAsync();
+        }
+
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=0");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        var item = items!.FirstOrDefault(i => i.Id == running.Id);
+        item.Should().NotBeNull("the Running work item must appear in the active list");
+        item!.TimeoutSeconds.Should().Be(expectedTimeout,
+            "TimeoutSeconds must be projected from WorkItemEntity so ReconciliationLoop can enforce per-item timeouts");
     }
 
     // ── LabelSwap ─────────────────────────────────────────────────────────────────

@@ -172,8 +172,8 @@ Usage (inside an env: list, indented to 12):
   value: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
 - name: WorkDistribution__Dispatch__RateLimitPerSecond
   value: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
-- name: WorkDistribution__Dispatch__AgentJobTimeoutSeconds
-  value: {{ .Values.workDistribution.dispatch.agentJobTimeoutSeconds | quote }}
+- name: WorkDistribution__Dispatch__ChatAgentJobTimeoutSeconds
+  value: {{ .Values.workDistribution.dispatch.chatAgentJobTimeoutSeconds | quote }}
 - name: WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds
   value: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
 - name: WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds
@@ -206,7 +206,7 @@ WorkDistribution__OpencodeConfigSecretName: {{ include "coding-agent-automation.
 WorkDistribution__JobTemplatesPath: "/app/config/job-templates.yaml"
 WorkDistribution__Dispatch__IntervalSeconds: {{ .Values.workDistribution.dispatch.intervalSeconds | quote }}
 WorkDistribution__Dispatch__RateLimitPerSecond: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
-WorkDistribution__Dispatch__AgentJobTimeoutSeconds: {{ .Values.workDistribution.dispatch.agentJobTimeoutSeconds | quote }}
+WorkDistribution__Dispatch__ChatAgentJobTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatAgentJobTimeoutSeconds | quote }}
 WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
 WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
 WorkDistribution__Dispatch__ChatIdleTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatIdleTimeoutSeconds | quote }}

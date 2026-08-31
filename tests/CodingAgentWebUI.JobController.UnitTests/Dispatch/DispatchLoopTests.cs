@@ -29,7 +29,6 @@ public sealed class DispatchLoopTests
             Namespace = "test-ns",
             PollIntervalSeconds = 1,
             RateLimitPerSecond = 100,
-            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120
         };
 
@@ -213,7 +212,6 @@ public sealed class DispatchLoopTests
         {
             Namespace = "test-ns",
             RateLimitPerSecond = 100,
-            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120,
             KiroPvcPool = ["kiro-pvc-0", "kiro-pvc-1"]
         };
@@ -273,7 +271,6 @@ public sealed class DispatchLoopTests
         {
             Namespace = "test-ns",
             RateLimitPerSecond = 100,
-            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120,
             KiroPvcPool = ["kiro-pvc-0", "kiro-pvc-1"]
         };
@@ -361,7 +358,6 @@ public sealed class DispatchLoopTests
         {
             Namespace = "test-ns",
             RateLimitPerSecond = 100,
-            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120,
             KiroPvcPool = ["kiro-pvc-0", "kiro-pvc-1"]
         };
@@ -470,7 +466,6 @@ public sealed class DispatchLoopTests
         {
             Namespace = "test-ns",
             RateLimitPerSecond = 100,
-            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120,
             KiroPvcPool = ["kiro-pvc-0", "kiro-pvc-1"]
         };
@@ -836,7 +831,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenItemTimeoutExceedsGlobal_K8sJob_ActiveDeadlineSeconds_UsesItemTimeout()
     {
-        // item timeout (28800s) > global timeout (7200s) → activeDeadlineSeconds == 28860
+        // item timeout (28800s) > global default (1800s) → activeDeadlineSeconds == 28860
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending(timeoutSeconds: 28800)]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
@@ -847,7 +842,7 @@ public sealed class DispatchLoopTests
             .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
             .Returns(Task.CompletedTask);
 
-        var loop = CreateLoop(); // _options.AgentJobTimeoutSeconds == 7200
+        var loop = CreateLoop();
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         capturedJob.Should().NotBeNull();
@@ -855,9 +850,9 @@ public sealed class DispatchLoopTests
     }
 
     [Fact]
-    public async Task WhenGlobalTimeoutExceedsItem_K8sJob_ActiveDeadlineSeconds_UsesGlobalTimeout()
+    public async Task WhenItemTimeoutSmall_K8sJob_ActiveDeadlineSeconds_UsesItemTimeout()
     {
-        // item timeout (3600s) < global timeout (7200s) → activeDeadlineSeconds == 7260
+        // item timeout (3600s) — must be used directly, not replaced by any floor
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending(timeoutSeconds: 3600)]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
@@ -868,16 +863,78 @@ public sealed class DispatchLoopTests
             .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
             .Returns(Task.CompletedTask);
 
-        var loop = CreateLoop(); // _options.AgentJobTimeoutSeconds == 7200
+        var loop = CreateLoop();
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         capturedJob.Should().NotBeNull();
-        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(7260L); // 7200 + 60
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(3660L); // 3600 + 60 — per-item timeout respected
     }
 
-    // TODO: Add equal-values edge case test — WhenItemTimeoutEqualsGlobal_K8sJob_ActiveDeadlineSeconds_UsesSharedTimeout
-    // where item.TimeoutSeconds == agentJobTimeoutSeconds (e.g. both 7200s) → activeDeadlineSeconds == 7260.
-    // This boundary condition confirms that floor and ceiling converge cleanly at the same value.
+    // ─── Acceptance criterion tests ───────────────────────────────────────────
+
+    [Fact]
+    public async Task WhenItemTimeout15Min_K8sJob_ActiveDeadlineSeconds_Is960()
+    {
+        // AC: project with AgentTimeout = 15m → activeDeadlineSeconds = 960 (900 + 60)
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending(timeoutSeconds: 900)]);
+        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        V1Job? capturedJob = null;
+        _k8sClient.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        capturedJob.Should().NotBeNull();
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(960L); // 900 + 60
+    }
+
+    [Fact]
+    public async Task WhenItemTimeoutIsGlobalDefault_K8sJob_ActiveDeadlineSeconds_Is1860()
+    {
+        // AC: no project override → global default 30 min → activeDeadlineSeconds = 1860 (1800 + 60)
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending(timeoutSeconds: 1800)]);
+        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        V1Job? capturedJob = null;
+        _k8sClient.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        capturedJob.Should().NotBeNull();
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(1860L); // 1800 + 60
+    }
+
+    [Fact]
+    public async Task WhenItemTimeoutIsZero_K8sJob_ActiveDeadlineSeconds_UsesGlobalDefault()
+    {
+        // Legacy row: TimeoutSeconds = 0 → falls back to PipelineConstants.DefaultAgentTimeout (30 min)
+        // → activeDeadlineSeconds = 1860 (1800 + 60). Must NOT produce 60 (0 + 60).
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending(timeoutSeconds: 0)]);
+        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        V1Job? capturedJob = null;
+        _k8sClient.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        capturedJob.Should().NotBeNull();
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(1860L); // fallback 1800 + 60
+    }
 
     // ─── Helpers ────────────────────────────────────────────────────────────────
 

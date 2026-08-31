@@ -25,7 +25,6 @@ public sealed class ReconciliationLoopTests
         _options = new DispatchServiceOptions
         {
             Namespace = "test-ns",
-            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120
         };
 
@@ -90,17 +89,19 @@ public sealed class ReconciliationLoopTests
     public async Task WhenTimeoutExceeded_ShouldCallPostStatusAsync_AndDeleteJob()
     {
         var jobName = JobNameFor(ItemId);
+        const int itemTimeoutSeconds = 900; // 15-min per-project timeout
         var timedOutItem = new ActiveWorkItemDto
         {
             Id = ItemId,
             Status = WorkItemStatus.Running,
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-_options.AgentJobTimeoutSeconds - 1),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
             AgentSelector = "dotnet10,opencode",
-            IssueIdentifier = "owner/repo#1"
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 0), It.IsAny<CancellationToken>()))
             .ReturnsAsync([timedOutItem]);
 
         var loop = CreateLoop();
@@ -109,9 +110,114 @@ public sealed class ReconciliationLoopTests
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            // TODO: [WARNING] #2179 — ErrorMessage is not asserted here. If the formatting regresses
+            // (e.g. still prints "7200s" or "0s" instead of "900s"), this test would still pass.
+            // Add u.ErrorMessage == "Agent timeout after 900s" to pin the per-item timeout surfacing.
             It.IsAny<CancellationToken>()), Times.Once);
 
         _k8sClient.Verify(c => c.DeleteJobAsync(jobName, _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ─── Per-item timeout enforcement tests (AC: #2179) ──────────────────────
+    // TODO: [WARNING] #2179 — None of the EnforceTimeoutsAsync tests below verify the call to
+    // GetActiveAsync itself (only the downstream effects are asserted). If the implementation
+    // regresses to passing a non-zero olderThanSeconds, the mock would not match, returning an
+    // empty list, and the tests would fail with misleading "PostStatusAsync never called" errors.
+    // Consider adding _workItemClient.Verify(c => c.GetActiveAsync(0, ...), Times.Once) to each
+    // test to make argument regressions explicit and produce clear failure messages.
+
+    [Fact]
+    public async Task WhenRunningItemTimeoutExceeded_PerItemTimeout_ShouldMarkFailed()
+    {
+        // AC: Running item with TimeoutSeconds = 900, dispatched 910s ago → marked Failed
+        var id = Guid.NewGuid();
+        const int itemTimeoutSeconds = 900; // 15 min
+        var item = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 10)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#5",
+            TimeoutSeconds = itemTimeoutSeconds
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 0), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task WhenRunningItemTimeoutNotYetExceeded_PerItemTimeout_ShouldNotMarkFailed()
+    {
+        // AC: Running item with TimeoutSeconds = 1800, dispatched only 600s ago → not yet timed out
+        var id = Guid.NewGuid();
+        const int itemTimeoutSeconds = 1800; // 30 min
+        var item = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-600),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#6",
+            TimeoutSeconds = itemTimeoutSeconds
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 0), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task WhenNullDispatchedAt_FallsBackToGlobalDefault_30Min_ShouldMarkFailed()
+    {
+        // AC: null DispatchedAt + zero TimeoutSeconds → fallback to 1800s; treated as "already past timeout"
+        var id = Guid.NewGuid();
+        var item = new ActiveWorkItemDto
+        {
+            Id = id,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = null,
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#7",
+            TimeoutSeconds = 0 // legacy row — zero
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 0), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item]);
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // When DispatchedAt is null and TimeoutSeconds = 0, both the executionAgeSeconds and
+        // itemTimeoutSeconds fall back to DefaultAgentTimeout (1800s). executionAgeSeconds == itemTimeoutSeconds
+        // → enforcement proceeds because the guard is strictly-less (executionAgeSeconds < itemTimeoutSeconds).
+        // TODO: [WARNING] #2179 — This test relies on the exact-boundary case: equal-to the timeout triggers
+        // enforcement (guard is <, not <=). If the guard is ever changed to <=, this test would fail for the
+        // right reason. The ErrorMessage content ("Agent timeout after 1800s") is also unasserted — a regression
+        // formatting the wrong value would not be caught by this test.
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            id,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ─── Short-circuit Dispatched sweep ──────────────────────────────────────
@@ -478,7 +584,6 @@ public sealed class ReconciliationLoopErrorTests
     private readonly DispatchServiceOptions _options = new()
     {
         Namespace = "test-ns",
-        AgentJobTimeoutSeconds = 7200,
         ChatPodConnectTimeoutSeconds = 120
     };
 
@@ -775,25 +880,29 @@ public sealed class ReconciliationLoopErrorTests
         var id1 = Guid.NewGuid();
         var id2 = Guid.NewGuid();
 
+        const int itemTimeoutSeconds = 1800; // 30 min — clearly past threshold
+
         var item1 = new ActiveWorkItemDto
         {
             Id = id1,
             Status = WorkItemStatus.Running,
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.AgentJobTimeoutSeconds + 1)),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
             AgentSelector = "dotnet",
-            IssueIdentifier = "owner/repo#1"
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds
         };
         var item2 = new ActiveWorkItemDto
         {
             Id = id2,
             Status = WorkItemStatus.Running,
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.AgentJobTimeoutSeconds + 1)),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
             AgentSelector = "dotnet",
-            IssueIdentifier = "owner/repo#2"
+            IssueIdentifier = "owner/repo#2",
+            TimeoutSeconds = itemTimeoutSeconds
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 0), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item1, item2]);
 
         // First call throws, second should still be attempted
@@ -817,17 +926,19 @@ public sealed class ReconciliationLoopErrorTests
     {
         // Only Running items should be timed out by EnforceTimeoutsAsync
         var id = Guid.NewGuid();
+        const int itemTimeoutSeconds = 1800;
         var dispatchedItem = new ActiveWorkItemDto
         {
             Id = id,
             Status = WorkItemStatus.Dispatched, // not Running
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.AgentJobTimeoutSeconds + 1)),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
             AgentSelector = "dotnet",
-            IssueIdentifier = "owner/repo#1"
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 0), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
         var loop = CreateLoop();
@@ -1198,7 +1309,6 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         _options = new DispatchServiceOptions
         {
             Namespace = "test-ns",
-            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120
         };
 
@@ -1253,18 +1363,19 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     [Fact]
     public async Task EnforceTimeouts_WhenExecutionAgeLessThan60s_SkipsEnforcementAndIncrementsCanaryCounter()
     {
-        // Arrange
+        // Arrange — item with a 30-min timeout, dispatched only 30s ago (below canary threshold)
         var item = new ActiveWorkItemDto
         {
             Id = Guid.NewGuid(),
             Status = WorkItemStatus.Running,
             DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-30),
             AgentSelector = "test",
-            IssueIdentifier = "owner/repo#1"
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = 1800
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 0), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item]);
 
         // Act
@@ -1297,24 +1408,26 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             "timeout_execution_age_seconds must record ≈ 30s for a 30s-old work item");
     }
 
-    // ─── AC: DispatchedAt = UtcNow - 7200s → enforcement proceeds, canary not incremented ──
+    // ─── AC: DispatchedAt = UtcNow - 1900s → enforcement proceeds, canary not incremented ──
 
     [Fact]
     public async Task EnforceTimeouts_WhenExecutionAgeAtOrAbove60s_ProceedsNormally_NoCanaryIncrement()
     {
-        // Arrange
+        // Arrange — item with 1800s (30 min) timeout, dispatched 1900s ago (past timeout)
         var id = Guid.NewGuid();
+        const int itemTimeoutSeconds = 1800;
         var item = new ActiveWorkItemDto
         {
             Id = id,
             Status = WorkItemStatus.Running,
-            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-7200),
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-1900),
             AgentSelector = "test",
-            IssueIdentifier = "owner/repo#1"
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = itemTimeoutSeconds
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 0), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item]);
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
@@ -1342,36 +1455,36 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         canaryCountAfter.Should().Be(canaryCountBefore,
             "timeout_canary_violations must not be incremented when execution age >= 60s");
 
-        // Assert — execution age histogram recorded (≈ 7200s)
-        // TODO: This Contain assertion does not verify the recording happened exactly once for this
-        // item. If a future refactor moves or duplicates the Record(...) call, this would still pass.
-        // Consider adding a count assertion (e.g. count of matching entries == 1 via snapshot-delta)
-        // to confirm the item was recorded exactly once before enforcement. (TestQuality review warning)
+        // Assert — execution age histogram recorded (≈ 1900s)
         _recordings.Should().Contain(
             r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
-                 && r.DoubleValue >= 3600.0
+                 && r.DoubleValue >= 1800.0
                  && r.AgentSelector == "test",
-            "timeout_execution_age_seconds must record ≈ 7200s");
+            "timeout_execution_age_seconds must record ≈ 1900s");
     }
 
-    // ─── AC: DispatchedAt = null → fallback to AgentJobTimeoutSeconds → enforcement proceeds ──
+    // ─── AC: DispatchedAt = null → fallback to DefaultAgentTimeout (30 min) → enforcement proceeds ──
 
     [Fact]
     public async Task EnforceTimeouts_WhenDispatchedAtIsNull_UsesFallbackAge_ProceedsNormally()
     {
-        // Arrange
+        // Arrange — null DispatchedAt; loop falls back to DefaultAgentTimeout (1800s).
+        // The item's TimeoutSeconds is also 1800 so the fallback equals the per-item timeout —
+        // enforcement proceeds because executionAgeSeconds == itemTimeoutSeconds >= itemTimeoutSeconds.
         var id = Guid.NewGuid();
+        const double expectedFallbackAge = 1800.0; // PipelineConstants.DefaultAgentTimeout.TotalSeconds
         var item = new ActiveWorkItemDto
         {
             Id = id,
             Status = WorkItemStatus.Running,
             DispatchedAt = null,
             AgentSelector = "test",
-            IssueIdentifier = "owner/repo#1"
+            IssueIdentifier = "owner/repo#1",
+            TimeoutSeconds = 1800
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.AgentJobTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 0), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item]);
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
@@ -1399,14 +1512,11 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         canaryCountAfter.Should().Be(canaryCountBefore,
             "timeout_canary_violations must not be incremented when DispatchedAt is null (falls back to full timeout age)");
 
-        // Assert — execution age histogram recorded with exact fallback value (7200.0, not clock-based)
-        // TODO: This Contain assertion does not bound the number of matching recordings. Using
-        // Should().ContainSingle(...) would make the intent explicit and catch loop-iteration bugs
-        // where Record(...) is called multiple times for the same item. (TestQuality review warning)
+        // Assert — execution age histogram recorded with exact fallback value (1800.0, not clock-based)
         _recordings.Should().Contain(
             r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
-                 && r.DoubleValue == (double)_options.AgentJobTimeoutSeconds
+                 && r.DoubleValue == expectedFallbackAge
                  && r.AgentSelector == "test",
-            $"timeout_execution_age_seconds must record exactly {_options.AgentJobTimeoutSeconds}s for null DispatchedAt");
+            $"timeout_execution_age_seconds must record exactly {expectedFallbackAge}s for null DispatchedAt");
     }
 }

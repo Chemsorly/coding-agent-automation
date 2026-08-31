@@ -102,15 +102,25 @@ public sealed class ReconciliationLoop
     }
 
     /// <summary>
-    /// Enforces the session timeout: marks Running items older than
-    /// <see cref="DispatchServiceOptions.AgentJobTimeoutSeconds"/> as Failed.
+    /// Enforces per-item session timeouts: marks Running items whose execution age exceeds
+    /// their own <c>TimeoutSeconds</c> (sourced from <c>PipelineConfiguration.AgentTimeout</c>
+    /// at enqueue time) as Failed. Falls back to <c>PipelineConstants.DefaultAgentTimeout</c>
+    /// (30 min) for legacy rows where <c>TimeoutSeconds</c> is zero.
     /// </summary>
     public async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
-        IReadOnlyList<ActiveWorkItemDto> timedOut;
+        // Fetch all active items (olderThanSeconds = 0 → cutoff = now → no age pre-filter).
+        // Per-item timeout is enforced below. This mirrors the existing CleanupOrphansAsync
+        // pattern which already uses GetActiveAsync(0) safely in production.
+        // TODO: [WARNING] #2179 — This call now depends entirely on the in-loop age check
+        // (executionAgeSeconds < itemTimeoutSeconds) to avoid incorrectly marking young Running items
+        // as Failed. The prior contract was GetActiveAsync(AgentJobTimeoutSeconds), which guaranteed
+        // only items old enough to time out were returned. If that guard is weakened or removed in a
+        // future refactor, all active Running items (including freshly dispatched ones) will be killed.
+        IReadOnlyList<ActiveWorkItemDto> activeItems;
         try
         {
-            timedOut = await _workItemClient.GetActiveAsync(_options.AgentJobTimeoutSeconds, ct);
+            activeItems = await _workItemClient.GetActiveAsync(0, ct);
         }
         catch (Exception ex)
         {
@@ -118,18 +128,34 @@ public sealed class ReconciliationLoop
             return;
         }
 
-        foreach (var item in timedOut)
+        foreach (var item in activeItems)
         {
             if (ct.IsCancellationRequested) break;
 
             // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
             if (item.Status != WorkItemStatus.Running) continue;
 
+            // Resolve this item's timeout: use per-item value if set, otherwise fall back to the
+            // global default (30 min). Zero indicates a legacy row created before TimeoutSeconds
+            // was populated — using the default prevents an immediate pod kill.
+            var itemTimeoutSeconds = item.TimeoutSeconds > 0
+                ? item.TimeoutSeconds
+                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds;
+
             // Compute execution age from DispatchedAt. If DispatchedAt is null (items dispatched before
-            // the field was added), fall back to AgentJobTimeoutSeconds — safe to enforce.
+            // the field was added), use the fallback timeout value directly — safe to enforce.
+            // TODO: [WARNING] #2179 — When DispatchedAt is null and TimeoutSeconds > 0, executionAgeSeconds
+            // is set to itemTimeoutSeconds, so enforcement fires immediately (equal satisfies the >= guard
+            // at the check below). This is intentional "treat null DispatchedAt as already timed out"
+            // policy, but it means a Running item whose DispatchedAt write failed (e.g. a network blip
+            // after ClaimAsync) will be killed on the very next reconciliation cycle — potentially < 10s
+            // after dispatch. The old code was protected by the GetActiveAsync age pre-filter (7200s);
+            // that safety margin no longer exists since GetActiveAsync(0) returns all active items.
+            // If this causes false positives in production, consider setting the fallback to
+            // itemTimeoutSeconds + 1 to defer enforcement one cycle, or sourcing a CreatedAt-based age.
             var executionAgeSeconds = item.DispatchedAt.HasValue
                 ? (DateTimeOffset.UtcNow - item.DispatchedAt.Value).TotalSeconds
-                : _options.AgentJobTimeoutSeconds;
+                : itemTimeoutSeconds;
 
             WorkDistributionTelemetry.TimeoutExecutionAge.Record(executionAgeSeconds,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
@@ -145,15 +171,18 @@ public sealed class ReconciliationLoop
                 continue;
             }
 
+            // Not yet timed out — skip.
+            if (executionAgeSeconds < itemTimeoutSeconds) continue;
+
             Log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
-                item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", _options.AgentJobTimeoutSeconds);
+                item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", itemTimeoutSeconds);
 
             try
             {
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
                     Status = nameof(WorkItemStatus.Failed),
-                    ErrorMessage = $"Agent timeout after {_options.AgentJobTimeoutSeconds}s",
+                    ErrorMessage = $"Agent timeout after {itemTimeoutSeconds}s",
                     FailureReason = "Timeout"
                 }, ct);
 

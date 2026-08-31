@@ -16,4 +16,13 @@ public sealed record ActiveWorkItemDto
     /// Used by <c>ReconciliationLoop</c> to match live Jobs without recomputing the name.
     /// </summary>
     public string? K8sJobName { get; init; }
+
+    /// <summary>
+    /// Per-item software-level timeout in seconds, sourced from <c>WorkItemEntity.TimeoutSeconds</c>.
+    /// Used by <c>ReconciliationLoop.EnforceTimeoutsAsync</c> to enforce the correct per-project
+    /// timeout rather than a global threshold.
+    /// Zero indicates a legacy row created before the field was populated; callers should fall
+    /// back to <c>PipelineConstants.DefaultAgentTimeout</c> in that case.
+    /// </summary>
+    public int TimeoutSeconds { get; init; }
 }

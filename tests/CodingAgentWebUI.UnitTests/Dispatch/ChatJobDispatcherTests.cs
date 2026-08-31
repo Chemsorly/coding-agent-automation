@@ -45,7 +45,7 @@ public class ChatJobDispatcherTests
         AgentApiKeySecretName = "caa-secret",
         AgentServiceAccountName = "caa-agent",
         ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
-        AgentJobTimeoutSeconds = chatSessionMaxDuration,
+        ChatAgentJobTimeoutSeconds = chatSessionMaxDuration,
         ChatTerminationGracePeriodSeconds = gracePeriod
     };
 
@@ -813,7 +813,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            AgentJobTimeoutSeconds = 7200,
+            ChatAgentJobTimeoutSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1   // 1 second grace → force-delete triggers fast
         };
 
@@ -875,7 +875,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            AgentJobTimeoutSeconds = 7200,
+            ChatAgentJobTimeoutSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1,  // triggers grace-period expiry quickly
             ChatIdleTimeoutSeconds = 3600            // far above idle threshold — no idle-kill race
         };
@@ -1067,7 +1067,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            AgentJobTimeoutSeconds = 7200,
+            ChatAgentJobTimeoutSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1
         };
 
