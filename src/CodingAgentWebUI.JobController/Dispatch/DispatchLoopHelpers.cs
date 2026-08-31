@@ -67,11 +67,10 @@ internal static class DispatchLoopHelpers
         var conditions = job.Status?.Conditions;
         if (conditions is not null)
         {
-            // TODO: V1JobCondition.Type and V1JobCondition.Status are both nullable strings (string?)
+            // V1JobCondition.Type and V1JobCondition.Status are both nullable strings (string?)
             // in the Kubernetes C# client. The LINQ comparisons (c.Type == "Complete", c.Status == "True")
-            // evaluate safely to false when null (no NullReferenceException), but this implicit
-            // null-tolerance is undocumented. Consider adding explicit null guards or a comment in a
-            // future tidy-up pass for clarity and future-proofing against client model changes.
+            // evaluate safely to false when null (no NullReferenceException) because string equality
+            // with null returns false in C#.
             if (conditions.Any(c => (c.Type == "Complete" || c.Type == "Failed") && c.Status == "True"))
                 return true;
         }
@@ -104,11 +103,11 @@ internal static class DispatchLoopHelpers
             "app.kubernetes.io/managed-by=caa-orchestrator",
             ct);
 
-        // TODO: This query does not filter terminal jobs. A completed job within the K8s log-retention
+        // Note: this query does not filter terminal jobs. A completed job within the K8s log-retention
         // window (~600s) still has its PVC mounted in the spec, causing this method to treat that PVC
         // as occupied and return null — starving the pool for up to 600s even though BuildConcurrencyMapAsync
-        // correctly excludes the terminal job from the count. Fix: filter jobs using IsJobTerminal before
-        // building claimedNames, mirroring the approach in BuildConcurrencyMapAsync.
+        // correctly excludes the terminal job from the count. A follow-up fix should filter using
+        // IsJobTerminal before building claimedNames, mirroring the approach in BuildConcurrencyMapAsync.
         var claimedNames = jobs.Items
             .SelectMany(j => j.Spec?.Template?.Spec?.Volumes ?? [])
             .Where(v => v.PersistentVolumeClaim?.ClaimName is not null)

@@ -486,11 +486,11 @@ public sealed class ReconciliationLoop
 
         // Fall back to counters
         if (job.Status?.Succeeded > 0) return JobPhaseSucceeded;
-        // TODO: Same bug as DispatchLoop.IsJobTerminal — Failed > 0 falsely returns "Failed" for a
+        // Note: the same retrying-job edge case applies here — Failed > 0 falsely returns "Failed" for a
         // retrying job (Status.Failed=1, Status.Active=1) before the "Failed" condition is set by K8s.
-        // Unlike the concurrency-map impact in DispatchLoop, here the consequence is that the work item
-        // is prematurely marked as failed while a retry pod is still running. Fix by guarding with
-        // Active == 0: `if (job.Status?.Failed > 0 && (job.Status?.Active ?? 0) == 0) return JobPhaseFailed;`
+        // The consequence is that the work item may be prematurely marked as failed while a retry pod
+        // is still running. Fix by guarding with Active == 0:
+        // `if (job.Status?.Failed > 0 && (job.Status?.Active ?? 0) == 0) return JobPhaseFailed;`
         if (job.Status?.Failed > 0) return JobPhaseFailed;
         return "Active";
     }

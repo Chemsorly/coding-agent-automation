@@ -2,7 +2,7 @@ using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
-using k8s.Models; // TODO: This using directive is unused — V1Job is no longer referenced directly in this file after the refactor (it is only used inside TryCreateK8sJobAsync's implementation). Remove once confirmed safe.
+using k8s.Models;
 using Serilog;
 
 namespace CodingAgentWebUI.JobController.Dispatch;
