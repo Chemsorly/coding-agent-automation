@@ -1,3 +1,4 @@
+#pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 // Feature: 021-consolidation-loops
 // Property 3: Template Filtering by Provider Configuration
 // Property 4: Last-Run Timestamp Isolation
