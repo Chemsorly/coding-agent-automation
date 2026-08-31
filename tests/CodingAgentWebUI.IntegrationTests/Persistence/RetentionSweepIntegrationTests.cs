@@ -349,6 +349,117 @@ public class RetentionSweepIntegrationTests : IDisposable
             .Should().NotThrowAsync();
     }
 
+    /// <summary>
+    /// Verifies fault isolation at the orchestrator level: when the PipelineRun count-based sweep
+    /// throws an unhandled exception, <see cref="DatabaseMaintenanceService.RunRetentionSweepAsync"/>
+    /// catches it via its per-sweep try/catch in <c>RunSweepAsync</c>, logs a warning, and continues
+    /// so the WorkItem sweep still executes to completion (rows are actually deleted).
+    ///
+    /// Regression guard: if the per-sweep try/catch in <c>RunSweepAsync</c> were removed, the
+    /// exception thrown by <c>PipelineRunFaultingRetentionService.SweepPipelineRunRetentionAsync</c>
+    /// would propagate out of <c>RunRetentionSweepAsync</c>, preventing the WorkItem sweep from
+    /// running, and the assertion on surviving WorkItems would fail.
+    /// </summary>
+    [Fact]
+    public async Task RunRetentionSweep_WhenPipelineRunSweepFaults_WorkItemSweepStillCompletes()
+    {
+        // Arrange: seed 5 terminal WorkItems for ProjA (retention=3 → expect 2 deleted, 3 survive).
+        // Use a recent timestamp within the 7-day stale retention window so CleanupStaleWorkItemsAsync
+        // never deletes them before the count-based sweep runs.
+        var t = DateTimeOffset.UtcNow.AddDays(-1);
+        var workItemIds = Enumerable.Range(0, 5)
+            .Select(i => (Id: Guid.NewGuid(), CompletedAt: t.AddHours(i)))
+            .ToList();
+        foreach (var (id, completedAt) in workItemIds)
+            await InsertWorkItem(id, ProjA, WorkItemStatus.Succeeded, completedAt);
+
+        // Both sweeps active: PipelineRun retention=3, WorkItem retention=3
+        SetupConfig(pipelineRunRetentionCount: 3, workItemRetentionCount: 3);
+
+        // PipelineRunFaultingRetentionService throws from SweepPipelineRunRetentionAsync without
+        // catching — the exception escapes to RunRetentionSweepAsync's per-sweep try/catch (RunSweepAsync),
+        // which absorbs it and returns 0. SweepWorkItemRetentionAsync is inherited from
+        // TestableRetentionService and uses the SQLite-compatible shim.
+        var svc = new PipelineRunFaultingRetentionService(
+            _dbFactory, _mockConsolidation.Object, _configuration, _mockConfigStore.Object);
+
+        // Act: call the orchestrator method, not individual sweep methods.
+        // NotThrowAsync makes a regression (exception escaping RunRetentionSweepAsync) produce a
+        // clear assertion failure rather than an ambiguous xUnit exception.
+        var result = await svc.Invoking(s => s.RunRetentionSweepAsync(CancellationToken.None))
+            .Should().NotThrowAsync();
+        var sweepResult = result.Subject;
+
+        // Assert: WorkItem sweep ran and deleted the 2 oldest rows (5 - 3 = 2 deleted)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var survivingWorkItems = (await db.WorkItems.Where(w => w.ProjectId == ProjA).ToListAsync())
+            .Select(w => w.Id).ToHashSet();
+        survivingWorkItems.Should().HaveCount(3, "WorkItem sweep ran: retention=3, 5 seeded → 3 survive");
+        survivingWorkItems.Should().Contain(workItemIds[2].Id);
+        survivingWorkItems.Should().Contain(workItemIds[3].Id);
+        survivingWorkItems.Should().Contain(workItemIds[4].Id);
+        survivingWorkItems.Should().NotContain(workItemIds[0].Id, "oldest WorkItem beyond retention deleted");
+        survivingWorkItems.Should().NotContain(workItemIds[1].Id, "second-oldest WorkItem beyond retention deleted");
+
+        // PipelineRun sweep threw and was absorbed by RunSweepAsync → returned 0
+        sweepResult.RetentionPipelineRunsDeleted.Should().Be(0, "PipelineRun sweep faulted and RunSweepAsync returned 0");
+        // WorkItem sweep ran successfully
+        sweepResult.RetentionWorkItemsDeleted.Should().Be(2, "WorkItem sweep deleted 2 rows");
+    }
+
+    /// <summary>
+    /// Symmetric case: when the WorkItem count-based sweep throws an unhandled exception,
+    /// <see cref="DatabaseMaintenanceService.RunRetentionSweepAsync"/> catches it via its
+    /// per-sweep try/catch in <c>RunSweepAsync</c> and continues so the PipelineRun sweep
+    /// still executes to completion (rows are actually deleted).
+    /// </summary>
+    [Fact]
+    public async Task RunRetentionSweep_WhenWorkItemSweepFaults_PipelineRunSweepStillCompletes()
+    {
+        // Arrange: seed 5 completed PipelineRuns for proj-a (retention=3 → expect 2 deleted, 3 survive).
+        // Use a recent timestamp within the stale retention window so CleanupStalePipelineRunsAsync
+        // never deletes them before the count-based sweep runs.
+        var t = DateTimeOffset.UtcNow.AddDays(-1);
+        var runIds = Enumerable.Range(0, 5)
+            .Select(i => (Id: Guid.NewGuid(), StartedAt: t.AddHours(i)))
+            .ToList();
+        foreach (var (id, startedAt) in runIds)
+            await InsertPipelineRun(id, "proj-a", startedAt, startedAt.AddMinutes(30));
+
+        // Both sweeps active: PipelineRun retention=3, WorkItem retention=3
+        SetupConfig(pipelineRunRetentionCount: 3, workItemRetentionCount: 3);
+
+        // WorkItemFaultingRetentionService throws from SweepWorkItemRetentionAsync without
+        // catching — the exception escapes to RunRetentionSweepAsync's per-sweep try/catch (RunSweepAsync),
+        // which absorbs it and returns 0. SweepPipelineRunRetentionAsync is inherited from
+        // TestableRetentionService and uses the SQLite-compatible shim.
+        var svc = new WorkItemFaultingRetentionService(
+            _dbFactory, _mockConsolidation.Object, _configuration, _mockConfigStore.Object);
+
+        // Act: call the orchestrator method, not individual sweep methods.
+        // NotThrowAsync makes a regression (exception escaping RunRetentionSweepAsync) produce a
+        // clear assertion failure rather than an ambiguous xUnit exception.
+        var result = await svc.Invoking(s => s.RunRetentionSweepAsync(CancellationToken.None))
+            .Should().NotThrowAsync();
+        var sweepResult = result.Subject;
+
+        // Assert: PipelineRun sweep ran and deleted the 2 oldest rows (5 - 3 = 2 deleted)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var survivingRuns = (await db.PipelineRuns.Where(r => r.ProjectId == "proj-a").ToListAsync())
+            .Select(r => r.RunId).ToHashSet();
+        survivingRuns.Should().HaveCount(3, "PipelineRun sweep ran: retention=3, 5 seeded → 3 survive");
+        survivingRuns.Should().Contain(runIds[2].Id);
+        survivingRuns.Should().Contain(runIds[3].Id);
+        survivingRuns.Should().Contain(runIds[4].Id);
+        survivingRuns.Should().NotContain(runIds[0].Id, "oldest PipelineRun beyond retention deleted");
+        survivingRuns.Should().NotContain(runIds[1].Id, "second-oldest PipelineRun beyond retention deleted");
+
+        // WorkItem sweep threw and was absorbed by RunSweepAsync → returned 0
+        sweepResult.RetentionWorkItemsDeleted.Should().Be(0, "WorkItem sweep faulted and RunSweepAsync returned 0");
+        // PipelineRun sweep ran successfully
+        sweepResult.RetentionPipelineRunsDeleted.Should().Be(2, "PipelineRun sweep deleted 2 rows");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private void SetupConfig(int pipelineRunRetentionCount = -1, int workItemRetentionCount = -1)
@@ -425,7 +536,7 @@ public class RetentionSweepIntegrationTests : IDisposable
     /// to the Postgres production SQL; only the DELETE syntax differs (IN subquery vs USING).
     /// SQLite supports ROW_NUMBER() since 3.25 (2018-09-15).
     /// </summary>
-    private sealed class TestableRetentionService : DatabaseMaintenanceService
+    private class TestableRetentionService : DatabaseMaintenanceService
     {
         public TestableRetentionService(
             IDbContextFactory<PipelineDbContext> dbFactory,
@@ -510,6 +621,60 @@ public class RetentionSweepIntegrationTests : IDisposable
     }
 
     // ── Test Infrastructure ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Fault-injection subclass that overrides <c>SweepPipelineRunRetentionAsync</c> to throw
+    /// without catching, letting the exception escape to <c>RunRetentionSweepAsync</c>'s
+    /// per-sweep try/catch (<c>RunSweepAsync</c>), which absorbs it and returns 0.
+    /// <c>SweepWorkItemRetentionAsync</c> is inherited from <see cref="TestableRetentionService"/>
+    /// and uses the SQLite-compatible shim, so it exercises real database row deletion.
+    /// </summary>
+    private sealed class PipelineRunFaultingRetentionService : TestableRetentionService
+    {
+        public PipelineRunFaultingRetentionService(
+            IDbContextFactory<PipelineDbContext> dbFactory,
+            IConsolidationService consolidationService,
+            IConfiguration configuration,
+            IPipelineConfigStore configStore)
+            : base(dbFactory, consolidationService, configuration, configStore) { }
+
+        internal override Task<int> SweepPipelineRunRetentionAsync(CancellationToken ct)
+        {
+            // Throws without catching — the exception bubbles to RunRetentionSweepAsync's RunSweepAsync
+            // wrapper, which is what actually provides orchestrator-level fault isolation.
+            // Regression guard: if RunSweepAsync's try/catch were removed, this exception would
+            // propagate out of RunRetentionSweepAsync and the WorkItem sweep would never run,
+            // causing the test's surviving-row assertion to fail.
+            throw new Exception("injected fault: PipelineRun sweep");
+        }
+    }
+
+    /// <summary>
+    /// Fault-injection subclass that overrides <c>SweepWorkItemRetentionAsync</c> to throw
+    /// without catching, letting the exception escape to <c>RunRetentionSweepAsync</c>'s
+    /// per-sweep try/catch (<c>RunSweepAsync</c>), which absorbs it and returns 0.
+    /// <c>SweepPipelineRunRetentionAsync</c> is inherited from <see cref="TestableRetentionService"/>
+    /// and uses the SQLite-compatible shim, so it exercises real database row deletion.
+    /// </summary>
+    private sealed class WorkItemFaultingRetentionService : TestableRetentionService
+    {
+        public WorkItemFaultingRetentionService(
+            IDbContextFactory<PipelineDbContext> dbFactory,
+            IConsolidationService consolidationService,
+            IConfiguration configuration,
+            IPipelineConfigStore configStore)
+            : base(dbFactory, consolidationService, configuration, configStore) { }
+
+        internal override Task<int> SweepWorkItemRetentionAsync(CancellationToken ct)
+        {
+            // Throws without catching — the exception bubbles to RunRetentionSweepAsync's RunSweepAsync
+            // wrapper, which is what actually provides orchestrator-level fault isolation.
+            // Regression guard: if RunSweepAsync's try/catch were removed, this exception would
+            // propagate out of RunRetentionSweepAsync and the PipelineRun sweep result would be lost,
+            // causing the test's surviving-row assertion to fail.
+            throw new Exception("injected fault: WorkItem sweep");
+        }
+    }
 
     private sealed class TestSqlitePipelineDbContext : PipelineDbContext
     {
