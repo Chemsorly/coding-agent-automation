@@ -54,11 +54,14 @@ public static class PipelineRunEndpoints
         int pageSize = 50,
         bool feedbackOnly = false,
         bool includeActive = false,
+        PipelineStep? finalStep = null,
         CancellationToken ct = default)
     {
-        var result = await history.GetRunHistoryAsync(page, pageSize, feedbackOnly, ct);
+        var result = await history.GetRunHistoryAsync(page, pageSize, feedbackOnly, finalStep, ct);
 
-        if (!includeActive || feedbackOnly)
+        // Skip the in-flight merge when an outcome filter is set: active runs are non-terminal, so they
+        // never match a Completed/Failed/Cancelled tab and merging them in would violate the filter.
+        if (!includeActive || feedbackOnly || finalStep is not null)
             return TypedResults.Ok(result);
 
         // Merge in-flight runs from IOrchestratorRunService that are not yet in history.

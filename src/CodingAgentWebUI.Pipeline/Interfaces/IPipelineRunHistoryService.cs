@@ -35,6 +35,21 @@ public interface IPipelineRunHistoryService
     /// <param name="ct">Cancellation token.</param>
     Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default);
 
+    /// <summary>
+    /// Retrieves paginated run history filtered by outcome (<paramref name="finalStep"/>) in addition to
+    /// the optional feedback filter — the DB applies the outcome filter before paging, so pagination stays
+    /// correct across the whole history.
+    /// </summary>
+    /// <param name="finalStep">When set, returns only runs whose terminal step matches (e.g. <see cref="PipelineStep.Failed"/>); null = no outcome filter.</param>
+    /// <remarks>
+    /// The default implementation ignores <paramref name="finalStep"/>. Only the DB-backed
+    /// <c>PostgresPipelineRunHistoryService</c> (the API endpoint's implementor) overrides it; the other
+    /// implementors — the agent's null service and the API-client-backed stores — are not on the Runs
+    /// filter path (the web UI's Runs page calls <c>IPipelineApiRunHistoryClient</c> directly).
+    /// </remarks>
+    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep, CancellationToken ct = default)
+        => GetRunHistoryAsync(page, pageSize, feedbackOnly, ct);
+
     /// <summary>Retrieves a single pipeline run summary by run ID. Returns null if not found.</summary>
     Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default);
 }

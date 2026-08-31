@@ -35,7 +35,7 @@ public class CockpitLayoutComponentTests : BunitContext
         // Run-history client: the top-bar attention-count query.
         var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
         mockRunHistory.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = Array.Empty<PipelineRunSummary>(),

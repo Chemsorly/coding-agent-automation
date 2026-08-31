@@ -25,23 +25,17 @@
     </div>
 
     <div class="cockpit-toolbar">
-        <div class="cockpit-segmented" role="tablist" aria-label="Filter runs on this page">
-            <button class="cockpit-seg-btn @(_filter == RunFilter.All ? "is-active" : "")" role="tab" aria-selected="@(_filter == RunFilter.All)" @onclick="() => _filter = RunFilter.All">All</button>
-            <button class="cockpit-seg-btn @(_filter == RunFilter.Running ? "is-active" : "")" role="tab" aria-selected="@(_filter == RunFilter.Running)" @onclick="() => _filter = RunFilter.Running">Running</button>
-            <button class="cockpit-seg-btn @(_filter == RunFilter.Consolidation ? "is-active" : "")" role="tab" aria-selected="@(_filter == RunFilter.Consolidation)" @onclick="() => _filter = RunFilter.Consolidation">Consolidation</button>
-            <button class="cockpit-seg-btn @(_filter == RunFilter.Failed ? "is-active" : "")" role="tab" aria-selected="@(_filter == RunFilter.Failed)" @onclick="() => _filter = RunFilter.Failed">Failed</button>
+        <div class="cockpit-segmented" role="tablist" aria-label="Filter runs by outcome">
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.All ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.All)" @onclick="() => SetOutcome(OutcomeFilter.All)">All</button>
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Completed ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Completed)" @onclick="() => SetOutcome(OutcomeFilter.Completed)">Completed</button>
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Failed ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Failed)" @onclick="() => SetOutcome(OutcomeFilter.Failed)">Failed</button>
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Cancelled ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Cancelled)" @onclick="() => SetOutcome(OutcomeFilter.Cancelled)">Cancelled</button>
         </div>
         <label class="cockpit-filter-toggle @(_feedbackOnly ? "is-on" : "")">
             <input type="checkbox" checked="@_feedbackOnly" @onchange="ToggleFeedbackOnly" />
             Feedback only
         </label>
     </div>
-    @* Interim: filters the loaded page client-side. Server-side RunType/status filtering (correct across
-       all pages) is the P3 GetRunHistoryAsync param — until then this is explicitly a current-page view. *@
-    @if (_filter != RunFilter.All)
-    {
-        <div class="cockpit-view-hint" style="margin-top: -8px;">Filtering the current page only — full server-side filtering is coming.</div>
-    }
 
     <AutoRefresh IntervalSeconds="12" OnTick="RefreshQuietAsync" />
 
@@ -56,11 +50,7 @@
         }
         else if (_result is null || _result.Items.Count == 0)
         {
-            <div class="cockpit-empty">No runs @(_feedbackOnly ? "with feedback " : "")yet.</div>
-        }
-        else if (FilteredItems.Count == 0)
-        {
-            <div class="cockpit-empty">No @_filter.ToString().ToLowerInvariant() runs on this page.</div>
+            <div class="cockpit-empty">No @(_outcome == OutcomeFilter.All ? "" : _outcome.ToString().ToLowerInvariant() + " ")runs@(_feedbackOnly ? " with feedback" : "") yet.</div>
         }
         else
         {
@@ -78,7 +68,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var run in FilteredItems)
+                        @foreach (var run in _result.Items)
                         {
                             <tr class="monitoring-row-clickable" @onclick="() => OpenRun(run.RunId)">
                                 <td>
@@ -135,7 +125,7 @@
     </div>
 
     <div class="cockpit-pager">
-        <span class="cockpit-pager-info">Page @_page@(FilteredItems.Count > 0 ? $" · {FilteredItems.Count} shown{(_filter == RunFilter.All ? "" : " (filtered)")}" : "")</span>
+        <span class="cockpit-pager-info">Page @_page@(_result is { Items.Count: > 0 } ? $" · {_result.Items.Count} shown" : "")</span>
         <div class="cockpit-pager-buttons">
             <button class="cockpit-pager-btn" disabled="@(_page <= 1 || _loading)" @onclick="PrevPage">
                 <Icon Name="chevrons-left" Size="14" /> Prev
@@ -157,19 +147,26 @@
     private bool _loading = true;
     private string? _error;
 
-    private enum RunFilter { All, Running, Consolidation, Failed }
-    private RunFilter _filter = RunFilter.All;
+    // Server-side outcome filter (All / Completed / Failed / Cancelled). Applied DB-side by the API,
+    // so pagination is correct across the whole history — not just the loaded page.
+    private enum OutcomeFilter { All, Completed, Failed, Cancelled }
+    private OutcomeFilter _outcome = OutcomeFilter.All;
 
-    // Interim client-side view filter over the loaded page (see the toolbar note). Server-side is P3.
-    private IReadOnlyList<PipelineRunSummary> FilteredItems => _result is null
-        ? []
-        : _filter switch
-        {
-            RunFilter.Running => _result.Items.Where(r => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled).ToList(),
-            RunFilter.Consolidation => _result.Items.Where(r => r.RunType == PipelineRunType.Consolidation).ToList(),
-            RunFilter.Failed => _result.Items.Where(r => r.FinalStep == PipelineStep.Failed).ToList(),
-            _ => _result.Items
-        };
+    private PipelineStep? FinalStepFilter => _outcome switch
+    {
+        OutcomeFilter.Completed => PipelineStep.Completed,
+        OutcomeFilter.Failed => PipelineStep.Failed,
+        OutcomeFilter.Cancelled => PipelineStep.Cancelled,
+        _ => null
+    };
+
+    private async Task SetOutcome(OutcomeFilter outcome)
+    {
+        if (_outcome == outcome) return;
+        _outcome = outcome;
+        _page = 1;   // a new filter resets to the first page
+        await LoadAsync();
+    }
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
@@ -180,7 +177,7 @@
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
-                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, ct: _cts.Token);
+                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, finalStep: FinalStepFilter, ct: _cts.Token);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -199,7 +196,7 @@
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
-                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, ct: _cts.Token);
+                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, finalStep: FinalStepFilter, ct: _cts.Token);
             _error = null;
         }
         catch (OperationCanceledException) { }

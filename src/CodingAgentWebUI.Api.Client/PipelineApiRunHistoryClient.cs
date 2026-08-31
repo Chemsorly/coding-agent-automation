@@ -22,10 +22,15 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
         int pageSize = 50,
         bool feedbackOnly = false,
         bool includeActive = false,
+        PipelineStep? finalStep = null,
         CancellationToken ct = default)
     {
+        var url = $"/api/pipeline-runs?page={page}&pageSize={pageSize}&feedbackOnly={feedbackOnly}&includeActive={includeActive}";
+        if (finalStep is { } step)
+            url += $"&finalStep={step}";
+
         var result = await _http.GetFromJsonAsync<PagedResult<PipelineRunSummary>>(
-            $"/api/pipeline-runs?page={page}&pageSize={pageSize}&feedbackOnly={feedbackOnly}&includeActive={includeActive}",
+            url,
             PipelineJsonOptions.Default,
             ct);
         return result!;
