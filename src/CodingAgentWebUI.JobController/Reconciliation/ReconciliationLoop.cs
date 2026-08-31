@@ -351,12 +351,12 @@ public sealed class ReconciliationLoop
                 if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, "AgentError", errorMsg, ct))
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
-            // Active/Unknown/Pending — no action needed
-            // TODO: If a JobPhaseCancelled case is ever added, remember to also add the workItemId
-            // to _reconciledTerminalIds on success — the guard comment says "Succeeded, Failed,
-            // Cancelled" but the current switch only covers Succeeded and Failed. Omitting it for
-            // a future Cancelled case would allow duplicate PostStatusAsync calls within the K8s
-            // job retention window.
+                // Active/Unknown/Pending — no action needed
+                // TODO: If a JobPhaseCancelled case is ever added, remember to also add the workItemId
+                // to _reconciledTerminalIds on success — the guard comment says "Succeeded, Failed,
+                // Cancelled" but the current switch only covers Succeeded and Failed. Omitting it for
+                // a future Cancelled case would allow duplicate PostStatusAsync calls within the K8s
+                // job retention window.
         }
     }
 

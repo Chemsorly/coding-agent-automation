@@ -20,20 +20,20 @@ namespace CodingAgentWebUI.JobController.UnitTests.Dispatch;
 public sealed class DispatchServiceTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
-    private readonly Mock<IPipelineApiConfigClient>   _configClient   = new();
-    private readonly Mock<IKubernetesJobClient>        _k8sClient      = new();
-    private readonly JobTemplateStore                  _templateStore;
-    private readonly DispatchServiceOptions            _options;
+    private readonly Mock<IPipelineApiConfigClient> _configClient = new();
+    private readonly Mock<IKubernetesJobClient> _k8sClient = new();
+    private readonly JobTemplateStore _templateStore;
+    private readonly DispatchServiceOptions _options;
 
     public DispatchServiceTests()
     {
         _options = new DispatchServiceOptions
         {
-            Namespace              = "test-ns",
-            PollIntervalSeconds    = 1,
-            RateLimitPerSecond     = 100,
-            AgentJobTimeoutSeconds  = 7200,
-            ChatPodConnectTimeoutSeconds   = 120
+            Namespace = "test-ns",
+            PollIntervalSeconds = 1,
+            RateLimitPerSecond = 100,
+            AgentJobTimeoutSeconds = 7200,
+            ChatPodConnectTimeoutSeconds = 120
         };
 
         const string yaml = """
@@ -113,7 +113,7 @@ public sealed class DispatchServiceTests
     public async Task WhenLeader_DispatchLoop_IsCalled()
     {
         // Arrange: starts as leader, nothing pending
-        var leaderCts    = new CancellationTokenSource();
+        var leaderCts = new CancellationTokenSource();
         var leaderElection = MakeLeaderElection(isLeader: true, leaderCts);
         var svc = MakeService(leaderElection);
 
@@ -150,7 +150,7 @@ public sealed class DispatchServiceTests
     public async Task WhenLeadershipAcquiredAfterWaiting_DispatchLoop_IsCalled()
     {
         // Arrange: start as non-leader
-        var leaderCts      = new CancellationTokenSource();
+        var leaderCts = new CancellationTokenSource();
         var leaderElection = MakeLeaderElection(isLeader: false, leaderCts);
         var svc = MakeService(leaderElection);
 
@@ -159,7 +159,7 @@ public sealed class DispatchServiceTests
             .ReturnsAsync([]);
 
         using var stopCts = new CancellationTokenSource();
-        var executeTask   = RunExecuteForDuration(svc, stopCts.Token);
+        var executeTask = RunExecuteForDuration(svc, stopCts.Token);
 
         // Confirm no polling while waiting for leadership
         await Task.Delay(150);

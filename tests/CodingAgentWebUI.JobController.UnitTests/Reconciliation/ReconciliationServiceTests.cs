@@ -21,16 +21,16 @@ namespace CodingAgentWebUI.JobController.UnitTests.Reconciliation;
 public sealed class ReconciliationServiceTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
-    private readonly Mock<IKubernetesJobClient>        _k8sClient      = new();
-    private readonly DispatchServiceOptions            _options;
+    private readonly Mock<IKubernetesJobClient> _k8sClient = new();
+    private readonly DispatchServiceOptions _options;
 
     public ReconciliationServiceTests()
     {
         _options = new DispatchServiceOptions
         {
-            Namespace                     = "test-ns",
+            Namespace = "test-ns",
             AgentJobTimeoutSeconds = 7200,
-            ChatPodConnectTimeoutSeconds  = 120
+            ChatPodConnectTimeoutSeconds = 120
         };
 
         // Default: no active jobs, no active work items
@@ -107,7 +107,7 @@ public sealed class ReconciliationServiceTests
     public async Task WhenLeader_ReconciliationLoop_IsCalled()
     {
         // Arrange: starts as leader
-        var leaderCts      = new CancellationTokenSource();
+        var leaderCts = new CancellationTokenSource();
         var leaderElection = MakeLeaderElection(isLeader: true, leaderCts);
         var svc = MakeService(leaderElection);
 
@@ -140,12 +140,12 @@ public sealed class ReconciliationServiceTests
     public async Task WhenLeadershipAcquiredAfterWaiting_ReconciliationLoop_IsCalled()
     {
         // Arrange: start as non-leader
-        var leaderCts      = new CancellationTokenSource();
+        var leaderCts = new CancellationTokenSource();
         var leaderElection = MakeLeaderElection(isLeader: false, leaderCts);
         var svc = MakeService(leaderElection);
 
         using var stopCts = new CancellationTokenSource();
-        var executeTask   = RunExecuteForDuration(svc, stopCts.Token);
+        var executeTask = RunExecuteForDuration(svc, stopCts.Token);
 
         // Confirm no calls while waiting for leadership
         await Task.Delay(150);
@@ -187,10 +187,10 @@ public sealed class ReconciliationServiceTests
     {
         // Arrange: ReconciliationService with a near-infinite poll interval so only the
         // trigger signal causes the second cycle — not a natural timer expiry.
-        var leaderCts      = new CancellationTokenSource();
+        var leaderCts = new CancellationTokenSource();
         var leaderElection = MakeLeaderElection(isLeader: true, leaderCts);
         var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
-        var svc  = new TestableReconciliationService(leaderElection, loop);
+        var svc = new TestableReconciliationService(leaderElection, loop);
 
         using var stopCts = new CancellationTokenSource();
         var executeTask = RunExecuteForDuration(svc, stopCts.Token);
@@ -249,10 +249,10 @@ public sealed class ReconciliationServiceTests
                 return new V1JobList { Items = [] };
             });
 
-        var leaderCts      = new CancellationTokenSource();
+        var leaderCts = new CancellationTokenSource();
         var leaderElection = MakeLeaderElection(isLeader: true, leaderCts);
         var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
-        var svc  = new TestableReconciliationService(leaderElection, loop);
+        var svc = new TestableReconciliationService(leaderElection, loop);
 
         using var stopCts = new CancellationTokenSource();
         var executeTask = RunExecuteForDuration(svc, stopCts.Token);
