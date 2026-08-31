@@ -23,6 +23,7 @@
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
     <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Serilog.Enrichers.Span" />
+    <PackageReference Include="Serilog.Formatting.Compact" />
     <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
   </ItemGroup>
 

@@ -3,6 +3,7 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 using Serilog.Enrichers.Span;
+using Serilog.Formatting.Compact;
 
 namespace CodingAgentWebUI.Agent;
 
@@ -10,6 +11,34 @@ namespace CodingAgentWebUI.Agent;
 /// Provides Serilog configuration for the agent worker.
 /// Extracted from Program.cs to reduce top-level statement complexity.
 /// </summary>
+/// <remarks>
+/// <para><b>Log format:</b> Logs are emitted as CLEF (Compact Log Event Format) JSON
+/// lines to stdout. This makes agent logs parseable by Loki's <c>| json</c> pipeline
+/// stage, eliminating <c>JSONParserErr</c> when querying structured agent log fields
+/// (e.g., <c>{service_name="agent"} | json | __error__ = ""</c>).</para>
+///
+/// <para><b>Field mapping:</b> CLEF uses <c>@l</c> for log level (not <c>level</c>),
+/// <c>@t</c> for timestamp, and <c>@mt</c> for the message template. All enriched
+/// properties (AgentId, TraceId, SpanId, etc.) appear as top-level JSON fields.
+/// If the external Loki scrape config expects a <c>level</c> label, a label-rename
+/// stage mapping <c>@l → level</c> must be added there.
+/// Note: <c>@l</c> is omitted entirely for <c>Information</c>-level events per the
+/// CLEF specification — only non-Information events carry the <c>@l</c> field.</para>
+// TODO: The acceptance criterion `{service_name="agent"} | json | level="error"` requires a
+// `level` label, but CLEF emits `@l` (not `level`). The Loki scrape config (Helm chart /
+// Promtail ConfigMap) must add a label-rename stage mapping `@l → level`. Without it, the
+// query `level="error"` returns no results even after this fix. Callers must use `@l="Error"`
+// until the scrape config is updated. See review finding for issue #2205.
+///
+/// <para><b>OpenCode limitation:</b> OpenCode agent containers pipe log lines through
+/// the entrypoint script, producing non-JSON prefixed output. Those lines will still
+/// produce JSONParserErr in Loki. Only Kiro CLI agent pods are fully fixed by this change.</para>
+///
+/// <para><b>Known gap:</b> Pipeline progress lines emitted via <c>EmitOutputLine</c>
+/// bypass Serilog entirely (streamed to the UI only) and do not appear in Loki.
+/// Only structural lifecycle events (startup, SIGTERM, errors) are observable via Loki.
+/// See issue #2178.</para>
+/// </remarks>
 internal static class AgentSerilogConfiguration
 {
     internal static Serilog.ILogger CreateAgentLogger(AgentId agentId)
@@ -32,10 +61,17 @@ internal static class AgentSerilogConfiguration
             .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
             .Enrich.FromLogContext()
             .Enrich.WithSpan()
+            // TODO: Serilog's CompactJsonFormatter destructures structs into their properties, so
+            // `AgentId` (a readonly record struct) will emit as `"AgentId":{"Value":"..."}` — a nested
+            // object — rather than a flat string. This causes the `IncludesAgentIdAsStructuredProperty`
+            // test to fail (it asserts JsonValueKind.String) and breaks Loki queries filtering on AgentId.
+            // Fix: pass `agentId.Value` (the inner string) instead of the struct: `.Enrich.WithProperty("AgentId", agentId.Value)`.
             .Enrich.WithProperty("AgentId", agentId)
-            .WriteTo.Console(
-                outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] [{AgentId}] {Message:lj}{NewLine}{Exception}",
-                theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+            // CLEF JSON format: emits single-line JSON per event, parseable by Loki's | json stage.
+            // Each line includes @t (timestamp), @mt (message template), @l (level), and all
+            // structured properties as top-level fields. Exceptions are serialized inline (no
+            // multi-line output), which also fixes the multi-line log collection problem.
+            .WriteTo.Console(new CompactJsonFormatter())
             .WriteToOtlpIfConfigured(Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-worker")
             .CreateLogger();
     }
