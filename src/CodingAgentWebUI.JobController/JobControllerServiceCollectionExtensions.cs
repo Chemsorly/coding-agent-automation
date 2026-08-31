@@ -19,7 +19,7 @@ public static class JobControllerServiceCollectionExtensions
     /// - KubernetesJobClient
     /// - JobTemplateStore
     /// - ILeaderElectionService / LeaderElectionService
-    /// - DispatchService (with DispatchLoop and PvcPool)
+    /// - DispatchService (with DispatchLoop)
     /// - ReconciliationService (with ReconciliationLoop)
     /// </summary>
     public static IServiceCollection AddJobControllerServices(

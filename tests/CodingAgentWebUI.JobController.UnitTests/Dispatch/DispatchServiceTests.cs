@@ -74,9 +74,9 @@ public sealed class DispatchServiceTests
     {
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            _templateStore, new PvcPool(_options.KiroPvcPool), _options, _reconciliationTrigger.Object);
+            _templateStore, _options, _reconciliationTrigger.Object, new PvcSelectLock());
 
-        return new DispatchService(leaderElection, loop, _options, new PvcPool(_options.KiroPvcPool), _k8sClient.Object);
+        return new DispatchService(leaderElection, loop, _options);
     }
 
     private static async Task RunExecuteForDuration(BackgroundService svc, CancellationToken stopToken)

@@ -63,7 +63,7 @@ public sealed class ReconciliationServiceTests
 
     private ReconciliationService MakeService(ILeaderElectionService leaderElection)
     {
-        var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, new PvcPool([]), _options);
+        var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
         return new ReconciliationService(leaderElection, loop);
     }
 
@@ -189,7 +189,7 @@ public sealed class ReconciliationServiceTests
         // trigger signal causes the second cycle — not a natural timer expiry.
         var leaderCts      = new CancellationTokenSource();
         var leaderElection = MakeLeaderElection(isLeader: true, leaderCts);
-        var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, new PvcPool([]), _options);
+        var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
         var svc  = new TestableReconciliationService(leaderElection, loop);
 
         using var stopCts = new CancellationTokenSource();
@@ -251,7 +251,7 @@ public sealed class ReconciliationServiceTests
 
         var leaderCts      = new CancellationTokenSource();
         var leaderElection = MakeLeaderElection(isLeader: true, leaderCts);
-        var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, new PvcPool([]), _options);
+        var loop = new ReconciliationLoop(_workItemClient.Object, _k8sClient.Object, _options);
         var svc  = new TestableReconciliationService(leaderElection, loop);
 
         using var stopCts = new CancellationTokenSource();
