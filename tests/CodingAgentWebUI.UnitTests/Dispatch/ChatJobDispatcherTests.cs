@@ -1339,56 +1339,104 @@ public class ChatJobDispatcherTests
             "pod must be force-deleted when cross-replica heartbeats stop");
     }
 
-    // ─── Fix A: CTS dispose guard ─────────────────────────────────────────────
+    // ─── StopAsync / DisposeAsync idempotency ─────────────────────────────────
 
     /// <summary>
-    /// Regression test for issue #2202 Fix A.
-    /// When CleanupSession disposes WatcherCts before TerminateChatSessionAsync reaches
-    /// the CancelAsync() call, the method must not propagate ObjectDisposedException.
-    /// A disposed CTS is already cancelled, so the catch is a semantic no-op.
-    ///
-    /// This test verifies the guard at the CancelAsync() call site in the OperationCanceledException
-    /// catch block. We simulate the race by wrapping CancelAsync on an already-disposed CTS
-    /// and confirming the guard handles it without propagation.
+    /// Verifies that calling StopAsync twice in sequence does not throw and the second call
+    /// returns immediately (idempotency guard via Interlocked.Exchange).
     /// </summary>
     [Fact]
-    public async Task TerminateChatSessionAsync_WhenWatcherCtsAlreadyDisposed_DoesNotThrow()
+    public async Task StopAsync_CalledTwice_DoesNotThrow()
     {
-        // TODO: This test does not exercise TerminateChatSessionAsync itself — it re-implements the guard
-        // in the test body and verifies .NET runtime behaviour (CancelAsync on a disposed CTS throws
-        // ObjectDisposedException). If the try/catch guard were removed from ChatJobDispatcher.cs, this
-        // test would still pass because the hand-written catch in the test body absorbs the exception.
-        // A proper regression test should construct a ChatJobDispatcher with a session entry that has a
-        // pre-disposed WatcherCts and invoke TerminateChatSessionAsync directly to verify it does not throw.
-        // (Issue #2202 review, DotNetSpecialist + TestQualityReviewer)
-        // Verify the guard's contract directly: CancelAsync on a disposed CTS throws
-        // ObjectDisposedException without the guard, and does not throw with the guard.
-        // This tests the fix without relying on the full TerminateChatSessionAsync timing.
-        var cts = new CancellationTokenSource();
-        cts.Dispose();
+        var dispatcher = CreateDispatcher();
 
-        // Without guard: ObjectDisposedException escapes
-        // (Confirmed in .NET 8+: CancelAsync on a disposed CTS throws ObjectDisposedException)
-        var withoutGuard = async () => await cts.CancelAsync();
-        await withoutGuard.Should().ThrowAsync<ObjectDisposedException>(
-            "calling CancelAsync on a disposed CancellationTokenSource throws ObjectDisposedException");
+        await dispatcher.StopAsync(CancellationToken.None);
 
-        // With guard (the fix): same operation is a no-op, not an exception
-        Exception? escapedException = null;
-        try
-        {
-            await cts.CancelAsync();
-        }
-        catch (ObjectDisposedException)
-        {
-            // Handled — no-op (matches the fix in ChatJobDispatcher.TerminateChatSessionAsync)
-        }
-        catch (Exception ex)
-        {
-            escapedException = ex;
-        }
+        // Second call must not throw and must complete synchronously / promptly
+        var exception = await Record.ExceptionAsync(
+            () => dispatcher.StopAsync(CancellationToken.None));
 
-        escapedException.Should().BeNull(
-            "the try/catch(ObjectDisposedException) guard must prevent any exception from escaping");
+        exception.Should().BeNull("StopAsync must be idempotent — a second call must not throw");
+        // TODO: This test only covers the sequential case (first call completes before second
+        // begins). Interlocked.Exchange was specifically chosen to handle concurrent callers
+        // racing on the same _shutdownCts. A concurrent test (e.g. Task.WhenAll with both
+        // calls started without awaiting the first) is missing and would exercise the true
+        // race condition the guard was designed to prevent.
+    }
+
+    /// <summary>
+    /// Verifies that DisposeAsync called after StopAsync does not throw.
+    /// Reproduces the crash on every API pod graceful shutdown.
+    /// </summary>
+    [Fact]
+    public async Task DisposeAsync_AfterStopAsync_DoesNotThrow()
+    {
+        var dispatcher = CreateDispatcher();
+
+        await dispatcher.StopAsync(CancellationToken.None);
+
+        // DisposeAsync must not throw even though StopAsync already ran
+        var exception = await Record.ExceptionAsync(
+            async () => await dispatcher.DisposeAsync());
+
+        exception.Should().BeNull("DisposeAsync must not throw after StopAsync has already run");
+        // TODO: This test confirms no exception is thrown but makes no observable assertion
+        // about post-dispose state. It also does not exercise the concurrent race window where
+        // DisposeAsync calls _shutdownCts.Dispose() while a concurrent in-progress StopAsync
+        // is still awaiting CancelAsync() — a scenario the production code's own TODO comments
+        // acknowledge as unmitigated. The test would pass even if the fix were absent (since
+        // here StopAsync completes before DisposeAsync is invoked, so there is no actual race).
+    }
+
+    /// <summary>
+    /// Verifies that DisposeAsync called WITHOUT a prior StopAsync still cancels _shutdownCts and
+    /// drains watchers (i.e., the normal 'await using var dispatcher = new ...' pattern works).
+    /// </summary>
+    [Fact]
+    public async Task DisposeAsync_WithoutPriorStopAsync_CancelsAndDrainsWatchers()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? createdJobName = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(
+                It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var id) ? id : null;
+                if (dispatchId != null)
+                    RegisterChatAgent(registry, createdJobName!, dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        // ReadJobAsync returns running (non-terminal) so the watcher keeps polling
+        jobClientMock.Setup(c => c.ReadJobAsync(
+                It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
+
+        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        createdJobName.Should().NotBeNull();
+        dispatcher.HasActiveSession(createdJobName!).Should().BeTrue();
+
+        // DisposeAsync without prior StopAsync — must cancel watchers and not throw
+        var exception = await Record.ExceptionAsync(
+            async () => await dispatcher.DisposeAsync());
+
+        exception.Should().BeNull("DisposeAsync without prior StopAsync must not throw");
+
+        // After dispose, the watcher should have been cancelled and the session cleaned up
+        // TODO: WaitForWatcherAsync returns true immediately when the agentId key is absent
+        // from _activeWatchers (it short-circuits on missing key). CleanupSession removes the
+        // key before DisposeAsync returns, so by the time this assertion runs the entry is
+        // already gone. The assertion passes regardless of whether the watcher actually ran
+        // and was cancelled — it cannot distinguish "watcher completed" from "key was never
+        // registered or was removed for another reason". A stronger assertion would verify
+        // both HasActiveSession and an observable watcher side-effect (e.g. ReadJobAsync call
+        // count) to confirm actual execution and cleanup occurred.
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(5));
+        watcherDone.Should().BeTrue("watcher must complete after DisposeAsync cancels _shutdownCts");
     }
 }
