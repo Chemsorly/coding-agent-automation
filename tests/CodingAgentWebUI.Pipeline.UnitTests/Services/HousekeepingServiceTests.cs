@@ -503,6 +503,29 @@ public class HousekeepingServiceTests
             Times.Never);
     }
 
+    // ── Conflicted + branch active → no swap (guard fires before TriggerReworkAsync) ─
+
+    // TODO: Add a counterpart test that verifies the guard is branch-name–specific:
+    // when activeRuns contains a *different* branch (e.g. "feature/auto-99-other") but the
+    // conflicted PR's branch ("feature/auto-42-some-fix") is NOT in activeRunBranches, the
+    // swap should still proceed (TriggerReworkAsync IS called). Without this, a buggy
+    // "any active run → skip all conflicted PRs" implementation would go undetected.
+    // See review finding: TestQualityReviewer WARNING at this location.
+    [Fact]
+    public async Task ExecuteAsync_ConflictedPr_BranchIsActive_SkipsReworkSwap()
+    {
+        var (svc, provider, issues, _) = Create(activeRuns: [ActiveRun("feature/auto-42-some-fix")]);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+
+        await ExecAsync(svc, provider, issues, [MakePr(1, branch: "feature/auto-42-some-fix")]);
+
+        provider.Verify(p => p.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never, "TriggerReworkAsync must not be called when branch has an active run");
+        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "label swap must not be triggered when branch has an active run");
+    }
+
     // ── Conflicted + empty linked issues → no crash ───────────────────────────
 
     [Fact]
