@@ -194,8 +194,12 @@ public class PipelineIntegrationTests : IntegrationTestBase
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         (await service.GetRunHistoryAsync()).Should().ContainSingle(s => s.RunId == run.RunId);
 
-        // Allow fire-and-forget persist to flush to disk
-        await Task.Delay(500);
+        // Wait for fire-and-forget persist to flush to disk.
+        // Poll rather than a fixed delay to avoid flakiness under CI load.
+        var expectedFile = Path.Combine(RunsDir, $"{run.RunId}.json");
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (!File.Exists(expectedFile) && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(50);
 
         // Simulate restart: create a brand new service pointing at the same runs directory
         await using var service2 = new TestPipelineRunner(
