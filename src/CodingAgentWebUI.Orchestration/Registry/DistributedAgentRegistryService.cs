@@ -44,9 +44,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     private readonly ConcurrentDictionary<string, AgentEntry> _localSnapshot = new();
 
     // Cached snapshot of all agents, refreshed by GetAllAgentsAsync and write paths.
-    // Sync overloads (GetAllAgents, GetIdleAgents, GetBusyAgentCount, GetAgentsByLabel) read from
-    // this cache so they never block on Redis. For OTel gauges and Blazor render components this
-    // staleness (≤ heartbeat interval) is acceptable. The dispatch hot path must use the async methods.
+    // Used by GetByAgentId (cross-replica fallback) and async callers that want fresh Redis data
+    // without waiting for a full cross-replica read. Write paths (Register, TransitionStatusAsync)
+    // keep this cache current so the OTel gauges (GetBusyAgentCount) see timely data between
+    // the Redis-backed sync reads that fully refresh it.
     private volatile IReadOnlyList<AgentEntry> _allAgentsCache = [];
 
     // Serialises mutations to _allAgentsCache from write paths. Read-side uses the volatile field
@@ -472,10 +473,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetIdleAgents()
     {
-        // Read from in-process cache — no Redis round-trip.
-        // Cache is refreshed by GetIdleAgentsAsync/GetAllAgentsAsync and all write paths.
-        var cached = _allAgentsCache;
-        return cached.Where(a => a.Status == AgentStatus.Idle).ToList().AsReadOnly();
+        // Read from Redis — ensures cross-replica visibility (agents registered on other replicas
+        // are not in this replica's _allAgentsCache until a write path populates it).
+        // GetIdleAgentsAsync also refreshes the cache as a side-effect.
+        return GetIdleAgentsAsync().GetAwaiter().GetResult(); // Safe: ThreadPool context only
     }
 
     /// <inheritdoc />
@@ -522,8 +523,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetAllAgents()
     {
-        // Read from in-process cache — no Redis round-trip.
-        return _allAgentsCache;
+        // Read from Redis — ensures cross-replica visibility (agents registered on other replicas
+        // are not in this replica's _allAgentsCache until a write path populates it).
+        // GetAllAgentsAsync also refreshes the cache as a side-effect.
+        return GetAllAgentsAsync().GetAwaiter().GetResult(); // Safe: ThreadPool context only
     }
 
     /// <inheritdoc />
@@ -561,13 +564,13 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
     /// <inheritdoc />
     public int GetBusyAgentCount()
-        => _allAgentsCache.Count(a => a.Status == AgentStatus.Busy);
+        => GetAllAgents().Count(a => a.Status == AgentStatus.Busy);
 
     /// <inheritdoc />
     public IReadOnlyList<AgentEntry> GetAgentsByLabel(string labelKey, string labelValue)
     {
         var target = $"{labelKey}={labelValue}";
-        return _allAgentsCache
+        return GetAllAgents()
             .Where(a => a.Labels?.Any(l => string.Equals(l, target, StringComparison.OrdinalIgnoreCase)) == true)
             .ToList()
             .AsReadOnly();

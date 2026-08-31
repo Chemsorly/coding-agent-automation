@@ -55,9 +55,9 @@ public interface IAgentRegistryService
     /// <summary>
     /// Returns all agents currently in <see cref="AgentStatus.Idle"/> status.
     /// <para>
-    /// <b>Sync callers (Blazor render, OTel gauges):</b> reads from a best-effort in-process cache.
-    /// The cache may be slightly stale (up to one heartbeat interval). Use
-    /// <see cref="GetIdleAgentsAsync"/> for fresh data on the dispatch hot path.
+    /// Reads from Redis to ensure cross-replica visibility. Use
+    /// <see cref="GetIdleAgentsAsync"/> for a pipelined batch variant that is more efficient
+    /// when called frequently on the dispatch hot path.
     /// </para>
     /// </summary>
     IReadOnlyList<AgentEntry> GetIdleAgents();
@@ -72,8 +72,9 @@ public interface IAgentRegistryService
     /// <summary>
     /// Returns all registered agents regardless of status.
     /// <para>
-    /// <b>Sync callers (Blazor render, OTel gauges):</b> reads from a best-effort in-process cache.
-    /// Use <see cref="GetAllAgentsAsync"/> for fresh data.
+    /// Reads from Redis to ensure cross-replica visibility. Use
+    /// <see cref="GetAllAgentsAsync"/> for a pipelined batch variant that is more efficient
+    /// when called frequently.
     /// </para>
     /// </summary>
     IReadOnlyList<AgentEntry> GetAllAgents();
