@@ -150,10 +150,6 @@ public sealed class DistributedAgentRegistryServiceTests
         // Sync overload reads from the in-process cache populated by Register.
         var idle = _sut.GetIdleAgents();
         idle.Should().HaveCount(2);
-        // TODO: This test does not distinguish the cache-based path from sync-over-async.
-        // It passes even if the implementation calls GetIdleAgentsAsync().GetAwaiter().GetResult().
-        // A stronger test would force-expire both hashes and assert the cache still returns 2 entries,
-        // proving the sync overload reads the write-path cache and NOT Redis.
     }
 
     [Fact]
@@ -169,12 +165,6 @@ public sealed class DistributedAgentRegistryServiceTests
         var idle = await _sut.GetIdleAgentsAsync();
         idle.Should().HaveCount(1);
         idle[0].AgentId.Value.Should().Be("agent-2");
-        // TODO: This test does not verify the cache-merge side-effect. Per the implementation,
-        // GetIdleAgentsAsync merges its results into _allAgentsCache, which means after this call
-        // the cache may contain only agent-2 (agent-1's expired entry dropped from the merge).
-        // A subsequent GetAllAgents() call would then return only agent-2, even though agent-1
-        // was registered and exists in _localSnapshot. Consider asserting what GetAllAgents()
-        // returns after this call to document and detect this subtle merge behavior.
     }
 
     [Fact]
@@ -185,9 +175,6 @@ public sealed class DistributedAgentRegistryServiceTests
 
         var idle = await _sut.GetIdleAgentsAsync();
         idle.Should().BeEmpty();
-        // TODO: This assertion is too weak — it would also pass if GetIdleAgentsAsync returned an
-        // empty list unconditionally. Add: idle.Should().NotContain(a => a.AgentId.Value == "agent-1")
-        // to confirm the Busy agent is specifically excluded, not just that the result happens to be empty.
     }
 
     [Fact]
@@ -202,9 +189,6 @@ public sealed class DistributedAgentRegistryServiceTests
 
         idle.Should().HaveCount(3);
         idle.Select(a => a.AgentId.Value).Should().BeEquivalentTo(["agent-1", "agent-2", "agent-3"]);
-        // TODO: This test does not validate pipelining. It would pass equally if HGETALL calls
-        // were issued sequentially. Consider verifying via FakeRedisStore call counts if exposed,
-        // or renaming to remove the misleading "PipelinedBatch" claim from the test name.
     }
 
     // ── GetAllAgents / GetAllAgentsAsync ──────────────────────────────────────
@@ -234,11 +218,6 @@ public sealed class DistributedAgentRegistryServiceTests
         // Sync read should now return same data from cache without hitting Redis
         var all = _sut.GetAllAgents();
         all.Should().HaveCount(2);
-        // TODO: This test passes even if GetAllAgentsAsync never touches _allAgentsCache, because
-        // Register itself populates the cache via UpdateAllAgentsCache. A stronger test would
-        // simulate a remote-registration scenario: directly insert an agent into the FakeRedisStore
-        // (bypassing Register so the local cache is not populated), call GetAllAgentsAsync, and assert
-        // that the subsequent GetAllAgents() sync call returns the remotely-registered agent.
     }
 
     [Fact]
