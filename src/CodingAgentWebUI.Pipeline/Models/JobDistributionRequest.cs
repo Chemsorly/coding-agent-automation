@@ -239,13 +239,6 @@ public record JobDistributionRequest
     /// </summary>
     // Note: Unlike the old loop decomposition code which hardcoded IssueDetail.Description = "" and
     // Labels = [], this factory populates them with actual data from the issue summary when present.
-    // TODO: [WARNING] This overload is not exercised by the live dispatch path. The production dispatch
-    // goes through DispatchOrchestrationService.PrepareDecompositionDistributionRequestAsync → MapToRequest,
-    // which constructs JobDistributionRequest directly (not via FromTemplate) and already sets RunId.
-    // If the intent was to fix hub routing for loop-dispatched decompositions, verify whether the actual
-    // broken path is in MapToRequest or in a different layer (e.g. hub lookup logic). No production call
-    // site was updated by this change. Consider whether this factory should replace MapToRequest for
-    // consistency, or whether this overload serves a different purpose.
     public static JobDistributionRequest FromTemplate(
         PipelineJobTemplate template,
         IssueSummary issue,

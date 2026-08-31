@@ -49,11 +49,6 @@ public sealed class BridgingDispatchOrchestrationService(IWorkDistributor distri
 
     public Task<JobDistributionRequest?> PrepareDecompositionDistributionRequestAsync(
         DecompositionDispatchOrchestrationRequest request, CancellationToken ct = default)
-        // TODO: [WARNING] RunId is not set here. Any test that verifies hub routing behavior for
-        // decomposition through this bridge will observe RunId = null, which contradicts the fix
-        // that ensures RunId is propagated. If hub-routing tests are added against the scheduler
-        // path using this bridge, set RunId = request.RunId (or equivalent) here to match the
-        // production MapToRequest behavior.
         => Task.FromResult<JobDistributionRequest?>(new JobDistributionRequest
         {
             IssueIdentifier = request.EpicIdentifier.Value,

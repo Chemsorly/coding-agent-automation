@@ -334,11 +334,6 @@ public class JobDistributionRequestFactoryTests
             initiatedBy: "loop", runId: runId);
 
         Assert.Equal(runId, result.RunId);
-        // TODO: [WARNING] No test covers PipelineRunType.Decomposition (Phase 2 / execution phase).
-        // Both phases share the same overload and RunId assignment, but if a future refactor splits
-        // the paths, RunId propagation could regress for the execution phase silently.
-        // Add a companion test: FromTemplate_Decomposition_SetsRunId_ExecutionPhase using
-        // PipelineRunType.Decomposition to close this coverage gap.
     }
 
     // ── Regression tests (compare against old construction patterns) ──
@@ -555,11 +550,23 @@ public class JobDistributionRequestFactoryTests
 
     // ── Null-guard tests ──
 
-    // TODO: [WARNING] No null/empty-guard test exists for the `runId` parameter on the decomposition
-    // overload. Production code guards it with ArgumentException.ThrowIfNullOrEmpty(runId), but this
-    // is not verified by any test. Existing null-guard tests cover `template` and `issue` for the
-    // implementation overload and `pr` for the review overload — add symmetrical coverage here:
-    // FromTemplate_Decomposition_ThrowsOnNullRunId and FromTemplate_Decomposition_ThrowsOnEmptyRunId.
+    [Fact]
+    public void FromTemplate_Decomposition_ThrowsOnNullRunId()
+    {
+        var template = MakeTemplate();
+        var issue = MakeIssue();
+        Assert.Throws<ArgumentNullException>(() =>
+            JobDistributionRequest.FromTemplate(template, issue, PipelineRunType.DecompositionAnalysis, initiatedBy: "loop", runId: null!));
+    }
+
+    [Fact]
+    public void FromTemplate_Decomposition_ThrowsOnEmptyRunId()
+    {
+        var template = MakeTemplate();
+        var issue = MakeIssue();
+        Assert.Throws<ArgumentException>(() =>
+            JobDistributionRequest.FromTemplate(template, issue, PipelineRunType.DecompositionAnalysis, initiatedBy: "loop", runId: ""));
+    }
 
     [Fact]
     public void FromTemplate_Implementation_ThrowsOnNullTemplate()
