@@ -57,12 +57,42 @@ public class DatabaseMaintenanceService
     /// </summary>
     public async Task<RetentionSweepResult> RunRetentionSweepAsync(CancellationToken ct)
     {
-        var staleWi = await CleanupStaleWorkItemsAsync(ct);
-        var staleRuns = await CleanupStalePipelineRunsAsync(ct);
-        var staleConsolidation = await CleanupStaleConsolidationRunsAsync(ct);
-        var retentionRuns = await SweepPipelineRunRetentionAsync(ct);
-        var retentionWi = await SweepWorkItemRetentionAsync(ct);
+        // Each sweep is individually fault-isolated at the orchestrator level: a failure in one sweep
+        // is logged and returns 0, allowing the remaining sweeps to proceed. Each individual sweep
+        // method also has its own internal try/catch for fine-grained error handling; this outer
+        // per-call guard ensures a fault that escapes an individual sweep (e.g. from a subclass
+        // override in tests, or a missing catch in future code) cannot prevent later sweeps from running.
+        var staleWi = await RunSweepAsync(CleanupStaleWorkItemsAsync, "CleanupStaleWorkItems", ct);
+        var staleRuns = await RunSweepAsync(CleanupStalePipelineRunsAsync, "CleanupStalePipelineRuns", ct);
+        var staleConsolidation = await RunSweepAsync(CleanupStaleConsolidationRunsAsync, "CleanupStaleConsolidationRuns", ct);
+        var retentionRuns = await RunSweepAsync(SweepPipelineRunRetentionAsync, "SweepPipelineRunRetention", ct);
+        var retentionWi = await RunSweepAsync(SweepWorkItemRetentionAsync, "SweepWorkItemRetention", ct);
         return new RetentionSweepResult(staleWi, staleRuns, staleConsolidation, retentionRuns, retentionWi);
+    }
+
+    private static async Task<int> RunSweepAsync(Func<CancellationToken, Task<int>> sweep, string name, CancellationToken ct)
+    {
+        try
+        {
+            return await sweep(ct);
+        }
+        // TODO [WARNING]: Swallowing OperationCanceledException here means cancellation is not
+        // propagated to the caller. All remaining sweeps in RunRetentionSweepAsync will still
+        // execute even after the CancellationToken is cancelled, because each RunSweepAsync call
+        // absorbs the cancellation rather than short-circuiting. Callers cannot distinguish
+        // "sweep returned zero rows" from "sweep was cancelled". Consider re-throwing the
+        // OperationCanceledException so the general Exception catch handles only non-cancellation
+        // faults, and cooperative shutdown (e.g. IHostedService stopping) works correctly.
+        // (review-findings.md: Correctness line 77, DotNetSpecialist line 79)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DatabaseMaintenanceService: sweep {Name} failed (non-fatal, continuing)", name);
+            return 0;
+        }
     }
 
     /// <summary>Counts and result for a full retention sweep.</summary>
