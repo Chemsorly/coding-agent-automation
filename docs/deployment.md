@@ -6,7 +6,7 @@ The application runs on Kubernetes as five distinct processes:
 
 - **Orchestrator** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI. No direct database access — all config and run history read from the Pipeline API via HTTP. `IAgentHubConnection` (defined in `CodingAgentWebUI.Api.Client`, scoped per Blazor circuit) subscribes to the API hub for live run streaming.
 - **Pipeline API** (`CodingAgentWebUI.Api`) — HTTP and SignalR hub server. Authoritative database owner (EF Core + Postgres). Hosts `AgentHub`, `AgentRegistryService`, `OrchestratorRunService`, `AgentReservationService` (`JobDeduplicationGuardService` is a backward-compat alias), `DatabaseMaintenanceService`, and `ChatJobDispatcher`.
-- **Job Controller** (`CodingAgentWebUI.JobController`) — Kubernetes Job dispatch. Claims `WorkItem` rows from the API and creates K8s Jobs. Leader-elected via `caa-{release}-dispatch-lock` Lease. Stateless between dispatches; all state lives in Postgres via the API.
+- **Job Controller** (`CodingAgentWebUI.JobController`) — Kubernetes Job dispatch. Claims `WorkItem` rows from the API and creates K8s Jobs. Also dispatches consolidation Jobs via `ConsolidationDispatchService` (shares the same leader-election lease). Leader-elected via `caa-{release}-dispatch-lock` Lease. Stateless between dispatches; all state lives in Postgres via the API.
 - **Scheduler** (`CodingAgentWebUI.Scheduler`) — Owns all scheduled/periodic background work: orphaned label recovery, housekeeping, work-item metrics polling, and periodic maintenance sweeps. No direct Postgres connection — all persistence goes through the Pipeline API. Leader-elected via `caa-{release}-scheduler-lock` Lease.
 - **Agent Host** (`CodingAgentWebUI.Agent`) — Ephemeral K8s Job pod. Connects to the Pipeline API hub using `AGENT_API_KEY` as a Bearer token. Picks up assignments via `GET /api/work-items/{id}/assignment`, reports progress and terminal status via hub methods and `POST /api/work-items/{id}/status`. Two execution modes: _work-item pods_ (spawned with `--work-item-id`) and _chat pods_.
 
@@ -75,6 +75,7 @@ The chart deploys:
 | Path | Description |
 |------|-------------|
 | `orchestrator.image.repository/tag` | Orchestrator container image |
+| `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — without Redis, in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
 | `secrets.otelHeaders` | OTLP auth headers |
@@ -135,11 +136,9 @@ jobTemplates:
         effect: NoSchedule
 ```
 
-### Leader Election in Non-Kubernetes (SignalR) Mode
+### Leader Election Without Kubernetes
 
-When deployed without Kubernetes (e.g., local dev or SignalR-only mode), `ILeaderElectionService` is not registered in the DI container. `PipelineLoopService` null-checks the leader gate: when the gate is `null`, the loop runs unconditionally without any leadership check. This is the intended behavior — non-K8s deployments are typically single-instance and need no leader gate.
-
-The previous `AlwaysLeaderElectionService` stub (an explicit always-leader no-op) was removed in the arch-audit; the null-check achieves the same behavior without polluting the DI container.
+When the Kubernetes client is unavailable (e.g., local `dotnet run`), `ILeaderElectionService` logs a warning and remains non-leader for the lifetime of the process. `PipelineLoopService` null-checks the leader gate: when the gate is `null`, the loop runs unconditionally — no leader gate needed for single-instance local dev.
 
 > **Note on `AgentReservationService` and Redis:** When Redis is configured (`signalr.redis.connectionString` is set), `AgentReservationService` switches to distributed per-agent Redis locks (`lock:agent:{id}`, 5-second TTL) instead of the in-process `_selectionLock`. This enables safe agent selection across multiple API replicas. The in-process lock is used only when Redis is absent (local dev or single-replica deployments).
 
@@ -172,7 +171,7 @@ Three independent leases are used — one per relevant process (the Pipeline API
 | `DispatchService` | Polls for pending WorkItems and dispatches K8s Jobs | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 | `ReconciliationService` | Runs startup reconciliation, watches K8s Jobs, enforces timeouts | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 
-**Pipeline API** — No leader election. All API replicas handle requests concurrently. `DatabaseMaintenanceService` is a singleton triggered by the Scheduler via HTTP (`POST /api/scheduler/maintenance/retention-sweep`); `ChatJobDispatcher` and consolidation dispatch use K8s double-dispatch guards instead of a lease. Set `signalr.redis.connectionString` when running more than one API replica.
+**Pipeline API** — No leader election. All API replicas handle requests concurrently. `DatabaseMaintenanceService` is a singleton triggered by the Scheduler via HTTP (`POST /api/scheduler/maintenance/retention-sweep`); `ChatJobDispatcher` uses K8s double-dispatch guards instead of a lease. Set `signalr.redis.connectionString` when running more than one API replica.
 
 **Orchestrator** (`caa-{release}-pipeline-loop-lock` lease) — Deprecated: `PipelineLoopService` moved to the Scheduler in Spec 047. The Orchestrator now only polls `/loop/status` and dispatches individual runs via HTTP. The lease still exists in the Helm chart but governs no background services in the Orchestrator process. It can be ignored for operational purposes.
 
@@ -223,9 +222,6 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch", "delete"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "create", "update"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "delete"]   # per-Job derived-key Secrets (GC'd via ownerReference)
@@ -233,6 +229,7 @@ rules:
     resources: ["pods", "configmaps"]
     verbs: ["get", "list"]
 ```
+The Pipeline API has no leader election, so it does not need a `coordination.k8s.io/leases` rule.
 
 **Job Controller** (`CodingAgentWebUI.JobController`) ServiceAccount:
 

@@ -35,7 +35,6 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 │  WorkItemEndpoints, ConfigEndpoints, PipelineRunEndpoints                  │
 │  DatabaseMaintenanceService (triggered by Scheduler via HTTP)              │
 │  ChatJobDispatcher                                                          │
-│  ConsolidationWorkItemDispatchService (BackgroundService — not Job Ctrl)   │
 │  No leader election lease                                                   │
 └─────────────────────────────────────────────────────────────────────────────┘
          │  POST /api/work-items (claim)   ▲ hub: ReportOutputLines etc.
