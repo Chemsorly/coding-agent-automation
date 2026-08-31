@@ -80,16 +80,13 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     [Fact]
     public async Task AfterMigrations_NoPendingModelChanges()
     {
-        // Skip if fixture setup failed (e.g., Docker unavailable in this environment);
-        // AllMigrations_ApplyFromScratch_WithoutError already records that failure.
-        // TODO: `if (_fixture.MigrationException is not null) return;` silently passes this test
-        // for ANY migration failure (not just DockerUnavailableException), unlike the
-        // AllMigrations_ApplyFromScratch_WithoutError test which re-asserts the exception. A real
-        // migration DDL error would cause this and all subsequent migration tests to vacuously pass
-        // while only AllMigrations_ApplyFromScratch_WithoutError surfaces the failure. Consider
-        // checking for DockerUnavailableException specifically (like AllMigrations does) and
-        // asserting null for all other failure types to catch real migration regressions.
-        if (_fixture.MigrationException is not null) return;
+        // Mirror AllMigrations_ApplyFromScratch_WithoutError: skip only when Docker is unavailable,
+        // assert null for any other failure so real DDL errors surface here too.
+        if (_fixture.MigrationException is DotNet.Testcontainers.Builders.DockerUnavailableException)
+            return;
+        _fixture.MigrationException.Should().BeNull(
+            "migrations must have applied cleanly before checking pending model changes. " +
+            "A non-null exception means MigrateAsync threw — inspect AllMigrations_ApplyFromScratch_WithoutError for details.");
 
         await using var db = _fixture.CreateDbContext();
 
@@ -116,14 +113,13 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     [Fact]
     public async Task AfterMigrations_AppliedMigrations_MatchAssemblyMigrations()
     {
-        // Skip if fixture setup failed (e.g., Docker unavailable in this environment);
-        // AllMigrations_ApplyFromScratch_WithoutError already records that failure.
-        // TODO: `if (_fixture.MigrationException is not null) return;` silently passes this test
-        // for ANY migration failure (not just DockerUnavailableException). A real DDL failure or
-        // PendingModelChangesException would cause this test to vacuously pass while only
-        // AllMigrations_ApplyFromScratch_WithoutError surfaces the failure. Consider mirroring
-        // that test's pattern: skip on DockerUnavailableException, assert null otherwise.
-        if (_fixture.MigrationException is not null) return;
+        // Mirror AllMigrations_ApplyFromScratch_WithoutError: skip only when Docker is unavailable,
+        // assert null for any other failure so real DDL errors surface here too.
+        if (_fixture.MigrationException is DotNet.Testcontainers.Builders.DockerUnavailableException)
+            return;
+        _fixture.MigrationException.Should().BeNull(
+            "migrations must have applied cleanly before comparing applied vs defined migrations. " +
+            "A non-null exception means MigrateAsync threw — inspect AllMigrations_ApplyFromScratch_WithoutError for details.");
 
         await using var db = _fixture.CreateDbContext();
 
@@ -144,14 +140,13 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     [Fact]
     public async Task WorkItems_ProjectIdColumn_IsUuidType()
     {
-        // Skip if fixture setup failed (e.g., Docker unavailable in this environment);
-        // AllMigrations_ApplyFromScratch_WithoutError already records that failure.
-        // TODO: `if (_fixture.MigrationException is not null) return;` silently passes this test
-        // for ANY migration failure (not just DockerUnavailableException). A real DDL failure
-        // would cause this test to vacuously pass while only AllMigrations_ApplyFromScratch_WithoutError
-        // surfaces the failure. Consider mirroring that test's pattern: skip on
-        // DockerUnavailableException, assert null otherwise.
-        if (_fixture.MigrationException is not null) return;
+        // Mirror AllMigrations_ApplyFromScratch_WithoutError: skip only when Docker is unavailable,
+        // assert null for any other failure so real DDL errors surface here too.
+        if (_fixture.MigrationException is DotNet.Testcontainers.Builders.DockerUnavailableException)
+            return;
+        _fixture.MigrationException.Should().BeNull(
+            "migrations must have applied cleanly before inspecting schema. " +
+            "A non-null exception means MigrateAsync threw — inspect AllMigrations_ApplyFromScratch_WithoutError for details.");
 
         await using var conn = _fixture.CreateConnection();
         await conn.OpenAsync();
@@ -180,14 +175,13 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     [Fact]
     public async Task WorkItems_ForeignKey_ToProjects_Exists()
     {
-        // Skip if fixture setup failed (e.g., Docker unavailable in this environment);
-        // AllMigrations_ApplyFromScratch_WithoutError already records that failure.
-        // TODO: `if (_fixture.MigrationException is not null) return;` silently passes this test
-        // for ANY migration failure (not just DockerUnavailableException). A real DDL failure
-        // would cause this test to vacuously pass while only AllMigrations_ApplyFromScratch_WithoutError
-        // surfaces the failure. Consider mirroring that test's pattern: skip on
-        // DockerUnavailableException, assert null otherwise.
-        if (_fixture.MigrationException is not null) return;
+        // Mirror AllMigrations_ApplyFromScratch_WithoutError: skip only when Docker is unavailable,
+        // assert null for any other failure so real DDL errors surface here too.
+        if (_fixture.MigrationException is DotNet.Testcontainers.Builders.DockerUnavailableException)
+            return;
+        _fixture.MigrationException.Should().BeNull(
+            "migrations must have applied cleanly before inspecting schema. " +
+            "A non-null exception means MigrateAsync threw — inspect AllMigrations_ApplyFromScratch_WithoutError for details.");
 
         await using var conn = _fixture.CreateConnection();
         await conn.OpenAsync();
@@ -221,14 +215,13 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
     [Fact]
     public async Task WorkItems_SpuriousSingleColumnProjectIdIndex_DoesNotExist()
     {
-        // Skip if fixture setup failed (e.g., Docker unavailable in this environment);
-        // AllMigrations_ApplyFromScratch_WithoutError already records that failure.
-        // TODO: `if (_fixture.MigrationException is not null) return;` silently passes this test
-        // for ANY migration failure (not just DockerUnavailableException). A real DDL failure
-        // would cause this test to vacuously pass while only AllMigrations_ApplyFromScratch_WithoutError
-        // surfaces the failure. Consider mirroring that test's pattern: skip on
-        // DockerUnavailableException, assert null otherwise.
-        if (_fixture.MigrationException is not null) return;
+        // Mirror AllMigrations_ApplyFromScratch_WithoutError: skip only when Docker is unavailable,
+        // assert null for any other failure so real DDL errors surface here too.
+        if (_fixture.MigrationException is DotNet.Testcontainers.Builders.DockerUnavailableException)
+            return;
+        _fixture.MigrationException.Should().BeNull(
+            "migrations must have applied cleanly before inspecting schema. " +
+            "A non-null exception means MigrateAsync threw — inspect AllMigrations_ApplyFromScratch_WithoutError for details.");
 
         await using var conn = _fixture.CreateConnection();
         await conn.OpenAsync();
@@ -310,6 +303,14 @@ public sealed class MigrationIntegrityFixture : IAsyncLifetime
     /// <summary>Creates a new <see cref="PipelineDbContext"/> connected to the test container.</summary>
     public PipelineDbContext CreateDbContext()
     {
+        // TODO: _container! will throw NullReferenceException if _container is null because
+        // InitializeAsync threw something other than DockerUnavailableException (e.g. an
+        // InvalidOperationException from PostgreSqlBuilder.Build()). In that case MigrationException
+        // is set to that non-Docker exception, the guard in each test does not match
+        // DockerUnavailableException, Should().BeNull() produces a clear assertion failure, but
+        // test execution continues into this method and dereferences null — producing a secondary
+        // NullReferenceException that clutters the test report. Consider adding a null guard:
+        //   if (_container is null) throw new InvalidOperationException("Container not initialized — check MigrationException.");
         var options = new DbContextOptionsBuilder<PipelineDbContext>()
             .UseNpgsql(_container!.GetConnectionString())
             .Options;
@@ -317,6 +318,7 @@ public sealed class MigrationIntegrityFixture : IAsyncLifetime
     }
 
     /// <summary>Creates a raw <see cref="NpgsqlConnection"/> for schema inspection queries.</summary>
+    // TODO: Same _container! null dereference risk as CreateDbContext — see comment there.
     public NpgsqlConnection CreateConnection() =>
         new(_container!.GetConnectionString());
 }

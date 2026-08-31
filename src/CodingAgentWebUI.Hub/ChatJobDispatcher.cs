@@ -664,36 +664,37 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _logger.Information("ChatJobDispatcher: stopping — cancelling {Count} active watcher(s)",
             _activeWatchers.Count);
 
-        // Signal all watchers to stop.
-        // TODO: If CancelAsync() throws an unexpected exception here (e.g. ObjectDisposedException
-        // from an unusual code path), execution exits StopAsync before reaching the try/finally
-        // block below, leaving _stopCompleted unsignalled. DisposeAsync's `await _stopCompleted.Task`
-        // would then hang indefinitely. To fully harden this, consider wrapping the entire body
-        // (from CancelAsync through the finally block) in an outer try/finally that calls
-        // _stopCompleted.TrySetResult() as a last-resort fallback.
-        await _shutdownCts.CancelAsync();
-
-        // Collect current entries before they drain
-        var entries = _activeWatchers.ToArray();
-
-        // Await all watchers with 5s deadline
-        try
-        {
-            await Task.WhenAll(entries.Select(e => e.Value.WatcherTask))
-                .WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
-        }
-        catch
-        {
-            // Timeout or aggregate watcher failure on shutdown — manual cleanup follows
-        }
-
-        // Clean up any sessions whose watchers didn't finish in time.
-        // Wrapped in try/finally so that _stopCompleted is always signalled even if CleanupSession
-        // throws an unexpected exception. Without the finally, an unhandled exception here would
+        // Outer try/finally ensures _stopCompleted is always signalled, even if CancelAsync()
+        // throws an unexpected exception (e.g. ObjectDisposedException from an unusual teardown
+        // path). Without this guard, any exception thrown before the inner finally block would
         // leave _stopCompleted unset, causing DisposeAsync's `await _stopCompleted.Task` to hang
-        // indefinitely and block pod shutdown until the host's shutdown timeout kills the process.
+        // indefinitely and block pod shutdown until the host's ShutdownTimeout kills the process.
+        // TODO: The comment above is misleading — the outer try/finally already ensures
+        // _stopCompleted.TrySetResult() is called on any exception path, so the "would leave
+        // _stopCompleted unset" scenario described cannot actually occur with the current structure.
+        // The comment describes the motivation for the try/finally but overstates the risk by
+        // implying a gap that the surrounding code already closes. Consider revising to describe
+        // the protection that IS provided rather than a failure mode that no longer exists.
         try
         {
+            // Signal all watchers to stop.
+            await _shutdownCts.CancelAsync();
+
+            // Collect current entries before they drain
+            var entries = _activeWatchers.ToArray();
+
+            // Await all watchers with 5s deadline
+            try
+            {
+                await Task.WhenAll(entries.Select(e => e.Value.WatcherTask))
+                    .WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+            }
+            catch
+            {
+                // Timeout or aggregate watcher failure on shutdown — manual cleanup follows
+            }
+
+            // Clean up any sessions whose watchers didn't finish in time.
             foreach (var (_, entry) in entries)
             {
                 var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
@@ -867,13 +868,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         // in that race window. In the sequential ASP.NET Core lifecycle (Stop then Dispose)
         // this completes immediately because StopAsync already finished.
         await StopAsync(CancellationToken.None);
-        // TODO: In the sequential lifecycle this await is a no-op — StopAsync already
-        // set _stopCompleted before returning. It is only meaningful when StopAsync returned
-        // early via the idempotency guard (Interlocked.Exchange) because a first invocation
-        // is still in-flight; in that case _stopCompleted is not yet set and this await
-        // prevents _shutdownCts.Dispose() from racing with the first invocation's CancelAsync.
-        // Consider adding a clarifying comment or test to document this distinction so a
-        // future maintainer does not remove what appears to be a redundant await.
+        // Awaits the first in-flight StopAsync when the idempotency guard returned early above;
+        // no-op in the sequential ASP.NET Core lifecycle where StopAsync already set _stopCompleted.
         await _stopCompleted.Task;
         _shutdownCts.Dispose();
     }
