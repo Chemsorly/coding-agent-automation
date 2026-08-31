@@ -337,7 +337,9 @@
 
         try
         {
-            _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None);
+            // Null-coalesce: this section is embedded in the Pipelines page, so a null return
+            // (e.g. a service that doesn't honour the non-null contract) must not NRE the render.
+            _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None) ?? [];
         }
         catch (Exception ex)
         {
