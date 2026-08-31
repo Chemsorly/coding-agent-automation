@@ -35,7 +35,6 @@ public sealed class ReconciliationLoop
 
     private readonly IPipelineApiWorkItemClient _workItemClient;
     private readonly IKubernetesJobClient _k8sClient;
-    private readonly PvcPool _pvcPool;
     private readonly DispatchServiceOptions _options;
 
     /// <summary>
@@ -64,16 +63,13 @@ public sealed class ReconciliationLoop
     public ReconciliationLoop(
         IPipelineApiWorkItemClient workItemClient,
         IKubernetesJobClient k8sClient,
-        PvcPool pvcPool,
         DispatchServiceOptions options)
     {
         ArgumentNullException.ThrowIfNull(workItemClient);
         ArgumentNullException.ThrowIfNull(k8sClient);
-        ArgumentNullException.ThrowIfNull(pvcPool);
         ArgumentNullException.ThrowIfNull(options);
         _workItemClient = workItemClient;
         _k8sClient = k8sClient;
-        _pvcPool = pvcPool;
         _options = options;
     }
 
@@ -355,18 +351,18 @@ public sealed class ReconciliationLoop
                 if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, "AgentError", errorMsg, ct))
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
-            // Active/Unknown/Pending — no action needed
-            // TODO: If a JobPhaseCancelled case is ever added, remember to also add the workItemId
-            // to _reconciledTerminalIds on success — the guard comment says "Succeeded, Failed,
-            // Cancelled" but the current switch only covers Succeeded and Failed. Omitting it for
-            // a future Cancelled case would allow duplicate PostStatusAsync calls within the K8s
-            // job retention window.
+                // Active/Unknown/Pending — no action needed
+                // TODO: If a JobPhaseCancelled case is ever added, remember to also add the workItemId
+                // to _reconciledTerminalIds on success — the guard comment says "Succeeded, Failed,
+                // Cancelled" but the current switch only covers Succeeded and Failed. Omitting it for
+                // a future Cancelled case would allow duplicate PostStatusAsync calls within the K8s
+                // job retention window.
         }
     }
 
     /// <summary>
-    /// Posts a terminal status update for a completed K8s Job, releases the PVC, and records
-    /// telemetry. Returns <c>true</c> if <see cref="IPipelineApiWorkItemClient.PostStatusAsync"/>
+    /// Posts a terminal status update for a completed K8s Job and records telemetry.
+    /// Returns <c>true</c> if <see cref="IPipelineApiWorkItemClient.PostStatusAsync"/>
     /// succeeded (the caller should then cache the WorkItem ID to suppress duplicate posts on
     /// subsequent reconciliation cycles), or <c>false</c> if it threw (the caller must NOT cache
     /// the ID so that the next cycle retries the post).
@@ -379,9 +375,6 @@ public sealed class ReconciliationLoop
         string? errorMessage,
         CancellationToken ct)
     {
-        // Release the PVC outside the try block so a transient PostStatusAsync failure
-        // does not leak the claim until the next leadership acquisition rebuilds the pool.
-        var pvcName = GetPvcFromJob(job);
         var succeeded = false;
         try
         {
@@ -411,21 +404,6 @@ public sealed class ReconciliationLoop
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to post status {Status} for WorkItem {Id}", status, workItemId);
-        }
-        finally
-        {
-            // Release PVC unconditionally — idempotent on unknown names, ensures the pool slot
-            // is freed even when PostStatusAsync throws a transient error.
-            // TODO: Verify PvcPool.Release is safe to call twice for the same name within a single
-            // leadership term. The retry path introduced by the _reconciledTerminalIds deduplication
-            // guard makes a double-release reachable: if PostStatusAsync throws on the first cycle
-            // (succeeded = false, ID not cached), this finally block still releases the PVC; on the
-            // retry cycle HandleJobCompletedAsync is invoked again and Release is called a second
-            // time. If a released PVC name is re-allocated between the two calls the second Release
-            // could corrupt the pool's accounting. The existing comment says "idempotent on unknown
-            // names" — confirm this also covers the already-released-and-potentially-reallocated case.
-            if (pvcName is not null)
-                _pvcPool.Release(pvcName);
         }
 
         return succeeded;
@@ -467,13 +445,6 @@ public sealed class ReconciliationLoop
         if (job.Status?.Succeeded > 0) return JobPhaseSucceeded;
         if (job.Status?.Failed > 0) return JobPhaseFailed;
         return "Active";
-    }
-
-    private static string? GetPvcFromJob(V1Job job)
-    {
-        return job.Spec?.Template?.Spec?.Volumes?
-            .FirstOrDefault(v => v.PersistentVolumeClaim?.ClaimName is not null)
-            ?.PersistentVolumeClaim?.ClaimName;
     }
 
     private static string? GetFailureMessage(V1Job job)

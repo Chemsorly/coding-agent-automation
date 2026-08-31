@@ -39,8 +39,8 @@ public sealed class ReconciliationLoopTests
             .ReturnsAsync([]);
     }
 
-    private ReconciliationLoop CreateLoop(PvcPool? pvcPool = null) =>
-        new(_workItemClient.Object, _k8sClient.Object, pvcPool ?? new PvcPool([]), _options);
+    private ReconciliationLoop CreateLoop() =>
+        new(_workItemClient.Object, _k8sClient.Object, _options);
 
     private static string JobNameFor(Guid id) => $"caa-agent-{id:N}"[..21];
 
@@ -306,25 +306,30 @@ public sealed class ReconciliationLoopTests
             It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
-    // ─── PVC release on job completion ────────────────────────────────────────
+    // ─── PVC release removed — reconciliation no longer manages PVC state ─────
 
+    /// <summary>
+    /// Reconciliation must NOT release any PVC — that responsibility was removed when
+    /// PvcPool was deleted (issue #2200). This test verifies that job completion still
+    /// posts the terminal status and does not throw due to the absent pool.
+    /// </summary>
     [Fact]
-    public async Task WhenJobSucceeds_ShouldReleasePvc()
+    public async Task WhenJobSucceeds_ShouldPostStatus_NoPvcReleaseNeeded()
     {
-        const string pvcName = "kiro-pvc-0";
-        var pool = new PvcPool([pvcName]);
-        pool.TryClaim(ItemId); // claim it first
-
         var jobName = JobNameFor(ItemId);
-        var job = MakeJob(jobName, ItemId, succeeded: true, pvcName: pvcName);
+        var job = MakeJob(jobName, ItemId, succeeded: true, pvcName: "kiro-pvc-0");
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
 
-        var loop = CreateLoop(pool);
+        var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
 
-        Assert.Equal(1, pool.AvailableCount);
+        // Status must still be posted
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -477,8 +482,8 @@ public sealed class ReconciliationLoopErrorTests
         ChatPodConnectTimeoutSeconds = 120
     };
 
-    private ReconciliationLoop CreateLoop(PvcPool? pvcPool = null) =>
-        new(_workItemClient.Object, _k8sClient.Object, pvcPool ?? new PvcPool([]), _options);
+    private ReconciliationLoop CreateLoop() =>
+        new(_workItemClient.Object, _k8sClient.Object, _options);
 
     // ─── ReconcileOnceAsync ────────────────────────────────────────────────
 
@@ -498,15 +503,11 @@ public sealed class ReconciliationLoopErrorTests
     }
 
     [Fact]
-    public async Task ReconcileOnce_WhenPostStatusThrows_PvcStillReleased()
+    public async Task ReconcileOnce_WhenPostStatusThrows_ReconcileDoesNotPropagate()
     {
-        const string pvcName = "kiro-pvc-err";
-        var pool = new PvcPool([pvcName]);
         var id = Guid.NewGuid();
-        pool.TryClaim(id);
-
         var jobName = $"caa-agent-{id:N}"[..21];
-        var job = MakeJob(jobName, id, succeeded: true, pvcName: pvcName);
+        var job = MakeJob(jobName, id, succeeded: true, pvcName: "kiro-pvc-err");
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [job] });
@@ -514,11 +515,13 @@ public sealed class ReconciliationLoopErrorTests
         _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("DB error"));
 
-        var loop = CreateLoop(pool);
+        // Reconciliation must not propagate the exception from PostStatusAsync
+        var loop = CreateLoop();
         await loop.ReconcileOnceAsync(CancellationToken.None);
-
-        // PVC must still be released even when PostStatusAsync throws
-        Assert.Equal(1, pool.AvailableCount);
+        // The DB error is swallowed — verify the status call was attempted (once, for the succeeded job)
+        // but no further status calls were made (the item is not cached, so the next cycle will retry).
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -1243,7 +1246,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     public void Dispose() => _listener.Dispose();
 
     private ReconciliationLoop CreateLoop() =>
-        new(_workItemClient.Object, _k8sClient.Object, new PvcPool([]), _options);
+        new(_workItemClient.Object, _k8sClient.Object, _options);
 
     // ─── AC: DispatchedAt = UtcNow - 30s → enforcement skipped, canary incremented ──
 
