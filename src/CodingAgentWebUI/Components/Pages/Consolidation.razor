@@ -11,7 +11,8 @@
 @inject ConsolidationBadgeService BadgeService
 @inject IPipelineApiConfigClient ConfigClient
 
-<PageTitle>Consolidation - Coding Agent</PageTitle>
+@* No <PageTitle> — this component is embedded in the Pipelines page and must not override its
+   browser-tab title (a <PageTitle> rendered later wins). The Pipelines page owns the title. *@
 
 <div class="consolidation-page">
     <header class="consolidation-header">

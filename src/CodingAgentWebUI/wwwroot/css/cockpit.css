@@ -392,5 +392,8 @@
 /* ---- Pipelines re-shell (Agent Coding page inside the new frame) ------------ */
 .cockpit .agent-header { padding: 22px 28px 4px; border: none; background: transparent; }
 .cockpit .agent-header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
+/* Align the section content inset with the header (28px — the app-wide content inset). Without this,
+   .agent-main's 20px padding + the sections' own 20px margins push content to 40px, 12px past the h1. */
+.cockpit .agent-main { padding-left: 8px; padding-right: 8px; }
 /* Consolidation is folded into Pipelines as a section — hide its own page heading. */
 .cockpit .consolidation-header { display: none; }
