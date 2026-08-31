@@ -960,33 +960,29 @@ public class ChatJobDispatcherTests
         ChatJobDispatcher.IsTerminal(job).Should().BeFalse();
     }
 
-    [Theory]
-    [InlineData("kiro")]
-    [InlineData("KIRO")]
-    [InlineData("Kiro")]
-    public void IsKiroAgent_KiroVariants_ReturnsTrue(string providerType)
-        => ChatJobDispatcher.IsKiroAgent(providerType).Should().BeTrue();
+    // ── IsKiroAgent / IsOpencodeAgent ─────────────────────────────────────────
 
     [Theory]
-    [InlineData("opencode")]
-    [InlineData("")]
-    [InlineData("kiro-dotnet")]
-    public void IsKiroAgent_NonKiro_ReturnsFalse(string providerType)
-        => ChatJobDispatcher.IsKiroAgent(providerType).Should().BeFalse();
+    [InlineData("kiro", true)]
+    [InlineData("KIRO", true)]
+    [InlineData("Kiro", true)]
+    [InlineData("opencode", false)]
+    [InlineData("", false)]
+    [InlineData("kiro-dotnet", false)]
+    public void IsKiroAgent_VariousInputs_ReturnsExpected(string providerType, bool expected)
+        => ChatJobDispatcher.IsKiroAgent(providerType).Should().Be(expected,
+            $"IsKiroAgent(\"{providerType}\") must return {expected}");
 
     [Theory]
-    [InlineData("opencode")]
-    [InlineData("OPENCODE")]
-    [InlineData("OpenCode")]
-    public void IsOpencodeAgent_OpencodeVariants_ReturnsTrue(string providerType)
-        => ChatJobDispatcher.IsOpencodeAgent(providerType).Should().BeTrue();
-
-    [Theory]
-    [InlineData("kiro")]
-    [InlineData("")]
-    [InlineData("opencode-dotnet")]
-    public void IsOpencodeAgent_NonOpencode_ReturnsFalse(string providerType)
-        => ChatJobDispatcher.IsOpencodeAgent(providerType).Should().BeFalse();
+    [InlineData("opencode", true)]
+    [InlineData("OPENCODE", true)]
+    [InlineData("OpenCode", true)]
+    [InlineData("kiro", false)]
+    [InlineData("", false)]
+    [InlineData("opencode-dotnet", false)]
+    public void IsOpencodeAgent_VariousInputs_ReturnsExpected(string providerType, bool expected)
+        => ChatJobDispatcher.IsOpencodeAgent(providerType).Should().Be(expected,
+            $"IsOpencodeAgent(\"{providerType}\") must return {expected}");
 
     // ─── IsNotFound ───────────────────────────────────────────────────────────
 
