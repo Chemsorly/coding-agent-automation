@@ -144,6 +144,17 @@ public sealed class HousekeepingService : IHousekeepingService
             if (mergeabilityMap[pr.Number] != PrMergeabilityStatus.Conflicted)
                 continue;
 
+            // Skip if the branch still has an active run — the pod is live and the issue
+            // will be re-queued naturally when the run completes. Swapping the label now
+            // would leave the issue stuck at agent:next with no new dispatch possible.
+            if (activeRunBranches.Contains(pr.BranchName))
+            {
+                _logger.Debug(
+                    "HousekeepingService: PR #{PrNumber} is conflicted but branch '{Branch}' has an active run — skipping rework swap",
+                    pr.Number, pr.BranchName);
+                continue;
+            }
+
             await TriggerReworkAsync(repoProvider, issueProvider, issueProviderId, pr, repoTag, ct);
         }
 

@@ -503,6 +503,52 @@ public class HousekeepingServiceTests
             Times.Never);
     }
 
+    // ── Conflicted + branch active → no swap (guard fires before TriggerReworkAsync) ─
+
+    [Fact]
+    public async Task ExecuteAsync_ConflictedPr_BranchIsActive_SkipsReworkSwap()
+    {
+        var (svc, provider, issues, _) = Create(activeRuns: [ActiveRun("feature/auto-42-some-fix")]);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+
+        await ExecAsync(svc, provider, issues, [MakePr(1, branch: "feature/auto-42-some-fix")]);
+
+        provider.Verify(p => p.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never, "TriggerReworkAsync must not be called when branch has an active run");
+        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "label swap must not be triggered when branch has an active run");
+    }
+
+    // ── Conflicted + different branch active → guard is branch-name–specific ─
+
+    [Fact]
+    public async Task ExecuteAsync_ConflictedPr_DifferentBranchIsActive_ProceedsWithReworkSwap()
+    {
+        // An active run on a *different* branch must not block the swap for the conflicted PR.
+        // Guards a buggy "any active run → skip all" implementation.
+        var (svc, provider, issues, _) = Create(activeRuns: [ActiveRun("feature/auto-99-other")]);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)["42"]);
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", AgentLabels.Done));
+        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+
+        await ExecAsync(svc, provider, issues, [MakePr(1, branch: "feature/auto-42-some-fix")]);
+
+        provider.Verify(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once, "TriggerReworkAsync must proceed when only a different branch is active");
+        issues.Verify(i => i.AddLabelAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "42"),
+            AgentLabels.Next, It.IsAny<CancellationToken>()), Times.Once,
+            "label swap must be triggered when the PR's branch is not in active runs");
+    }
+
     // ── Conflicted + empty linked issues → no crash ───────────────────────────
 
     [Fact]
