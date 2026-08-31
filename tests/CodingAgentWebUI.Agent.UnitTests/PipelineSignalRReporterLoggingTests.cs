@@ -174,6 +174,12 @@ public class PipelineSignalRReporterLoggingTests
         logEvent.Level.Should().Be(LogEventLevel.Information);
         logEvent.Properties.Should().ContainKey("Line");
         logEvent.Properties["Line"].ToString().Should().Contain("Pipeline cancelled");
+        // TODO: [WARNING] This test is structurally identical to EmitOutputLine_OutsideStepContext_LogsWithoutStepName
+        // (single call, no LogContext, assert HaveCount(1) and Information level). It does not verify the
+        // cross-class boundary: it cannot detect if both PipelineSignalRReporter AND PipelineRunLifecycleService
+        // emit a "🚫 Pipeline cancelled" line for the same cancellation event. The "single-emission guarantee"
+        // described in the XML doc comment requires an integration-level test at the LocalPipelineExecutor call
+        // site, not a unit test on the reporter. (#2178)
     }
 
     [Fact]

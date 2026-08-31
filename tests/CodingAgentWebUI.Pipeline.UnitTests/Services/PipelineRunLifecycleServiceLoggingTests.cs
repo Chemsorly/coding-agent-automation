@@ -54,6 +54,10 @@ public class PipelineRunLifecycleServiceLoggingTests
         // enrichment property, consistent with LocalPipelineExecutor and PipelineOrchestrationService,
         // and queryable in Grafana as {PipelineRunId="..."} without parsing the message body.
         logEvent.Properties.Should().ContainKey("PipelineRunId");
+        // TODO: [WARNING] This uses .Contain() which is a substring match — it would pass if the property
+        // contained "run-log-test-1-extra" or any other value containing the substring. Use an exact-match
+        // assertion (e.g. unwrap the ScalarValue and assert the typed value) to catch regressions where a
+        // wrong-but-containing run ID is emitted. (#2178)
         logEvent.Properties["PipelineRunId"].ToString().Should().Contain("run-log-test-1");
         logEvent.Properties.Should().ContainKey("Line");
         logEvent.Properties["Line"].ToString().Should().Contain("Pipeline failed: timeout");
@@ -70,6 +74,12 @@ public class PipelineRunLifecycleServiceLoggingTests
         service.EmitOutputLine("🚫 Pipeline cancelled");
 
         // Assert — exactly one log entry, not two
+        // TODO: [WARNING] This test name "NoDoubleLog" overpromises: it only verifies that a single call to
+        // EmitOutputLine produces at most one Serilog entry (a trivially true property for a non-recursive
+        // synchronous method). It does NOT detect the cross-class double-emission scenario described in #2178,
+        // where both PipelineSignalRReporter.EmitOutputLine and PipelineRunLifecycleService.EmitOutputLine
+        // fire for the same logical event. A true double-emission guard would require an integration-level
+        // test at the LocalPipelineExecutor call site. (#2178)
         _sink.Events.Should().HaveCount(1);
     }
 
@@ -90,6 +100,11 @@ public class PipelineRunLifecycleServiceLoggingTests
         _sink.Events.Should().HaveCount(1);
         received.Should().HaveCount(1);
         received.Single().Should().Be("🔍 Starting analysis gate...");
+        // TODO: [WARNING] This test only covers the PipelineRunLifecycleService.OnOutputLine path. There is
+        // no equivalent regression guard in PipelineSignalRReporterLoggingTests verifying that
+        // EmitOutputLineInternalAsync still dispatches to SignalR after the Serilog call was added.
+        // A regression dropping the `_ = EmitOutputLineInternalAsync(...)` call in PipelineSignalRReporter
+        // would go undetected in the reporter-layer tests. (#2178)
     }
 
     [Fact]
