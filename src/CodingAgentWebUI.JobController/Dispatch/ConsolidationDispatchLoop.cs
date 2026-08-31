@@ -90,33 +90,8 @@ public sealed class ConsolidationDispatchLoop
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    private async Task<Dictionary<string, int>> BuildConcurrencyMapAsync(CancellationToken ct)
-    {
-        var map = new Dictionary<string, int>(StringComparer.Ordinal);
-        try
-        {
-            var jobs = await _k8sClient.ListJobsAsync(
-                _options.Namespace,
-                "app.kubernetes.io/managed-by=caa-orchestrator",
-                ct);
-
-            foreach (var job in jobs.Items)
-            {
-                var labels = job.Metadata?.Labels;
-                var selectorLabel = labels is not null && labels.TryGetValue("caa/agent-selector", out var lv) ? lv : "";
-                if (string.IsNullOrEmpty(selectorLabel)) continue;
-
-                var normalizedSelector = selectorLabel.Replace('.', ',');
-                var key = JobTemplateStore.NormalizeLabels(normalizedSelector);
-                map[key] = (map.TryGetValue(key, out var cnt) ? cnt : 0) + 1;
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "ConsolidationDispatchLoop: failed to build concurrency map; proceeding with empty map");
-        }
-        return map;
-    }
+    private Task<Dictionary<string, int>> BuildConcurrencyMapAsync(CancellationToken ct) =>
+        DispatchLoopHelpers.BuildConcurrencyMapAsync(_k8sClient, _options.Namespace, nameof(ConsolidationDispatchLoop), ct);
 
     private async Task ProcessItemAsync(
         PendingWorkItemDto item,
@@ -253,23 +228,8 @@ public sealed class ConsolidationDispatchLoop
     /// are claimed or the pool is empty.
     /// Must be called under <see cref="_pvcSelectLock"/>.
     /// </summary>
-    private async Task<string?> SelectAvailablePvcAsync(CancellationToken ct)
-    {
-        if (_options.KiroPvcPool.Count == 0) return null;
-
-        var jobs = await _k8sClient.ListJobsAsync(
-            _options.Namespace,
-            "app.kubernetes.io/managed-by=caa-orchestrator",
-            ct);
-
-        var claimedNames = jobs.Items
-            .SelectMany(j => j.Spec?.Template?.Spec?.Volumes ?? [])
-            .Where(v => v.PersistentVolumeClaim?.ClaimName is not null)
-            .Select(v => v.PersistentVolumeClaim!.ClaimName!)
-            .ToHashSet(StringComparer.Ordinal);
-
-        return _options.KiroPvcPool.FirstOrDefault(p => !claimedNames.Contains(p));
-    }
+    private Task<string?> SelectAvailablePvcAsync(CancellationToken ct) =>
+        DispatchLoopHelpers.SelectAvailablePvcAsync(_k8sClient, _options.Namespace, _options.KiroPvcPool, ct);
 
     private JobSpecBuilder.BuildContext BuildJobContext(
         PendingWorkItemDto item,
