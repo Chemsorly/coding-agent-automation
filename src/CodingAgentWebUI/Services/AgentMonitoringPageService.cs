@@ -96,7 +96,7 @@ public class AgentMonitoringPageService
         try
         {
             var profiles = await _configClient.GetAgentProfilesAsync(CancellationToken.None);
-            ProfileLookup = profiles.ToDictionary(p => p.Id);
+            ProfileLookup = (profiles ?? []).ToDictionary(p => p.Id);
         }
         catch (Exception ex)
         {
@@ -106,7 +106,7 @@ public class AgentMonitoringPageService
         try
         {
             var qgcs = await _configClient.GetQualityGateConfigsAsync(CancellationToken.None);
-            QgcLookup = qgcs.ToDictionary(q => q.Id);
+            QgcLookup = (qgcs ?? []).ToDictionary(q => q.Id);
         }
         catch (Exception ex)
         {
