@@ -32,6 +32,7 @@ Projects can override most general settings on a per-project basis using a nulla
 | `agentDisconnectGracePeriod` | 00:05:00 | How long to wait for a disconnected agent to reconnect before failing the run |
 | `agentBusyProgressTimeout` | 01:00:00 | How long a busy agent can go without reporting progress before being marked stuck |
 | `maxInfrastructureRetries` | 5 | Max retries for transient infrastructure failures (range: 0–10). These retries don't consume the agent's quality gate retry budget. |
+| `transientRetryDelay` | 00:00:30 | Delay between retry loop iterations when a transient provider error (`ProviderRateLimit` or `ProviderOverload`) is encountered. Default: 30 seconds. Set to zero in tests for faster execution. |
 | `heartbeatSweepIntervalSeconds` | 60 | Seconds between heartbeat monitor sweeps |
 | `heartbeatTimeoutSeconds` | 90 | Seconds without a heartbeat before an agent is considered stale |
 | `analysisCommitThreshold` | 30 | Number of commits on the default branch since last analysis that triggers automatic analysis refresh. Set to 0 to disable commit-count staleness detection |
@@ -119,8 +120,8 @@ The retry loop classifies agent failures into categories to distinguish provider
 
 | Error Category | HTTP Status | Retry Budget Consumed? | Behavior |
 |----------------|-------------|------------------------|----------|
-| `ProviderRateLimit` | 429 | **No** | `RetryCount` is rolled back. Loop waits 30 seconds then retries from the same position without burning a fix attempt. No cap on consecutive transient retries — only the overall job timeout (`agentTimeout`) bounds this. |
-| `ProviderOverload` | 503 | **No** | Same as `ProviderRateLimit` — 30s delay, no budget consumed. |
+| `ProviderRateLimit` | 429 | **No** | `RetryCount` is rolled back. Loop waits `TransientRetryDelay` (default: 30 seconds) then retries from the same position without burning a fix attempt. No cap on consecutive transient retries — only the overall job timeout (`agentTimeout`) bounds this. |
+| `ProviderOverload` | 503 | **No** | Same as `ProviderRateLimit` — waits `TransientRetryDelay`, no budget consumed. |
 | `PermanentAuthFailure` | 401/403 | Yes (1 attempt counted) | Loop aborts immediately — credentials cannot be fixed by retrying. |
 | `None` (default) | — | **Yes** | Normal code-fix attempt: `RetryCount` incremented, QG re-run after fix. |
 
@@ -262,9 +263,14 @@ For full request/response examples, authentication details, and query parameters
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 | `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 0, range: 0–300). The API now owns `IOrchestratorRunService` and rehydrates independently, so the Orchestrator no longer needs a startup delay. Increase only when a rolling-restart race condition is observed. |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
-| `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. |
 | `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8080`). **Required.** Used by `IPipelineApiConfigClient` to load pipeline configuration and by `IAgentHubConnection` as the fallback hub URL base. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
 | `PipelineApi__HubUrl` | Full URL of the Pipeline API SignalR hub (default: `{PipelineApi__BaseUrl}/hubs/agent`). The Orchestrator's `IAgentHubConnection` subscribes to this hub for live run streaming. Override via `api.hubUrl` in `values.yaml` only when the hub path differs from the default. |
+
+### Pipeline API
+
+| Variable | Description |
+|----------|-------------|
+| `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. Only consumed by the Pipeline API process, which owns the database connection. |
 
 ### SignalR Backplane (multi-replica)
 

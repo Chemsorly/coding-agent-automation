@@ -11,7 +11,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 16 | Last run: 2026-08-28 | Decisions added: 4 (soft anti-affinity, AgentJobTimeoutSeconds backstop, Redis required for multi-replica keepalive, ExternalCiDuration split); issue created: #2133; helm templates fixed (required→preferred anti-affinity, all 4 deployments); stale audit: monolith decision updated (4-service split), DatabaseMaintenanceService migration closed (Spec 047 superseded), SignalR reconnect Reassess-when updated, MessagePack/MaxRunsPerCycle docker-compose refs removed, Decision Map cleaned -->
 <!-- Session: 17 | Last run: 2026-08-29 | Decisions added: 5 (WorkItems.Payload dispatch-time snapshot, EmitOutputLine→Serilog, AgentJobTimeoutSeconds hierarchy, PriorityWeight secondary sort, Grafana Faro CDN-only); issues created: #2178; stale audit: Chat keepalive Redis #2133 text updated (warning now implemented) -->
 <!-- Session: 18 | Last run: 2026-08-29 | Decisions added: 3 (PR description via file, FeedbackTimeoutSeconds config, single AgentTimeout); no-opinions: 3 (registration race, terminal guard pattern, concurrency map filter); issues created: #2179; stale: AgentJobTimeoutSeconds decision superseded by #2179 -->
-<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition -->
+<!-- Session: 19 | Last run: 2026-08-31 | Decisions added: 6 (DistributedAgentRegistry cache staleness, Payload null-discriminator, PostPrCiDuration metric, live K8s dual ListJobsAsync correctness, AssignmentEnricher 503 semantics, traceparent bidirectional); issues created: #2219/#2220/#2221/#2222/#2223 -->
+<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition, PostPrCiDuration Grafana panels after #2220 lands, Faro CSP script-src when CSP added, TimeoutSeconds end-to-end after #2179 -->
 
 ---
 
@@ -1574,7 +1575,16 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - "AgentJobTimeoutSeconds: unified backstop" enables "Chat keepalive Redis required for multi-replica" (the backstop fires when the idle-kill circuit fails, which happens when Redis is absent in multi-replica)
 - "Chat keepalive Redis required for multi-replica" scoped by "HMAC key derivation for agent auth" (Redis is already in the dependency stack for multi-replica SignalR; this adds one more reason it's required)
 - "ExternalCiDuration vs PostPrCiDuration" scoped by "Telemetry philosophy: instrument every decision point" (the split follows from the principle that each observable event gets its own instrument)
+- "PostPrCiDuration: separate histogram" scoped by "ExternalCiDuration vs PostPrCiDuration" (the new histogram is the actionable consequence of the separation decision); #2220 tracks
 - "WorkItems.Payload dispatch-time snapshot" scoped by "Dual JSON options (Default/Lenient)" (fresh fetch at assignment uses Lenient deserialization for backward compat); currently broken — #2171 tracks the fix
+- "WorkItems.Payload null-discriminator: no strong opinion" scoped by "WorkItems.Payload dispatch-time snapshot" (discriminator is the schema boundary guard for the snapshot feature); #2221 tracks
+- "AssignmentEnricher: 503 on enrichment failure" scoped by "WorkItems.Payload dispatch-time snapshot" (enrichment failure must not produce a partial assignment — 503 preserves the freshness contract)
+- "AssignmentEnricher: 503 on enrichment failure" scoped by "Partial failure contract: enrichment steps non-fatal, critical path fatal" (enrichment IS on the critical path — a configless job spec degrades quality; 503 is the correct contract)
+- "Traceparent propagation: bidirectional" enables "Telemetry philosophy: instrument every decision point" (full run traceability in Grafana Tempo requires end-to-end span linkage)
+- "Traceparent propagation: bidirectional" scoped by "Token vending: private keys never leave orchestrator" (both affect what flows over the agent↔API channel — traceparent is metadata, not secret)
+- "Live K8s dual ListJobsAsync: correctness requirement" scoped by "Agent lifetime: pull→push evolution" (K8s-only push model; live query is necessary because ephemeral Jobs are the only state)
+- "Live K8s dual ListJobsAsync: correctness requirement" constrains "Live K8s dual ListJobsAsync: optimization deferred" (optimization is blocked until K8s informer or TTL cache is introduced)
+- "DistributedAgentRegistry _allAgentsCache staleness: no strong opinion" scoped by "Chat keepalive Redis required for multi-replica" (both are multi-replica correctness concerns; cache staleness is low-risk because dispatch reads Redis directly)
 - "WorkItems.Payload dispatch-time snapshot" enables "Token vending: private keys never leave orchestrator" (tokens vended fresh at assignment time, not expired from enqueue snapshot)
 - "EmitOutputLine → Serilog routing" scoped by "Telemetry philosophy: instrument every decision point" (full run traceability requires every observable event to be Serilog-queryable); currently broken — #2178 tracks the fix
 - "AgentJobTimeoutSeconds: removed — single AgentTimeout" supersedes "AgentJobTimeoutSeconds: Helm default + per-project override" (session 17 entry); #2179 tracks the removal
@@ -1589,12 +1599,17 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - AgentCodingPageService decomposition — decision captured but implementation not yet started
 - `RateLimiter` null-forgiving operator (#1994) — no opinion captured, implementation detail
 - Timeout field proliferation: `FailureFeedbackTimeoutSeconds` const is the last remaining hardcoded timeout (session 18 decision queues its promotion)
+- DistributedAgentRegistry `_allAgentsCache` races — session 19: no-opinion, #2219 tracks
+- Payload null-discriminator fragility — session 19: no-opinion, #2221 tracks
+- PostPrCiDuration metric gap — session 19: issue #2220 created
+- AssignmentEnricher 503 correctness gap — session 19: issue #2222 created
+- Traceparent agent→orchestrator gap — session 19: issue #2223 created
 
 ### Queued Questions (for next session)
 - Automated calibration design — when a clear mechanism emerges, revisit
 - Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct?
 - AgentCodingPageService decomposition: after extraction, was the per-drawer split the right granularity?
-- PostPrCiDuration: after the metric split is implemented, verify Grafana panels updated
+- PostPrCiDuration: after #2220 lands, verify Grafana panels updated
 - Grafana Faro CSP: when CSP is added, revisit `script-src` to include `unpkg.com`
 - After #2171 + #2179 land: verify `TimeoutSeconds` propagation to `activeDeadlineSeconds` end-to-end
 
@@ -1658,3 +1673,93 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 **The split is deliberate and should not be re-unified.** Registration overlap between the two files is 0% — not one registration line is shared. Three of ~10 slots fill the same abstraction with a genuinely different implementation (e.g., `IJobCompletionReporter` vs `SignalRCompletionReporter`). Merging them behind an `if` would be strictly worse.
 
 **Dead branch removed at same time:** The `!isChatMode` check at `AgentWorkerService.cs:94` is the correct live path (wires `OnAssignJob` for work-item pods). Confirmed live — not removed.
+
+---
+
+### DistributedAgentRegistryService: _allAgentsCache staleness is acceptable — no strong opinion on fix approach
+
+**Date:** 2026-08-31
+**Category:** architecture
+
+**Decision:** No strong preference on how to fix the documented `_allAgentsCache` race in `GetIdleAgentsAsync` / `GetAllAgentsAsync` (TODOs at lines ~511 and ~554). The hard requirement is: dispatch correctness must not be affected. Four TODO (WARNING) comments document the issue explicitly in source. Agents should resolve them via whichever approach is simplest: `Interlocked.Exchange` for full replacements, `lock(_cacheUpdateLock)` via a dedicated `SemaphoreSlim(1)` for partial merges, or promoted `KNOWN-STALENESS:` comments if the staleness is accepted as a best-effort optimization. `#2219` tracks the fix.
+
+**Context:** `_allAgentsCache` is used only for the OTel `agent.jobs.active` gauge (`GetBusyAgentCount` → `GetAllAgents` sync) and non-dispatch reads. Dispatch itself reads Redis directly via `GetIdleAgentsAsync` (which returns fresh Redis data regardless of cache state). A deregistered agent resurrected in the in-memory cache does not affect dispatch — it only inflates the gauge transiently.
+
+**Alternatives considered:** Full async lock (introduces `SemaphoreSlim` overhead), drop `_allAgentsCache` entirely (callers already do `GetAwaiter().GetResult()` on the async path), accept staleness (cache is best-effort).
+
+**Reassess when:** Never for the principle — dispatch correctness is the invariant. Cache staleness in the OTel gauge is acceptable. `#2219` tracks cleanup of the TODO comments.
+
+---
+
+### WorkItems.Payload: null-discriminator for schema detection is fragile — no strong opinion on timing of fix
+
+**Date:** 2026-08-31
+**Category:** architecture
+
+**Decision:** No strong preference on when to add `PayloadSchemaVersion` to replace the fragile `ProviderConfigs == null` null-discriminator in `GetAssignment`. The current design works correctly for all rows written after `#2171`. The fragility (a legacy row with `ProviderConfigs` accidentally null being misclassified as new-schema) has a small but non-zero probability surface. `#2221` tracks the fix. Agents encountering a breaking schema change or adding a new field to `JobDistributionRequest` should evaluate whether adding `PayloadSchemaVersion` at that point is the right time.
+
+**Context:** The code itself documents the gap: `NOTE: [WARNING] The null-discriminator is fragile: an old-schema row where ProviderConfigs happened to deserialize as null ... would be misclassified as new-schema.` The suggested fix (`PayloadSchemaVersion = int?` in `JobDistributionRequest`, set to `1` in `BuildMinimalPayload`, discriminated in `GetAssignment`) requires no DB migration — the field lives in the `Payload` JSONB column.
+
+**Alternatives considered:** Keep null-discriminator permanently (acceptable risk for stable schema), add a sentinel in an existing nullable field (fragile in a different way).
+
+**Reassess when:** A breaking schema change to `JobDistributionRequest` is required, or a serialization regression causes a null-discriminator false-positive in production. At that point `#2221` becomes urgent.
+
+---
+
+### PostPrCiDuration: separate histogram from ExternalCiDuration — create tracking issue
+
+**Date:** 2026-08-31
+**Category:** architecture
+
+**Decision:** `WaitForPostPrCiAsync` must emit into a dedicated `PostPrCiDuration` histogram, not the existing `ExternalCiDuration`. The two CI poll phases are semantically distinct (pre-PR: branch push; post-PR: `pull_request` event). Emitting both into the same histogram inflates p50/p99 dashboards on runs that execute both phases (2× samples). `#2220` tracks the fix.
+
+**Context:** The TODO in `QualityGateExecutor.RetryLoop.cs:~210` documents this gap. On paths where both pre-PR and post-PR CI run (cleanup has no changes → post-PR CI fires), two samples land in `ExternalCiDuration`. The telemetry philosophy decision ("instrument every decision point") requires each observable event to have its own instrument.
+
+**Alternatives considered:** Single metric with `phase=pre_pr|post_pr` tag (valid but requires Grafana filter to disaggregate), run-level aggregate (loses per-phase granularity needed for debugging).
+
+**Reassess when:** Never for the separation principle. `#2220` tracks implementation.
+
+---
+
+### Live K8s dual ListJobsAsync calls per dispatch cycle — two calls are correct by design
+
+**Date:** 2026-08-31
+**Category:** architecture
+
+**Decision:** `DispatchLoop` and `ConsolidationDispatchLoop` each issue **two** `ListJobsAsync` calls per dispatch cycle when kiro items are present: one for `BuildConcurrencyMapAsync` (active job count per selector, called before the per-item loop) and one per kiro item for `SelectAvailablePvcAsync` (PVC availability, called inside `_pvcSelectLock`). These cannot be safely merged. Merging would require the PVC selection to use a snapshot taken before the lock — but concurrent cycles or loops may have created jobs between the snapshot and the lock acquisition. The second call is a correctness requirement: PVC selection must reflect the state of K8s at the moment the lock is held. The `SameLoop_ConcurrentCycles` and `CrossLoop` tests confirm this: both rely on the stateful mock returning different data for each `ListJobsAsync` call as jobs are created.
+
+**Context:** Option B (merge into one call) was implemented and reverted when two TOCTOU tests failed. The tests are correct: the per-item PVC query must be fresh. The only safe optimization would be to merge the two calls if `BuildConcurrencyMapAsync` were also executed inside `_pvcSelectLock` — but that would serialize the concurrency map computation (a per-cycle-level concern) into the per-item lock, which is worse.
+
+**Alternatives considered:** Short-lived in-process cache with TTL = dispatch cycle interval (~5s) — valid if K8s API latency becomes a bottleneck, but adds complexity. K8s informer watch stream (avoids polling entirely) — major architectural change, deferred.
+
+**Reassess when:** K8s API latency on `ListJobsAsync` becomes measurable (e.g., >100ms per call under load with many concurrent items). At that point, a per-cycle in-process cache with TTL shorter than the cycle interval is the right optimization.
+
+---
+
+### AssignmentEnricher: enrichment failure must return 503, not degraded 200
+
+**Date:** 2026-08-31
+**Category:** architecture
+
+**Decision:** When `AssignmentEnricher.EnrichAsync` fails transiently (DB timeout, provider resolution failure), `GetAssignment` must return 503, not a degraded identity-only 200. An agent receiving a 200 with `ProviderConfigs = null`, `QualityGateConfigs = null`, and `PipelineConfiguration = null` treats it as a valid job spec and proceeds — running without quality gates or steering. This is a correctness gap. `#2222` tracks the fix.
+
+**Context:** The current code swallows all non-`OperationCanceledException` exceptions in `EnrichAsync` and returns `null`, which the endpoint treats as "degraded but acceptable." The comment explicitly documents this as a gap: `NOTE: [WARNING] assignmentEnricher is nullable ... If enrichment fails silently, agents receive an identity-only 200 with no configs.` Comparable systems (GitHub Copilot CCA) return 503 on transient assignment failures; agents implement retry.
+
+**Alternatives considered:** Log at Error level + emit OTel counter (makes silent degrade visible without behavior change — insufficient), configurable degrade-vs-fail per failure type (over-engineered for a clear correctness requirement).
+
+**Reassess when:** Never for the 503-on-failure principle. If `GetAssignment` performance becomes a bottleneck due to enrichment latency, add a short-TTL server-side cache for config resolution — but the freshness contract must hold.
+
+---
+
+### Traceparent propagation: agent→orchestrator direction must be implemented
+
+**Date:** 2026-08-31
+**Category:** architecture
+
+**Decision:** W3C traceparent must be propagated **bidirectionally**: orchestrator→agent (implemented in #2211) AND agent→orchestrator. `WorkItemHttpClient` must inject `Activity.Current`'s traceparent into all outgoing orchestration-channel HTTP calls (`GetAssignmentAsync`, `PostStatusAsync`, `PostLabelSwapAsync`). Without this, agent-sourced status updates start disconnected root spans in Grafana Tempo — two separate trace trees per run instead of one. `#2223` tracks the fix.
+
+**Context:** The current propagation is one-directional. Agent spans are children of the API request that created the WorkItem. But when the agent calls `POST /status` or `GET /assignment`, those API spans are independent root spans. Correlation today requires querying by `run_id` tag across both trees. The preferred fix is manual header injection in `WorkItemHttpClient` (targeted to the orchestration channel only, not provider API calls like GitHub/GitLab).
+
+**Alternatives considered:** `AddHttpClientInstrumentation()` (auto-propagates on all `HttpClient` calls, including provider API calls — undesirable), tag-based correlation only (sufficient for debugging but not for end-to-end trace visualization).
+
+**Reassess when:** Never for the bidirectional principle once implemented. Chat pods (`AgentWorkerService`) use a persistent SignalR connection — traceparent for chat sessions is a separate concern, out of scope for `#2223`.
