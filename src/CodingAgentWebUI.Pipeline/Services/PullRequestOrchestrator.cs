@@ -37,6 +37,11 @@ public sealed class PullRequestOrchestrator
         string? issueReference = null)
     {
         ArgumentNullException.ThrowIfNull(run);
+        // TODO: [WARNING] `report` is no longer consumed by this method (BuildPrBodyAsync was replaced by the
+        // synchronous BuildPrBody which no longer accepts report). The parameter and null-check remain only for
+        // interface compatibility. Remove `report` from CreatePullRequestAsync, FinalizePullRequestAsync, and the
+        // IPipelineCallbacks interface once callers (QualityGateExecutor, PipelineExecutionContextBuilder,
+        // PullRequestFinalizationService) are updated to stop passing it.
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(repoProvider);
         ArgumentNullException.ThrowIfNull(config);
@@ -66,7 +71,7 @@ public sealed class PullRequestOrchestrator
         // Build PR info
         var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, effectiveIssueRef);
 
-        var prBody = await BuildPrBodyAsync(run, report, isDraft, repoProvider, issue, issueComments, effectiveIssueRef, closeRef, ct);
+        var prBody = BuildPrBody(run, isDraft, issue, issueComments, effectiveIssueRef, closeRef);
         run.PullRequestBody = prBody;
 
         if (isRework || !string.IsNullOrEmpty(run.PullRequestNumber))
@@ -279,6 +284,9 @@ public sealed class PullRequestOrchestrator
         string? issueReference = null)
     {
         ArgumentNullException.ThrowIfNull(run);
+        // TODO: [WARNING] `report` is no longer consumed by FinalizePullRequestAsync — BuildPrBody no longer accepts
+        // it. Remove from this method's signature and the callback interface once callers are updated (see parallel
+        // TODO in CreatePullRequestAsync).
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(repoProvider);
         ArgumentNullException.ThrowIfNull(config);
@@ -301,7 +309,7 @@ public sealed class PullRequestOrchestrator
         onOutputLine?.Invoke($"🔀 Pushed final changes to origin/{run.BranchName}");
 
         // Build the full PR body
-        var prBody = await BuildPrBodyAsync(run, report, isDraft, repoProvider, issue, issueComments, effectiveIssueRef, closeRef, ct);
+        var prBody = BuildPrBody(run, isDraft, issue, issueComments, effectiveIssueRef, closeRef);
         run.PullRequestBody = prBody;
 
         // Update PR body and mark ready (or leave as draft)
@@ -325,40 +333,27 @@ public sealed class PullRequestOrchestrator
     }
 
     /// <summary>
-    /// Constructs the PR body string from quality gate results, file changes, and run metadata.
+    /// Constructs the PR body string from run metadata and issue context.
     /// Called by both CreatePullRequestAsync and FinalizePullRequestAsync.
     /// </summary>
-    private async Task<string> BuildPrBodyAsync(
+    private static string BuildPrBody(
         PipelineRun run,
-        QualityGateReport report,
         bool isDraft,
-        IRepositoryProvider repoProvider,
         IssueDetail? issue,
         IReadOnlyList<IssueComment>? issueComments,
         string effectiveIssueRef,
-        string? closeRef,
-        CancellationToken ct)
+        string? closeRef)
     {
-        var testsPassed = report.Tests.TestsPassed ?? 0;
-        var testsFailed = report.Tests.TestsFailed ?? 0;
-        var testsSkipped = report.Tests.TestsSkipped ?? 0;
-        var fileChanges = await repoProvider.GetFileChangesAsync(run.WorkspacePath!, ct);
         var issueTitle = issue?.Title ?? run.IssueTitle;
-        var codeReviewSummary = BuildCodeReviewSummary(run);
 
         return PipelineFormatting.GeneratePrBody(new PrBodyParameters
         {
             IssueReference = effectiveIssueRef,
-            TestsPassed = testsPassed,
-            TestsFailed = testsFailed,
-            TestsSkipped = testsSkipped,
-            FileChanges = fileChanges,
             IssueTitle = issueTitle,
             IsDraft = isDraft,
             Comments = issueComments,
             BlacklistedFilesDetected = run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
             ModelName = run.ModelName,
-            CodeReviewSummary = codeReviewSummary,
             CloseReference = closeRef,
             ComplianceReport = run.AcceptanceCriteriaReport,
         });
@@ -395,26 +390,5 @@ public sealed class PullRequestOrchestrator
         await UpdateFileChangeStatsAsync(run, repoProvider);
 
         return true;
-    }
-
-    /// <summary>
-    /// Builds a CodeReviewSummary from the run's review data, or null if no review agents ran.
-    /// </summary>
-    private static CodeReviewSummary? BuildCodeReviewSummary(PipelineRun run)
-    {
-        return run.CodeReviewAgentsRun is { Count: > 0 }
-            ? new CodeReviewSummary(
-                run.CodeReviewAgentsRun,
-                run.CodeReviewCriticalCount,
-                run.CodeReviewWarningCount,
-                run.CodeReviewSuggestionCount,
-                run.CodeReviewAgentFindings
-                    .Select(kv => new AgentFindings(kv.Key, kv.Value))
-                    .ToArray())
-                {
-                    ChangeSummary = run.CodeReviewChangeSummary,
-                    VerdictSummary = run.CodeReviewVerdictSummary
-                }
-            : null;
     }
 }

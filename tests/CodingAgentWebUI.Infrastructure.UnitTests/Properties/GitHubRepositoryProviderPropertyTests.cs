@@ -90,45 +90,6 @@ public class GitHubRepositoryProviderPropertyTests
         prTitle.Should().Be($"feat: {title.Get} ({issueRef})");
     }
 
-    /// <summary>
-    /// Property 6: PR body contains all required sections including file changes and issue context.
-    /// **Validates: Requirements 6.3, 6.4**
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public void PrBody_ContainsAllRequiredSections(
-        PositiveInt issueNum,
-        NonNegativeInt passed,
-        NonNegativeInt failed,
-        NonNegativeInt skipped,
-        NonEmptyString title)
-    {
-        var issueRef = $"#{issueNum.Get}";
-        var fileChanges = new List<FileChangeSummary>
-        {
-            new("Added", "src/Test.cs"),
-            new("Modified", "src/Other.cs")
-        };
-
-        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = issueRef,
-                TestsPassed = passed.Get,
-                TestsFailed = failed.Get,
-                TestsSkipped = skipped.Get,
-                FileChanges = fileChanges,
-                IssueTitle = title.Get,
-                CloseReference = $"Closes {issueRef}",
-            });
-
-        body.Should().Contain("## Issue Context");
-        body.Should().Contain(title.Get);
-        body.Should().Contain($"({issueRef})");
-        body.Should().Contain("## Files Changed");
-        body.Should().Contain("src/Test.cs");
-        body.Should().Contain("## Test Results");
-        body.Should().Contain($"Passed: {passed.Get}");
-        body.Should().Contain($"Failed: {failed.Get}");
-        body.Should().Contain($"Skipped: {skipped.Get}");
-        body.Should().Contain($"Closes {issueRef}");
-    }
+    // Deleted (behavior removed): PrBody_ContainsAllRequiredSections — asserted ## Files Changed,
+    // ## Test Results, ## Coverage, and ## AI Code Review Findings which are no longer emitted.
 }

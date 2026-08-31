@@ -53,7 +53,7 @@ public static partial class PipelineFormatting
     private const int MaxCommentLength = PipelineConstants.MaxCommentLength;
 
     /// <summary>
-    /// Generates a PR body with all required sections including file changes and issue context.
+    /// Generates a PR body with issue context, input comments, issue reference, and acceptance criteria compliance.
     /// </summary>
     public static string GeneratePrBody(PrBodyParameters parameters)
     {
@@ -73,31 +73,6 @@ public static partial class PipelineFormatting
         // Input comments
         AppendInputComments(sb, parameters.Comments);
 
-        // Files changed
-        sb.AppendLine("## Files Changed");
-        if (parameters.FileChanges.Count > 0)
-        {
-            sb.AppendLine("| Status | File |");
-            sb.AppendLine("|--------|------|");
-            const int maxFiles = 50;
-            foreach (var fc in parameters.FileChanges.Take(maxFiles))
-                sb.AppendLine($"| {fc.Status} | `{fc.Path}` |");
-            if (parameters.FileChanges.Count > maxFiles)
-                sb.AppendLine($"| | *(and {parameters.FileChanges.Count - maxFiles} more)* |");
-        }
-        else
-        {
-            sb.AppendLine("No file changes detected.");
-        }
-        sb.AppendLine();
-
-        // Test results
-        sb.AppendLine("## Test Results");
-        sb.AppendLine($"- Passed: {parameters.TestsPassed}");
-        sb.AppendLine($"- Failed: {parameters.TestsFailed}");
-        sb.AppendLine($"- Skipped: {parameters.TestsSkipped}");
-        sb.AppendLine();
-
         if (parameters.CloseReference is not null)
         {
             sb.AppendLine("## Issue Reference");
@@ -105,7 +80,6 @@ public static partial class PipelineFormatting
             sb.AppendLine();
         }
 
-        AppendCodeReviewSection(sb, parameters.CodeReviewSummary);
         AppendComplianceSection(sb, parameters.ComplianceReport);
 
         sb.AppendLine("---");
@@ -141,61 +115,6 @@ public static partial class PipelineFormatting
                 return true;
         }
         return false;
-    }
-
-    private static void AppendCodeReviewSection(StringBuilder sb, CodeReviewSummary? summary)
-    {
-        if (summary is null)
-            return;
-
-        sb.AppendLine("## AI Code Review Findings");
-        sb.AppendLine();
-
-        // Render verdict before any early-return (valuable even for zero-findings runs)
-        var truncatedVerdict = ReviewSummaryParser.TruncateAtSentenceBoundary(summary.VerdictSummary);
-        if (truncatedVerdict is not null)
-        {
-            sb.AppendLine($"**Review verdict**: {truncatedVerdict}");
-            sb.AppendLine();
-        }
-
-        if (summary.CriticalCount == 0 && summary.WarningCount == 0 && summary.SuggestionCount == 0
-            && summary.AgentFindings.Count == 0)
-        {
-            sb.AppendLine("Code review: no findings");
-            sb.AppendLine();
-            return;
-        }
-
-        if (summary.AgentsRun.Count > 0)
-            sb.AppendLine($"**Agents**: {string.Join(", ", summary.AgentsRun)}");
-        sb.AppendLine();
-
-        sb.AppendLine("| Severity | Count | Action |");
-        sb.AppendLine("|----------|-------|--------|");
-        if (summary.CriticalCount > 0)
-            sb.AppendLine($"| CRITICAL | {summary.CriticalCount} | Fixed |");
-        if (summary.WarningCount > 0)
-            sb.AppendLine($"| WARNING | {summary.WarningCount} | Reported (TODO comments added) |");
-        if (summary.SuggestionCount > 0)
-            sb.AppendLine($"| SUGGESTION | {summary.SuggestionCount} | Reported only |");
-        sb.AppendLine();
-
-        const int maxFindingsPerAgent = 10_000;
-        foreach (var agent in summary.AgentFindings)
-        {
-            if (string.IsNullOrEmpty(agent.Findings))
-                continue;
-
-            var truncated = TruncateMarkdown(agent.Findings, maxFindingsPerAgent);
-            sb.AppendLine("<details>");
-            sb.AppendLine($"<summary>{agent.AgentName}</summary>");
-            sb.AppendLine();
-            sb.AppendLine(truncated);
-            sb.AppendLine();
-            sb.AppendLine("</details>");
-            sb.AppendLine();
-        }
     }
 
     private static void AppendComplianceSection(StringBuilder sb, AcceptanceCriteriaReport? report)
@@ -288,6 +207,8 @@ public static partial class PipelineFormatting
             FormatTestGateSummary(report.Tests)
         };
 
+        if (report.Coverage is not null)
+            parts.Add($"Coverage {(report.Coverage.Passed ? "✅" : "❌")} ({report.Coverage.Details})");
         if (report.SecurityScan is not null)
             parts.Add($"Security {(report.SecurityScan.Passed ? "✅" : "❌")}");
         if (report.ExternalCi is not null)

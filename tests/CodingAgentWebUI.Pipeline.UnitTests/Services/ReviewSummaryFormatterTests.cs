@@ -80,128 +80,13 @@ public class ReviewSummaryFormatterTests
         result.Should().NotContain(new string('x', 600));
     }
 
-    // ─── PipelineFormatting.AppendCodeReviewSection: with verdict ──────────────
-
-    [Fact]
-    public void AppendCodeReviewSection_WithVerdict_RendersBeforeTable()
-    {
-        var summary = new CodeReviewSummary(
-            AgentsRun: ["Agent1"],
-            CriticalCount: 1,
-            WarningCount: 0,
-            SuggestionCount: 0,
-            AgentFindings: [new AgentFindings("Agent1", "Found issue")])
-        {
-            VerdictSummary = "Found 1 critical race condition in the drain service."
-        };
-
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-        {
-            IssueReference = "#1",
-            TestsPassed = 0,
-            TestsFailed = 0,
-            TestsSkipped = 0,
-            FileChanges = [],
-            IssueTitle = "Test",
-            CodeReviewSummary = summary,
-        });
-
-        result.Should().Contain("**Review verdict**: Found 1 critical race condition");
-        var verdictIndex = result.IndexOf("**Review verdict**:", StringComparison.Ordinal);
-        var tableIndex = result.IndexOf("| Severity |", StringComparison.Ordinal);
-        verdictIndex.Should().BeLessThan(tableIndex);
-    }
-
-    [Fact]
-    public void AppendCodeReviewSection_VerdictRendersBeforeNoFindings()
-    {
-        var summary = new CodeReviewSummary(
-            AgentsRun: ["Agent1"],
-            CriticalCount: 0,
-            WarningCount: 0,
-            SuggestionCount: 0,
-            AgentFindings: [])
-        {
-            VerdictSummary = "No issues found, implementation follows standard patterns."
-        };
-
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-        {
-            IssueReference = "#1",
-            TestsPassed = 0,
-            TestsFailed = 0,
-            TestsSkipped = 0,
-            FileChanges = [],
-            IssueTitle = "Test",
-            CodeReviewSummary = summary,
-        });
-
-        result.Should().Contain("**Review verdict**: No issues found");
-        result.Should().Contain("Code review: no findings");
-        // Verdict should appear before "no findings"
-        var verdictIndex = result.IndexOf("**Review verdict**:", StringComparison.Ordinal);
-        var noFindingsIndex = result.IndexOf("Code review: no findings", StringComparison.Ordinal);
-        verdictIndex.Should().BeLessThan(noFindingsIndex);
-    }
-
-    [Fact]
-    public void AppendCodeReviewSection_NullVerdict_NoVerdictLine()
-    {
-        var summary = new CodeReviewSummary(
-            AgentsRun: ["Agent1"],
-            CriticalCount: 1,
-            WarningCount: 0,
-            SuggestionCount: 0,
-            AgentFindings: [new AgentFindings("Agent1", "Found issue")])
-        {
-            VerdictSummary = null
-        };
-
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-        {
-            IssueReference = "#1",
-            TestsPassed = 0,
-            TestsFailed = 0,
-            TestsSkipped = 0,
-            FileChanges = [],
-            IssueTitle = "Test",
-            CodeReviewSummary = summary,
-        });
-
-        result.Should().NotContain("**Review verdict**:");
-        // Still renders the table
-        result.Should().Contain("CRITICAL | 1 | Fixed");
-    }
-
-    [Fact]
-    public void AppendCodeReviewSection_DoesNotRenderChangeSummary()
-    {
-        // Implementation PR body should NOT have ChangeSummary — it's already in the blockquote
-        var summary = new CodeReviewSummary(
-            AgentsRun: ["Agent1"],
-            CriticalCount: 0,
-            WarningCount: 0,
-            SuggestionCount: 0,
-            AgentFindings: [])
-        {
-            ChangeSummary = "This should not appear in the implementation PR body.",
-            VerdictSummary = "Verdict text."
-        };
-
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-        {
-            IssueReference = "#1",
-            TestsPassed = 0,
-            TestsFailed = 0,
-            TestsSkipped = 0,
-            FileChanges = [],
-            IssueTitle = "Test",
-            CodeReviewSummary = summary,
-        });
-
-        result.Should().NotContain("**Changes**:");
-        result.Should().Contain("**Review verdict**: Verdict text.");
-    }
+    // Deleted (behavior removed): AppendCodeReviewSection_WithVerdict_RendersBeforeTable
+    // Deleted (behavior removed): AppendCodeReviewSection_VerdictRendersBeforeNoFindings
+    // Deleted (behavior removed): AppendCodeReviewSection_NullVerdict_NoVerdictLine
+    // Deleted (behavior removed): AppendCodeReviewSection_DoesNotRenderChangeSummary
+    // Deleted (behavior removed): PipelineFormatting_NullSummariesAfterFailure_BackwardCompatible
+    // All five tested AppendCodeReviewSection via PipelineFormatting.GeneratePrBody — that method
+    // no longer calls AppendCodeReviewSection; the section has been removed from the PR body.
 
     // ─── Non-fatal failure path ────────────────────────────────────────────────
 
@@ -231,37 +116,6 @@ public class ReviewSummaryFormatterTests
         result.Should().NotContain("**Review verdict**:");
         result.Should().Contain("[CRITICAL] | 1 |");
         result.Should().Contain("Race condition in X");
-    }
-
-    [Fact]
-    public void PipelineFormatting_NullSummariesAfterFailure_BackwardCompatible()
-    {
-        // Simulates: agent threw exception → summaries are null → formatter still works
-        var summary = new CodeReviewSummary(
-            AgentsRun: ["Agent1"],
-            CriticalCount: 2,
-            WarningCount: 1,
-            SuggestionCount: 0,
-            AgentFindings: [new AgentFindings("Agent1", "Found issues")])
-        {
-            ChangeSummary = null,
-            VerdictSummary = null
-        };
-
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-        {
-            IssueReference = "#1",
-            TestsPassed = 5,
-            TestsFailed = 0,
-            TestsSkipped = 0,
-            FileChanges = [],
-            IssueTitle = "Test",
-            CodeReviewSummary = summary,
-        });
-
-        result.Should().NotContain("**Review verdict**:");
-        result.Should().Contain("CRITICAL | 2 | Fixed");
-        result.Should().Contain("WARNING | 1 | Reported");
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────────────
