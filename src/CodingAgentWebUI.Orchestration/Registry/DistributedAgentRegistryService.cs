@@ -672,12 +672,19 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
         // Redis hash absent: either the TTL has not yet been written (fire-and-forget from Register
         // has not completed) or the hash TTL expired between heartbeats.
-        // Fall back to the node-local snapshot so that a just-registered agent is visible
-        // immediately after Register() returns, and a TTL-expired-but-live agent remains visible
-        // until UpdateHeartbeatAsync re-registers it.
-        // DeregisterAsync removes the snapshot entry before the Redis delete, so a deregistered
-        // agent correctly returns null here even if the Redis delete is still in-flight.
-        return _localSnapshot.TryGetValue(agentId, out var snap) ? snap : null;
+        // Fall back to the node-local snapshot ONLY if this replica owns the agent's connection
+        // (i.e. the agent's connectionId is in _connectionIndex). This prevents cross-replica
+        // false positives: agents registered on another replica are absent from _connectionIndex,
+        // and deregistered agents have their _connectionIndex entry cleared by DeregisterAsync
+        // before the Redis delete fires. Without this guard, a force-expired hash or a
+        // cross-replica deregister would cause GetByAgentId on the owning replica to return a
+        // stale snapshot entry instead of null.
+        if (_localSnapshot.TryGetValue(agentId, out var snap) &&
+            _connectionIndex.TryGetValue(snap.ConnectionId, out var indexedAgentId) &&
+            indexedAgentId == agentId)
+            return snap;
+
+        return null;
     }
 
     private static AgentEntry? HashToEntry(HashEntry[] hash)
