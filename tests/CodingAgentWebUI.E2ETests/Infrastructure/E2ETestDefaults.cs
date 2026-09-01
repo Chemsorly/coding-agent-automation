@@ -60,7 +60,7 @@ internal static class E2ETestDefaults
         Environment.SetEnvironmentVariable("WorkDistribution__AgentServiceAccountName", "agent-sa");
         Environment.SetEnvironmentVariable("WorkDistribution__CredentialPools__Kiro__0", "fake-pvc-0");
         Environment.SetEnvironmentVariable("WorkDistribution__CredentialPools__Kiro__1", "fake-pvc-1");
-        Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__AgentJobTimeoutSeconds", "7200");
+        Environment.SetEnvironmentVariable("WorkDistribution__Dispatch__ChatJobMaxDurationSeconds", "7200");
         // 30s, matching the production default. The original 10s was meant to fail fast for broken
         // dispatches — but loaded CI runners can take 12s+ for a real Kestrel+WebSocket+SignalR
         // handshake on the second concurrent chat connection, which caused false failures.
@@ -89,7 +89,7 @@ internal static class E2ETestDefaults
                      "WorkDistribution__Namespace", "WorkDistribution__OrchestratorUrl",
                      "WorkDistribution__AgentApiKeySecretName", "WorkDistribution__AgentServiceAccountName",
                      "WorkDistribution__CredentialPools__Kiro__0", "WorkDistribution__CredentialPools__Kiro__1",
-                     "WorkDistribution__Dispatch__AgentJobTimeoutSeconds",
+                     "WorkDistribution__Dispatch__ChatJobMaxDurationSeconds",
                      "WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds",
                      "WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds",
                      "WorkDistribution__Dispatch__ChatIdleTimeoutSeconds"

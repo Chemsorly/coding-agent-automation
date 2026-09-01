@@ -31,10 +31,11 @@ public sealed class DispatchServiceOptions
     public string OpencodeConfigSecretName { get; set; } = "";
 
     /// <summary>
-    /// Maximum agent job lifetime in seconds. Sets <c>activeDeadlineSeconds</c> on every K8s Job pod
-    /// (work-item agent jobs, consolidation jobs, and chat session pods). Default: 7200.
+    /// Maximum chat session pod lifetime in seconds. Sets <c>activeDeadlineSeconds</c> on chat
+    /// session K8s Job pods. Does NOT apply to work-item agent jobs (those use
+    /// <c>PipelineConfiguration.AgentTimeout</c> per-project). Default: 7200.
     /// </summary>
-    public int AgentJobTimeoutSeconds { get; set; } = 7200;
+    public int ChatJobMaxDurationSeconds { get; set; } = 7200;
 
     /// <summary>Time to wait for chat pod to connect before aborting. Default: 120s.</summary>
     public int ChatPodConnectTimeoutSeconds { get; set; } = 120;
@@ -56,28 +57,28 @@ public sealed class DispatchServiceOptions
     /// heartbeats may be silently lost on non-watcher replicas. Default: 1 (safe for local dev / single-replica).
     /// </summary>
     // TODO: Add a lower-bound clamp for ChatReplicaCount in ValidateAndClamp (Math.Max(1, value)), consistent
-    // with the other numeric options (AgentJobTimeoutSeconds, ChatIdleTimeoutSeconds, etc.). A misconfigured
+    // with the other numeric options (ChatJobMaxDurationSeconds, ChatIdleTimeoutSeconds, etc.). A misconfigured
     // value of 0 or negative (e.g. via Helm --set api.replicas=0) evaluates as <= 1, silently suppressing
     // the Redis warning even though the deployment is broken. See review finding [WARNING] #2133.
     public int ChatReplicaCount { get; set; } = 1;
 
-    private const int MinAgentJobTimeoutSeconds = 60;
+    private const int MinChatJobMaxDurationSeconds = 60;
     private const int MinChatPodConnectTimeoutSeconds = 5;
     private const int MinChatTerminationGracePeriodSeconds = 5;
     private const int MinChatIdleTimeoutSeconds = 10;
 
     /// <summary>
-    /// Validates job timeout and chat-related config values, clamping to safe minimums.
+    /// Validates chat-related config values, clamping to safe minimums.
     /// Called after options binding to prevent zero/negative values that would
-    /// immediately kill or never start agent pods.
+    /// immediately kill or never start chat pods.
     /// </summary>
     public void ValidateAndClamp(Serilog.ILogger? logger = null)
     {
-        if (AgentJobTimeoutSeconds < MinAgentJobTimeoutSeconds)
+        if (ChatJobMaxDurationSeconds < MinChatJobMaxDurationSeconds)
         {
-            logger?.Warning("AgentJobTimeoutSeconds ({Value}) is below minimum ({Min}), clamping",
-                AgentJobTimeoutSeconds, MinAgentJobTimeoutSeconds);
-            AgentJobTimeoutSeconds = MinAgentJobTimeoutSeconds;
+            logger?.Warning("ChatJobMaxDurationSeconds ({Value}) is below minimum ({Min}), clamping",
+                ChatJobMaxDurationSeconds, MinChatJobMaxDurationSeconds);
+            ChatJobMaxDurationSeconds = MinChatJobMaxDurationSeconds;
         }
         if (ChatPodConnectTimeoutSeconds < MinChatPodConnectTimeoutSeconds)
         {
