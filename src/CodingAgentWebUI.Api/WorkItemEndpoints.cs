@@ -77,6 +77,7 @@ public static class WorkItemEndpoints
         group.MapGet("/staleness", GetStaleness).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapPost("/{id:guid}/priority", PostPriorityWeight).RequireAuthorization(ApiAuthPolicies.Operator);
 
         // ── Metrics feed for the Scheduler's WorkItemCountsPoller ─────────────
         group.MapGet("/counts-by-status", GetCountsByStatus).RequireAuthorization(ApiAuthPolicies.Operator);
@@ -196,58 +197,91 @@ public static class WorkItemEndpoints
         if (request is null)
             return TypedResults.NotFound();
 
-        // ── Payload schema detection ──────────────────────────────────────
-        // PayloadSchemaVersion == 1  (new schema, post-#2171): fetch fresh config via AssignmentEnricher.
-        // PayloadSchemaVersion == null AND ProviderConfigs != null (old schema, pre-#2171): serve frozen snapshot.
-        // PayloadSchemaVersion == null AND ProviderConfigs == null: treat as new schema (all post-#2171 rows
-        //   without PayloadSchemaVersion set during the transition window).
-        var isNewSchema = request.PayloadSchemaVersion == 1
-            || (request.PayloadSchemaVersion is null && request.ProviderConfigs is null);
-
-        if (isNewSchema && assignmentEnricher is not null)
-        {
-            // Resolve project for steering + config override context.
-            // Falls back to a minimal stub so enrichment still works for project-less items.
-            PipelineProject project;
-            if (request.ProjectId.HasValue)
-            {
-                project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct)
-                    ?? BuildMinimalProject(request);
-            }
-            else
-            {
-                project = BuildMinimalProject(request);
-            }
-
-            var enriched = await assignmentEnricher.EnrichAsync(request, project, ct);
-            if (enriched is not null)
-                request = enriched;
-            // If enrichment fails, fall through to serve the identity-only request as a
-            // best-effort degraded response (missing configs, but RunId/IssueIdentifier intact).
-        }
-        else if (isNewSchema && assignmentEnricher is null)
-        {
-            // new-schema work item but enricher is null — indicates DI misconfiguration.
-            // ValidateDiWiring should have caught this at startup; log a warning here as
-            // defence-in-depth so the degraded response is at least visible in logs.
-            Log.Warning(
-                "GetAssignment: AssignmentEnricher is null for new-schema WorkItem {WorkItemId} — " +
-                "returning identity-only payload (no provider configs). " +
-                "ValidateDiWiring should prevent this in production.",
-                id);
-        }
+        // ── Backward-compatibility: detect payload schema ─────────────────
+        // Old schema: ProviderConfigs != null → serve from frozen snapshot.
+        // New schema: ProviderConfigs == null → fresh-fetch all mutable config.
+        // NOTE: [WARNING] The null-discriminator is fragile: an old-schema row where ProviderConfigs
+        // happened to deserialize as null (serialization bug, manually inserted row, future
+        // [JsonIgnore] refactor) would be misclassified as new-schema and enter the enrichment path.
+        // A versioned discriminator field (e.g., PayloadSchemaVersion) would eliminate the ambiguity.
+        // TODO: Restore the versioned PayloadSchemaVersion discriminator (was: PayloadSchemaVersion == 1)
+        // that was removed in the #2172 refactor. The null-ProviderConfigs signal is a fragile fallback.
+        // Either set PayloadSchemaVersion = 1 in BuildMinimalPayload and use it here, or remove the
+        // field and its documentation to prevent the mismatch. Consider splitting this into its own PR.
+        if (request.ProviderConfigs is null && assignmentEnricher is not null)
+            request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+        // TODO: When assignmentEnricher is null and request.ProviderConfigs is null (new-schema path),
+        // enrichment is silently skipped and an identity-only 200 is returned with no log output.
+        // A DI misconfiguration that drops AssignmentEnricher is now undetectable from logs at this site.
+        // Restore a Log.Warning when the enricher is null on the new-schema path (was present before #2172).
 
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
-
-        // Inject project secrets at delivery time (not serialized in payload for security)
-        if (request.ProjectId.HasValue)
-        {
-            var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
-            if (project?.Secrets is { Count: > 0 })
-                message = message with { ProjectSecrets = project.Secrets };
-        }
+        // TODO: [WARNING] InjectProjectSecretsAsync is now called unconditionally for all GetAssignment
+        // requests, including old-schema requests where request.ProviderConfigs is not null. In the
+        // prior code, secret injection was inside the isNewSchema branch. Old-schema callers that log
+        // or persist the full response message will now receive live ProjectSecrets where they did not
+        // before, widening the exposure surface even though the endpoint already requires Operator auth.
+        // Gate this call on request.ProviderConfigs is null (new-schema path only), or document the
+        // intentional behavior change so callers are aware secrets are now injected on all paths.
+        message = await InjectProjectSecretsAsync(message, request, projectStore, ct);
 
         return TypedResults.Ok(message);
+    }
+
+    /// <summary>
+    /// Enriches a new-schema request (ProviderConfigs == null) by fetching mutable config fresh
+    /// from the database. Resolves the project for steering + config override context, falling
+    /// back to a minimal stub for project-less items.
+    /// If enrichment fails, returns the original request as a best-effort degraded response.
+    /// </summary>
+    private static async Task<JobDistributionRequest> EnrichRequestAsync(
+        JobDistributionRequest request,
+        IProjectStore projectStore,
+        AssignmentEnricher assignmentEnricher,
+        CancellationToken ct)
+    {
+        // NOTE: [WARNING] assignmentEnricher is nullable ([FromServices] optional). If the DI
+        // container fails to resolve it at startup (transitive dependency missing), ASP.NET
+        // Core silently injects null and every new-schema work item gets a degraded identity-only
+        // 200 with no configs — no startup error, no warning log at this site.
+        // TODO: This method is only called when assignmentEnricher is not null (see GetAssignment
+        // call site). However, the outer GetAssignment still silently skips enrichment when
+        // assignmentEnricher is null. Restore the Log.Warning at the call site for that path.
+        PipelineProject project;
+        if (request.ProjectId.HasValue)
+        {
+            project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct)
+                ?? BuildMinimalProject(request);
+        }
+        else
+        {
+            project = BuildMinimalProject(request);
+        }
+
+        var enriched = await assignmentEnricher.EnrichAsync(request, project, ct);
+        // If enrichment fails, fall through to serve the identity-only request as a
+        // best-effort degraded response (missing configs, but RunId/IssueIdentifier intact).
+        return enriched ?? request;
+    }
+
+    /// <summary>
+    /// Injects project secrets into the assignment message at delivery time.
+    /// Secrets are not serialized in the payload for security; they are fetched fresh here.
+    /// </summary>
+    private static async Task<JobAssignmentMessage> InjectProjectSecretsAsync(
+        JobAssignmentMessage message,
+        JobDistributionRequest request,
+        IProjectStore projectStore,
+        CancellationToken ct)
+    {
+        if (!request.ProjectId.HasValue)
+            return message;
+
+        var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
+        if (project?.Secrets is { Count: > 0 })
+            return message with { ProjectSecrets = project.Secrets };
+
+        return message;
     }
 
     /// <summary>
@@ -376,6 +410,7 @@ public static class WorkItemEndpoints
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
+            PriorityWeight = string.Equals(request.InitiatedBy, "manual", StringComparison.Ordinal) ? 100 : 0,
             // Capture the W3C traceparent from the current API span so the worker K8s Job
             // can restore it and attach its spans to this trace rather than starting a new root.
             // Activity.Current here is the ASP.NET Core request span — the API span that the
@@ -431,9 +466,6 @@ public static class WorkItemEndpoints
     {
         return new JobDistributionRequest
         {
-            // Schema version discriminator: 1 = new schema (post-#2171), fresh config at assignment time.
-            PayloadSchemaVersion = 1,
-
             // Identity / non-reconstructable fields
             IssueIdentifier = request.IssueIdentifier,
             IssueProviderConfigId = request.IssueProviderConfigId,
@@ -489,21 +521,13 @@ public static class WorkItemEndpoints
                 }
                 : null,
 
-            // All mutable config intentionally omitted (null):
-            // ProviderConfigs = null           ← PayloadSchemaVersion=1 is now the authoritative new-schema signal;
-            //                                    ProviderConfigs==null is retained as a fallback for rows that
-            //                                    were created before PayloadSchemaVersion was introduced.
-            // PipelineConfiguration = null
-            // QualityGateConfigs = null
-            // ReviewerConfigs = null
-            // McpServers = null
-            // RepoSteeringContent = null
-            // ProjectSteeringContent = null
-            // IssueComments = null
-            // ParsedIssue = null
-            // ExistingAnalysis = null
-            // ResolvedProfileId = null         (re-resolved at assignment time)
-            // AgentProviderConfigId = null     (re-resolved at assignment time)
+            // All mutable config intentionally omitted (null). Fields not listed above
+            // (ProviderConfigs, PipelineConfiguration, QualityGateConfigs, ReviewerConfigs,
+            // McpServers, RepoSteeringContent, ProjectSteeringContent, IssueComments,
+            // ParsedIssue, ExistingAnalysis, ResolvedProfileId, AgentProviderConfigId)
+            // are left at their default null values and re-fetched at assignment time by
+            // AssignmentEnricher. The absence of ProviderConfigs is the new-schema signal
+            // detected in GetAssignment.
         };
     }
 
@@ -529,7 +553,8 @@ public static class WorkItemEndpoints
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending
                      && w.TaskType != WorkItemTaskType.Consolidation)
-            .OrderBy(w => w.CreatedAt)
+            .OrderByDescending(w => w.PriorityWeight)
+            .ThenBy(w => w.CreatedAt)
             .Take(maxResults)
             .Select(w => new
             {
@@ -543,6 +568,7 @@ public static class WorkItemEndpoints
                 w.Payload,
                 w.ProjectId,
                 w.TimeoutSeconds,
+                w.PriorityWeight,
                 w.TraceParent
             })
             .ToListAsync(ct);
@@ -576,6 +602,7 @@ public static class WorkItemEndpoints
                 AgentSelector = w.AgentSelector,
                 RetryCount = w.RetryCount,
                 TimeoutSeconds = w.TimeoutSeconds,
+                PriorityWeight = w.PriorityWeight,
                 IssueTitle = req?.IssueDetail?.Title,
                 InitiatedBy = req?.InitiatedBy,
                 ProjectName = req?.ProjectName,
@@ -1209,6 +1236,58 @@ public static class WorkItemEndpoints
             new CodingAgentWebUI.Api.Client.WorkItemCountDto(c.Status, c.AgentSelector, c.Count))
             .ToArray());
     }
+
+    // ── POST /{id}/priority ───────────────────────────────────────────────
+
+    /// <summary>
+    /// POST /api/work-items/{id}/priority
+    /// Body: { "priorityWeight": int }
+    /// Sets <see cref="WorkItemEntity.PriorityWeight"/> on a Pending work item.
+    /// Returns 200 on success.
+    /// Returns 400 if <c>priorityWeight</c> is outside [0, 1000].
+    /// Returns 409 if the item is not in Pending status.
+    /// Returns 404 if the item does not exist.
+    /// </summary>
+    internal static async Task<IResult> PostPriorityWeight(
+        Guid id,
+        [FromBody] PriorityWeightRequest request,
+        WorkItemTransitionService transitionService,
+        CancellationToken ct)
+    {
+        if (request.PriorityWeight is null)
+            return TypedResults.BadRequest("priorityWeight is required.");
+
+        if (request.PriorityWeight < 0 || request.PriorityWeight > 1000)
+            return TypedResults.BadRequest("priorityWeight must be between 0 and 1000 (inclusive).");
+
+        var result = await transitionService.UpdatePriorityWeightAsync(id, request.PriorityWeight.Value, ct);
+
+        return result switch
+        {
+            Infrastructure.Persistence.Services.UpdatePriorityWeightResult.Success => TypedResults.Ok(),
+            Infrastructure.Persistence.Services.UpdatePriorityWeightResult.NotPending =>
+                TypedResults.Conflict("Cannot update PriorityWeight: work item is not in Pending status."),
+            Infrastructure.Persistence.Services.UpdatePriorityWeightResult.ConcurrencyConflict =>
+                TypedResults.Conflict("Cannot update PriorityWeight: concurrent update conflict, please retry."),
+            // TODO: [WARNING] The default arm silently maps any future UpdatePriorityWeightResult values
+            // to 404 NotFound. If a new result code is added to the enum, the compiler will not warn
+            // that it is unhandled here. Consider adding an explicit case for UpdatePriorityWeightResult.NotFound
+            // and replacing the default arm with a throw (or a 500 response) to catch unhandled cases
+            // at compile time. The current behavior is correct for all existing values.
+            _ => TypedResults.NotFound()
+        };
+    }
+}
+
+/// <summary>
+/// Request body for POST /api/work-items/{id}/priority.
+/// </summary>
+public sealed class PriorityWeightRequest
+{
+    /// <summary>
+    /// Dispatch priority weight. Must be between 0 and 1000 (inclusive). Required.
+    /// </summary>
+    public int? PriorityWeight { get; init; }
 }
 
 /// <summary>

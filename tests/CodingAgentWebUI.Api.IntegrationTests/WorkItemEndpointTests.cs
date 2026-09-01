@@ -206,6 +206,35 @@ public sealed class WorkItemEndpointTests
         updated.ErrorMessage.Should().Be("agent crashed");
     }
 
+    /// <summary>
+    /// Regression test for issue #2202 Fix C (primary).
+    /// PostStatus with failureReason="Timeout" must return 200 and persist FailureReason.Timeout.
+    /// The fix ensures EmitTerminalStatusTelemetryAsync parses request.FailureReason and passes it
+    /// to LogTerminalStatus instead of null, so workdistribution_workitems_terminated emits
+    /// failure_reason="Timeout" instead of "none".
+    /// </summary>
+    [Fact]
+    public async Task PostStatus_FailedWithTimeoutReason_Returns200AndPersistsFailureReason()
+    {
+        var entity = SeedEntity(WorkItemStatus.Running);
+        var update = new
+        {
+            status = "Failed",
+            failureReason = "Timeout",
+            errorMessage = "agent timed out"
+        };
+
+        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/status", update,
+            PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(entity.Id);
+        updated!.FailureReason.Should().Be(FailureReason.Timeout,
+            "FailureReason=Timeout must be persisted so the metric tag is accurate");
+    }
+
     [Theory]
     [InlineData(WorkItemStatus.Succeeded)]
     [InlineData(WorkItemStatus.Failed)]
@@ -958,34 +987,290 @@ public sealed class WorkItemEndpointTests
         updated.RetryCount.Should().Be(1, "RetryCount must be incremented by requeue");
     }
 
-    // ── Fix C primary: FailureReason metric tag (issue #2202) ────────────────
+    // ── PriorityWeight — AC tests for issue #2172 ────────────────────────────
 
     /// <summary>
-    /// Regression test for issue #2202 Fix C (primary).
-    /// PostStatus with failureReason="Timeout" must return 200 and the FailureReason must be
-    /// persisted. The fix ensures EmitTerminalStatusTelemetryAsync parses request.FailureReason
-    /// and passes it to LogTerminalStatus instead of null, so workdistribution_workitems_terminated
-    /// emits failure_reason="Timeout" instead of "none".
+    /// AC: POST /api/work-items with InitiatedBy="manual" creates entity with PriorityWeight=100.
     /// </summary>
     [Fact]
-    public async Task PostStatus_FailedWithTimeoutReason_Returns200AndPersistsFailureReason()
+    public async Task CreateWorkItem_WithManualInitiatedBy_SetsPriorityWeightTo100()
     {
-        var entity = SeedEntity(WorkItemStatus.Running);
-        var update = new
+        var request = new JobDistributionRequest
         {
-            status = "Failed",
-            failureReason = "Timeout",
-            errorMessage = "agent timed out"
+            IssueIdentifier = new IssueIdentifier($"issue-manual-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "manual",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 3600
         };
 
-        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/status", update,
+        var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var id = await response.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+
+        using var db = _factory.CreateDbContext();
+        var entity = await db.WorkItems.FindAsync(id);
+        entity!.PriorityWeight.Should().Be(100, "manual dispatch must receive PriorityWeight=100");
+    }
+
+    /// <summary>
+    /// AC: POST /api/work-items with InitiatedBy="loop" creates entity with PriorityWeight=0.
+    /// </summary>
+    [Fact]
+    public async Task CreateWorkItem_WithLoopInitiatedBy_SetsPriorityWeightToZero()
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier($"issue-loop-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 3600
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/work-items", request, PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var id = await response.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+
+        using var db = _factory.CreateDbContext();
+        var entity = await db.WorkItems.FindAsync(id);
+        entity!.PriorityWeight.Should().Be(0, "loop dispatch must receive PriorityWeight=0");
+    }
+
+    // TODO: Add tests for InitiatedBy values that are neither "manual" nor "loop" (e.g. null,
+    // empty string, "automated", "cron", "MANUAL"). The production code uses StringComparison.Ordinal
+    // and maps everything non-"manual" to PriorityWeight=0. A caller sending "MANUAL" (wrong case)
+    // would silently receive weight 0. At minimum test null or empty → PriorityWeight=0 to lock in
+    // the intended fallback behavior.
+
+    /// <summary>
+    /// AC: GET /api/work-items/pending returns high-weight item before low-weight item
+    /// regardless of CreatedAt.
+    /// </summary>
+    [Fact]
+    public async Task GetPendingWorkItems_ReturnsHighWeightBeforeLowWeight_RegardlessOfCreatedAt()
+    {
+        var issuePrefix = $"prio-order-{Guid.NewGuid():N}";
+
+        // Seed a low-weight item with an earlier CreatedAt (was created "first")
+        var lowWeightEntity = SeedEntity(
+            WorkItemStatus.Pending,
+            issueIdentifier: $"{issuePrefix}-low",
+            createdAt: DateTimeOffset.UtcNow.AddMinutes(-10));
+        lowWeightEntity = UpdateEntityPriorityWeight(lowWeightEntity.Id, 0);
+
+        // Seed a high-weight item with a later CreatedAt (created "second")
+        var highWeightEntity = SeedEntity(
+            WorkItemStatus.Pending,
+            issueIdentifier: $"{issuePrefix}-high",
+            createdAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        highWeightEntity = UpdateEntityPriorityWeight(highWeightEntity.Id, 100);
+
+        var pendingResponse = await _client.GetAsync("/api/work-items/pending?maxResults=100");
+        pendingResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await pendingResponse.Content
+            .ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+
+        // Verify both entities carry the expected PriorityWeight values in the response
+        // (confirms that UpdateEntityPriorityWeight persisted before the HTTP call was made)
+        var lowItem = items!.FirstOrDefault(i => i.Id == lowWeightEntity.Id);
+        var highItem = items!.FirstOrDefault(i => i.Id == highWeightEntity.Id);
+
+        lowItem.Should().NotBeNull("low-weight item must be in pending list");
+        highItem.Should().NotBeNull("high-weight item must be in pending list");
+        lowItem!.PriorityWeight.Should().Be(0, "low-weight item must have PriorityWeight=0 as seeded");
+        highItem!.PriorityWeight.Should().Be(100, "high-weight item must have PriorityWeight=100 as seeded");
+
+        // Filter to just the two fixture items and assert the ordering invariant directly,
+        // so interleaved items from other parallel tests cannot produce false positives.
+        var fixtureItems = items
+            .Where(i => i.Id == lowWeightEntity.Id || i.Id == highWeightEntity.Id)
+            .ToList();
+
+        fixtureItems.Should().HaveCount(2);
+        fixtureItems[0].Id.Should().Be(highWeightEntity.Id,
+            "high-weight item must appear before low-weight item regardless of CreatedAt");
+        fixtureItems[1].Id.Should().Be(lowWeightEntity.Id,
+            "low-weight item must appear after high-weight item");
+    }
+
+    /// <summary>
+    /// AC: PriorityWeight field is present in GET /api/work-items/pending response.
+    /// </summary>
+    [Fact]
+    public async Task GetPendingWorkItems_IncludesPriorityWeightField()
+    {
+        var entity = SeedEntity(WorkItemStatus.Pending);
+        UpdateEntityPriorityWeight(entity.Id, 42);
+
+        var response = await _client.GetAsync("/api/work-items/pending?maxResults=100");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content
+            .ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        var found = items!.FirstOrDefault(i => i.Id == entity.Id);
+        found.Should().NotBeNull();
+        found!.PriorityWeight.Should().Be(42);
+    }
+
+    /// <summary>
+    /// AC: POST /api/work-items/{id}/priority with valid weight returns 200 and persists value.
+    /// </summary>
+    [Fact]
+    public async Task PostPriority_WithValidWeight_Returns200AndPersistsValue()
+    {
+        var entity = SeedEntity(WorkItemStatus.Pending);
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/work-items/{entity.Id}/priority",
+            new { priorityWeight = 500 },
             PipelineJsonOptions.Default);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         using var db = _factory.CreateDbContext();
         var updated = await db.WorkItems.FindAsync(entity.Id);
-        updated!.FailureReason.Should().Be(FailureReason.Timeout,
-            "FailureReason=Timeout must be persisted so the metric tag is accurate");
+        updated!.PriorityWeight.Should().Be(500);
+    }
+
+    /// <summary>
+    /// AC: POST /api/work-items/{id}/priority with weight &lt; 0 returns 400.
+    /// </summary>
+    [Fact]
+    public async Task PostPriority_WithNegativeWeight_Returns400()
+    {
+        var entity = SeedEntity(WorkItemStatus.Pending);
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/work-items/{entity.Id}/priority",
+            new { priorityWeight = -1 },
+            PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// AC: POST /api/work-items/{id}/priority with weight &gt; 1000 returns 400.
+    /// </summary>
+    [Fact]
+    public async Task PostPriority_WithWeightAbove1000_Returns400()
+    {
+        var entity = SeedEntity(WorkItemStatus.Pending);
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/work-items/{entity.Id}/priority",
+            new { priorityWeight = 1001 },
+            PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// AC: POST /api/work-items/{id}/priority on a non-Pending item returns 409.
+    /// </summary>
+    [Theory]
+    [InlineData(WorkItemStatus.Dispatched)]
+    [InlineData(WorkItemStatus.Running)]
+    [InlineData(WorkItemStatus.Succeeded)]
+    [InlineData(WorkItemStatus.Failed)]
+    [InlineData(WorkItemStatus.Cancelled)]
+    public async Task PostPriority_OnNonPendingItem_Returns409(WorkItemStatus nonPendingStatus)
+    {
+        var entity = SeedEntity(nonPendingStatus);
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/work-items/{entity.Id}/priority",
+            new { priorityWeight = 100 },
+            PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    /// <summary>
+    /// AC: POST /api/work-items/{id}/priority on non-existent item returns 404.
+    /// </summary>
+    [Fact]
+    public async Task PostPriority_OnNonExistentItem_Returns404()
+    {
+        var response = await _client.PostAsJsonAsync(
+            $"/api/work-items/{Guid.NewGuid()}/priority",
+            new { priorityWeight = 100 },
+            PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    // TODO: Add a test for POST /{id}/priority with a missing or empty body (i.e. priorityWeight
+    // is null after deserialization, sending `{}` or no body). The production handler returns
+    // 400 "priorityWeight is required." for PriorityWeightRequest.PriorityWeight == null,
+    // but this path is currently untested.
+
+    /// <summary>
+    /// AC: POST /api/work-items/{id}/priority with boundary values 0 and 1000 returns 200.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1000)]
+    public async Task PostPriority_WithBoundaryWeights_Returns200(int weight)
+    {
+        var entity = SeedEntity(WorkItemStatus.Pending);
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/work-items/{entity.Id}/priority",
+            new { priorityWeight = weight },
+            PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(entity.Id);
+        updated!.PriorityWeight.Should().Be(weight);
+    }
+
+    /// <summary>
+    /// AC: POST /api/work-items/{id}/requeue on a Failed item with PriorityWeight=100
+    /// preserves PriorityWeight after the transition back to Pending.
+    /// </summary>
+    [Fact]
+    public async Task RequeueWorkItem_PreservesPriorityWeight_AfterTransitionFromFailed()
+    {
+        // Seed a Failed entity with PriorityWeight=100
+        var entity = SeedEntity(WorkItemStatus.Failed, failureReason: FailureReason.AgentError);
+        UpdateEntityPriorityWeight(entity.Id, 100);
+
+        // Verify the weight was persisted before calling requeue, so a silent failure in
+        // UpdateEntityPriorityWeight cannot mask a bug in the requeue transition.
+        using (var dbBefore = _factory.CreateDbContext())
+        {
+            var before = await dbBefore.WorkItems.FindAsync(entity.Id);
+            before!.PriorityWeight.Should().Be(100, "PriorityWeight must be 100 before requeue is called");
+        }
+
+        // Requeue Failed → Pending
+        var response = await _client.PostAsync($"/api/work-items/{entity.Id}/requeue", null);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // PriorityWeight must be preserved (requeue does not touch the column)
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(entity.Id);
+        updated!.Status.Should().Be(WorkItemStatus.Pending);
+        updated.PriorityWeight.Should().Be(100, "PriorityWeight must be preserved across requeue transitions");
+    }
+
+    // ── Priority test helpers ─────────────────────────────────────────────────
+
+    private WorkItemEntity UpdateEntityPriorityWeight(Guid id, int priorityWeight)
+    {
+        using var db = _factory.CreateDbContext();
+        var entity = db.WorkItems.Find(id)!;
+        entity.PriorityWeight = priorityWeight;
+        db.SaveChanges();
+        return entity;
     }
 }

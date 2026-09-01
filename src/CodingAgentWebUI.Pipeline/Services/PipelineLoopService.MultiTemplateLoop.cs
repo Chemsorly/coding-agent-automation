@@ -59,6 +59,12 @@ public sealed partial class PipelineLoopService
 
         EmitCyclePollMetrics(snapshot, failuresBefore, issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues);
 
+        // Build eligibility map from already-polled data for use by the queue sweep later.
+        // failuresBefore is passed so BuildEligibilityMap can detect templates that failed (or were
+        // rate-limited) *during* this cycle and skip them (fail-open), preventing incorrect
+        // cancellation of WorkItems when poll data is stale due to a same-cycle failure.
+        var eligibleByProvider = BuildEligibilityMap(snapshot.PollableTemplates, issueQueues, failuresBefore, _templateStatuses);
+
         if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.Config.ClosedLoopMaxConsecutivePollFailures, snapshot.Config.ClosedLoopCircuitBreakerCooldown, ct))
             return true;
 
@@ -91,6 +97,9 @@ public sealed partial class PipelineLoopService
 
         await RunHousekeepingAsync(snapshot, agentDonePrQueues, ct);
 
+        if (snapshot.Config.QueueSweepEnabled)
+            await SweepPendingWorkItemsAsync(eligibleByProvider, sweepEnabled: true, ct);
+
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
         lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.Config.ClosedLoopPollInterval.TotalSeconds}s."; }
@@ -104,6 +113,180 @@ public sealed partial class PipelineLoopService
         return templates.DistinctBy(t => t.Id).ToDictionary(
             t => t.Id,
             t => _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0);
+    }
+
+    /// <summary>
+    /// Builds a provider-keyed eligibility map from the already-polled issue queues.
+    /// The map is used by <see cref="SweepPendingWorkItemsAsync"/> to decide which Pending
+    /// WorkItems to cancel.
+    /// <para>
+    /// Fail-open cases — a template is omitted from the map (its provider will be absent,
+    /// causing the sweep to skip WorkItems for that provider) when:
+    /// <list type="bullet">
+    ///   <item>Its ID is not in <paramref name="issueQueues"/> (template was not polled).</item>
+    ///   <item>Its <c>ConsecutiveFailures</c> increased versus <paramref name="failuresBefore"/>
+    ///         (it failed during this cycle — poll data is unreliable).</item>
+    ///   <item>Its current status has <c>RateLimitResetAt</c> set (rate-limited during this cycle
+    ///         OR excluded from <paramref name="pollableTemplates"/> upstream because it was already
+    ///         rate-limited at cycle start).</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyDictionary<string, HashSet<string>> BuildEligibilityMap(
+        IReadOnlyList<PipelineJobTemplate> pollableTemplates,
+        Dictionary<string, List<IssueSummary>> issueQueues,
+        IReadOnlyDictionary<string, int>? failuresBefore = null,
+        IReadOnlyDictionary<string, ConfigStatusSnapshot>? templateStatuses = null)
+    {
+        var result = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var template in pollableTemplates)
+        {
+            if (!issueQueues.TryGetValue(template.Id, out var issues))
+                continue; // template was not polled this cycle — fail open, omit from map
+
+            // Skip templates that failed (or got rate-limited) during this cycle: their
+            // issueQueues entry was cleared by HandleRateLimitException/HandleGenericPollException
+            // and represents missing data, not a genuine empty queue.
+            // TODO [WARNING]: When templateStatuses contains an entry for a template but
+            // failuresBefore does not (or vice versa), the ConsecutiveFailures check is skipped
+            // and the template is included in the eligibility map with whatever issueQueues holds.
+            // If a template fails during the cycle (ConsecutiveFailures incremented) but its ID
+            // was never recorded in failuresBefore, the stale/empty issue list is treated as a
+            // genuine "zero eligible issues" eligibility set, potentially cancelling WorkItems for
+            // a provider whose poll data is unreliable. In practice failuresBefore is always built
+            // from the same _templateStatuses snapshot before polling, so the two should always be
+            // in sync — but this is not enforced by the type system.
+            if (templateStatuses is not null && templateStatuses.TryGetValue(template.Id, out var status))
+            {
+                if (status.RateLimitResetAt.HasValue)
+                    continue; // rate-limited during (or before) this cycle — fail open
+
+                if (failuresBefore is not null &&
+                    failuresBefore.TryGetValue(template.Id, out var before) &&
+                    status.ConsecutiveFailures > before)
+                    continue; // poll failed during this cycle — fail open
+            }
+
+            if (!result.TryGetValue(template.IssueProviderId, out var set))
+            {
+                set = new HashSet<string>(StringComparer.Ordinal);
+                result[template.IssueProviderId] = set;
+            }
+            foreach (var issue in issues)
+                set.Add(issue.Identifier);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Fetches all Pending WorkItems and cancels any whose issue is no longer in the
+    /// current cycle's eligibility set. Skips WorkItems with <c>TaskType != Implementation</c>.
+    /// Aborts the entire sweep (without cancelling anything) if <c>GetPendingAsync</c> throws.
+    /// Per-item <c>PostStatusAsync</c> failures are handled individually: expected HTTP races
+    /// (400/404/409) are logged at Debug level; unexpected failures are logged at Warning and
+    /// counted in <see cref="PipelineTelemetry.QueueSweepFailed"/>.
+    /// </summary>
+    /// <param name="eligibleByProvider">Provider-keyed eligibility map from <see cref="BuildEligibilityMap"/>.</param>
+    /// <param name="sweepEnabled">
+    /// Must be <c>true</c> for the sweep to run. Pass <see cref="PipelineConfiguration.QueueSweepEnabled"/>
+    /// here; the parameter is explicit (rather than reading config inside the method) so the
+    /// <c>QueueSweepEnabled = false</c> guard can be unit-tested without wiring a full cycle.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    internal async Task SweepPendingWorkItemsAsync(
+        IReadOnlyDictionary<string, HashSet<string>> eligibleByProvider,
+        bool sweepEnabled,
+        CancellationToken ct)
+    {
+        if (!sweepEnabled) return;
+        if (_workItemClient is null) return;
+
+        IReadOnlyList<PendingWorkItemDto> pending;
+        // TODO [WARNING]: GetPendingAsync(maxResults: 500) is a hard, unpaginated cap. If more
+        // than 500 Pending Implementation WorkItems exist, the excess is silently skipped this
+        // cycle with no log, no counter. The assumption is that the sweep drains across multiple
+        // cycles. If the full 500 are returned, consider logging a Warning to signal the cap was hit.
+        try
+        {
+            pending = await _workItemClient.GetPendingAsync(maxResults: 500, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "QueueSweep: failed to fetch pending items, skipping this cycle");
+            return;
+        }
+
+        foreach (var item in pending)
+        {
+            if (item.TaskType != WorkItemTaskType.Implementation)
+            {
+                PipelineTelemetry.QueueSweepSkipped.Add(1);
+                continue;
+            }
+
+            if (!eligibleByProvider.TryGetValue(item.IssueProviderConfigId, out var eligible))
+            {
+                // Provider was not polled this cycle (e.g. rate-limited template excluded from
+                // pollableTemplates) — fail open, do not cancel
+                PipelineTelemetry.QueueSweepSkipped.Add(1);
+                continue;
+            }
+
+            if (eligible.Contains(item.IssueIdentifier))
+            {
+                // Issue is still eligible for dispatch — do not cancel
+                continue;
+            }
+
+            _logger.Information(
+                "QueueSweep: cancelling WorkItem {WorkItemId} for issue {IssueIdentifier} " +
+                "(provider {IssueProviderConfigId}) — issue no longer eligible",
+                item.Id, item.IssueIdentifier, item.IssueProviderConfigId);
+            // TODO [WARNING]: QueueSweepCancelled is incremented here, before PostStatusAsync.
+            // If PostStatusAsync throws (expected 400/404/409 race or unexpected failure), the
+            // counter still records a "cancelled" item that was not actually cancelled by this sweep.
+            // This means QueueSweepCancelled counts "cancel attempts" rather than "confirmed
+            // cancellations". To fix, move this Add(1) call inside the try block, after the
+            // PostStatusAsync await succeeds.
+            PipelineTelemetry.QueueSweepCancelled.Add(1);
+
+            try
+            {
+                await _workItemClient.PostStatusAsync(item.Id,
+                    new WorkItemStatusUpdate
+                    {
+                        Status = "Cancelled",
+                        ErrorMessage = "Issue no longer eligible for dispatch (queue sweep)"
+                    }, ct);
+            }
+            catch (HttpRequestException httpEx) when (
+                httpEx.StatusCode is System.Net.HttpStatusCode.BadRequest
+                    or System.Net.HttpStatusCode.NotFound
+                    or System.Net.HttpStatusCode.Conflict)
+            {
+                // Expected race: item was claimed/transitioned by the DispatchLoop between our
+                // GetPendingAsync scan and this PostStatusAsync call. Treat as non-error.
+                _logger.Debug(
+                    "QueueSweep: WorkItem {WorkItemId} already transitioned (HTTP {StatusCode}) — skipping",
+                    item.Id, (int?)httpEx.StatusCode);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Unexpected failure (network error, timeout, 5xx). Count and log at Warning.
+                PipelineTelemetry.QueueSweepFailed.Add(1);
+                _logger.Warning(ex,
+                    "QueueSweep: PostStatusAsync failed unexpectedly for WorkItem {WorkItemId} — will retry next cycle",
+                    item.Id);
+            }
+        }
     }
 
     /// <summary>
