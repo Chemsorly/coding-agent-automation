@@ -228,10 +228,18 @@ public static class WorkDistributionTelemetry
     /// Registers a callback that supplies workitems_by_status measurements.
     /// Called once at startup from DI registration when DB is configured.
     /// The callback should query WorkItems grouped by (Status, AgentSelector).
+    /// Logs a warning if called more than once (e.g. from a misconfigured DI container
+    /// or parallel test runs) — the second registration overwrites the first.
     /// </summary>
     public static void RegisterWorkItemsByStatusCallback(Func<IEnumerable<Measurement<long>>> callback)
     {
-        _workItemsByStatusCallback = callback;
+        if (Interlocked.CompareExchange(ref _workItemsByStatusCallback, callback, null) is not null)
+        {
+            Serilog.Log.Warning(
+                "WorkDistributionTelemetry: RegisterWorkItemsByStatusCallback called more than once — " +
+                "previous callback overwritten. This indicates a DI misconfiguration or parallel test run.");
+            _workItemsByStatusCallback = callback;
+        }
     }
 
     /// <summary>
