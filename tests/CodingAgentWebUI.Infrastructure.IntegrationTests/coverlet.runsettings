@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RunSettings>
-  <!-- NOTE: Do NOT add <TestCaseFilter> here. The migration-integrity CI job uses
-       --filter "Category=Integration" on the command line. A runsettings-level filter
-       gets AND-combined with the CLI filter, producing the impossible expression
-       "(Category!=Integration)&(Category=Integration)" which matches zero tests and
-       silently passes. The category exclusion for local/quality-gate runs is handled
-       by the CLI filter in those invocations, not here. -->
+  <!-- NOTE: Do NOT add a TestCaseFilter element here. The migration-integrity CI job uses
+       "Category=Integration" on the command line via the dotnet test filter argument.
+       A runsettings-level filter gets AND-combined with the CLI filter, producing the
+       impossible expression "(Category!=Integration)&(Category=Integration)" which
+       matches zero tests and silently passes. Category exclusion for local or
+       quality-gate runs is handled by the CLI filter in those invocations. -->
   <DataCollectionRunSettings>
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">
