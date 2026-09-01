@@ -32,10 +32,10 @@ public sealed class DispatchService : LeaderElectedPollingService
 
     protected override async Task RunLeadershipTermAsync(CancellationToken ct)
     {
-        Log.Debug("DispatchService config: AgentJobTimeoutSeconds={Timeout}s, ChatPodConnectTimeoutSeconds={ConnectTimeout}s, " +
+        Log.Debug("DispatchService config: ChatJobMaxDurationSeconds={ChatDuration}s, ChatPodConnectTimeoutSeconds={ConnectTimeout}s, " +
                   "ChatTerminationGracePeriodSeconds={TerminationGrace}s, PollIntervalSeconds={PollInterval}s, " +
                   "KiroPvcPool=[{PvcPool}]",
-            _options.AgentJobTimeoutSeconds,
+            _options.ChatJobMaxDurationSeconds,
             _options.ChatPodConnectTimeoutSeconds,
             _options.ChatTerminationGracePeriodSeconds,
             _options.PollIntervalSeconds,

@@ -102,21 +102,33 @@ public sealed class ReconciliationLoop
     }
 
     /// <summary>
-    /// Enforces the session timeout: marks Running items older than
-    /// <see cref="DispatchServiceOptions.AgentJobTimeoutSeconds"/> as Failed.
+    /// Enforces the session timeout: marks Running items that have exceeded their per-item
+    /// <see cref="ActiveWorkItemDto.TimeoutSeconds"/> as Failed.
+    /// Items without a stored timeout (zero) fall back to the global default
+    /// (<see cref="PipelineConstants.DefaultAgentTimeout"/>).
     /// </summary>
     public async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
+        // Use the canary minimum as the query threshold so that items with short per-project
+        // timeouts (potentially less than the global default) are still evaluated.
+        // Per-item timeout enforcement happens in the loop body below.
+        // TODO: PipelineConfiguration.AgentTimeout has no minimum-value enforcement at the DB layer.
+        // A project configured with AgentTimeout < TimeoutCanaryMinAgeSeconds (60s) will never be
+        // enforced: every cycle the canary guard fires, emitting a TimeoutCanaryViolations metric
+        // but skipping the item. Consider adding a lower-bound clamp on AgentTimeout at the
+        // configuration-save endpoint (similar to DispatchServiceOptions.ValidateAndClamp).
         IReadOnlyList<ActiveWorkItemDto> timedOut;
         try
         {
-            timedOut = await _workItemClient.GetActiveAsync(_options.AgentJobTimeoutSeconds, ct);
+            timedOut = await _workItemClient.GetActiveAsync(TimeoutCanaryMinAgeSeconds, ct);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to query active work items for timeout enforcement");
             return;
         }
+
+        var globalDefaultSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds;
 
         foreach (var item in timedOut)
         {
@@ -125,11 +137,31 @@ public sealed class ReconciliationLoop
             // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
             if (item.Status != WorkItemStatus.Running) continue;
 
+            // Resolve the effective timeout for this item.
+            // TimeoutSeconds == 0 means the value was not stored (pre-dates this field) — fall back
+            // to the global PipelineConfiguration.AgentTimeout default for backward compatibility.
+            // TODO: The zero sentinel is not enforced at the entity/DTO layer — it is indistinguishable
+            // from an explicitly set value of 0. Consider adding a DB constraint or a positive-value
+            // check at the enqueue endpoint (WorkItemEndpoints) so that TimeoutSeconds > 0 is always
+            // guaranteed for new rows, narrowing this fallback to truly legacy data only.
+            var effectiveTimeoutSeconds = item.TimeoutSeconds > 0
+                ? item.TimeoutSeconds
+                : globalDefaultSeconds;
+
             // Compute execution age from DispatchedAt. If DispatchedAt is null (items dispatched before
-            // the field was added), fall back to AgentJobTimeoutSeconds — safe to enforce.
+            // the field was added), fall back to effectiveTimeoutSeconds — safe to enforce.
+            // TODO: DispatchedAt == null with effectiveTimeoutSeconds >= TimeoutCanaryMinAgeSeconds means
+            // executionAgeSeconds == effectiveTimeoutSeconds, so the subsequent guard
+            // (executionAgeSeconds < effectiveTimeoutSeconds) evaluates to false and the item is
+            // immediately timed out on the first reconciliation cycle after dispatch. If DispatchedAt
+            // can remain null for a legitimately running item (e.g., a write failure on the claim
+            // path), this creates a false-positive timeout for a healthy item. Consider returning
+            // early (skip enforcement) when DispatchedAt is null and the item has been running less
+            // than effectiveTimeoutSeconds according to CreatedAt, or storing DispatchedAt
+            // atomically with the claim to eliminate the null window. (DotNetSpecialist review [WARNING])
             var executionAgeSeconds = item.DispatchedAt.HasValue
                 ? (DateTimeOffset.UtcNow - item.DispatchedAt.Value).TotalSeconds
-                : _options.AgentJobTimeoutSeconds;
+                : effectiveTimeoutSeconds;
 
             WorkDistributionTelemetry.TimeoutExecutionAge.Record(executionAgeSeconds,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
@@ -145,15 +177,26 @@ public sealed class ReconciliationLoop
                 continue;
             }
 
+            // Not timed out yet — skip.
+            // TODO: The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
+            // is considered timed out (not skipped). At TimeoutSeconds == 60 (the canary minimum),
+            // the canary guard (executionAgeSeconds < 60) and this guard (executionAgeSeconds < 60)
+            // use the same threshold, so the canary invariant provides no protection for items at
+            // exactly that boundary — the item is immediately enforced on the first cycle it is
+            // returned by the query. This is a gap in the canary design that was not present when
+            // the global timeout was always >> 60s. (DotNetSpecialist review [WARNING])
+            if (executionAgeSeconds < effectiveTimeoutSeconds)
+                continue;
+
             Log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
-                item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", _options.AgentJobTimeoutSeconds);
+                item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", effectiveTimeoutSeconds);
 
             try
             {
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
                     Status = nameof(WorkItemStatus.Failed),
-                    ErrorMessage = $"Agent timeout after {_options.AgentJobTimeoutSeconds}s",
+                    ErrorMessage = $"Agent timeout after {effectiveTimeoutSeconds}s",
                     FailureReason = "Timeout"
                 }, ct);
 

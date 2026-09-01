@@ -29,7 +29,7 @@ public sealed class ReconciliationServiceTests
         _options = new DispatchServiceOptions
         {
             Namespace = "test-ns",
-            AgentJobTimeoutSeconds = 7200,
+            ChatJobMaxDurationSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120
         };
 
