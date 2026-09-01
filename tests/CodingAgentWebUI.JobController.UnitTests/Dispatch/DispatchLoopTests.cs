@@ -1,5 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
+using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
 using System.Collections.Concurrent;
 
@@ -20,7 +22,21 @@ public sealed class DispatchLoopTests
     // Shared process-wide PVC selection lock — same singleton that would be injected by DI in production.
     private readonly PvcSelectLock _pvcSelectLock = new();
 
+    // Provider factory mocks — default setup returns an eligible issue (open + agent:next).
+    // This keeps all existing tests passing unchanged after the IProviderFactory ctor param is added.
+    private readonly Mock<IProviderFactory> _providerFactory = new();
+    private readonly Mock<IIssueProvider> _issueProvider = new();
+
     private static readonly Guid ItemId = Guid.NewGuid();
+
+    // Default provider config returned for IssueProviderConfigId "gh-1".
+    private static readonly ProviderConfig DefaultProviderConfig = new()
+    {
+        Id = "gh-1",
+        Kind = ProviderKind.Issue,
+        ProviderType = "GitHub",
+        DisplayName = "Test GitHub"
+    };
 
     public DispatchLoopTests()
     {
@@ -50,6 +66,32 @@ public sealed class DispatchLoopTests
         _k8sClient.Setup(c => c.ListJobsAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [] });
+
+        // Default eligible-issue behavior — issue is open, has agent:next.
+        // All existing tests rely on this default so they pass without modification.
+        _issueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "1",
+                Title = "Test issue",
+                Description = "",
+                Labels = new[] { AgentLabels.Next }
+            });
+        _issueProvider
+            .Setup(p => p.DisposeAsync())
+            .Returns(ValueTask.CompletedTask);
+
+        _providerFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(_issueProvider.Object);
+
+        _configClient
+            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { DefaultProviderConfig });
     }
 
     private static PendingWorkItemDto MakePending(string agentSelector = "dotnet10,opencode", int timeoutSeconds = 0) =>
@@ -76,7 +118,7 @@ public sealed class DispatchLoopTests
 
     private DispatchLoop CreateLoop() =>
         new(_workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            _templateStore, _options, _pvcSelectLock);
+            _templateStore, _options, _pvcSelectLock, _providerFactory.Object);
 
     // ─── Happy path ───────────────────────────────────────────────────────────
 
@@ -182,7 +224,7 @@ public sealed class DispatchLoopTests
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            kiroStore, twoVcOptions, _pvcSelectLock);
+            kiroStore, twoVcOptions, _pvcSelectLock, _providerFactory.Object);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -234,7 +276,7 @@ public sealed class DispatchLoopTests
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            kiroStore, twoVcOptions, _pvcSelectLock);
+            kiroStore, twoVcOptions, _pvcSelectLock, _providerFactory.Object);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -286,6 +328,11 @@ public sealed class DispatchLoopTests
         var configClient = new Mock<IPipelineApiConfigClient>();
         var k8sClient = new Mock<IKubernetesJobClient>();
 
+        // Eligibility gate: return the default provider config so both items pass the gate.
+        configClient
+            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { DefaultProviderConfig });
+
         var item1 = new PendingWorkItemDto { Id = id1, IssueIdentifier = "o/r#1", IssueProviderConfigId = "gh-1", TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = "dotnet10,kiro", RetryCount = 0, TimeoutSeconds = 0 };
         var item2 = new PendingWorkItemDto { Id = id2, IssueIdentifier = "o/r#2", IssueProviderConfigId = "gh-1", TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = "dotnet10,kiro", RetryCount = 0, TimeoutSeconds = 0 };
 
@@ -322,7 +369,7 @@ public sealed class DispatchLoopTests
             .Returns(Task.CompletedTask);
 
         var loop = new DispatchLoop(workItemClient.Object, configClient.Object, k8sClient.Object,
-            kiroStore, twoVcOptions, _pvcSelectLock);
+            kiroStore, twoVcOptions, _pvcSelectLock, _providerFactory.Object);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -375,6 +422,11 @@ public sealed class DispatchLoopTests
         var configClient = new Mock<IPipelineApiConfigClient>();
         var k8sClient = new Mock<IKubernetesJobClient>();
 
+        // Eligibility gate: return the default provider config so both items pass the gate.
+        configClient
+            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { DefaultProviderConfig });
+
         workItemClient.SetupSequence(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([new PendingWorkItemDto { Id = id1, IssueIdentifier = "o/r#1", IssueProviderConfigId = "gh-1", TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = "dotnet10,kiro", RetryCount = 0, TimeoutSeconds = 0 }])
             .ReturnsAsync([new PendingWorkItemDto { Id = id2, IssueIdentifier = "o/r#2", IssueProviderConfigId = "gh-1", TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = "dotnet10,kiro", RetryCount = 0, TimeoutSeconds = 0 }]);
@@ -421,7 +473,7 @@ public sealed class DispatchLoopTests
             });
 
         var loop = new DispatchLoop(workItemClient.Object, configClient.Object, k8sClient.Object,
-            kiroStore, twoVcOptions, _pvcSelectLock);
+            kiroStore, twoVcOptions, _pvcSelectLock, _providerFactory.Object);
 
         // Start cycle 1 — it will enter the semaphore and block at CreateJobAsync
         var cycle1 = loop.RunOneCycleAsync(CancellationToken.None);
@@ -483,6 +535,11 @@ public sealed class DispatchLoopTests
         var consolidationClient = new Mock<IPipelineApiConsolidationWorkItemClient>();
         var k8sClient = new Mock<IKubernetesJobClient>();
 
+        // Eligibility gate: return the default provider config so the dispatch item passes the gate.
+        configClient
+            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { DefaultProviderConfig });
+
         workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([new PendingWorkItemDto { Id = dispatchItemId, IssueIdentifier = "o/r#1", IssueProviderConfigId = "gh-1", TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow, AgentSelector = "dotnet10,kiro", RetryCount = 0, TimeoutSeconds = 0 }]);
         workItemClient.Setup(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
@@ -529,7 +586,7 @@ public sealed class DispatchLoopTests
         // Both loops share the SAME PvcSelectLock — this is the fix under test.
         var sharedLock = new PvcSelectLock();
         var dispatchLoop = new DispatchLoop(workItemClient.Object, configClient.Object, k8sClient.Object,
-            kiroStore, twoVcOptions, sharedLock);
+            kiroStore, twoVcOptions, sharedLock, _providerFactory.Object);
         var consolidationLoop = new ConsolidationDispatchLoop(consolidationClient.Object, k8sClient.Object,
             kiroStore, twoVcOptions, sharedLock);
 
@@ -585,7 +642,7 @@ public sealed class DispatchLoopTests
 
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            limitedStore, _options, _pvcSelectLock);
+            limitedStore, _options, _pvcSelectLock, _providerFactory.Object);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
@@ -878,6 +935,320 @@ public sealed class DispatchLoopTests
     // TODO: Add equal-values edge case test — WhenItemTimeoutEqualsGlobal_K8sJob_ActiveDeadlineSeconds_UsesSharedTimeout
     // where item.TimeoutSeconds == agentJobTimeoutSeconds (e.g. both 7200s) → activeDeadlineSeconds == 7260.
     // This boundary condition confirms that floor and ceiling converge cleanly at the same value.
+
+    // ─── Eligibility gate — issue closed (AC #1) ──────────────────────────────
+
+    /// <summary>
+    /// AC #1: A Pending WorkItem whose upstream issue is closed must be cancelled (not dispatched)
+    /// during the next DispatchLoop cycle.
+    /// AC #6: RetryCount must not be incremented (RequeueAsync must not be called).
+    /// </summary>
+    [Fact]
+    public async Task WhenIssueIsClosed_ShouldCancelWorkItemAndNotDispatch()
+    {
+        _issueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // AC #1: cancellation posted with Cancelled status and a non-empty reason
+        // TODO: Assert ErrorMessage contains "Issue closed" specifically, not just any non-empty string.
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u =>
+                u.Status == nameof(WorkItemStatus.Cancelled) &&
+                u.ErrorMessage != null && u.ErrorMessage.Length > 0),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Item must not have been claimed or dispatched
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // AC #6: RetryCount must not be incremented — RequeueAsync must NOT be called
+        _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── Eligibility gate — ineligible labels (AC #2) ─────────────────────────
+
+    // TODO: Consolidate into a single [Theory]/[InlineData] and add ErrorMessage assertions
+    // that verify the specific label name is included in the cancellation reason.
+
+    /// <summary>AC #2: issue has agent:error — must cancel.</summary>
+    [Fact]
+    public async Task WhenIssueHasIneligibleLabel_Error_ShouldCancelWorkItem()
+    {
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "1", Title = "Test", Description = "",
+                Labels = new[] { AgentLabels.Error }
+            });
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>AC #2: issue has agent:needs-refinement — must cancel.</summary>
+    [Fact]
+    public async Task WhenIssueHasIneligibleLabel_NeedsRefinement_ShouldCancelWorkItem()
+    {
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "1", Title = "Test", Description = "",
+                Labels = new[] { AgentLabels.NeedsRefinement }
+            });
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>AC #2: issue has agent:wont-do — must cancel.</summary>
+    [Fact]
+    public async Task WhenIssueHasIneligibleLabel_WontDo_ShouldCancelWorkItem()
+    {
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "1", Title = "Test", Description = "",
+                Labels = new[] { AgentLabels.WontDo }
+            });
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>AC #2: issue has agent:cancelled — must cancel.</summary>
+    [Fact]
+    public async Task WhenIssueHasIneligibleLabel_Cancelled_ShouldCancelWorkItem()
+    {
+        _issueProvider
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "1", Title = "Test", Description = "",
+                Labels = new[] { AgentLabels.Cancelled }
+            });
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── Eligibility gate — regression: open issue dispatches normally (AC #3) ─
+
+    /// <summary>
+    /// AC #3: A Pending WorkItem whose issue is open with agent:next must be dispatched normally.
+    /// This is the regression check — the eligibility gate must NOT prevent normal dispatch.
+    /// </summary>
+    [Fact]
+    public async Task WhenIssueIsOpenWithAgentNext_ShouldDispatchNormally()
+    {
+        // Default setup already returns open + agent:next — just verify dispatch proceeds
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Item must be claimed and dispatched
+        _workItemClient.Verify(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), _options.Namespace, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Must NOT be cancelled
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(),
+            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Must NOT be requeued
+        _workItemClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── Eligibility gate — fail open on network error (AC #4) ───────────────
+
+    /// <summary>
+    /// AC #4: If the eligibility check fails (network error), the WorkItem must NOT be cancelled.
+    /// It is skipped for the current cycle. Fail open — never cancel on inconclusive check.
+    /// </summary>
+    [Fact]
+    public async Task WhenEligibilityCheckThrows_ShouldSkipItemWithoutCancelling()
+    {
+        _issueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("GitHub API unavailable"));
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // TODO: This test only covers IsIssueClosedAsync failure. Add a test for GetIssueAsync
+        // failure (issue open, label fetch fails) to verify the same fail-open behaviour.
+
+        // Must NOT cancel (fail open)
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(),
+            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Must NOT claim or dispatch (item is skipped for this cycle)
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── Eligibility gate — per-cycle cache (AC #5) ───────────────────────────
+
+    /// <summary>
+    /// AC #5: Multiple Pending WorkItems referencing the same issue must result in only one
+    /// GetIssueAsync call per dispatch cycle (per-cycle cache prevents N provider calls for N items).
+    /// </summary>
+    [Fact]
+    public async Task WhenMultipleItemsReferenceSameIssue_ShouldCallProviderOnce()
+    {
+        // TODO: Assert GetProviderConfigsWithSecretsAsync call count (not covered by this test).
+        // TODO: Add test for FailOpen result caching — second item hitting cached FailOpen must
+        // not re-call GetProviderConfigsWithSecretsAsync.
+        var id1 = Guid.NewGuid();
+        var id2 = Guid.NewGuid();
+
+        var item1 = new PendingWorkItemDto
+        {
+            Id = id1, IssueIdentifier = "1", IssueProviderConfigId = "gh-1",
+            TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "dotnet10,opencode", RetryCount = 0, TimeoutSeconds = 0
+        };
+        var item2 = new PendingWorkItemDto
+        {
+            Id = id2, IssueIdentifier = "1", IssueProviderConfigId = "gh-1",
+            TaskType = WorkItemTaskType.Implementation, CreatedAt = DateTimeOffset.UtcNow,
+            AgentSelector = "dotnet10,opencode", RetryCount = 0, TimeoutSeconds = 0
+        };
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([item1, item2]);
+        _workItemClient.Setup(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemClaimResponse { WorkItemId = id1, RunId = "run-1", PayloadJson = "{}", OrchestratorUrl = "http://orchestrator:5000" });
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Both items must be dispatched
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), _options.Namespace, It.IsAny<CancellationToken>()), Times.Exactly(2));
+
+        // Per-cycle cache: provider called exactly once for the shared (IssueProviderConfigId, IssueIdentifier) pair
+        _issueProvider.Verify(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()), Times.Once);
+        _issueProvider.Verify(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ─── Eligibility gate — missing provider config (fail-open) ──────────────
+
+    /// <summary>
+    /// When the provider config for IssueProviderConfigId is not found, the item must be skipped
+    /// (fail-open: missing config is not grounds for cancellation).
+    /// </summary>
+    [Fact]
+    public async Task WhenProviderConfigNotFound_ShouldSkipItemWithoutCancelling()
+    {
+        _configClient
+            .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+
+        var loop = CreateLoop();
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Must NOT cancel — missing config is fail-open (skip, not cancel)
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(),
+            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Must NOT claim
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ─── Eligibility gate — SafeCancelWorkItemAsync swallows PostStatusAsync failure ─
+
+    /// <summary>
+    /// If PostStatusAsync throws (e.g., 400 invalid transition — item was claimed by another
+    /// instance between GetPendingAsync and the cancel call), RunOneCycleAsync must not propagate
+    /// the exception.
+    /// </summary>
+    [Fact]
+    public async Task WhenCancelPostStatusFails_ShouldNotThrow()
+    {
+        _issueProvider
+            .Setup(p => p.IsIssueClosedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending()]);
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("400 Bad Request — invalid transition"));
+
+        var loop = CreateLoop();
+
+        // Must not throw — SafeCancelWorkItemAsync swallows the exception
+        await loop.RunOneCycleAsync(CancellationToken.None);
+    }
 
     // ─── Helpers ────────────────────────────────────────────────────────────────
 
