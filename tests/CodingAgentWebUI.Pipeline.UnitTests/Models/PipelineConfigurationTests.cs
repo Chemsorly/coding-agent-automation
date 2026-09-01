@@ -118,6 +118,7 @@ public class PipelineConfigurationTests
             WorkItemRetentionCount = 200,
             DbRetentionSweepInterval = TimeSpan.FromHours(12),
             TransientRetryDelay = TimeSpan.FromSeconds(45),
+            QueueSweepEnabled = true,
         };
 
         // Act
@@ -137,7 +138,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(72,
+        keyPropertyCount.Should().Be(73,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }

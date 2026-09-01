@@ -113,6 +113,14 @@ public static class PipelineTelemetry
         "pipeline.housekeeping.branch_deleted", "{branch}",
         "Stale agent branches deleted (no open PR, inactive issue label)");
 
+    // Queue sweep metrics
+    public static readonly Counter<long> QueueSweepCancelled = Meter.CreateCounter<long>(
+        "pipeline.queue_sweep.cancelled", "{item}", "WorkItems cancelled as stale by the queue sweep");
+    public static readonly Counter<long> QueueSweepSkipped = Meter.CreateCounter<long>(
+        "pipeline.queue_sweep.skipped", "{item}", "WorkItems skipped by the queue sweep (fail-open: provider not polled, rate-limited, wrong TaskType)");
+    public static readonly Counter<long> QueueSweepFailed = Meter.CreateCounter<long>(
+        "pipeline.queue_sweep.failed", "{item}", "PostStatusAsync unexpected failures during queue sweep (expected races like already-terminal are not counted)");
+
     // Agent worker metrics
     public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(
         "agent.jobs.received", "{job}", "Jobs received by agent workers");
@@ -146,7 +154,6 @@ public static class PipelineTelemetry
     {
         public const string Compilation = "compilation";
         public const string Tests = "tests";
-        public const string Coverage = "coverage";
         public const string Security = "security";
         public const string ExternalCi = "external_ci";
     }

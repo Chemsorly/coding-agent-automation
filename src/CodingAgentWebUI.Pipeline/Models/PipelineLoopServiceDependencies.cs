@@ -27,4 +27,12 @@ public sealed record PipelineLoopServiceDependencies
     /// unconditionally.
     /// </summary>
     public required ILeaderGate? LeaderElection { get; init; }
+
+    /// <summary>
+    /// Optional client for the queue sweep. When non-null, the sweep fetches Pending WorkItems
+    /// and cancels those whose issue is no longer in the current eligibility set (requires
+    /// <see cref="PipelineConfiguration.QueueSweepEnabled"/> = true). When null, the sweep
+    /// is skipped — safe default for environments that do not run the sweep (e.g. test environments).
+    /// </summary>
+    public IWorkItemSweepClient? WorkItemClient { get; init; }
 }

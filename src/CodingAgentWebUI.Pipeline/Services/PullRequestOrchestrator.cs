@@ -342,7 +342,6 @@ public sealed class PullRequestOrchestrator
         var testsPassed = report.Tests.TestsPassed ?? 0;
         var testsFailed = report.Tests.TestsFailed ?? 0;
         var testsSkipped = report.Tests.TestsSkipped ?? 0;
-        var coverage = report.Coverage?.CoveragePercent;
         var fileChanges = await repoProvider.GetFileChangesAsync(run.WorkspacePath!, ct);
         var issueTitle = issue?.Title ?? run.IssueTitle;
         var codeReviewSummary = BuildCodeReviewSummary(run);
@@ -353,7 +352,6 @@ public sealed class PullRequestOrchestrator
             TestsPassed = testsPassed,
             TestsFailed = testsFailed,
             TestsSkipped = testsSkipped,
-            CoveragePercent = coverage,
             FileChanges = fileChanges,
             IssueTitle = issueTitle,
             IsDraft = isDraft,

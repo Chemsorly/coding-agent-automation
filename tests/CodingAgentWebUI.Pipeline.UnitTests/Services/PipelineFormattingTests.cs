@@ -207,7 +207,6 @@ public class PipelineFormattingTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 2,
-                CoveragePercent = 85.5,
                 FileChanges = [],
                 IssueTitle = "Add feature X",
                 CloseReference = "Closes #42",
@@ -221,8 +220,6 @@ public class PipelineFormattingTests
         result.Should().Contain("- Passed: 10");
         result.Should().Contain("- Failed: 0");
         result.Should().Contain("- Skipped: 2");
-        result.Should().Contain("## Coverage");
-        result.Should().Contain("85.5%");
         result.Should().Contain("Closes #42");
     }
 
@@ -241,7 +238,6 @@ public class PipelineFormattingTests
                 TestsPassed = 5,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = files,
                 IssueTitle = "Test",
             });
@@ -264,29 +260,11 @@ public class PipelineFormattingTests
                 TestsPassed = 0,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = files,
                 IssueTitle = "Many files",
             });
 
         result.Should().Contain("*(and 10 more)*");
-    }
-
-    [Fact]
-    public void GeneratePrBody_NullCoverage_ShowsNotAvailable()
-    {
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                TestsPassed = 0,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                CoveragePercent = null,
-                FileChanges = [],
-                IssueTitle = "Test",
-            });
-
-        result.Should().Contain("Not available");
     }
 
     [Fact]
@@ -298,7 +276,6 @@ public class PipelineFormattingTests
                 TestsPassed = 0,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = [],
                 IssueTitle = "Draft PR",
                 IsDraft = true,
@@ -316,7 +293,6 @@ public class PipelineFormattingTests
                 TestsPassed = 0,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = [],
                 IssueTitle = "Test",
                 ModelName = "claude-sonnet-4-20250514",
@@ -334,7 +310,6 @@ public class PipelineFormattingTests
                 TestsPassed = 0,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = [],
                 IssueTitle = "Test",
             });
@@ -360,7 +335,6 @@ public class PipelineFormattingTests
                 TestsPassed = 0,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = [],
                 IssueTitle = "Test",
                 CodeReviewSummary = review,
@@ -390,7 +364,6 @@ public class PipelineFormattingTests
                 TestsPassed = 0,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = [],
                 IssueTitle = "Test",
                 CodeReviewSummary = review,
@@ -419,7 +392,6 @@ public class PipelineFormattingTests
                 TestsPassed = 0,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = [],
                 IssueTitle = "Test",
                 Comments = comments,
@@ -460,21 +432,6 @@ public class PipelineFormattingTests
         var result = PipelineFormatting.FormatQualityGateSummary(report);
 
         result.Should().Contain("Compilation ❌");
-    }
-
-    [Fact]
-    public void FormatQualityGateSummary_WithCoverage_IncludesCoverageDetails()
-    {
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" },
-            Coverage = new GateResult { GateName = "Coverage", Passed = false, Details = "26.7% below threshold 40.0%" }
-        };
-
-        var result = PipelineFormatting.FormatQualityGateSummary(report);
-
-        result.Should().Contain("Coverage ❌ (26.7% below threshold 40.0%)");
     }
 
     [Fact]
