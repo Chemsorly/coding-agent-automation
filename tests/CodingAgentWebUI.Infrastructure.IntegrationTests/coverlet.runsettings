@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RunSettings>
-  <!-- Exclude tests that require Docker (Testcontainers). These run in the
-       dedicated migration-integrity CI job that has Docker available.
-       The quality-gate and local dev runs do not have Docker. -->
-  <RunConfiguration>
-    <TestCaseFilter>Category!=Integration</TestCaseFilter>
-  </RunConfiguration>
+  <!-- NOTE: Do NOT add a TestCaseFilter element here. The migration-integrity CI job uses
+       "Category=Integration" on the command line via the dotnet test filter argument.
+       A runsettings-level filter gets AND-combined with the CLI filter, producing the
+       impossible expression "(Category!=Integration)&(Category=Integration)" which
+       matches zero tests and silently passes. Category exclusion for local or
+       quality-gate runs is handled by the CLI filter in those invocations. -->
   <DataCollectionRunSettings>
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">
