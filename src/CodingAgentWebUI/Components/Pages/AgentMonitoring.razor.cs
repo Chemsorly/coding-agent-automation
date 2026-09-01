@@ -221,6 +221,7 @@ public partial class AgentMonitoring : IAsyncDisposable
                     IssueProviderConfigId = string.Empty,
                     RepoProviderConfigId = string.Empty,
                     BrainProviderConfigId = snapshot.BrainProviderConfigId,
+                    RunType = snapshot.RunType,
                 };
             }
 
@@ -257,12 +258,7 @@ public partial class AgentMonitoring : IAsyncDisposable
         model.CodeReviewIterationInProgress = snapshot.CodeReviewIterationInProgress;
         model.CodeReviewIterationsTotal = snapshot.CodeReviewIterationsTotal;
         model.CodeReviewAgentsRun = snapshot.CodeReviewAgentsRun;
-        // TODO [WARNING]: snapshot.CodeReviewCriticalCount, CodeReviewWarningCount, and CodeReviewSuggestionCount
-        // (snapshot keys 18–20) are never written to the model here. PipelineRun requires mutation via
-        // SetCodeReviewCounts(int, int, int). Omission causes the sidebar to display 0/0/0 for code review
-        // finding counts after any snapshot restore (initial open or reconnect), even when the server has
-        // non-zero values. Fix: add model.SetCodeReviewCounts(snapshot.CodeReviewCriticalCount,
-        // snapshot.CodeReviewWarningCount, snapshot.CodeReviewSuggestionCount);
+        model.SetCodeReviewCounts(snapshot.CodeReviewCriticalCount, snapshot.CodeReviewWarningCount, snapshot.CodeReviewSuggestionCount);
         model.LatestQualityReport = snapshot.LatestQualityReport;
         model.PullRequestUrl = snapshot.PullRequestUrl;
         model.PullRequestNumber = snapshot.PullRequestNumber;
@@ -276,14 +272,10 @@ public partial class AgentMonitoring : IAsyncDisposable
         model.FailureReason = snapshot.FailureReason;
         model.ModelName = snapshot.ModelName;
         model.RepositoryName = snapshot.RepositoryName;
-        // Populate quality gate history from the snapshot list
-        // TODO [WARNING]: QualityGateHistory is never cleared before enqueuing. On hub reconnect,
-        // HandleReconnected re-calls SubscribeToRun which triggers a second OnRunStateSnapshot, and
-        // ApplySnapshotToRunModel is called on the existing _activeModalRunModel whose queue already
-        // contains entries from the first snapshot (plus any live OnQualityGateResult events). Every
-        // reconnect appends the full history again, producing duplicate entries. BoundedConcurrentQueue<T>
-        // exposes no Clear() method; the fix requires draining via TryDequeue in a loop before re-enqueuing,
-        // or replacing the model entirely. Scenario: 2 reports → disconnect → reconnect → 4 reports (2 duped).
+        // Drain the queue before re-enqueuing so that reconnect does not produce duplicate entries.
+        // Without this, a second ApplySnapshotToRunModel call (triggered by hub reconnect) would
+        // append to the existing entries, producing duplicates (2 reports → 4 after one reconnect).
+        while (model.QualityGateHistory.TryDequeue(out _)) { }
         foreach (var report in snapshot.QualityGateHistory)
             model.QualityGateHistory.Enqueue(report);
         // Use the public ResetStartedAt method since StartedAtOffset setter is internal.
