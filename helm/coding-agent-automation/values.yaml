@@ -166,7 +166,15 @@ workDistribution:
   dispatch:
     intervalSeconds: 10
     rateLimitPerSecond: 10
-    agentJobTimeoutSeconds: 7200
+    # Maximum lifetime (seconds) of a chat session K8s Job pod.
+    # Sets activeDeadlineSeconds on chat session pods ONLY.
+    # Work-item agent jobs and consolidation jobs derive their deadline from
+    # PipelineConfiguration.AgentTimeout (per-project overridable, default 30 min = 1800s).
+    # Operators upgrading from agentJobTimeoutSeconds: this field no longer controls agent job
+    # wall-clock limits — configure AgentTimeout in Pipeline Settings instead.
+    # TODO: Consider adding a values.yaml comment referencing the UI/API path for AgentTimeout
+    # so operators know where to find the agent-job timeout control. (DotNetSpecialist review [WARNING])
+    chatJobMaxDurationSeconds: 7200
     chatPodConnectTimeoutSeconds: 120
     chatTerminationGracePeriodSeconds: 120
     # Maximum seconds a chat pod may remain idle (no client keepalive) before automatic termination.

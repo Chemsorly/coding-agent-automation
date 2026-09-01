@@ -17,8 +17,10 @@ public sealed record PendingWorkItemDto
 
     /// <summary>
     /// Per-item software-level timeout in seconds. Used by the Job Controller to compute
-    /// <c>activeDeadlineSeconds</c> on the K8s Job: <c>Max(TimeoutSeconds, agentJobTimeoutSeconds) + 60</c>.
+    /// <c>activeDeadlineSeconds</c> on the K8s Job: <c>TimeoutSeconds + 60</c> (buffer added
+    /// by <see cref="CodingAgentWebUI.Kubernetes.JobSpecBuilder"/>).
     /// Populated from <c>WorkItemEntity.TimeoutSeconds</c> by the pending-items API endpoint.
+    /// Set at enqueue time from <c>PipelineConfiguration.AgentTimeout</c> (with per-project override applied).
     /// </summary>
     public required int TimeoutSeconds { get; init; }
 

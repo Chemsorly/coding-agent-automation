@@ -368,6 +368,11 @@ public static class WorkItemEndpoints
             Status = WorkItemStatus.Pending,
             Payload = payloadJson,
             AgentSelector = request.AgentSelector ?? "",
+            // TODO: Add a positive-value guard here: if request.TimeoutSeconds <= 0, substitute
+            // (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds. This prevents a legacy or
+            // misconfigured caller from storing a zero (the DB column default) and relying on the
+            // dispatch-path fallback in BuildJobContext. See review finding [WARNING] — zero sentinel
+            // ambiguity in ReconciliationLoop and DispatchLoop.
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -835,7 +840,8 @@ public static class WorkItemEndpoints
                 DispatchedAt = w.DispatchedAt,
                 AgentSelector = w.AgentSelector,
                 IssueIdentifier = w.IssueIdentifier,
-                K8sJobName = w.K8sJobName
+                K8sJobName = w.K8sJobName,
+                TimeoutSeconds = w.TimeoutSeconds
             })
             .ToListAsync(ct);
 

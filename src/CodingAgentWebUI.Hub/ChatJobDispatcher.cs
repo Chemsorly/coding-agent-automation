@@ -218,7 +218,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         {
             WorkItemId = null,
             AgentSelector = normalized,
-            TimeoutSeconds = _options.AgentJobTimeoutSeconds,
+            TimeoutSeconds = _options.ChatJobMaxDurationSeconds,
             JobName = jobName,
             ClaimedPvc = claimedPvc,
             OrchestratorUrl = _options.OrchestratorUrl,
@@ -259,7 +259,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             job.Metadata.Labels["caa/claimed-pvc"] = claimedPvc;
 
         job.Spec.BackoffLimit = 0;
-        job.Spec.ActiveDeadlineSeconds = _options.AgentJobTimeoutSeconds;
+        job.Spec.ActiveDeadlineSeconds = _options.ChatJobMaxDurationSeconds;
         job.Spec.Template.Spec.TerminationGracePeriodSeconds = _options.ChatTerminationGracePeriodSeconds;
 
         await _jobClient.CreateJobAsync(job, _options.Namespace, cancellationToken);

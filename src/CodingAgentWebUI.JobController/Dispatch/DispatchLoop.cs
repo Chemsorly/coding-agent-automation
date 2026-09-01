@@ -308,7 +308,12 @@ public sealed class DispatchLoop
         {
             WorkItemId = item.Id,
             AgentSelector = selector,
-            TimeoutSeconds = Math.Max(item.TimeoutSeconds, _options.AgentJobTimeoutSeconds),
+            // Guard against legacy rows where TimeoutSeconds was not yet populated (DB column default 0).
+            // A zero timeout would produce activeDeadlineSeconds = 60, killing the agent after 60s.
+            // Match the same fallback used by ReconciliationLoop.EnforceTimeoutsAsync.
+            TimeoutSeconds = item.TimeoutSeconds > 0
+                ? item.TimeoutSeconds
+                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
             JobName = jobName,
             ClaimedPvc = pvcName,
             OrchestratorUrl = _options.OrchestratorUrl,

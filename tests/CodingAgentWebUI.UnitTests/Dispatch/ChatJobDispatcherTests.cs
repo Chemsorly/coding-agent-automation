@@ -47,7 +47,7 @@ public class ChatJobDispatcherTests
         AgentApiKeySecretName = "caa-secret",
         AgentServiceAccountName = "caa-agent",
         ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
-        AgentJobTimeoutSeconds = chatSessionMaxDuration,
+        ChatJobMaxDurationSeconds = chatSessionMaxDuration,
         ChatTerminationGracePeriodSeconds = gracePeriod
     };
 
@@ -815,7 +815,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            AgentJobTimeoutSeconds = 7200,
+            ChatJobMaxDurationSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1   // 1 second grace → force-delete triggers fast
         };
 
@@ -877,7 +877,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            AgentJobTimeoutSeconds = 7200,
+            ChatJobMaxDurationSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1,  // triggers grace-period expiry quickly
             ChatIdleTimeoutSeconds = 3600            // far above idle threshold — no idle-kill race
         };
@@ -1065,7 +1065,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            AgentJobTimeoutSeconds = 7200,
+            ChatJobMaxDurationSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1
         };
 
@@ -1353,7 +1353,7 @@ public class ChatJobDispatcherTests
         AgentApiKeySecretName = "caa-secret",
         AgentServiceAccountName = "caa-agent",
         ChatPodConnectTimeoutSeconds = 5,
-        AgentJobTimeoutSeconds = 7200,
+        ChatJobMaxDurationSeconds = 7200,
         ChatTerminationGracePeriodSeconds = 1,
         ChatIdleTimeoutSeconds = 1   // triggers idle-kill quickly; below prod minimum but valid for tests
     };
@@ -1880,7 +1880,7 @@ public class ChatJobDispatcherTests
                 AgentApiKeySecretName = "caa-secret",
                 AgentServiceAccountName = "caa-agent",
                 ChatPodConnectTimeoutSeconds = 5,
-                AgentJobTimeoutSeconds = 7200,
+                ChatJobMaxDurationSeconds = 7200,
                 ChatTerminationGracePeriodSeconds = 120,
                 ChatIdleTimeoutSeconds = 3600   // very large — idle-kill must NOT fire during test
             },
