@@ -52,6 +52,9 @@ public static class AgentJobRunner
             {
                 FinalStep = PipelineStep.Cancelled,
                 CompletedAt = DateTimeOffset.UtcNow,
+                // RunMode: DetectReworkStep has not run at this point (exception fired before or during
+                // step execution setup). LinkedPullRequest from the assignment is the best available signal.
+                // RunMode.Retry (draft-only) is not detectable here; assignment carries no draft-PR marker.
                 RunMode = req.Assignment.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New,
                 FinalLabel = req.CancelledLabel
             };
@@ -63,6 +66,7 @@ public static class AgentJobRunner
                 FinalStep = PipelineStep.Failed,
                 FailureReason = ex.Message,
                 CompletedAt = DateTimeOffset.UtcNow,
+                // RunMode: same reasoning as OperationCanceledException path above.
                 RunMode = req.Assignment.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New
             };
         }
