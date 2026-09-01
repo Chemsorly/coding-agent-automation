@@ -20,8 +20,7 @@ public sealed record QgcExecutionResult
     [Key(3)]
     public GateResult? Tests { get; init; }
 
-    [Key(4)]
-    public GateResult? Coverage { get; init; }
+    // Key(4) is retired (was Coverage). Do not reuse to avoid deserialization issues with existing data.
 
     [Key(5)]
     public GateResult? SecurityScan { get; init; }
@@ -31,5 +30,5 @@ public sealed record QgcExecutionResult
     /// </summary>
     [IgnoreMember]
     public bool Passed => (Compilation?.Passed ?? true) && (Tests?.Passed ?? true)
-        && (Coverage?.Passed ?? true) && (SecurityScan?.Passed ?? true);
+        && (SecurityScan?.Passed ?? true);
 }

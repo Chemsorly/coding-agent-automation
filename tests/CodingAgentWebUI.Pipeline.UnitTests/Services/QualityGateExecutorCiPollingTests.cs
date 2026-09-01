@@ -244,25 +244,6 @@ public class QualityGateExecutorGuardTests
     }
 
     [Fact]
-    public async Task AppendExternalCi_WhenCoverageFailed_ReturnsReportUnchanged()
-    {
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" },
-            Coverage = new GateResult { GateName = "Coverage", Passed = false, Details = "67% < 80% threshold" }
-        };
-
-        var context = BuildContext(CreateRun());
-        var result = await _executor.AppendExternalCiIfNeededAsync(context, report, false, CancellationToken.None);
-
-        result.Should().BeSameAs(report, "coverage gate failure should short-circuit before CI polling");
-        _mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
-            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
     public async Task AppendExternalCi_WhenPipelineProviderIsNull_ReturnsReportUnchanged()
     {
         var report = new QualityGateReport

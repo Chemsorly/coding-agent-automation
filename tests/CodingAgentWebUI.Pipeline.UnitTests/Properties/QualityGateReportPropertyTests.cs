@@ -21,27 +21,22 @@ public class QualityGateReportPropertyTests
     public void AllPassed_IsConsistentWithIndividualGateResults(
         bool compilationPassed,
         bool testsPassed,
-        bool hasCoverage,
-        bool coveragePassed,
         bool hasSecurity,
         bool securityPassed)
     {
         var compilation = new GateResult { GateName = "Compilation", Passed = compilationPassed };
         var tests = new GateResult { GateName = "Tests", Passed = testsPassed };
-        var coverage = hasCoverage ? new GateResult { GateName = "Coverage", Passed = coveragePassed } : null;
         var security = hasSecurity ? new GateResult { GateName = "Security", Passed = securityPassed } : null;
 
         var report = new QualityGateReport
         {
             Compilation = compilation,
             Tests = tests,
-            Coverage = coverage,
             SecurityScan = security
         };
 
         var expected = compilationPassed
             && testsPassed
-            && (coverage?.Passed ?? true)
             && (security?.Passed ?? true);
 
         report.AllPassed.Should().Be(expected);

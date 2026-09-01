@@ -31,8 +31,7 @@ public sealed record QualityGateConfiguration
     [Key(6)]
     public IReadOnlyList<string>? TestArguments { get; init; }
 
-    [Key(7)]
-    public double? CoverageThreshold { get; init; }
+    // Key(7) is retired (was CoverageThreshold). Do not reuse to avoid deserialization issues with existing data.
 
     // Key(8) is retired (was SecurityScanEnabled). Do not reuse to avoid deserialization issues with existing data.
 
@@ -42,22 +41,9 @@ public sealed record QualityGateConfiguration
     [Key(10)]
     public int ExecutionOrder { get; init; } = 0;
 
-    /// <summary>
-    /// Format of the coverage report produced by the test command.
-    /// Supported values: "cobertura" (default), "jacoco".
-    /// </summary>
-    [Key(11)]
-    public string CoverageReportFormat { get; init; } = "cobertura";
+    // Key(11) is retired (was CoverageReportFormat). Do not reuse to avoid deserialization issues with existing data.
 
-    /// <summary>
-    /// Glob patterns for locating coverage report files relative to the workspace root.
-    /// If null/empty, defaults are used based on the test command:
-    /// - dotnet: TestResults/**/coverage.cobertura.xml
-    /// - jacoco: **/target/site/jacoco/jacoco.xml
-    /// - cobertura (non-dotnet): **/coverage.xml
-    /// </summary>
-    [Key(12)]
-    public IReadOnlyList<string>? CoverageReportPaths { get; init; }
+    // Key(12) is retired (was CoverageReportPaths). Do not reuse to avoid deserialization issues with existing data.
 
     // Key(13) is retired (was TestQuarantine). Do not reuse to avoid deserialization issues with existing data.
 

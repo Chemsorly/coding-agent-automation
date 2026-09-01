@@ -8,8 +8,7 @@ public sealed class QualityGateReport
     [Key(0)]
     public required GateResult Compilation { get; init; }
 
-    [Key(1)]
-    public GateResult? Coverage { get; init; }
+    // Key(1) is retired (was Coverage). Do not reuse to avoid deserialization issues with existing data.
 
     [Key(2)]
     public GateResult? ExternalCi { get; init; }
@@ -31,6 +30,6 @@ public sealed class QualityGateReport
     public bool AllPassed => QgcResults.Count > 0
         ? QgcResults.All(r => r.Passed) && (ExternalCi?.Passed ?? true)
         : Compilation.Passed && Tests.Passed
-            && (Coverage?.Passed ?? true) && (SecurityScan?.Passed ?? true)
+            && (SecurityScan?.Passed ?? true)
             && (ExternalCi?.Passed ?? true);
 }

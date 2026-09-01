@@ -77,7 +77,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 10,
                 TestsFailed = 2,
                 TestsSkipped = 1,
-                CoveragePercent = 87.3,
                 FileChanges = fileChanges,
                 IssueTitle = "Add new feature",
                 CloseReference = "Closes #42",
@@ -95,26 +94,27 @@ public class GitHubRepositoryProviderTests
         body.Should().Contain("Passed: 10");
         body.Should().Contain("Failed: 2");
         body.Should().Contain("Skipped: 1");
-        body.Should().Contain("## Coverage");
-        body.Should().Contain("87.3%");
         body.Should().Contain("Closes #42");
     }
 
     [Fact]
-    public void GeneratePrBody_WithNullCoverage_ShowsNotAvailable()
+    public void GeneratePrBody_WithoutCoverage_NoNotAvailable()
     {
+        // TODO: [WARNING] This test only asserts that "## Coverage" is absent, giving no positive signal
+        // that the remaining sections (Test Results, File Changes, etc.) still render correctly when
+        // CoveragePercent is not set. A template that returns an empty string would pass this test.
+        // Consider adding a positive assertion such as: body.Should().Contain("## Test Results")
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
                 IssueReference = "#1",
                 TestsPassed = 5,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
             });
 
-        body.Should().Contain("Not available");
+        body.Should().NotContain("## Coverage");
     }
 
     [Fact]
@@ -126,7 +126,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 3,
                 TestsFailed = 5,
                 TestsSkipped = 0,
-                CoveragePercent = 40.0,
                 FileChanges = new[] { new FileChangeSummary("Modified", "src/Foo.cs") },
                 IssueTitle = "Partial feature",
                 IsDraft = true,
@@ -153,7 +152,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 5,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = 90.0,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Feature",
                 Comments = comments,
@@ -176,7 +174,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 1,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Bug",
             });
@@ -199,7 +196,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 1,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Test",
                 Comments = comments,
@@ -226,7 +222,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 0,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "T",
                 Comments = comments,
@@ -280,7 +275,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 5,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = 90.0,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Test",
                 ModelName = "claude-sonnet-4.6",
@@ -298,7 +292,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 5,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = 90.0,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Test",
             });
@@ -318,7 +311,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 1,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Bug",
             });
@@ -340,7 +332,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 1,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Bug",
                 CodeReviewSummary = summary,
@@ -364,7 +355,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 1,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Bug",
                 CodeReviewSummary = summary,
@@ -387,7 +377,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 1,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Bug",
                 CodeReviewSummary = summary,
@@ -417,7 +406,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 1,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Bug",
                 CodeReviewSummary = summary,
@@ -446,7 +434,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 1,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Bug",
                 CodeReviewSummary = summary,
@@ -470,7 +457,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 1,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Bug",
                 CodeReviewSummary = summary,
@@ -495,7 +481,6 @@ public class GitHubRepositoryProviderTests
                 TestsPassed = 1,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Bug",
                 CodeReviewSummary = summary,

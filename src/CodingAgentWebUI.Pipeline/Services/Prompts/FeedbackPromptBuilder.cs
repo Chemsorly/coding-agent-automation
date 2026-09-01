@@ -303,7 +303,6 @@ public static class FeedbackPromptBuilder
     {
         AppendGateResult(sb, "Compilation", report.Compilation.Passed, report.Compilation.Details);
         AppendTestsSection(sb, report.Tests);
-        AppendCoverageSection(sb, report.Coverage);
 
         if (report.SecurityScan is not null)
             AppendGateResult(sb, "Security Scan", report.SecurityScan.Passed, report.SecurityScan.Details);
@@ -321,16 +320,6 @@ public static class FeedbackPromptBuilder
             sb.AppendLine($"  - Details: {tests.Details}");
         if (tests.TestsPassed.HasValue || tests.TestsFailed.HasValue)
             sb.AppendLine($"  - Passed: {tests.TestsPassed ?? 0}, Failed: {tests.TestsFailed ?? 0}, Skipped: {tests.TestsSkipped ?? 0}");
-    }
-
-    private static void AppendCoverageSection(StringBuilder sb, GateResult? coverage)
-    {
-        if (coverage is null) return;
-        sb.AppendLine($"- **Coverage:** {(coverage.Passed ? Passed : Failed)}");
-        if (coverage.CoveragePercent.HasValue)
-            sb.AppendLine($"  - Coverage: {coverage.CoveragePercent:F1}%");
-        if (!string.IsNullOrEmpty(coverage.Details))
-            sb.AppendLine($"  - Details: {coverage.Details}");
     }
 
     private static void AppendQgcResultsSection(StringBuilder sb, IReadOnlyList<QgcExecutionResult> results)

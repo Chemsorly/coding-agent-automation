@@ -25,31 +25,4 @@ public class QualityGateExecutorLogFormatTests
         var gate = new GateResult { GateName = "ExternalCi", Passed = false };
         QualityGateExecutor.FormatGateLogValue(gate).Should().Be("False");
     }
-
-    [Fact]
-    public void FormatCoverageLogValue_Null_ReturnsNA()
-    {
-        QualityGateExecutor.FormatCoverageLogValue(null).Should().Be("N/A");
-    }
-
-    [Fact]
-    public void FormatCoverageLogValue_PassedWithPercentage_IncludesPercentage()
-    {
-        var gate = new GateResult { GateName = "Coverage", Passed = true, CoveragePercent = 56.4 };
-        QualityGateExecutor.FormatCoverageLogValue(gate).Should().Be("True (56.4%)");
-    }
-
-    [Fact]
-    public void FormatCoverageLogValue_FailedWithPercentage_IncludesPercentage()
-    {
-        var gate = new GateResult { GateName = "Coverage", Passed = false, CoveragePercent = 12.3 };
-        QualityGateExecutor.FormatCoverageLogValue(gate).Should().Be("False (12.3%)");
-    }
-
-    [Fact]
-    public void FormatCoverageLogValue_WithoutPercentage_ReturnsPassedOnly()
-    {
-        var gate = new GateResult { GateName = "Coverage", Passed = true };
-        QualityGateExecutor.FormatCoverageLogValue(gate).Should().Be("True");
-    }
 }
