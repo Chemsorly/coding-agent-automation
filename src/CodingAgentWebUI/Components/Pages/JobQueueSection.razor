@@ -1,0 +1,155 @@
+@using CodingAgentWebUI.Pipeline.Models
+
+<section class="settings-section" style="margin: 16px 20px;">
+    <h2><Icon Name="clipboard-list" Size="16" /> Job Queue (@(QueuedJobs.Count + QueuedConsolidationRuns.Count))</h2>
+    @if (QueuedJobs.Count == 0 && QueuedConsolidationRuns.Count == 0)
+    {
+        <div class="monitoring-empty">No pending jobs in queue.</div>
+    }
+    else
+    {
+        <div class="monitoring-table-wrap">
+            <table class="monitoring-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Type</th>
+                        <th>Project</th>
+                        <th>Issue</th>
+                        <th>Initiated By</th>
+                        <th>Enqueued At</th>
+                        <th>Wait Time</th>
+                        <th>Required Labels</th>
+                        <th>Priority</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ var position = 1; }
+                    @foreach (var job in QueuedJobs)
+                    {
+                        var waitTime = DateTimeOffset.UtcNow - job.EnqueuedAt;
+                        var hasWorkItemId = Guid.TryParse(job.WorkItemId, out var parsedWorkItemId);
+                        <tr>
+                            <td>@position</td>
+                            <td>
+                                @if (job.IsConsolidation)
+                                {
+                                    var consolidationType = job.ConsolidationRunType.GetValueOrDefault();
+                                    <span class="run-type-badge run-type-consolidation" title="@FormatConsolidationRunType(consolidationType)">
+                                        <Icon Name="@GetConsolidationTypeIconName(consolidationType)" Size="14" /> @FormatConsolidationRunTypeShort(consolidationType)
+                                    </span>
+                                }
+                                else if (job.RunType == PipelineRunType.Review)
+                                {
+                                    <span class="run-type-badge run-type-review" title="PR Review"><Icon Name="search" Size="14" /> Review</span>
+                                }
+                                else if (job.RunType == PipelineRunType.DecompositionAnalysis)
+                                {
+                                    <span class="run-type-badge run-type-decomp" title="Decomposition Analysis"><Icon Name="puzzle" Size="14" /> Decomp (A)</span>
+                                }
+                                else if (job.RunType == PipelineRunType.Decomposition)
+                                {
+                                    <span class="run-type-badge run-type-decomp" title="Decomposition"><Icon Name="puzzle" Size="14" /> Decomp</span>
+                                }
+                                else
+                                {
+                                    <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /> Impl</span>
+                                }
+                            </td>
+                            <td>@(job.Project?.Name ?? "—")</td>
+                            <td title="#@job.IssueIdentifier @job.IssueTitle">#@job.IssueIdentifier @job.IssueTitle</td>
+                            <td title="@job.InitiatedBy">@job.InitiatedBy</td>
+                            <td>@job.EnqueuedAt.ToLocalTime().ToString("HH:mm:ss")</td>
+                            <td>@waitTime.ToString(@"hh\:mm\:ss")</td>
+                            <td>
+                                @if (job.RequiredLabels.Count > 0)
+                                {
+                                    @foreach (var label in job.RequiredLabels)
+                                    {
+                                        <span class="sidebar-label">@label</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="monitoring-muted">any</span>
+                                }
+                            </td>
+                            <td>
+                                @* TODO: Out-of-range values (< 0 or > 1000) are silently discarded — the callback is not
+                                   fired and no feedback is given to the user. The browser's min/max attributes only
+                                   enforce on form submit, not on inline @onchange. Consider showing a validation message
+                                   or reverting the input to the previous value when the entered value is out of range. *@
+                                @* TODO: Guard `if (!hasWorkItemId) return` inside the lambda is dead code when the
+                                   input is properly disabled by the browser; kept as defence-in-depth. *@
+                                <input type="number"
+                                       class="priority-input"
+                                       min="0"
+                                       max="1000"
+                                       value="@job.PriorityWeight"
+                                       disabled="@(!hasWorkItemId)"
+                                       title="@(hasWorkItemId ? "Edit priority (0–1000)" : "Priority unavailable")"
+                                       @onchange="async e => {
+                                           if (!hasWorkItemId) return;
+                                           if (int.TryParse(e.Value?.ToString(), out var w) && w >= 0 && w <= 1000)
+                                               await OnSetPriority.InvokeAsync((parsedWorkItemId, w));
+                                       }" />
+                            </td>
+                            <td>
+                                <button class="btn-cancel-small" @onclick="() => OnRemoveFromQueue.InvokeAsync((job.IssueIdentifier, job.IssueProviderId.Value))">
+                                    Remove
+                                </button>
+                            </td>
+                        </tr>
+                        position++;
+                    }
+                    @foreach (var cRun in QueuedConsolidationRuns)
+                    {
+                        var cWaitTime = DateTime.UtcNow - cRun.StartedAtUtc;
+                        <tr>
+                            <td>@position</td>
+                            <td>
+                                <span class="run-type-badge run-type-consolidation" title="@FormatConsolidationRunType(cRun.Type)">
+                                    <Icon Name="@GetConsolidationTypeIconName(cRun.Type)" Size="14" /> @FormatConsolidationRunTypeShort(cRun.Type)
+                                </span>
+                            </td>
+                            <td>@(string.IsNullOrEmpty(cRun.ProjectName) ? "—" : cRun.ProjectName)</td>
+                            <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
+                            <td>consolidation</td>
+                            <td>@cRun.StartedAtUtc.ToLocalTime().ToString("HH:mm:ss")</td>
+                            <td>@cWaitTime.ToString(@"hh\:mm\:ss")</td>
+                            <td>
+                                @if (cRun.QueuedRequiredLabels is { Count: > 0 })
+                                {
+                                    @foreach (var label in cRun.QueuedRequiredLabels)
+                                    {
+                                        <span class="sidebar-label">@label</span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="monitoring-muted">any</span>
+                                }
+                            </td>
+                            <td></td>
+                            <td>
+                                <button class="btn-cancel-small" @onclick="() => OnCancelConsolidation.InvokeAsync(cRun.RunId)">
+                                    Remove
+                                </button>
+                            </td>
+                        </tr>
+                        position++;
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<PendingJob> QueuedJobs { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<ConsolidationRun> QueuedConsolidationRuns { get; set; } = [];
+    [Parameter] public EventCallback<(string IssueIdentifier, string IssueProviderId)> OnRemoveFromQueue { get; set; }
+    [Parameter] public EventCallback<string> OnCancelConsolidation { get; set; }
+    [Parameter] public EventCallback<(Guid Id, int Weight)> OnSetPriority { get; set; }
+}

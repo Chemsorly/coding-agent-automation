@@ -184,6 +184,17 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result?.IsDistributed ?? false;
     }
 
+    public async Task SetPriorityAsync(Guid workItemId, int priorityWeight, CancellationToken ct = default)
+    {
+        var body = new { priorityWeight };
+        var response = await _http.PostAsJsonAsync(
+            $"/api/work-items/{workItemId}/priority",
+            body,
+            PipelineJsonOptions.Default,
+            ct);
+        response.EnsureSuccessStatusCode();
+    }
+
     public async Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIdentifiersAsync(CancellationToken ct = default)
     {
         var result = await _http.GetFromJsonAsync<List<ActiveIdentifierDto>>(

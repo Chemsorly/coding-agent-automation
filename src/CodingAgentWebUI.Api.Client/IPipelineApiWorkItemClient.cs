@@ -45,6 +45,13 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId, CancellationToken ct = default);
 
     /// <summary>
+    /// Sets the dispatch priority weight for a Pending WorkItem.
+    /// Calls <c>POST /api/work-items/{id}/priority</c>.
+    /// Throws <see cref="System.Net.Http.HttpRequestException"/> on non-2xx (400 invalid range, 409 not-Pending or concurrency conflict).
+    /// </summary>
+    Task SetPriorityAsync(Guid workItemId, int priorityWeight, CancellationToken ct = default);
+
+    /// <summary>
     /// Returns all (IssueIdentifier, IssueProviderConfigId) pairs that have active or recently
     /// terminated WorkItems. Used by KubernetesWorkDistributor.GetActiveIssueIdentifiersAsync.
     /// </summary>
