@@ -294,7 +294,7 @@ public sealed record JobCompletionPayload
     public AnalysisGateResult? AnalysisRecommendation { get; init; }
 
     [Key(12)]
-    public bool IsRework { get; init; }
+    public RunMode RunMode { get; init; } = RunMode.New;
 
     [Key(13)]
     public IReadOnlyList<string> AnalysisConcerns { get; init; } = [];

@@ -239,7 +239,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 FinalStep = PipelineStep.Failed,
                 FailureReason = ex.Message,
                 CompletedAt = DateTimeOffset.UtcNow,
-                IsRework = message.LinkedPullRequest is not null
+                RunMode = message.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New
             };
         }
         finally

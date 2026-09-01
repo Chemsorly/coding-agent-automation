@@ -30,6 +30,12 @@ public static class InitiatedByConstants
     /// Rework run dispatched after the housekeeping loop detected a conflicted PR and
     /// swapped the linked issue back to <c>agent:next</c>.
     /// </summary>
+    /// <remarks>
+    /// Not used — rework is now represented by <see cref="RunMode.Rework"/> on the run summary,
+    /// which is set by <c>DetectReworkStep</c> during agent execution. <c>InitiatedBy</c> records
+    /// the dispatch source; <see cref="RunMode"/> records what the pipeline did with the branch.
+    /// </remarks>
+    [Obsolete("Rework is signalled by RunMode.Rework on PipelineRunSummary, not by InitiatedBy. This constant is unused and will be removed in a future version.")]
     public const string LoopRework = "loop:rework";
 
     // ── Manual (human-initiated via UI) ──────────────────────────────────────
@@ -62,4 +68,19 @@ public static class InitiatedByConstants
     public static bool IsManual(string? initiatedBy) =>
         initiatedBy is not null &&
         initiatedBy.StartsWith("manual", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Returns a composite display string combining <paramref name="initiatedBy"/> and
+    /// <paramref name="runMode"/> for UI surfaces.
+    /// <para>
+    /// Format: <c>initiatedBy</c> when <paramref name="runMode"/> is <see cref="RunMode.New"/>;
+    /// <c>initiatedBy (rework)</c> or <c>initiatedBy (retry)</c> otherwise.
+    /// </para>
+    /// </summary>
+    public static string ToDisplayString(string initiatedBy, RunMode runMode) => runMode switch
+    {
+        RunMode.Rework => $"{initiatedBy} (rework)",
+        RunMode.Retry  => $"{initiatedBy} (retry)",
+        _              => initiatedBy
+    };
 }

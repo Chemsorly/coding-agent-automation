@@ -249,6 +249,13 @@ public sealed partial class PipelineRun
     /// <summary>How this run was initiated: "manual" or "loop".</summary>
     public string InitiatedBy { get; init; } = "manual";
 
+    /// <summary>
+    /// What the pipeline did with the branch when this run started.
+    /// Set by <c>DetectReworkStep</c> after querying for existing agent PRs.
+    /// Defaults to <see cref="RunMode.New"/> until DetectReworkStep runs.
+    /// </summary>
+    public RunMode RunMode { get; set; } = RunMode.New;
+
     /// <summary>Discriminates implementation vs review runs.</summary>
     public PipelineRunType RunType { get; init; } = PipelineRunType.Implementation;
 
@@ -381,7 +388,7 @@ public sealed partial class PipelineRun
         AgentId = AgentId,
         InitiatedBy = InitiatedBy,
         AnalysisRecommendation = AnalysisRecommendation,
-        IsRework = LinkedPullRequest != null,
+        RunMode = RunMode,
         FailureReason = FailureReason,
         Feedback = Feedback,
         TotalTokens = TotalTokens,

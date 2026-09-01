@@ -58,8 +58,8 @@ public sealed class PipelineRunSummary
     /// <summary>Analysis gate recommendation, or null if no assessment was produced.</summary>
     public AnalysisGateResult? AnalysisRecommendation { get; init; }
 
-    /// <summary>Whether this run was a rework of an existing PR.</summary>
-    public bool IsRework { get; init; }
+    /// <summary>What the pipeline did with the branch when this run started.</summary>
+    public RunMode RunMode { get; init; } = RunMode.New;
 
     /// <summary>Why the run failed, or null if it did not fail.</summary>
     public string? FailureReason { get; init; }

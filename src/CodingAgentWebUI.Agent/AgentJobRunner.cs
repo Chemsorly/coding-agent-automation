@@ -52,7 +52,7 @@ public static class AgentJobRunner
             {
                 FinalStep = PipelineStep.Cancelled,
                 CompletedAt = DateTimeOffset.UtcNow,
-                IsRework = req.Assignment.LinkedPullRequest is not null,
+                RunMode = req.Assignment.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New,
                 FinalLabel = req.CancelledLabel
             };
         }
@@ -63,7 +63,7 @@ public static class AgentJobRunner
                 FinalStep = PipelineStep.Failed,
                 FailureReason = ex.Message,
                 CompletedAt = DateTimeOffset.UtcNow,
-                IsRework = req.Assignment.LinkedPullRequest is not null
+                RunMode = req.Assignment.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New
             };
         }
     }
