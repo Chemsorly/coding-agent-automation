@@ -197,13 +197,8 @@ public class PipelineIntegrationTests : IntegrationTestBase
         // Wait for the fire-and-forget persist to flush to disk.
         // Poll instead of a fixed delay: under parallel test-suite load 500 ms is insufficient.
         var expectedFile = Path.Combine(RunsDir, $"{run.RunId}.json");
-        // TODO: [WARNING] DateTime.UtcNow was introduced here in the #2172 refactor but the rest of
-        // the codebase uses DateTimeOffset.UtcNow for time comparisons. While both produce the same
-        // wall-clock result, mixing the two types in the same polling loop is inconsistent and may
-        // produce a compiler warning on implicit conversion. Revert to DateTimeOffset.UtcNow to match
-        // the project convention.
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (!File.Exists(expectedFile) && DateTime.UtcNow < deadline)
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (!File.Exists(expectedFile) && DateTimeOffset.UtcNow < deadline)
             await Task.Delay(50);
 
         // Simulate restart: create a brand new service pointing at the same runs directory

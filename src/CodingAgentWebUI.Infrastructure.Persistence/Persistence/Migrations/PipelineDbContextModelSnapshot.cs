@@ -376,12 +376,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .HasColumnType("jsonb");
 
                     b.Property<int>("PriorityWeight")
-                        // TODO: [WARNING] Missing .HasDefaultValue(0) annotation. The migration sets
-                        // defaultValue: 0, but the model snapshot does not record the database default.
-                        // EF Core uses the snapshot as the source of truth for subsequent migration
-                        // generation; running 'dotnet ef migrations add' may emit a spurious AlterColumn
-                        // for PriorityWeight because the snapshot and the migration are inconsistent.
-                        // Add .HasDefaultValue(0) here to keep them in sync.
+                        .HasDefaultValue(0)
                         .HasColumnType("integer");
 
                     b.Property<Guid?>("ProjectId")
