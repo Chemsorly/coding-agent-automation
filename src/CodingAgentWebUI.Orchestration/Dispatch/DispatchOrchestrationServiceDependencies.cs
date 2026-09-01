@@ -10,5 +10,5 @@ public sealed record DispatchOrchestrationServiceDependencies(
     DispatchInfrastructure Infra,
     IWorkDistributor WorkDistributor,
     IAgentProfileStore AgentProfileStore,
-    IConfigurationStore ProviderConfigStore,
+    IProviderConfigStore ProviderConfigStore,
     IPipelineConfigStore PipelineConfigStore);

@@ -1,3 +1,4 @@
+#pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;

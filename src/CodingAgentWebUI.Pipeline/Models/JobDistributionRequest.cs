@@ -67,6 +67,19 @@ public record JobDistributionRequest
 
     // --- Provider configs (serialized without secrets) ---
 
+    /// <summary>
+    /// Payload schema version discriminator.
+    /// <list type="bullet">
+    ///   <item><c>null</c> — old schema (pre-#2171): full config snapshot frozen at enqueue time.
+    ///     <c>ProviderConfigs</c> is non-null. Served as-is from the frozen snapshot.</item>
+    ///   <item><c>1</c> — new schema (post-#2171): minimal identity payload.
+    ///     <c>ProviderConfigs</c> is null. All mutable config is fetched fresh at assignment time
+    ///     via <c>AssignmentEnricher</c>.</item>
+    /// </list>
+    /// Replaces the fragile <c>ProviderConfigs == null</c> null-discriminator for schema detection.
+    /// </summary>
+    public int? PayloadSchemaVersion { get; init; }
+
     /// <summary>Provider configurations relevant to this work item.</summary>
     public IReadOnlyList<ProviderConfig>? ProviderConfigs { get; init; }
 

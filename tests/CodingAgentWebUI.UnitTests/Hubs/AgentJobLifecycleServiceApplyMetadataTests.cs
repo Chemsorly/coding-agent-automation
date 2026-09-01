@@ -36,57 +36,38 @@ public class AgentJobLifecycleServiceApplyMetadataTests
 
     // ── BaselineHealthPassed ──────────────────────────────────────────────────
 
-    [Fact]
-    public void ApplyStepMetadata_BaselineHealthPassed_True_SetsTrue()
+    [Theory]
+    [InlineData("True", true)]
+    [InlineData("False", false)]
+    [InlineData("not-a-bool", null)]
+    public void ApplyStepMetadata_BaselineHealthPassed_SetsExpectedValue(string rawValue, bool? expected)
     {
         var run = MakeRun();
-        Apply(run, new() { ["BaselineHealthPassed"] = "True" });
-        run.BaselineHealthPassed.Should().BeTrue();
-    }
+        if (expected == null)
+            run.BaselineHealthPassed = true; // ensure garbage case truly sets null, not just leaves default
 
-    [Fact]
-    public void ApplyStepMetadata_BaselineHealthPassed_False_SetsFalse()
-    {
-        var run = MakeRun();
-        Apply(run, new() { ["BaselineHealthPassed"] = "False" });
-        run.BaselineHealthPassed.Should().BeFalse();
-    }
+        Apply(run, new() { ["BaselineHealthPassed"] = rawValue });
 
-    [Fact]
-    public void ApplyStepMetadata_BaselineHealthPassed_Garbage_SetsNull()
-    {
-        var run = MakeRun();
-        Apply(run, new() { ["BaselineHealthPassed"] = "not-a-bool" });
-        run.BaselineHealthPassed.Should().BeNull("unparseable value must leave property null");
+        run.BaselineHealthPassed.Should().Be(expected,
+            $"BaselineHealthPassed value '{rawValue}' must parse to {expected?.ToString() ?? "null"}");
     }
 
     // ── AnalysisSkipped ───────────────────────────────────────────────────────
 
-    [Fact]
-    public void ApplyStepMetadata_AnalysisSkipped_True_SetsTrue()
+    [Theory]
+    [InlineData("True", true)]
+    [InlineData("False", false)]
+    [InlineData("garbage", false)] // TryParseBool returns null → null == true is false → AnalysisSkipped = false
+    public void ApplyStepMetadata_AnalysisSkipped_SetsExpectedValue(string rawValue, bool expected)
     {
         var run = MakeRun();
-        Apply(run, new() { ["AnalysisSkipped"] = "True" });
-        run.AnalysisSkipped.Should().BeTrue();
-    }
+        if (expected == false && rawValue == "False")
+            run.AnalysisSkipped = true; // ensure reset actually fires
 
-    [Fact]
-    public void ApplyStepMetadata_AnalysisSkipped_False_SetsFalse()
-    {
-        var run = MakeRun();
-        run.AnalysisSkipped = true;
-        Apply(run, new() { ["AnalysisSkipped"] = "False" });
-        run.AnalysisSkipped.Should().BeFalse();
-    }
+        Apply(run, new() { ["AnalysisSkipped"] = rawValue });
 
-    [Fact]
-    public void ApplyStepMetadata_AnalysisSkipped_Garbage_SetsFalse()
-    {
-        // TryParseBool returns null for garbage → `null == true` is false → AnalysisSkipped = false
-        var run = MakeRun();
-        run.AnalysisSkipped = false;
-        Apply(run, new() { ["AnalysisSkipped"] = "garbage" });
-        run.AnalysisSkipped.Should().BeFalse();
+        run.AnalysisSkipped.Should().Be(expected,
+            $"AnalysisSkipped value '{rawValue}' must parse to {expected}");
     }
 
     // ── Integer fields ────────────────────────────────────────────────────────

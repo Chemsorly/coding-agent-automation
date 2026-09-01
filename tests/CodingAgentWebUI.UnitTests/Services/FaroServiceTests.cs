@@ -145,51 +145,45 @@ public class FaroServiceTests
     }
 
     // ── Graceful degradation ─────────────────────────────────────────────────
-    // Each swallowed exception type is tested across all three methods so that
-    // per-method catch-block regressions are caught. A negative test verifies
-    // the filter is selective (unexpected exceptions must propagate).
+    // All three methods share one catch predicate (IsSafeToSwallow), so a single
+    // parameterized Theory catches per-method catch-block regressions while
+    // eliminating three structurally identical copies.
 
     [Theory]
-    [InlineData("JSException")]
-    [InlineData("JSDisconnectedException")]
-    [InlineData("OperationCanceledException")]
-    [InlineData("ObjectDisposedException")]
-    [InlineData("InvalidOperationException")]
-    public async Task PushLogAsync_DoesNotThrow_ForAllSafeExceptionTypes(string exceptionType)
+    [InlineData("PushLog",   "JSException")]
+    [InlineData("PushLog",   "JSDisconnectedException")]
+    [InlineData("PushLog",   "OperationCanceledException")]
+    [InlineData("PushLog",   "ObjectDisposedException")]
+    [InlineData("PushLog",   "InvalidOperationException")]
+    [InlineData("PushError", "JSException")]
+    [InlineData("PushError", "JSDisconnectedException")]
+    [InlineData("PushError", "OperationCanceledException")]
+    [InlineData("PushError", "ObjectDisposedException")]
+    [InlineData("PushError", "InvalidOperationException")]
+    [InlineData("PushEvent", "JSException")]
+    [InlineData("PushEvent", "JSDisconnectedException")]
+    [InlineData("PushEvent", "OperationCanceledException")]
+    [InlineData("PushEvent", "ObjectDisposedException")]
+    [InlineData("PushEvent", "InvalidOperationException")]
+    public async Task DoesNotThrow_ForAllSafeExceptionTypes(string method, string exceptionType)
     {
         var js = MakeThrowingMock(exceptionType);
         var sut = new FaroService(js.Object);
-        var ex = await Record.ExceptionAsync(() => sut.PushLogAsync("test"));
+
+        var ex = await Record.ExceptionAsync(() => method switch
+        {
+            "PushLog"   => sut.PushLogAsync("test"),
+            "PushError" => sut.PushErrorAsync("test"),
+            "PushEvent" => sut.PushEventAsync("test"),
+            _ => throw new ArgumentOutOfRangeException(nameof(method))
+        });
+
         Assert.Null(ex);
     }
 
-    [Theory]
-    [InlineData("JSException")]
-    [InlineData("JSDisconnectedException")]
-    [InlineData("OperationCanceledException")]
-    [InlineData("ObjectDisposedException")]
-    [InlineData("InvalidOperationException")]
-    public async Task PushErrorAsync_DoesNotThrow_ForAllSafeExceptionTypes(string exceptionType)
-    {
-        var js = MakeThrowingMock(exceptionType);
-        var sut = new FaroService(js.Object);
-        var ex = await Record.ExceptionAsync(() => sut.PushErrorAsync("test"));
-        Assert.Null(ex);
-    }
-
-    [Theory]
-    [InlineData("JSException")]
-    [InlineData("JSDisconnectedException")]
-    [InlineData("OperationCanceledException")]
-    [InlineData("ObjectDisposedException")]
-    [InlineData("InvalidOperationException")]
-    public async Task PushEventAsync_DoesNotThrow_ForAllSafeExceptionTypes(string exceptionType)
-    {
-        var js = MakeThrowingMock(exceptionType);
-        var sut = new FaroService(js.Object);
-        var ex = await Record.ExceptionAsync(() => sut.PushEventAsync("test"));
-        Assert.Null(ex);
-    }
+    // ── Negative: filter is selective (unexpected exceptions must propagate) ──
+    // Kept as three named Facts so a regression in any specific method's try/catch
+    // is clearly identified in the test runner output.
 
     [Fact]
     public async Task PushLogAsync_Propagates_WhenUnexpectedExceptionOccurs()
