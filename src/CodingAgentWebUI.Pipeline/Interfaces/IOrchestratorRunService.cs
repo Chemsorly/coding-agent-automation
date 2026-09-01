@@ -70,7 +70,7 @@ public interface IOrchestratorRunService
     /// Used by <see cref="Services.HousekeepingService"/> Step 4 / Step 6b to guard
     /// against calling <c>UpdatePullRequestBranchAsync</c> on a branch that has an active run.
     /// </remarks>
-    // TODO (WARNING): The DI registration of SchedulerRunQueryService uses a factory lambda
+    // NOTE: The DI registration of SchedulerRunQueryService uses a factory lambda
     //   (sp => new SchedulerRunQueryService(sp.GetRequiredService<IPipelineApiRunHistoryClient>()))
     //   rather than automatic constructor injection. If IPipelineApiRunHistoryClient is not
     //   registered in the Scheduler's service collection, the error is deferred to first use

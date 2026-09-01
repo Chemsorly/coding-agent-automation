@@ -62,7 +62,7 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
         // A silent empty list would be indistinguishable from "no active runs" and would defeat
         // the conservative fallback — e.g. a 403 from a misconfigured auth key would cause
         // UpdatePullRequestBranchAsync to be called on live-run branches.
-        // TODO (WARNING): GetRunHistoryAsync (line ~22) uses the same GetFromJsonAsync pattern and
+        // NOTE: GetRunHistoryAsync (line ~22) uses the same GetFromJsonAsync pattern and
         //   would throw a NullReferenceException on non-2xx responses (result! dereference).
         //   That is a pre-existing issue in this file; consider aligning it to GetAsync +
         //   EnsureSuccessStatusCode for consistency.

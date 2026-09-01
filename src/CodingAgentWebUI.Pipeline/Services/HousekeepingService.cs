@@ -133,7 +133,7 @@ public sealed class HousekeepingService : IHousekeepingService
             // branches are safe to update. Branch updates are skipped for this cycle (Steps 6a and 6b).
             // Requirement: "If branch name data is unavailable, housekeeping MUST default to
             // conservative behavior: skip branch updates for PRs where branch state cannot be confirmed."
-            // TODO (WARNING): The Scheduler-deployment path reaches here when GET /api/pipeline-runs/active-branches
+            // NOTE: The Scheduler-deployment path reaches here when GET /api/pipeline-runs/active-branches
             //   fails (API pod down, auth misconfiguration, 5xx, etc.). The conservative skip covers correctness,
             //   but the root causes should also be addressed:
             //   1. PipelineApiRunHistoryClient.GetActiveBranchesAsync uses GetFromJsonAsync which silently
@@ -187,7 +187,7 @@ public sealed class HousekeepingService : IHousekeepingService
 
             // Conservative fallback: if active-run branch data was unavailable (Step 4 threw),
             // skip ALL branch updates this cycle — we cannot confirm which branches are safe.
-            // TODO (WARNING): The telemetry counter is incremented per-PR but no per-PR log is emitted
+            // NOTE: The telemetry counter is incremented per-PR but no per-PR log is emitted
             //   for the conservative-skip path. If the API is down for an extended period (e.g. 30 min),
             //   operators have no per-PR visibility into which PRs were skipped — only the aggregate
             //   counter and the single Warning-level log from Step 4. Consider logging PR number and

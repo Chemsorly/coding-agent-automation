@@ -33,7 +33,7 @@ public static class PipelineRunEndpoints
         group.MapPost("/", CreateRunSummary);
 
         // Active branch names — used by SchedulerRunQueryService for the housekeeping guard.
-        // TODO (WARNING): This endpoint inherits RequireAuthorization(ApiAuthPolicies.Operator) from the group.
+        // NOTE: This endpoint inherits RequireAuthorization(ApiAuthPolicies.Operator) from the group.
         //   The Scheduler's HttpClient (via PipelineApiRunHistoryClient) must authenticate with an operator-tier
         //   key, not an agent-tier key. If misconfigured with an agent key, the request receives 403 and
         //   GetFromJsonAsync silently returns null → [], which is indistinguishable from "no active runs" and

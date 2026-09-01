@@ -293,7 +293,7 @@ public class HousekeepingServiceTests
 
         selectedPrs.Should().HaveCountGreaterThan(1,
             "with random selection, both PR #10 and PR #20 should be selected at least once across 20 trials");
-        // TODO: HaveCountGreaterThan(1) only confirms diversity, not fairness — a heavily biased shuffle (e.g.,
+        // NOTE: HaveCountGreaterThan(1) only confirms diversity, not fairness — a heavily biased shuffle (e.g.,
         // 19 of 20 selections always picking PR #10) would still pass. Consider asserting that each candidate
         // appears in at least some minimum fraction of trials if stricter distribution validation is needed.
     }
@@ -453,7 +453,7 @@ public class HousekeepingServiceTests
             p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "UpdatePullRequestBranchAsync must not be called when active-run branch data is unavailable");
-        // TODO (WARNING): This test only asserts the Step 6b (branch update) path of the conservative
+        // NOTE: This test only asserts the Step 6b (branch update) path of the conservative
         //   fallback. The activeRunBranchesUnavailable flag also gates the Step 6a rework-swap path
         //   (if (activeRunBranchesUnavailable || activeRunBranches.Contains(pr.BranchName))).
         //   A regression that removes the flag check from Step 6a while leaving Step 6b intact
