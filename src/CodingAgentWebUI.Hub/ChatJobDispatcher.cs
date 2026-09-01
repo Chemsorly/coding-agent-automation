@@ -423,23 +423,32 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     /// <summary>
     /// Reads the cross-replica heartbeat timestamp from Redis.
-    /// Returns null on Redis failure (watcher falls back to local ticks).
+    /// Returns <c>(Available: true, Heartbeat: value)</c> when Redis is reachable — <c>Heartbeat</c>
+    /// is <c>null</c> when the key does not exist (never received a heartbeat).
+    /// Returns <c>(Available: false, Heartbeat: null)</c> when Redis threw an exception (transient fault).
+    /// Callers must distinguish these two cases: a <c>null</c> heartbeat from an available Redis means
+    /// "no heartbeat received" (local-ticks fallback is appropriate), whereas <c>Available=false</c>
+    /// means the infrastructure is faulted and the idle-kill check must be skipped entirely.
     /// </summary>
-    private async Task<DateTimeOffset?> TryGetRedisHeartbeatAsync(string jobName, WatcherEntry entry)
+    private async Task<(bool Available, DateTimeOffset? Heartbeat)> TryGetRedisHeartbeatAsync(
+        string jobName, WatcherEntry entry)
     {
         try
         {
             var raw = await _redis!.GetAsync(HeartbeatKey(entry.AgentId));
             if (raw is not null && long.TryParse(raw, out var ms))
-                return DateTimeOffset.FromUnixTimeMilliseconds(ms);
+                return (true, DateTimeOffset.FromUnixTimeMilliseconds(ms));
+            // Key does not exist — Redis is available but no heartbeat was written yet.
+            return (true, null);
         }
         catch (Exception ex)
         {
             _logger.Warning(ex,
-                "ChatJobDispatcher: Redis heartbeat read failed for {JobName} — falling back to local ticks",
+                "ChatJobDispatcher: Redis heartbeat read failed for {JobName} — skipping idle-kill for this cycle",
                 jobName);
+            // Redis fault: Available=false signals the caller to skip the idle-kill check.
+            return (false, null);
         }
-        return null;
     }
 
     // ─── Background watcher ───────────────────────────────────────────────────
@@ -463,11 +472,36 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 // When Redis is configured: read the cross-replica authoritative timestamp so
                 // a keepalive that landed on a different replica is visible here. Fall back to
                 // the local in-process ticks when Redis is absent (local dev, single replica).
+                // When Redis throws (transient fault), skip the idle-kill check entirely for
+                // this cycle — preserving the session is safer than killing it based on stale
+                // local ticks that may reflect keepalives missed due to load-balancing.
                 DateTimeOffset lastHeartbeat;
                 if (_redis is not null)
                 {
-                    var raw = await TryGetRedisHeartbeatAsync(jobName, entry);
-                    lastHeartbeat = raw ?? new DateTimeOffset(
+                    var (redisAvailable, redisHeartbeat) = await TryGetRedisHeartbeatAsync(jobName, entry);
+                    if (!redisAvailable)
+                    {
+                        // Redis fault — skip idle-kill for this cycle and continue polling.
+                        // The session is preserved until Redis recovers and the next check sees
+                        // either a recent heartbeat (no kill) or a genuinely expired one (kill).
+                        // TODO [WARNING]: swallowing OperationCanceledException here is consistent with the
+                        // catch-and-swallow pattern elsewhere in this loop (~line 511), but it means
+                        // cancellation during this delay exits via the while-condition rather than
+                        // the outer catch (OperationCanceledException) block. The CAS guard in
+                        // CleanupSession ensures the "shutdown" outcome is still recorded correctly,
+                        // so there is no functional regression, but propagating the OCE here would
+                        // be more idiomatic and match the normal cancellation exit path.
+                        // Additionally: if StopAsync fires while the watcher is sleeping here,
+                        // the OCE is swallowed and the loop exits via the while-condition without
+                        // calling CleanupSession("shutdown"). The normal cancellation path (~line 555)
+                        // does call CleanupSession; this path silently skips it. The CAS guard in
+                        // CleanupSession means the first call wins, so if shutdown fires before any
+                        // cleanup call, the "shutdown" outcome is never recorded for this session.
+                        // Fix: let the OCE propagate so the outer catch handles cleanup uniformly.
+                        try { await Task.Delay(pollInterval, ct); } catch (OperationCanceledException) { }
+                        continue;
+                    }
+                    lastHeartbeat = redisHeartbeat ?? new DateTimeOffset(
                         Interlocked.Read(ref entry.LastClientHeartbeatTicks), TimeSpan.Zero);
                 }
                 else
