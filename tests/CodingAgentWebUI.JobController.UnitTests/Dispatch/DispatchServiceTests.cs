@@ -1,6 +1,7 @@
 using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using k8s.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -72,7 +73,7 @@ public sealed class DispatchServiceTests
     {
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            _templateStore, _options, new PvcSelectLock());
+            _templateStore, _options, new PvcSelectLock(), Mock.Of<IProviderFactory>());
 
         return new DispatchService(leaderElection, loop, _options);
     }

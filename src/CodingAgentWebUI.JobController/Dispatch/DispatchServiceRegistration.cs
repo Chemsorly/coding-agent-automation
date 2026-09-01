@@ -1,5 +1,8 @@
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Api.Client.Stores;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,6 +32,20 @@ public static class DispatchServiceRegistration
         // concurrently (cross-loop TOCTOU). See PvcSelectLock for details.
         services.AddSingleton<PvcSelectLock>();
 
+        // ── Provider factory for issue-eligibility checks ─────────────────────
+        // ProviderFactory requires IPipelineConfigStore for CreatePipelineProviderAsync, but
+        // the eligibility path only calls CreateIssueProvider (which doesn't touch the config
+        // store). ApiPipelineConfigStore is the pragmatic safe choice matching the Scheduler pattern.
+        // Registration order: concrete first, interface forwarded second (Scheduler convention).
+        // TODO: The forwarding-singleton pattern is fragile if a future caller also registers
+        // IPipelineConfigStore — DI will silently resolve the last-registered one.
+        services.AddSingleton<ApiPipelineConfigStore>(sp =>
+            new ApiPipelineConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>()));
+        services.AddSingleton<IPipelineConfigStore>(sp =>
+            sp.GetRequiredService<ApiPipelineConfigStore>());
+        services.AddSingleton<IProviderFactory>(sp =>
+            new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
+
         // ── Regular work item dispatch ────────────────────────────────────────
         services.AddSingleton<DispatchLoop>(sp => new DispatchLoop(
             sp.GetRequiredService<IPipelineApiWorkItemClient>(),
@@ -36,7 +53,8 @@ public static class DispatchServiceRegistration
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<JobTemplateStore>(),
             sp.GetRequiredService<DispatchServiceOptions>(),
-            sp.GetRequiredService<PvcSelectLock>()));
+            sp.GetRequiredService<PvcSelectLock>(),
+            sp.GetRequiredService<IProviderFactory>()));
 
         services.AddSingleton<DispatchService>(sp => new DispatchService(
             sp.GetRequiredService<ILeaderElectionService>(),
