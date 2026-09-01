@@ -196,14 +196,15 @@ public static class WorkItemEndpoints
         if (request is null)
             return TypedResults.NotFound();
 
-        // ── Backward-compatibility: detect payload schema ─────────────────
-        // Old schema: ProviderConfigs != null → serve from frozen snapshot.
-        // New schema: ProviderConfigs == null → fresh-fetch all mutable config.
-        // NOTE: [WARNING] The null-discriminator is fragile: an old-schema row where ProviderConfigs
-        // happened to deserialize as null (serialization bug, manually inserted row, future
-        // [JsonIgnore] refactor) would be misclassified as new-schema and enter the enrichment path.
-        // A versioned discriminator field (e.g., PayloadSchemaVersion) would eliminate the ambiguity.
-        if (request.ProviderConfigs is null && assignmentEnricher is not null)
+        // ── Payload schema detection ──────────────────────────────────────
+        // PayloadSchemaVersion == 1  (new schema, post-#2171): fetch fresh config via AssignmentEnricher.
+        // PayloadSchemaVersion == null AND ProviderConfigs != null (old schema, pre-#2171): serve frozen snapshot.
+        // PayloadSchemaVersion == null AND ProviderConfigs == null: treat as new schema (all post-#2171 rows
+        //   without PayloadSchemaVersion set during the transition window).
+        var isNewSchema = request.PayloadSchemaVersion == 1
+            || (request.PayloadSchemaVersion is null && request.ProviderConfigs is null);
+
+        if (isNewSchema && assignmentEnricher is not null)
         {
             // Resolve project for steering + config override context.
             // Falls back to a minimal stub so enrichment still works for project-less items.
@@ -223,12 +224,17 @@ public static class WorkItemEndpoints
                 request = enriched;
             // If enrichment fails, fall through to serve the identity-only request as a
             // best-effort degraded response (missing configs, but RunId/IssueIdentifier intact).
-            // NOTE: [WARNING] assignmentEnricher is nullable ([FromServices] optional). If the DI
-            // container fails to resolve it at startup (transitive dependency missing), ASP.NET
-            // Core silently injects null and every new-schema work item gets a degraded identity-only
-            // 200 with no configs — no startup error, no warning log at this site. Add a startup
-            // validation or at minimum a warning log here when assignmentEnricher is null and
-            // request.ProviderConfigs is also null (new-schema work item with no enricher).
+        }
+        else if (isNewSchema && assignmentEnricher is null)
+        {
+            // new-schema work item but enricher is null — indicates DI misconfiguration.
+            // ValidateDiWiring should have caught this at startup; log a warning here as
+            // defence-in-depth so the degraded response is at least visible in logs.
+            Log.Warning(
+                "GetAssignment: AssignmentEnricher is null for new-schema WorkItem {WorkItemId} — " +
+                "returning identity-only payload (no provider configs). " +
+                "ValidateDiWiring should prevent this in production.",
+                id);
         }
 
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
@@ -420,6 +426,9 @@ public static class WorkItemEndpoints
     {
         return new JobDistributionRequest
         {
+            // Schema version discriminator: 1 = new schema (post-#2171), fresh config at assignment time.
+            PayloadSchemaVersion = 1,
+
             // Identity / non-reconstructable fields
             IssueIdentifier = request.IssueIdentifier,
             IssueProviderConfigId = request.IssueProviderConfigId,
@@ -476,7 +485,9 @@ public static class WorkItemEndpoints
                 : null,
 
             // All mutable config intentionally omitted (null):
-            // ProviderConfigs = null           ← absence detected as new-schema signal in GetAssignment
+            // ProviderConfigs = null           ← PayloadSchemaVersion=1 is now the authoritative new-schema signal;
+            //                                    ProviderConfigs==null is retained as a fallback for rows that
+            //                                    were created before PayloadSchemaVersion was introduced.
             // PipelineConfiguration = null
             // QualityGateConfigs = null
             // ReviewerConfigs = null
