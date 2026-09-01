@@ -145,10 +145,10 @@ public class PullRequestOrchestratorTests
         capturedInfo!.Body.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
     }
 
-    // ── Code review summary included ──
+    // ── PR body smoke test — issue context is always present ──
 
     [Fact]
-    public async Task CreatePullRequest_WithCodeReview_IncludesSummaryInBody()
+    public async Task CreatePullRequest_Always_ContainsIssueContextSection()
     {
         PullRequestInfo? capturedInfo = null;
         _mockRepo.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
@@ -156,34 +156,12 @@ public class PullRequestOrchestratorTests
             .ReturnsAsync("https://github.com/org/repo/pull/99");
 
         var run = CreateRun();
-        run.CodeReviewAgentsRun = new List<string> { "Correctness", "Security" };
-        run.SetCodeReviewCounts(2, 1, 0);
 
         await _sut.CreatePullRequestAsync(
             run, CreateReport(), false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
-        capturedInfo!.Body.Should().Contain("Code Review");
-    }
-
-    // ── No code review data → no summary section ──
-
-    [Fact]
-    public async Task CreatePullRequest_NoCodeReview_OmitsSummarySection()
-    {
-        PullRequestInfo? capturedInfo = null;
-        _mockRepo.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
-            .Callback<PullRequestInfo, CancellationToken>((info, _) => capturedInfo = info)
-            .ReturnsAsync("https://github.com/org/repo/pull/99");
-
-        var run = CreateRun();
-        // CodeReviewAgentsRun is empty by default
-
-        await _sut.CreatePullRequestAsync(
-            run, CreateReport(), false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
-
-        capturedInfo!.Body.Should().NotContain("Code Review");
+        capturedInfo!.Body.Should().Contain("## Issue Context");
     }
 
     // ── Rework path — updates existing PR ──
@@ -269,11 +247,6 @@ public class PullRequestOrchestratorTests
 
         capturedInfo!.Body.Should().Contain("#42");
         capturedInfo.Body.Should().Contain("Closes #42");
-        // TODO: [WARNING] ".Contain("5")" is under-constrained — the digit "5" appears anywhere in a typical PR body
-        // (PR numbers, coverage values, etc.) so this does not reliably guard TestsPassed rendering.
-        // Replace with the exact format string emitted by PipelineFormatting.GeneratePrBody for the passed-test count
-        // (e.g. "5 passed" or similar) once the template output is confirmed.
-        capturedInfo.Body.Should().Contain("5");   // tests passed
         run.PullRequestBody.Should().Be(capturedInfo.Body);
     }
 
@@ -301,11 +274,6 @@ public class PullRequestOrchestratorTests
         capturedBody.Should().NotBeNull();
         capturedBody!.Should().Contain("#42");
         capturedBody.Should().Contain("Closes #42");
-        // TODO: [WARNING] ".Contain("5")" is under-constrained — the digit "5" appears anywhere in a typical PR body
-        // (PR numbers, coverage values, etc.) so this does not reliably guard TestsPassed rendering.
-        // Replace with the exact format string emitted by PipelineFormatting.GeneratePrBody for the passed-test count
-        // (e.g. "5 passed" or similar) once the template output is confirmed.
-        capturedBody.Should().Contain("5");   // tests passed
         run.PullRequestBody.Should().Be(capturedBody);
     }
 

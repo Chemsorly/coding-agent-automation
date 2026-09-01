@@ -1133,14 +1133,6 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void BuildPrDescriptionPrompt_ContainsKeyChangesSection()
-    {
-        var run = CreatePipelineRun();
-        var result = PromptBuilder.BuildPrDescriptionPrompt(run);
-        result.Should().Contain("### Key Changes");
-    }
-
-    [Fact]
     public void BuildPrDescriptionPrompt_ContainsBreakingChangesSection()
     {
         var run = CreatePipelineRun();

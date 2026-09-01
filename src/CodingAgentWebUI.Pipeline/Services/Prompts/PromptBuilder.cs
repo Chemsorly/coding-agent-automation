@@ -900,9 +900,6 @@ public static partial class PromptBuilder
         sb.AppendLine("### Approach");
         sb.AppendLine("Brief description of the implementation strategy.");
         sb.AppendLine();
-        sb.AppendLine("### Key Changes");
-        sb.AppendLine("File-level walkthrough of the most important changes (not every file — focus on the interesting ones).");
-        sb.AppendLine();
         sb.AppendLine("### Breaking Changes");
         sb.AppendLine("Only if applicable. Omit this section entirely if there are none.");
         sb.AppendLine();

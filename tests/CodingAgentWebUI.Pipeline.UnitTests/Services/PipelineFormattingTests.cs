@@ -197,74 +197,33 @@ public class PipelineFormattingTests
     }
 
     // --- GeneratePrBody ---
+    // Deleted (behavior removed): GeneratePrBody_MinimalInput_ContainsRequiredSections — asserted ## Files Changed, ## Test Results, ## Coverage
+    // Deleted (behavior removed): GeneratePrBody_WithFileChanges_RendersTable — asserted file table rows
+    // Deleted (behavior removed): GeneratePrBody_MoreThan50Files_ShowsTruncationMessage — asserted truncation row
+    // Deleted (behavior removed): GeneratePrBody_NullCoverage_ShowsNotAvailable — asserted "Not available"
+    // Deleted (behavior removed): GeneratePrBody_WithCodeReview_ShowsReviewSection — asserted ## AI Code Review Findings
+    // Deleted (behavior removed): GeneratePrBody_WithCodeReview_NoFindings_ShowsNoFindingsMessage — asserted "Code review: no findings"
 
     [Fact]
-    public void GeneratePrBody_MinimalInput_ContainsRequiredSections()
+    public void GeneratePrBody_ContainsIssueContextSection()
     {
+        // TODO: [WARNING] This test only exercises the CloseReference != null path (## Issue Reference block is
+        // emitted). The CloseReference = null path — where ## Issue Reference must NOT appear — is not covered.
+        // Add a complementary test with CloseReference = null to guard the conditional in GeneratePrBody.
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
                 IssueReference = "#42",
-                TestsPassed = 10,
-                TestsFailed = 0,
-                TestsSkipped = 2,
-                FileChanges = [],
                 IssueTitle = "Add feature X",
                 CloseReference = "Closes #42",
             });
 
         result.Should().Contain("## Issue Context");
         result.Should().Contain("**Add feature X** (#42)");
-        result.Should().Contain("## Files Changed");
-        result.Should().Contain("No file changes detected.");
-        result.Should().Contain("## Test Results");
-        result.Should().Contain("- Passed: 10");
-        result.Should().Contain("- Failed: 0");
-        result.Should().Contain("- Skipped: 2");
         result.Should().Contain("Closes #42");
-    }
-
-    [Fact]
-    public void GeneratePrBody_WithFileChanges_RendersTable()
-    {
-        var files = new List<FileChangeSummary>
-        {
-            new("Added", "src/NewFile.cs"),
-            new("Modified", "src/Existing.cs", LinesAdded: 10, LinesDeleted: 3)
-        };
-
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                TestsPassed = 5,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                FileChanges = files,
-                IssueTitle = "Test",
-            });
-
-        result.Should().Contain("| Status | File |");
-        result.Should().Contain("| Added | `src/NewFile.cs` |");
-        result.Should().Contain("| Modified | `src/Existing.cs` |");
-    }
-
-    [Fact]
-    public void GeneratePrBody_MoreThan50Files_ShowsTruncationMessage()
-    {
-        var files = Enumerable.Range(1, 60)
-            .Select(i => new FileChangeSummary("Modified", $"src/File{i}.cs"))
-            .ToList();
-
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                TestsPassed = 0,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                FileChanges = files,
-                IssueTitle = "Many files",
-            });
-
-        result.Should().Contain("*(and 10 more)*");
+        result.Should().NotContain("## Files Changed");
+        result.Should().NotContain("## Test Results");
+        result.Should().NotContain("## Coverage");
+        result.Should().NotContain("## AI Code Review Findings");
     }
 
     [Fact]
@@ -273,10 +232,6 @@ public class PipelineFormattingTests
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
                 IssueReference = "#1",
-                TestsPassed = 0,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                FileChanges = [],
                 IssueTitle = "Draft PR",
                 IsDraft = true,
             });
@@ -290,10 +245,6 @@ public class PipelineFormattingTests
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
                 IssueReference = "#1",
-                TestsPassed = 0,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                FileChanges = [],
                 IssueTitle = "Test",
                 ModelName = "claude-sonnet-4-20250514",
             });
@@ -307,69 +258,10 @@ public class PipelineFormattingTests
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
                 IssueReference = "#1",
-                TestsPassed = 0,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                FileChanges = [],
                 IssueTitle = "Test",
             });
 
         result.Should().Contain("*Automated implementation via pipeline*");
-    }
-
-
-
-    [Fact]
-    public void GeneratePrBody_WithCodeReview_ShowsReviewSection()
-    {
-        var review = new CodeReviewSummary(
-            AgentsRun: ["security-agent", "style-agent"],
-            CriticalCount: 1,
-            WarningCount: 2,
-            SuggestionCount: 3,
-            AgentFindings: [new AgentFindings("security-agent", "Found SQL injection risk")]);
-
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                TestsPassed = 0,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                FileChanges = [],
-                IssueTitle = "Test",
-                CodeReviewSummary = review,
-            });
-
-        result.Should().Contain("## AI Code Review Findings");
-        result.Should().Contain("security-agent, style-agent");
-        result.Should().Contain("CRITICAL | 1 | Fixed");
-        result.Should().Contain("WARNING | 2 | Reported (TODO comments added)");
-        result.Should().Contain("SUGGESTION | 3 | Reported only");
-        result.Should().Contain("Found SQL injection risk");
-    }
-
-    [Fact]
-    public void GeneratePrBody_WithCodeReview_NoFindings_ShowsNoFindingsMessage()
-    {
-        var review = new CodeReviewSummary(
-            AgentsRun: ["agent-1"],
-            CriticalCount: 0,
-            WarningCount: 0,
-            SuggestionCount: 0,
-            AgentFindings: []);
-
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                TestsPassed = 0,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                FileChanges = [],
-                IssueTitle = "Test",
-                CodeReviewSummary = review,
-            });
-
-        result.Should().Contain("Code review: no findings");
     }
 
     [Fact]
@@ -389,10 +281,6 @@ public class PipelineFormattingTests
         var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
                 IssueReference = "#1",
-                TestsPassed = 0,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                FileChanges = [],
                 IssueTitle = "Test",
                 Comments = comments,
             });
@@ -433,6 +321,10 @@ public class PipelineFormattingTests
 
         result.Should().Contain("Compilation ❌");
     }
+
+    // Deleted (behavior removed): FormatQualityGateSummary_WithCoverage_IncludesCoverageDetails —
+    // Coverage property was retired from QualityGateReport (Key(1) tombstoned); coverage is now
+    // surfaced via QgcResults and is not shown in the one-line summary.
 
     [Fact]
     public void FormatQualityGateSummary_WithExternalCi_IncludesCiStatus()
