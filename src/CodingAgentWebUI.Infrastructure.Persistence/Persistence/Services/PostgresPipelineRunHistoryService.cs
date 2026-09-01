@@ -233,7 +233,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
             var batch = entities
                 .Select(DeserializeSummary)
-                .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+                .Where(s => s is not null && !s.InitiatedBy.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal))
                 .Where(s => include is null || include(s!))
                 .Select(s => s!)
                 .ToList();
@@ -294,7 +294,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         // even when SummaryJson is null or corrupt — consolidation ghost entries are excluded in both paths.
         return entities
             .Select(DeserializeSummary)
-            .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+            .Where(s => s is not null && !s.InitiatedBy.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal))
             .Select(s => s!)
             .ToList();
     }
@@ -409,7 +409,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             // when SummaryJson is null or corrupt. Note: this mapping relies on InitiatedBy being
             // set correctly before AddRunToHistoryAsync is called; there is no validation at the
             // API boundary.
-            IssueProviderConfigId = summary.InitiatedBy == ConsolidationConstants.InitiatedBy
+            IssueProviderConfigId = summary.InitiatedBy.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal)
                 ? ConsolidationConstants.ProviderConfigId
                 : null,
             SummaryJson = JsonSerializer.Serialize(summary, JsonOptions)
