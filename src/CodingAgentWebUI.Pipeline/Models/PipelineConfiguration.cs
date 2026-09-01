@@ -656,4 +656,12 @@ public sealed record PipelineConfiguration
     [Key(78)]
     public TimeSpan TransientRetryDelay { get; init; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// When true, the closed-loop cycle runs a sweep after each dispatch pass to cancel Pending
+    /// Implementation WorkItems whose issue is no longer in the current cycle's eligibility set.
+    /// Default: false (safe rollout — enable explicitly in production when ready).
+    /// </summary>
+    [Key(79)]
+    public bool QueueSweepEnabled { get; init; }
+
 }

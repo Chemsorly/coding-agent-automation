@@ -18,6 +18,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     private readonly IProjectStore _projectStore;
     private readonly IWorkDistributor? _workDistributor;
     private readonly IHousekeepingService? _housekeepingService;
+    private readonly IWorkItemSweepClient? _workItemClient;
     private readonly ILeaderGate? _leaderGate;
     private readonly Serilog.ILogger _logger;
 
@@ -101,6 +102,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
         _logger = deps.Logger;
         _workDistributor = deps.WorkDistributor;
         _housekeepingService = deps.HousekeepingService;
+        _workItemClient = deps.WorkItemClient;
         _leaderGate = deps.LeaderElection;
 
         _cacheManager = new ProviderCacheManager(deps.ProviderFactory, deps.Logger);
