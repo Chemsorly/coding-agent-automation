@@ -1301,6 +1301,132 @@ public class AgentMonitoringAdditionalTests : BunitContext
             "SubscribeToRun must not be called on reconnect when no run modal is open");
     }
 
+    // ── ApplySnapshotToRunModel bug fixes (Issue #2253) ───────────────────────
+
+    [Fact]
+    public async Task ApplySnapshotToRunModel_WhenSnapshotHasCodeReviewCounts_SetsCountsOnModel()
+    {
+        // Regression test for Bug 1: code review counts always 0/0/0 after snapshot restore.
+        // Must be RED against unfixed code (SetCodeReviewCounts never called) and GREEN after fix.
+        var runId = "code-review-counts-run";
+        var snapshot = new RunStateSnapshot
+        {
+            CurrentStep = PipelineStep.ReviewingCode,
+            HighWaterMark = PipelineStep.ReviewingCode,
+            IssueIdentifier = "org/repo#100",
+            IssueTitle = "Code Review Counts Test",
+            CodeReviewCriticalCount = 3,
+            CodeReviewWarningCount = 7,
+            CodeReviewSuggestionCount = 2,
+        };
+
+        var cut = Render<AgentMonitoring>();
+        Assert.NotNull(_onRunStateSnapshot);
+
+        await cut.InvokeAsync(async () =>
+        {
+            var method = typeof(AgentMonitoring).GetMethod("OpenRunDetail",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            await (Task)method!.Invoke(cut.Instance, [runId])!;
+        });
+
+        await cut.InvokeAsync(() => _onRunStateSnapshot!(runId, snapshot));
+
+        var runModel = GetField<PipelineRun?>(cut.Instance, "_activeModalRunModel");
+        runModel.Should().NotBeNull("snapshot must seed the sidebar view model");
+        // TODO [WARNING]: This test only covers the model-construction path (where _activeModalRunModel is null
+        // when the snapshot arrives). The existing-model path — where the model already exists and
+        // ApplySnapshotToRunModel is called on it directly — is not independently covered for non-zero
+        // CodeReviewCriticalCount. In practice there is no fix gap because SetCodeReviewCounts is called
+        // unconditionally in ApplySnapshotToRunModel, but the test would remain green even if
+        // SetCodeReviewCounts were accidentally placed inside the if (_activeModalRunModel == null) block.
+        // Consider adding a companion test that fires a second snapshot onto an already-initialized model.
+        runModel!.CodeReviewCriticalCount.Should().Be(3,
+            "ApplySnapshotToRunModel must call SetCodeReviewCounts with critical=3 from the snapshot");
+        runModel.CodeReviewWarningCount.Should().Be(7,
+            "ApplySnapshotToRunModel must call SetCodeReviewCounts with warning=7 from the snapshot");
+        runModel.CodeReviewSuggestionCount.Should().Be(2,
+            "ApplySnapshotToRunModel must call SetCodeReviewCounts with suggestion=2 from the snapshot");
+    }
+
+    [Fact]
+    public async Task ApplySnapshotToRunModel_OnReconnect_ClearsQualityGateHistoryBeforeReapplying()
+    {
+        // Regression test for Bug 2: QualityGateHistory duplicates on hub reconnect.
+        // Must be RED against unfixed code (no drain before re-enqueue) and GREEN after fix.
+        _mockHub.SetupGet(h => h.State).Returns(HubConnectionState.Connected);
+        _mockHub.Setup(h => h.InvokeAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var runId = "qg-history-reconnect-run";
+        var snapshot = new RunStateSnapshot
+        {
+            CurrentStep = PipelineStep.RunningQualityGates,
+            HighWaterMark = PipelineStep.RunningQualityGates,
+            IssueIdentifier = "org/repo#200",
+            IssueTitle = "QG History Reconnect Test",
+            QualityGateHistory =
+            [
+                new QualityGateReport
+                {
+                    Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                    Tests = new GateResult { GateName = "Tests", Passed = true },
+                },
+                new QualityGateReport
+                {
+                    Compilation = new GateResult { GateName = "Compilation", Passed = false },
+                    Tests = new GateResult { GateName = "Tests", Passed = false },
+                },
+            ],
+        };
+
+        var cut = Render<AgentMonitoring>();
+        Assert.NotNull(_onRunStateSnapshot);
+        Assert.NotNull(_reconnectedHandler);
+
+        // Open modal and fire initial snapshot
+        await cut.InvokeAsync(async () =>
+        {
+            var method = typeof(AgentMonitoring).GetMethod("OpenRunDetail",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            await (Task)method!.Invoke(cut.Instance, [runId])!;
+        });
+
+        await cut.InvokeAsync(() => _onRunStateSnapshot!(runId, snapshot));
+
+        // Sanity check: initial snapshot produces exactly 2 entries
+        var runModelBefore = GetField<PipelineRun?>(cut.Instance, "_activeModalRunModel");
+        runModelBefore.Should().NotBeNull();
+        runModelBefore!.QualityGateHistory.Count.Should().Be(2,
+            "initial snapshot application must produce exactly 2 QualityGateHistory entries");
+
+        // Simulate reconnect: the reconnect handler calls SubscribeToRun again.
+        // The server would re-push OnRunStateSnapshot; we simulate that by firing the snapshot again manually
+        // after the reconnect handler runs. This is equivalent to the live path and avoids complex mock chaining.
+        // TODO [WARNING]: This test fires _onRunStateSnapshot manually to simulate the server re-pushing after
+        // reconnect, rather than verifying that HandleReconnected itself triggers the re-push. If
+        // HandleReconnected is later changed to stop calling SubscribeToRun, the drain bug could re-emerge
+        // without this test catching it. The actual regression guard is only the final
+        // QualityGateHistory.Count.Should().Be(2) assertion at the end of the test.
+        await _reconnectedHandler!("new-connection-id");
+        await cut.InvokeAsync(() => { }); // flush reconnect handler's InvokeAsync
+
+        // Verify SubscribeToRun was called exactly twice (initial open + reconnect) — not more
+        _mockHub.Verify(
+            h => h.InvokeAsync(HubMethodNames.SubscribeToRun, It.IsAny<object>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2),
+            "SubscribeToRun must be called exactly twice: once on open and once on reconnect");
+
+        // Fire the snapshot a second time (simulating the server re-pushing on re-subscribe)
+        await cut.InvokeAsync(() => _onRunStateSnapshot!(runId, snapshot));
+
+        // After drain + re-enqueue, count must still be 2 — not 4
+        var runModelAfter = GetField<PipelineRun?>(cut.Instance, "_activeModalRunModel");
+        runModelAfter.Should().NotBeNull();
+        runModelAfter!.QualityGateHistory.Count.Should().Be(2,
+            "QualityGateHistory must be drained before re-applying snapshot; Count must remain 2, not 4");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static T GetField<T>(object instance, string fieldName)

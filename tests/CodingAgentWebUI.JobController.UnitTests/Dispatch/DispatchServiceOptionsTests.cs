@@ -19,24 +19,24 @@ public sealed class DispatchServiceOptionsTests
     {
         var opts = new DispatchServiceOptions
         {
-            AgentJobTimeoutSeconds = 3600,
+            ChatJobMaxDurationSeconds = 3600,
             ChatPodConnectTimeoutSeconds = 120,
             ChatTerminationGracePeriodSeconds = 120
         };
 
         opts.ValidateAndClamp();
 
-        opts.AgentJobTimeoutSeconds.Should().Be(3600);
+        opts.ChatJobMaxDurationSeconds.Should().Be(3600);
         opts.ChatPodConnectTimeoutSeconds.Should().Be(120);
         opts.ChatTerminationGracePeriodSeconds.Should().Be(120);
     }
 
     [Fact]
-    public void ValidateAndClamp_SessionDuration_BelowMinimum_ClampsTo60()
+    public void ValidateAndClamp_ChatJobMaxDuration_BelowMinimum_ClampsTo60()
     {
-        var opts = new DispatchServiceOptions { AgentJobTimeoutSeconds = 10 };
+        var opts = new DispatchServiceOptions { ChatJobMaxDurationSeconds = 10 };
         opts.ValidateAndClamp();
-        opts.AgentJobTimeoutSeconds.Should().Be(60);
+        opts.ChatJobMaxDurationSeconds.Should().Be(60);
     }
 
     [Fact]
@@ -68,14 +68,14 @@ public sealed class DispatchServiceOptionsTests
     {
         var opts = new DispatchServiceOptions
         {
-            AgentJobTimeoutSeconds = 60,
+            ChatJobMaxDurationSeconds = 60,
             ChatPodConnectTimeoutSeconds = 5,
             ChatTerminationGracePeriodSeconds = 5
         };
 
         opts.ValidateAndClamp();
 
-        opts.AgentJobTimeoutSeconds.Should().Be(60);
+        opts.ChatJobMaxDurationSeconds.Should().Be(60);
         opts.ChatPodConnectTimeoutSeconds.Should().Be(5);
         opts.ChatTerminationGracePeriodSeconds.Should().Be(5);
     }
@@ -85,14 +85,14 @@ public sealed class DispatchServiceOptionsTests
     {
         var opts = new DispatchServiceOptions
         {
-            AgentJobTimeoutSeconds = -100,
+            ChatJobMaxDurationSeconds = -100,
             ChatPodConnectTimeoutSeconds = -1,
             ChatTerminationGracePeriodSeconds = -50
         };
 
         opts.ValidateAndClamp();
 
-        opts.AgentJobTimeoutSeconds.Should().Be(60);
+        opts.ChatJobMaxDurationSeconds.Should().Be(60);
         opts.ChatPodConnectTimeoutSeconds.Should().Be(5);
         opts.ChatTerminationGracePeriodSeconds.Should().Be(5);
     }
