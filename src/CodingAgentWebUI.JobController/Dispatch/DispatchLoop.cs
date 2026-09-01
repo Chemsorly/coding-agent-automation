@@ -3,8 +3,6 @@ using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
-using k8s.Models;
-using Serilog;
 
 namespace CodingAgentWebUI.JobController.Dispatch;
 
