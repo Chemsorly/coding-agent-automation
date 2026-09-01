@@ -33,6 +33,7 @@ public sealed class HousekeepingService : IHousekeepingService
         AgentLabels.InProgress,
         AgentLabels.Epic,
         AgentLabels.EpicApproved,
+        AgentLabels.EpicReview,
     };
 
     /// <summary>
