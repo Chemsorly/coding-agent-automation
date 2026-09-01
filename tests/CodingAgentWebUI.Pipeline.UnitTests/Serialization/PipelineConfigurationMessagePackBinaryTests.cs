@@ -130,6 +130,7 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.ImageDownloadTimeoutSeconds.Should().Be(60);
         deserialized.MaxConsolidationDispatchRetries.Should().Be(7);
         deserialized.TransientRetryDelay.Should().Be(TimeSpan.FromSeconds(15));
+        deserialized.CiCancelledMoveMaxRetries.Should().Be(7);
     }
 
     private static PipelineConfiguration CreateFullyPopulatedConfig() => new()
@@ -217,5 +218,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         ImageDownloadTimeoutSeconds = 60,
         MaxConsolidationDispatchRetries = 7,
         TransientRetryDelay = TimeSpan.FromSeconds(15),
+        CiCancelledMoveMaxRetries = 7,
     };
 }

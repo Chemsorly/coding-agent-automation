@@ -664,4 +664,30 @@ public sealed record PipelineConfiguration
     [Key(79)]
     public bool QueueSweepEnabled { get; init; }
 
+    /// <summary>
+    /// Maximum number of re-poll attempts when CI is cancelled because the branch HEAD moved
+    /// to a new commit (e.g. a teammate's push, a bot merge-from-main, or the pipeline's own
+    /// retry commit triggering GitHub's cancel-in-progress concurrency rule).
+    /// On each attempt the pipeline reads the current HEAD SHA; if it differs from the polled SHA,
+    /// it re-enters <see cref="PollCiWithNotStartedRetryAsync"/> on the new HEAD instead of treating
+    /// the cancellation as a gate failure and consuming an outer retry slot.
+    /// Default: 3. Valid range: 0–10.
+    /// </summary>
+    // Note: PollAndHandleInfraRetryAsync enforces the ExternalCiTimeout budget across the initial
+    // poll and all branch-moved re-polls using a single linked CancellationTokenSource, so total
+    // CI wait time is bounded by one ExternalCiTimeout window.
+    [Key(80)]
+    [ProjectOverridable(Order = 31)]
+    public int CiCancelledMoveMaxRetries
+    {
+        get => _ciCancelledMoveMaxRetries;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 0);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 10);
+            _ciCancelledMoveMaxRetries = value;
+        }
+    }
+    private readonly int _ciCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries;
+
 }

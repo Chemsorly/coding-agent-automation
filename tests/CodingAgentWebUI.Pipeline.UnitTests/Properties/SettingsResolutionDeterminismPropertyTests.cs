@@ -215,6 +215,8 @@ public class SettingsResolutionDeterminismPropertyTests
             result.BlacklistedPaths.Should().BeEquivalentTo(project.BlacklistedPaths);
         if (project.BrainReadOnly.HasValue)
             result.BrainReadOnly.Should().Be(project.BrainReadOnly.Value);
+        if (project.CiCancelledMoveMaxRetries.HasValue)
+            result.CiCancelledMoveMaxRetries.Should().Be(project.CiCancelledMoveMaxRetries.Value);
     }
 }
 
@@ -313,6 +315,7 @@ public class SettingsResolutionArbitraries
         from harnessSuggestionsReviewEnabled in Gen.Elements(true, false)
         from blacklistedPaths in GenBlacklistedPaths()
         from brainReadOnly in Gen.Elements(true, false)
+        from ciCancelledMoveMaxRetries in Gen.Choose(0, 10)
         select new PipelineConfiguration
         {
             MaxRetries = maxRetries,
@@ -338,7 +341,8 @@ public class SettingsResolutionArbitraries
             BrainConsolidationReviewEnabled = brainConsolidationReviewEnabled,
             HarnessSuggestionsReviewEnabled = harnessSuggestionsReviewEnabled,
             BlacklistedPaths = blacklistedPaths,
-            BrainReadOnly = brainReadOnly
+            BrainReadOnly = brainReadOnly,
+            CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,
         };
 
     private static Gen<PipelineProject?> GenProject() =>
@@ -375,6 +379,7 @@ public class SettingsResolutionArbitraries
             (2, Gen.Constant<IReadOnlyList<string>?>(null)),
             (1, GenBlacklistedPaths().Select<IReadOnlyList<string>, IReadOnlyList<string>?>(p => p)))
         from brainReadOnly in Gen.Elements<bool?>(null, true, false)
+        from ciCancelledMoveMaxRetries in Gen.Elements<int?>(null, 0, 3, 7, 10)
         select new PipelineProject
         {
             Id = Guid.NewGuid().ToString(),
@@ -402,7 +407,8 @@ public class SettingsResolutionArbitraries
             BrainConsolidationReviewEnabled = brainConsolidationReviewEnabled,
             HarnessSuggestionsReviewEnabled = harnessSuggestionsReviewEnabled,
             BlacklistedPaths = blacklistedPaths,
-            BrainReadOnly = brainReadOnly
+            BrainReadOnly = brainReadOnly,
+            CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,
         };
 
     public static Arbitrary<SettingsResolutionInput> SettingsResolutionInputArb()
