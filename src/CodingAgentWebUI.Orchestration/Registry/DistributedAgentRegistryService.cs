@@ -603,50 +603,60 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
         var key = AgentKey(agentId.Value);
-
-        // Existence guard: if the hash has already expired (e.g. TTL fired before
-        // ReportChatCompleted cleared activeChatSessionId), writing a single field via
-        // HashSetFieldAsync would create a partial hash that satisfies ExistsAsync == true
-        // but is missing required fields (agentId, connectionId, registeredAt).
-        // HashToEntry would return null for that partial hash, making the agent invisible
-        // to GetByAgentId / GetIdleAgents / GetAllAgents until the 600s TTL expires again.
-        // Instead, skip the write if the hash is absent — the next heartbeat will
-        // re-register from _localSnapshot with all fields present (issue #2110).
-        if (!await _store.ExistsAsync(key))
+        try
         {
-            _logger.Warning(
-                "UpdateAgentFieldAsync: hash for agent {AgentId} does not exist (TTL may have expired); skipping field write for '{Field}'",
-                agentId.Value, field);
-            return;
-        }
-
-        await _store.HashSetFieldAsync(key, field, value ?? "");
-        // Refresh the TTL on every field write so that transient updates (e.g. clearing
-        // activeChatSessionId via ReportChatCompleted) do not leave the hash near-expiry
-        // without resetting the window (issue #2110 AC3).
-        await _store.ExpireAsync(key, AgentTtl);
-
-        // Keep the local snapshot in sync so that if TTL fires after this field update,
-        // UpdateHeartbeatAsync re-registers with the most recent known field value rather
-        // than the stale value captured at Register() time (issue #2110 CRITICAL-2 partial fix:
-        // snapshot is updated for fields managed through this method).
-        if (_localSnapshot.TryGetValue(agentId.Value, out var snapshot))
-        {
-            _localSnapshot[agentId.Value] = field switch
+            // Existence guard: if the hash has already expired (e.g. TTL fired before
+            // ReportChatCompleted cleared activeChatSessionId), writing a single field via
+            // HashSetFieldAsync would create a partial hash that satisfies ExistsAsync == true
+            // but is missing required fields (agentId, connectionId, registeredAt).
+            // HashToEntry would return null for that partial hash, making the agent invisible
+            // to GetByAgentId / GetIdleAgents / GetAllAgents until the 600s TTL expires again.
+            // Instead, skip the write if the hash is absent — the next heartbeat will
+            // re-register from _localSnapshot with all fields present (issue #2110).
+            if (!await _store.ExistsAsync(key))
             {
-                "activeJobId" => snapshot with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-                "activeChatSessionId" => snapshot with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-                "disabled" => bool.TryParse(value, out var d) ? snapshot with { Disabled = d } : snapshot,
-                "orphanRestoredAt" => DateTimeOffset.TryParse(value, out var ora) ? snapshot with { OrphanRestoredAt = ora } : snapshot,
-                _ => snapshot
-            };
+                _logger.Warning(
+                    "UpdateAgentFieldAsync: hash for agent {AgentId} does not exist (TTL may have expired); skipping field write for '{Field}'",
+                    agentId.Value, field);
+                return;
+            }
+
+            await _store.HashSetFieldAsync(key, field, value ?? "");
+            // Refresh the TTL on every field write so that transient updates (e.g. clearing
+            // activeChatSessionId via ReportChatCompleted) do not leave the hash near-expiry
+            // without resetting the window (issue #2110 AC3).
+            await _store.ExpireAsync(key, AgentTtl);
+
+            // Keep the local snapshot in sync so that if TTL fires after this field update,
+            // UpdateHeartbeatAsync re-registers with the most recent known field value rather
+            // than the stale value captured at Register() time (issue #2110 CRITICAL-2 partial fix:
+            // snapshot is updated for fields managed through this method).
+            // NOTE: snapshot update is intentionally inside the try — it must only run when
+            // the Redis write succeeds to prevent snapshot divergence from the actual Redis state.
+            if (_localSnapshot.TryGetValue(agentId.Value, out var snapshot))
+            {
+                _localSnapshot[agentId.Value] = field switch
+                {
+                    "activeJobId" => snapshot with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
+                    "activeChatSessionId" => snapshot with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
+                    "disabled" => bool.TryParse(value, out var d) ? snapshot with { Disabled = d } : snapshot,
+                    "orphanRestoredAt" => DateTimeOffset.TryParse(value, out var ora) ? snapshot with { OrphanRestoredAt = ora } : snapshot,
+                    _ => snapshot
+                };
+            }
+            // TODO: _allAgentsCache is NOT updated here. Fields written via this method (e.g. disabled,
+            // activeJobId) will not be reflected in GetAllAgents() / GetBusyAgentCount() sync reads until
+            // the next Register or TransitionStatusAsync call refreshes the entry via UpdateAllAgentsCache.
+            // For example, setting disabled=true will not be visible to GetAgentsByLabel or GetIdleAgents
+            // (sync overloads) until a write-path update occurs. Consider calling UpdateAllAgentsCache with
+            // the updated snapshot entry, consistent with TransitionStatusAsync which does both.
         }
-        // TODO: _allAgentsCache is NOT updated here. Fields written via this method (e.g. disabled,
-        // activeJobId) will not be reflected in GetAllAgents() / GetBusyAgentCount() sync reads until
-        // the next Register or TransitionStatusAsync call refreshes the entry via UpdateAllAgentsCache.
-        // For example, setting disabled=true will not be visible to GetAgentsByLabel or GetIdleAgents
-        // (sync overloads) until a write-path update occurs. Consider calling UpdateAllAgentsCache with
-        // the updated snapshot entry, consistent with TransitionStatusAsync which does both.
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex,
+                "UpdateAgentFieldAsync: Redis fault writing field '{Field}' for agent {AgentId}",
+                field, agentId.Value);
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
