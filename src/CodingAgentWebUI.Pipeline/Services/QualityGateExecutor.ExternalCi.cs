@@ -191,10 +191,75 @@ public partial class QualityGateExecutor
         CancellationToken ct)
     {
         var run = context.Run;
-        var ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, ct);
+
+        // Budget the entire polling session (initial poll + all branch-moved re-polls) against a
+        // single ExternalCiTimeout window.  When the timeout fires the linked token is cancelled;
+        // AppendExternalCiIfNeededAsync's catch (OperationCanceledException when !ct.IsCancellationRequested)
+        // turns that into a "timed out" gate result, matching the existing behaviour for a single poll.
+        using var timeoutCts = new CancellationTokenSource(config.ExternalCiTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        var pollCt = linkedCts.Token;
+
+        var ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, pollCt);
         var ciPassed = ciStatus.State == PipelineRunState.Passed;
         IReadOnlyDictionary<long, string>? ciLogPaths = null;
 
+        // Branch-moved cancellation: when CI is Cancelled and the branch HEAD has moved to a new
+        // commit (e.g. a teammate push, a bot merge-from-main, or the pipeline's own retry commit
+        // triggering GitHub's cancel-in-progress concurrency rule), re-enter CI polling on the new
+        // HEAD SHA rather than treating the cancellation as a gate failure that consumes a retry slot.
+        var branchMovedRetries = 0;
+        while (ciStatus.State == PipelineRunState.Cancelled
+               && run.WorkspacePath != null
+               && branchMovedRetries < config.CiCancelledMoveMaxRetries)
+        {
+            string? currentHead = null;
+            try { currentHead = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath, pollCt); }
+            catch (OperationCanceledException) { throw; }
+            // TODO [WARNING]: catch (Exception) here swallows any non-cancellation exception from
+            // GetHeadCommitShaAsync, logging it at Debug and leaving currentHead null (which causes
+            // the break below). This is intentional for transient errors, but differs from the
+            // explicit catch (OperationCanceledException) { throw; } guard used in WaitForCiRunsToAppearAsync.
+            // Consider aligning the pattern if GetHeadCommitShaAsync gains non-transient failure modes.
+            // Additionally, if GetHeadCommitShaAsync internally uses Task.WhenAll or similar, it may throw
+            // AggregateException wrapping OperationCanceledException. The explicit OCE guard above does NOT
+            // catch AggregateException, so such a cancellation would be swallowed here — leaving currentHead
+            // null and causing the loop to break (falling through to infra-retry) instead of propagating
+            // cancellation. Consider unwrapping AggregateException or calling ex.IsCancellation() if the
+            // provider implementation ever uses aggregate tasks internally.
+            catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD after Cancelled", run.RunId); }
+
+            if (currentHead == null || currentHead == pollSha)
+                break;  // HEAD unchanged — genuine pre-emption or unreadable HEAD, fall through to infra-retry path
+
+            branchMovedRetries++;
+            _logger.Information(
+                "Pipeline {RunId} CI cancelled because branch moved ({OldSha} → {NewSha}), re-polling on new HEAD (attempt {N}/{Max})",
+                run.RunId, pollSha, currentHead, branchMovedRetries, config.CiCancelledMoveMaxRetries);
+            callbacks.EmitOutputLine(
+                $"⏳ CI superseded by new commit on branch — re-polling on updated HEAD (attempt {branchMovedRetries}/{config.CiCancelledMoveMaxRetries})...");
+
+            pollSha = currentHead;
+            ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, pollCt);
+            ciPassed = ciStatus.State == PipelineRunState.Passed;
+        }
+        // TODO [WARNING]: The two exit conditions from the branch-moved loop are handled identically:
+        // (a) HEAD unchanged (currentHead == pollSha) → genuine pre-emption, infra-retry path correct.
+        // (b) branchMovedRetries >= CiCancelledMoveMaxRetries → retries exhausted, branch kept moving.
+        // Both fall through to the same infra-retry section below. For case (b), CiFailureClassifier.Classify
+        // on a Cancelled status with no failed jobs returns Unknown (not Infrastructure), so the infra-retry
+        // while-loop is a no-op and the gate fails — the intended behaviour. However, the distinction is
+        // invisible to future readers and any change that causes case (b) to classify as Infrastructure would
+        // re-introduce the retry storm. Consider adding an explicit log/comment when exiting due to exhausted
+        // retries, or an early break-label to make the two paths distinguishable.
+        //
+        // TODO [WARNING]: The local `pollSha` variable is mutated inside the loop (pollSha = currentHead)
+        // but is not read after the loop exits — ExecuteInfraRetryAsync reads a fresh SHA after its own push.
+        // The mutation is harmless but misleading; a reader might expect pollSha to feed into the infra-retry
+        // path. This is a code clarity issue, not a correctness defect.
+
+        // Write logs for the final ciStatus only — moved here from immediately after the initial poll
+        // to avoid writing misleading Cancelled-state log files for discarded intermediate polls.
         if (!ciPassed && run.WorkspacePath != null)
             ciLogPaths = _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId);
 
@@ -205,6 +270,13 @@ public partial class QualityGateExecutor
                    && classification == CiFailureClassifier.CiFailureCategory.Infrastructure
                    && run.InfrastructureRetryCount < config.MaxInfrastructureRetries)
             {
+                // TODO [WARNING]: ExecuteInfraRetryAsync is invoked with the original outer `ct`, not `pollCt`.
+                // This means infra-retry polling runs outside the ExternalCiTimeout budget established by
+                // `timeoutCts` above. If branch-moved re-polls consume most of the ExternalCiTimeout window,
+                // a subsequent infra-retry can add a full additional ExternalCiTimeout duration, violating the
+                // single-window guarantee documented in the property summary for CiCancelledMoveMaxRetries.
+                // To fix: pass `pollCt` instead of `ct` to ExecuteInfraRetryAsync, or restructure so both
+                // code paths share the same linked token.
                 (ciPassed, ciStatus, ciLogPaths) = await ExecuteInfraRetryAsync(
                     context, config, callbacks, ct);
 

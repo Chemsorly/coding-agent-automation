@@ -61,6 +61,7 @@ public static class TestPipelineConfig
         PipelineRunRetentionCount = -1,
         WorkItemRetentionCount = -1,
         DbRetentionSweepInterval = TimeSpan.FromHours(24),
+        CiCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries,
     };
 
     /// <summary>
@@ -113,5 +114,6 @@ public static class TestPipelineConfig
         PipelineRunRetentionCount = -1,
         WorkItemRetentionCount = -1,
         DbRetentionSweepInterval = TimeSpan.FromHours(24),
+        CiCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries,
     };
 }

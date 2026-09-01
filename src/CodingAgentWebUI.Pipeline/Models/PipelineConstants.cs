@@ -111,6 +111,9 @@ public static class PipelineConstants
     /// <summary>Default max retries when CI never starts (re-push to trigger).</summary>
     public const int DefaultCiNotStartedMaxRetries = 5;
 
+    /// <summary>Default max retries when CI is cancelled due to a branch move (new HEAD detected).</summary>
+    public const int DefaultCiCancelledMoveMaxRetries = 3;
+
     /// <summary>Default poll interval for closed-loop issue polling (60 seconds).</summary>
     public static readonly TimeSpan DefaultClosedLoopPollInterval = TimeSpan.FromSeconds(60);
 
