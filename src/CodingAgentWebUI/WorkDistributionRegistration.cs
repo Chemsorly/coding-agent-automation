@@ -32,7 +32,7 @@ public static partial class WorkDistributionRegistration
         // ApiBackedPipelineRunHistoryService routes AddRunToHistoryAsync/GetRunHistoryAsync
         // through POST|GET /api/pipeline-runs.
         services.AddSingleton<IPipelineRunHistoryService>(sp =>
-            new CodingAgentWebUI.Services.ApiBackedPipelineRunHistoryService(
+            new CodingAgentWebUI.Api.Client.Stores.ApiBackedPipelineRunHistoryService(
                 sp.GetRequiredService<IPipelineApiRunHistoryClient>(),
                 Log.Logger));
 

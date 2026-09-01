@@ -31,14 +31,10 @@ public sealed class WorkItemMetricsBackgroundService : BackgroundService
         IDbContextFactory<PipelineDbContext> dbFactory,
         TimeSpan? pollInterval = null)
     {
-        // TODO: Add ArgumentNullException.ThrowIfNull(dbFactory) to fail fast on DI misconfiguration
-        // instead of deferring failure to the first ExecuteAsync tick.
+        ArgumentNullException.ThrowIfNull(dbFactory);
         _dbFactory = dbFactory;
         _pollInterval = pollInterval ?? TimeSpan.FromSeconds(10);
 
-        // TODO: RegisterWorkItemsByStatusCallback overwrites the static callback — if a second instance
-        // is constructed (e.g., in tests or DI misconfiguration), the previous callback is silently lost.
-        // Consider adding a guard or logging a warning on duplicate registration.
         WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback(() => Volatile.Read(ref _cachedMeasurements));
     }
 
