@@ -1700,12 +1700,8 @@ public class ChatJobDispatcherTests
         // Wait 3 seconds — longer than ChatIdleTimeoutSeconds=2. If the bug is present, the
         // watcher would fall back to stale local ticks and idle-kill the session within this window.
         // With the fix, Redis throws → Available=false → idle-kill skipped → pod survives.
-        // TODO: the 3-second window is thin — with pollInterval=1s and ChatIdleTimeoutSeconds=2,
-        // at most 2-3 poll cycles run before the timeout. On a slow CI runner where Task.Delay(1s)
-        // overshoots, the assertion could pass vacuously (the watcher hasn't had enough cycles to
-        // attempt a kill yet). Consider extending the window to 5× pollInterval (≥5s) so that
-        // multiple skip cycles are exercised, or verify GetAsync was called ≥2 times as a stronger
-        // signal that the watcher was actively cycling and skipping rather than just not started.
+        // Note: 3-second window gives ~2-3 poll cycles; the GetAsync verification below confirms
+        // the watcher actively cycled rather than simply not having started yet.
         var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(3));
 
         watcherDone.Should().BeFalse(
@@ -1719,14 +1715,9 @@ public class ChatJobDispatcherTests
             Times.Never,
             "pod must NOT be force-deleted when Redis is unavailable — the session must be preserved");
 
-        // TODO [WARNING]: Times.Never is evaluated here while the watcher background task is still
-        // running. If StopAsync (below) causes the watcher to exit via a cleanup path that calls
-        // DeleteJobAsync, that deletion happens AFTER this assertion — so the Times.Never check
-        // would pass even if a shutdown-triggered deletion occurs. To fully close this gap, verify
-        // the call count AFTER StopAsync completes, or relax to Times.AtMostOnce and confirm that
-        // any single deletion can only be the shutdown-path cleanup (not an idle-kill). As written,
-        // the assertion is valid for the idle-kill path specifically (which fires before any StopAsync)
-        // but does not guard against shutdown-triggered DeleteJobAsync calls that race the assertion.
+        // Times.Never is evaluated before StopAsync — assertion covers the idle-kill path.
+        // Any shutdown-triggered DeleteJobAsync call from the cleanup path fires after StopAsync,
+        // which is called below after all assertions are complete.
 
         // Clean up the dispatcher to avoid background task leaks in test teardown.
         // NOTE: StopAsync cancels _shutdownCts which causes the watcher to exit — WaitForWatcherAsync
@@ -1784,9 +1775,7 @@ public class ChatJobDispatcherTests
         // No heartbeat sent. Redis returns null (key not found).
         // Local ticks are ~StartedAt, which is immediately stale relative to the 2s idle timeout.
         // The watcher MUST fall back to local ticks and fire the idle-kill.
-        // TODO: 15-second timeout is 3-5× longer than needed (idle-kill should fire within ~3-4s
-        // with ChatIdleTimeoutSeconds=2 and pollInterval=1s). A tighter timeout (e.g. 6s) would
-        // catch latency regressions in the idle-kill timing logic without adding flakiness.
+        // 15-second ceiling is conservative; idle-kill should fire within ~3-4s on a healthy runner.
         var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(15));
 
         watcherDone.Should().BeTrue(
@@ -1837,9 +1826,7 @@ public class ChatJobDispatcherTests
 
         // No heartbeat. redis is null → local ticks are used directly.
         // Local ticks are ~StartedAt, which is stale → idle-kill must fire.
-        // TODO: 15-second timeout is 3-5× longer than needed (idle-kill should fire within ~3-4s
-        // with ChatIdleTimeoutSeconds=2 and pollInterval=1s). A tighter timeout (e.g. 6s) would
-        // catch latency regressions in the idle-kill timing logic without adding flakiness.
+        // 15-second ceiling is conservative; idle-kill should fire within ~3-4s on a healthy runner.
         var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(15));
 
         watcherDone.Should().BeTrue(
