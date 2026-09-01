@@ -32,6 +32,15 @@ public static class PipelineRunEndpoints
         // Create: persists a completed run summary. Called by the orchestrator.
         group.MapPost("/", CreateRunSummary);
 
+        // Active branch names — used by SchedulerRunQueryService for the housekeeping guard.
+        // TODO (WARNING): This endpoint inherits RequireAuthorization(ApiAuthPolicies.Operator) from the group.
+        //   The Scheduler's HttpClient (via PipelineApiRunHistoryClient) must authenticate with an operator-tier
+        //   key, not an agent-tier key. If misconfigured with an agent key, the request receives 403 and
+        //   GetFromJsonAsync silently returns null → [], which is indistinguishable from "no active runs" and
+        //   defeats the conservative fallback. Document this requirement in the Scheduler configuration guide
+        //   and consider adding a startup check that the Scheduler can reach this endpoint.
+        group.MapGet("/active-branches", GetActiveBranches);
+
         // Run history export — operator-authenticated file download.
         // Returns pipeline run summaries including issue identifiers and project names;
         // these must not be exposed to unauthenticated callers.
@@ -109,6 +118,26 @@ public static class PipelineRunEndpoints
         ArgumentNullException.ThrowIfNull(summary);
         await history.AddRunSummaryAsync(summary, ct);
         return Results.StatusCode(201);
+    }
+
+    // ── GET /api/pipeline-runs/active-branches ─────────────────────────────
+
+    /// <summary>
+    /// GET /api/pipeline-runs/active-branches
+    /// Returns the branch names of all currently active (non-terminal) pipeline runs held
+    /// in the orchestrator's in-memory run service.
+    /// Used by <c>SchedulerRunQueryService</c> to populate <c>GetActiveRunBranchesAsync()</c>
+    /// so the housekeeping branch-update guard works correctly in the Scheduler deployment.
+    /// Returns an empty array when no runs are active.
+    /// </summary>
+    internal static IResult GetActiveBranches(IOrchestratorRunService runService)
+    {
+        var branches = runService.GetActiveRuns()
+            .Where(r => r.BranchName != null)
+            .Select(r => r.BranchName!)
+            .ToList();
+
+        return TypedResults.Ok((IReadOnlyList<string>)branches);
     }
 
     private static readonly HashSet<PipelineStep> s_terminalSteps =

@@ -59,4 +59,30 @@ public interface IOrchestratorRunService
     /// recently-completed issues as orphaned.
     /// </summary>
     bool WasRecentlyCompleted(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
+
+    /// <summary>
+    /// Returns the branch names of all currently active pipeline runs.
+    /// Default implementation derives from <see cref="GetActiveRuns"/> — override in
+    /// distributed adapters (e.g. <c>SchedulerRunQueryService</c>) that cannot access
+    /// in-memory run state directly.
+    /// </summary>
+    /// <remarks>
+    /// Used by <see cref="Services.HousekeepingService"/> Step 4 / Step 6b to guard
+    /// against calling <c>UpdatePullRequestBranchAsync</c> on a branch that has an active run.
+    /// </remarks>
+    // TODO (WARNING): The DI registration of SchedulerRunQueryService uses a factory lambda
+    //   (sp => new SchedulerRunQueryService(sp.GetRequiredService<IPipelineApiRunHistoryClient>()))
+    //   rather than automatic constructor injection. If IPipelineApiRunHistoryClient is not
+    //   registered in the Scheduler's service collection, the error is deferred to first use
+    //   rather than startup. This is no regression from the previous AddSingleton<SchedulerRunQueryService>()
+    //   pattern, but consider adding a startup health check or eager resolution to catch
+    //   misconfigured DI at service start rather than at the first housekeeping cycle.
+    Task<HashSet<string>> GetActiveRunBranchesAsync(CancellationToken ct = default)
+    {
+        var branches = GetActiveRuns()
+            .Where(r => r.BranchName != null)
+            .Select(r => r.BranchName!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return Task.FromResult(branches);
+    }
 }

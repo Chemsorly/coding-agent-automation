@@ -50,4 +50,27 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
         var response = await _http.SendAsync(req, ct);
         response.EnsureSuccessStatusCode();
     }
+
+    public async Task<IReadOnlyList<string>> GetActiveBranchesAsync(CancellationToken ct = default)
+    {
+        // Use GetAsync + EnsureSuccessStatusCode so that non-2xx responses (403 Forbidden,
+        // 500 Internal Server Error, etc.) throw an HttpRequestException instead of being
+        // silently swallowed as an empty list. The exception propagates to
+        // SchedulerRunQueryService.GetActiveRunBranchesAsync, which propagates it further to
+        // HousekeepingService.ExecuteAsync where the catch block sets activeRunBranchesUnavailable=true
+        // and applies the conservative fallback (skip all branch updates this cycle).
+        // A silent empty list would be indistinguishable from "no active runs" and would defeat
+        // the conservative fallback — e.g. a 403 from a misconfigured auth key would cause
+        // UpdatePullRequestBranchAsync to be called on live-run branches.
+        // TODO (WARNING): GetRunHistoryAsync (line ~22) uses the same GetFromJsonAsync pattern and
+        //   would throw a NullReferenceException on non-2xx responses (result! dereference).
+        //   That is a pre-existing issue in this file; consider aligning it to GetAsync +
+        //   EnsureSuccessStatusCode for consistency.
+        var response = await _http.GetAsync("/api/pipeline-runs/active-branches", ct);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<IReadOnlyList<string>>(
+            PipelineJsonOptions.Default,
+            ct);
+        return result ?? [];
+    }
 }
