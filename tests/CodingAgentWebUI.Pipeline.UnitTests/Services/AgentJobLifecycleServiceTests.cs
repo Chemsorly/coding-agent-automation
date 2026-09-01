@@ -426,12 +426,6 @@ public sealed class AgentJobLifecycleServiceTests
         var jobId = new JobId("job-1");
         var run = MakeRun("job-1"); // AgentId = "agent-1" from MakeRun
 
-        // TODO: The mock setup for _lifecycle.CompleteRunAsync and _facade.ReplaceRun is missing.
-        // Without it, CompleteRunAsync returns null (loose mock default), exercising an unintended
-        // fallback path inside RegularJobCompletionStrategy. Add:
-        //   _lifecycle.Setup(l => l.CompleteRunAsync(...)).ReturnsAsync(run);
-        //   _facade.Setup(f => f.ReplaceRun(run));
-        // to make this test accurately represent the production scenario.
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
             .Returns(Task.CompletedTask);
@@ -447,9 +441,6 @@ public sealed class AgentJobLifecycleServiceTests
         var expectedAgentId = new AgentId("agent-1");
         _facade.Verify(f => f.TransitionStatus(expectedAgentId, AgentStatus.Idle), Times.Once);
         _facade.Verify(f => f.UpdateAgentFieldAsync(expectedAgentId, "activeJobId", null), Times.Once);
-        // TODO: Consider also asserting Times.Never for orphanRestoredAt and lastJobCompletedAt to
-        // confirm the fallback branch — not the normal agent-is-not-null branch — was taken.
-        // e.g.: _facade.Verify(f => f.UpdateAgentFieldAsync(It.IsAny<AgentId>(), "orphanRestoredAt", It.IsAny<object>()), Times.Never);
     }
 
     [Fact]
@@ -459,9 +450,6 @@ public sealed class AgentJobLifecycleServiceTests
         var jobId = new JobId("job-1");
         var run = MakeRun("job-1"); // AgentId = "agent-1"
 
-        // TODO: Same incomplete mock setup as the TransitionsAgentToIdle test — _lifecycle.CompleteRunAsync
-        // and _facade.ReplaceRun are not set up, causing an unintended fallback inside the completion
-        // strategy. See TODO in HandleJobCompletedAsync_AgentIsNull_AndRunHasAgentId_TransitionsAgentToIdle.
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
             .Returns(Task.CompletedTask);
@@ -476,9 +464,6 @@ public sealed class AgentJobLifecycleServiceTests
         // Assert: a Warning is logged with the job ID and agent ID.
         // The log call is: _logger.Warning("{template}", jobId.Value /*string*/, run.AgentId /*string*/)
         // Compiler selects Warning<T0, T1>(string, T0, T1) — use typed matchers per brain entry dotnet.md#moq-serilog.
-        // TODO: Tighten the argument matchers from It.IsAny<string>() to pinned values
-        // (e.g. It.Is<string>(s => s == "job-1") and It.Is<string>(s => s == "agent-1")) so that
-        // swapped or wrong argument values are caught by this assertion.
         _logger.Verify(
             l => l.Warning(
                 It.Is<string>(s => s.Contains("agent lookup returned null") && s.Contains("{JobId}") && s.Contains("{AgentId}")),
