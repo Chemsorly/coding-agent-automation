@@ -62,7 +62,8 @@ internal sealed class DispatchStateBuilder
             var pendingItems = await db.WorkItems
                 .Where(w => w.Status == WorkItemStatus.Pending)
                 .Where(taskTypeFilter)
-                .OrderBy(w => w.CreatedAt)
+                .OrderByDescending(w => w.PriorityWeight)
+                .ThenBy(w => w.CreatedAt)
                 .Select(w => new PendingWorkItemProjection
                 {
                     Id = w.Id,
@@ -72,7 +73,8 @@ internal sealed class DispatchStateBuilder
                     ProjectId = w.ProjectId,
                     IssueIdentifier = w.IssueIdentifier,
                     IssueProviderConfigId = w.IssueProviderConfigId,
-                    TaskType = w.TaskType
+                    TaskType = w.TaskType,
+                    PriorityWeight = w.PriorityWeight
                 })
                 .ToListAsync(ct);
 

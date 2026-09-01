@@ -472,6 +472,44 @@ public class DispatchStateBuilderTests : IDisposable
             "the resolved selector 'dotnet,kiro' is at its concurrency limit (1/1), so the partial-selector item should be skipped");
     }
 
+    // ── PriorityWeight ordering ──────────────────────────────────────────
+
+    [Fact]
+    public async Task BuildStateAsync_OrdersPendingItems_ByPriorityWeightDescThenCreatedAtAsc()
+    {
+        // Seed: low-weight item created first, high-weight item created later
+        var lowId = Guid.NewGuid();
+        var highId = Guid.NewGuid();
+        var baseTime = DateTimeOffset.UtcNow;
+
+        await InsertWorkItem(lowId, "kiro,dotnet", WorkItemStatus.Pending,
+            priorityWeight: 0, createdAt: baseTime.AddMinutes(-10));
+        await InsertWorkItem(highId, "kiro,dotnet", WorkItemStatus.Pending,
+            priorityWeight: 100, createdAt: baseTime.AddMinutes(-5));
+
+        var builder = CreateBuilder(
+            imageMapping: new Dictionary<string, string> { ["kiro,dotnet"] = "kiro-image" },
+            maxConcurrent: new Dictionary<string, int> { ["kiro,dotnet"] = 10 });
+
+        var state = await builder.BuildStateAsync(
+            w => w.TaskType != WorkItemTaskType.Consolidation,
+            recordTelemetry: false,
+            CancellationToken.None);
+
+        state.Should().NotBeNull();
+        state!.PendingItems.Should().HaveCountGreaterThanOrEqualTo(2);
+
+        var fixtureItems = state.PendingItems
+            .Where(i => i.Id == lowId || i.Id == highId)
+            .ToList();
+
+        fixtureItems.Should().HaveCount(2);
+        fixtureItems[0].Id.Should().Be(highId,
+            "high-weight item (PriorityWeight=100) must appear before low-weight item (PriorityWeight=0) in BuildStateAsync output");
+        fixtureItems[1].Id.Should().Be(lowId,
+            "low-weight item must appear after high-weight item in BuildStateAsync output");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private DispatchStateBuilder CreateBuilder(
@@ -540,7 +578,9 @@ public class DispatchStateBuilderTests : IDisposable
     }
 
     private async Task InsertWorkItem(Guid id, string agentSelector, WorkItemStatus status,
-        WorkItemTaskType taskType = WorkItemTaskType.Implementation)
+        WorkItemTaskType taskType = WorkItemTaskType.Implementation,
+        int priorityWeight = 0,
+        DateTimeOffset? createdAt = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
         db.WorkItems.Add(new WorkItemEntity
@@ -550,10 +590,11 @@ public class DispatchStateBuilderTests : IDisposable
             IssueProviderConfigId = "provider-1",
             Status = status,
             AgentSelector = agentSelector,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
             TimeoutSeconds = 3600,
             Payload = "{}",
-            TaskType = taskType
+            TaskType = taskType,
+            PriorityWeight = priorityWeight
         });
         await db.SaveChangesAsync();
     }

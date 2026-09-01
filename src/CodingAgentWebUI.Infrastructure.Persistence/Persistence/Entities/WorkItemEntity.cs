@@ -63,4 +63,11 @@ public class WorkItemEntity
 
     /// <summary>Concurrency token mapped to PostgreSQL xmin system column.</summary>
     public uint RowVersion { get; set; }
+
+    /// <summary>
+    /// Intra-queue dispatch priority. Higher values are dispatched first (ORDER BY PriorityWeight DESC, CreatedAt ASC).
+    /// Manual dispatches receive 100; closed-loop dispatches receive 0 (the default).
+    /// Allowed range: 0–1000.
+    /// </summary>
+    public int PriorityWeight { get; set; }
 }

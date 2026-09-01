@@ -20,6 +20,7 @@ internal sealed record PendingWorkItemProjection
     public Guid? ProjectId { get; init; }
     public string? IssueIdentifier { get; init; }
     public string? IssueProviderConfigId { get; init; }
+    public int PriorityWeight { get; init; }
 }
 
 /// <summary>
