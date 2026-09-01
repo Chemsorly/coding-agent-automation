@@ -9,7 +9,6 @@ public sealed record PrBodyParameters
     public required int TestsPassed { get; init; }
     public required int TestsFailed { get; init; }
     public required int TestsSkipped { get; init; }
-    public double? CoveragePercent { get; init; }
     public required IReadOnlyList<FileChangeSummary> FileChanges { get; init; }
     public required string IssueTitle { get; init; }
     public bool IsDraft { get; init; }

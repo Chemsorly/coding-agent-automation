@@ -156,6 +156,12 @@ app.MapAgentEndpoints();
 app.MapChatEndpoints();
 app.MapApiSchedulerEndpoints();
 
+// ── Startup DI validation ─────────────────────────────────────────────────────
+// AssignmentEnricher is injected as optional [FromServices] in GetAssignment.
+// If it is missing, new-schema work items silently receive a degraded identity-only 200
+// response with no provider configs. Resolve eagerly to fail fast on misconfiguration.
+_ = app.Services.GetRequiredService<AssignmentEnricher>();
+
 await app.RunAsync();
 
 // Make Program accessible for WebApplicationFactory in integration tests

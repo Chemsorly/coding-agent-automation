@@ -1,8 +1,8 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Api.Client;
+using CodingAgentWebUI.Api.Client.Stores;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
 

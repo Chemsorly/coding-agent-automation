@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline.Models;
@@ -97,12 +96,6 @@ public static partial class PipelineFormatting
         sb.AppendLine($"- Passed: {parameters.TestsPassed}");
         sb.AppendLine($"- Failed: {parameters.TestsFailed}");
         sb.AppendLine($"- Skipped: {parameters.TestsSkipped}");
-        sb.AppendLine();
-
-        sb.AppendLine("## Coverage");
-        sb.AppendLine(parameters.CoveragePercent.HasValue
-            ? $"{parameters.CoveragePercent.Value.ToString("F1", CultureInfo.InvariantCulture)}%"
-            : "Not available");
         sb.AppendLine();
 
         if (parameters.CloseReference is not null)
@@ -295,8 +288,6 @@ public static partial class PipelineFormatting
             FormatTestGateSummary(report.Tests)
         };
 
-        if (report.Coverage is not null)
-            parts.Add($"Coverage {(report.Coverage.Passed ? "✅" : "❌")} ({report.Coverage.Details})");
         if (report.SecurityScan is not null)
             parts.Add($"Security {(report.SecurityScan.Passed ? "✅" : "❌")}");
         if (report.ExternalCi is not null)

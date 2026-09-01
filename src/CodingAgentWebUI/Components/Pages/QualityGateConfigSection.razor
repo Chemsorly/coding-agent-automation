@@ -18,7 +18,6 @@
                         <th>Display Name</th>
                         <th class="th-has-hint">Match Labels <span class="th-hint" tabindex="0" role="img" aria-label="ANY match — applies if at least one label overlaps with the job's labels" data-tooltip="ANY match — applies if at least one label overlaps with the job's labels">?</span></th>
                         <th style="min-width: 250px;">Commands</th>
-                        <th>Coverage</th>
                         <th>Enabled</th>
                         <th>Order</th>
                         <th>Actions</th>
@@ -51,7 +50,6 @@
                             <td class="monitoring-mono" style="font-size: 0.75rem;" title="@FormatCommandsFull(qgc)">
                                 @FormatCommands(qgc)
                             </td>
-                            <td>@(qgc.CoverageThreshold.HasValue ? $"{qgc.CoverageThreshold.Value}%" : "—")</td>
                             <td><Icon Name="@(qgc.Enabled ? "check-circle" : "x-circle")" /></td>
                             <td>@qgc.ExecutionOrder</td>
                             <td>
@@ -119,11 +117,6 @@
                 </div>
             </div>
             <div class="form-group">
-                <label>Coverage Threshold (%) <span class="form-hint">(leave empty to skip)</span></label>
-                <input type="number" @bind="_form.CoverageThreshold" min="0" max="100" step="0.1" />
-            </div>
-
-            <div class="form-group">
                 <label>Execution Order <span class="form-hint">(lower runs first)</span></label>
                 <input type="number" @bind="_form.ExecutionOrder" />
             </div>
@@ -134,31 +127,6 @@
                 </div>
                 <input type="number" @bind="_form.ProcessTimeoutSeconds" min="30" max="3600" />
             </div>
-            <div class="advanced-toggle" @onclick="() => _showFormAdvanced = !_showFormAdvanced">
-                <span class="toggle-chevron @(_showFormAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
-                <span>Advanced settings</span>
-            </div>
-            @if (_showFormAdvanced)
-            {
-            <div class="form-group">
-                <div class="label-with-hint">
-                    <label>Coverage Report Format</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="Format of the coverage report produced by the test command. Default: cobertura. Use jacoco for Java/Kotlin projects.">?</span>
-                </div>
-                <select @bind="_form.CoverageReportFormat">
-                    <option value="cobertura">Cobertura (default)</option>
-                    <option value="jacoco">JaCoCo</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <div class="label-with-hint">
-                    <label>Coverage Report Paths</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="Glob patterns for locating coverage report files (comma-separated). Leave empty for auto-detection based on test command.">?</span>
-                </div>
-                <input type="text" @bind="_form.CoverageReportPaths" placeholder="e.g. TestResults/**/coverage.cobertura.xml" />
-                <span class="form-hint">Comma-separated glob patterns. Empty = auto-detect.</span>
-            </div>
-            }
             <div class="form-buttons">
                 <button class="btn-save" @onclick="SaveConfig">Save</button>
                 <button class="btn-cancel" @onclick="CancelForm">Cancel</button>
@@ -192,7 +160,6 @@
     private QgcForm _form = new();
     private string? _formError;
     private bool _showDeleteConfirm;
-    private bool _showFormAdvanced;
     private QualityGateConfiguration? _deletingConfig;
 
     protected override async Task OnInitializedAsync()
@@ -231,12 +198,9 @@
             CompilationArguments = qgc.CompilationArguments != null ? string.Join(" ", qgc.CompilationArguments) : "",
             TestCommand = qgc.TestCommand ?? "",
             TestArguments = qgc.TestArguments != null ? string.Join(" ", qgc.TestArguments) : "",
-            CoverageThreshold = qgc.CoverageThreshold,
             Enabled = qgc.Enabled,
             ExecutionOrder = qgc.ExecutionOrder,
-            ProcessTimeoutSeconds = qgc.ProcessTimeoutSeconds,
-            CoverageReportFormat = qgc.CoverageReportFormat,
-            CoverageReportPaths = qgc.CoverageReportPaths != null ? string.Join(", ", qgc.CoverageReportPaths) : ""
+            ProcessTimeoutSeconds = qgc.ProcessTimeoutSeconds
         };
         _formError = null;
         _showForm = true;
@@ -280,12 +244,9 @@
             CompilationArguments = compilationArgs.Count > 0 ? compilationArgs : null,
             TestCommand = testCmd,
             TestArguments = testArgs.Count > 0 ? testArgs : null,
-            CoverageThreshold = _form.CoverageThreshold,
             Enabled = _form.Enabled,
             ExecutionOrder = _form.ExecutionOrder,
-            ProcessTimeoutSeconds = _form.ProcessTimeoutSeconds,
-            CoverageReportFormat = _form.CoverageReportFormat,
-            CoverageReportPaths = ParseCoverageReportPaths(_form.CoverageReportPaths)
+            ProcessTimeoutSeconds = _form.ProcessTimeoutSeconds
         };
 
         try
@@ -356,15 +317,6 @@
             .ToList();
     }
 
-    private static IReadOnlyList<string>? ParseCoverageReportPaths(string? input)
-    {
-        if (string.IsNullOrWhiteSpace(input)) return null;
-        var paths = input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .ToList();
-        return paths.Count > 0 ? paths : null;
-    }
-
     private class QgcForm
     {
         public string DisplayName { get; set; } = "";
@@ -373,11 +325,8 @@
         public string CompilationArguments { get; set; } = "";
         public string TestCommand { get; set; } = "";
         public string TestArguments { get; set; } = "";
-        public double? CoverageThreshold { get; set; }
         public bool Enabled { get; set; } = true;
         public int ExecutionOrder { get; set; } = 0;
         public int ProcessTimeoutSeconds { get; set; } = 600;
-        public string CoverageReportFormat { get; set; } = "cobertura";
-        public string CoverageReportPaths { get; set; } = "";
     }
 }

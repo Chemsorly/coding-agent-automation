@@ -780,8 +780,6 @@ public class QualityGateExecutorEdgeCaseTests
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
                 Tests = new GateResult { GateName = "Tests", Passed = true, Details = "ok" },
-                // Include Coverage and SecurityScan so EmitGateEvaluation coverage lines are hit
-                Coverage = new GateResult { GateName = "Coverage", Passed = true, Details = "85%" },
                 SecurityScan = new GateResult { GateName = "SecurityScan", Passed = true, Details = "ok" }
             });
     }

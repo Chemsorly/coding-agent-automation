@@ -5,8 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 [MessagePackObject]
 public sealed class GateResult
 {
-    [Key(0)]
-    public double? CoveragePercent { get; init; }
+    // Key(0) is retired (was CoveragePercent). Do not reuse to avoid deserialization issues with existing data.
 
     [Key(1)]
     public string? Details { get; init; }

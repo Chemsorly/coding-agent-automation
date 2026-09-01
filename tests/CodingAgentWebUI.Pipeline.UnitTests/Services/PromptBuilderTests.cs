@@ -978,25 +978,30 @@ public class PromptBuilderTests
         result.Should().NotContain("ACCURACY OVER THOROUGHNESS:");
     }
 
-    // TODO: Convert to [Theory]/[InlineData] or add .Because() context so that failures
-    // identify which specific prompt (CodeReview vs SecurityReview, etc.) is the offender
-    // without requiring a debugger re-run.
-    [Fact]
-    public void DefaultPrompts_ReviewPrompts_ContainFocusAreas()    {
-        var reviewPrompts = new[]
+    // TODO: Convert to [Theory]/[InlineData] — the test name communicates which prompt failed
+    // when using [InlineData], avoiding a debugger re-run for diagnosis.
+    [Theory]
+    [InlineData(nameof(DefaultPrompts.CodeReview))]
+    [InlineData(nameof(DefaultPrompts.CorrectnessReview))]
+    [InlineData(nameof(DefaultPrompts.DotNetSpecialistReview))]
+    [InlineData(nameof(DefaultPrompts.SecurityReview))]
+    [InlineData(nameof(DefaultPrompts.TestQualityReview))]
+    public void DefaultPrompts_ReviewPrompts_ContainFocusAreas(string promptName)
+    {
+        var prompt = promptName switch
         {
-            DefaultPrompts.CodeReview,
-            DefaultPrompts.CorrectnessReview,
-            DefaultPrompts.DotNetSpecialistReview,
-            DefaultPrompts.SecurityReview,
-            DefaultPrompts.TestQualityReview
+            nameof(DefaultPrompts.CodeReview) => DefaultPrompts.CodeReview,
+            nameof(DefaultPrompts.CorrectnessReview) => DefaultPrompts.CorrectnessReview,
+            nameof(DefaultPrompts.DotNetSpecialistReview) => DefaultPrompts.DotNetSpecialistReview,
+            nameof(DefaultPrompts.SecurityReview) => DefaultPrompts.SecurityReview,
+            nameof(DefaultPrompts.TestQualityReview) => DefaultPrompts.TestQualityReview,
+            _ => throw new ArgumentOutOfRangeException(nameof(promptName))
         };
 
-        foreach (var prompt in reviewPrompts)
-        {
-            prompt.Should().Contain("FOCUS AREAS (flag only when a concrete defect exists):");
-            prompt.Should().NotContain("CHECK FOR:");
-        }
+        prompt.Should().Contain("FOCUS AREAS (flag only when a concrete defect exists):",
+            because: $"review prompt '{promptName}' must use the FOCUS AREAS header");
+        prompt.Should().NotContain("CHECK FOR:",
+            because: $"review prompt '{promptName}' must not use the old CHECK FOR header");
     }
 
     [Fact]

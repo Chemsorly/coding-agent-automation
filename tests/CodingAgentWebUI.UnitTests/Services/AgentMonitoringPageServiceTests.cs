@@ -251,6 +251,69 @@ public sealed class AgentMonitoringPageServiceTests
         result.Should().Contain("(deleted)");
     }
 
+    // ── InitializeAsync — null-return guards (issue #2227) ──
+
+    // TODO: These null-return tests rely on the constructor-level mock defaults for the "other" lookup
+    // (e.g. the QGC null test does not override GetAgentProfilesAsync, so ProfileLookup uses the default
+    // empty array). If a future refactor merges the two try-blocks, the cross-lookup assertion would still
+    // pass even if the other lookup were incorrectly affected. Consider adding explicit setup for the
+    // non-tested lookup and asserting the other lookup remains in its expected state to improve isolation.
+    [Fact]
+    public async Task InitializeAsync_WhenGetQualityGateConfigsReturnsNull_QgcLookupIsEmptyAndNoExceptionThrown()
+    {
+        _mockConfigClient.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<QualityGateConfiguration>)null!);
+
+        await _sut.InitializeAsync();
+
+        _sut.QgcLookup.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task InitializeAsync_WhenGetAgentProfilesReturnsNull_ProfileLookupIsEmptyAndNoExceptionThrown()
+    {
+        _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<AgentProfile>)null!);
+
+        await _sut.InitializeAsync();
+
+        _sut.ProfileLookup.Should().BeEmpty();
+    }
+
+    // TODO: These happy-path tests assert only ContainKey, which passes even if the stored value is
+    // incorrect (wrong instance or null value). Consider strengthening the assertion to also verify the
+    // mapped value, e.g. _sut.QgcLookup["q1"].DisplayName.Should().Be("QGC One"), to make this a more
+    // meaningful regression guard against accidental key/value mapping changes in ToDictionary.
+    [Fact]
+    public async Task InitializeAsync_WithNonNullQgcs_PopulatesQgcLookup()
+    {
+        var qgcs = new List<QualityGateConfiguration>
+        {
+            new() { Id = "q1", DisplayName = "QGC One" }
+        };
+        _mockConfigClient.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(qgcs);
+
+        await _sut.InitializeAsync();
+
+        _sut.QgcLookup.Should().ContainKey("q1");
+    }
+
+    [Fact]
+    public async Task InitializeAsync_WithNonNullProfiles_PopulatesProfileLookup()
+    {
+        var profiles = new List<AgentProfile>
+        {
+            new() { Id = "p1", DisplayName = "Profile One", AgentProviderConfigId = "agent-1" }
+        };
+        _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(profiles);
+
+        await _sut.InitializeAsync();
+
+        _sut.ProfileLookup.Should().ContainKey("p1");
+    }
+
     // ── RefreshConsolidationAsync ──
 
     [Fact]

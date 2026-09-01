@@ -22,7 +22,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly DispatchInfrastructure _infra;
     private readonly IWorkDistributor _workDistributor;
     private readonly IAgentProfileStore _agentProfileStore;
-    private readonly IConfigurationStore _providerConfigStore;
+    private readonly IProviderConfigStore _providerConfigStore;
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly ILogger _logger;
 

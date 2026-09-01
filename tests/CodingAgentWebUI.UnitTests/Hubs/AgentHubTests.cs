@@ -303,26 +303,26 @@ public class AgentHubTests
     }
 
     [Fact]
-    public void QualityGateReport_AllPassed_WithCoverage_PassesWhenAllPass()
+    public void QualityGateReport_AllPassed_WithAllGates_PassesWhenAllPass()
     {
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = true },
-            Coverage = new GateResult { GateName = "Coverage", Passed = true, CoveragePercent = 85.0 }
+            SecurityScan = new GateResult { GateName = "Security", Passed = true }
         };
 
         report.AllPassed.Should().BeTrue();
     }
 
     [Fact]
-    public void QualityGateReport_AllPassed_WithCoverage_FailsWhenCoverageFails()
+    public void QualityGateReport_AllPassed_WithSecurityFailing_ReturnsFalse()
     {
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = true },
-            Coverage = new GateResult { GateName = "Coverage", Passed = false, CoveragePercent = 30.0 }
+            SecurityScan = new GateResult { GateName = "Security", Passed = false }
         };
 
         report.AllPassed.Should().BeFalse();
@@ -340,8 +340,7 @@ public class AgentHubTests
             Details = "All 42 tests passed",
             TestsPassed = 42,
             TestsFailed = 0,
-            TestsSkipped = 2,
-            CoveragePercent = 87.5
+            TestsSkipped = 2
         };
 
         result.GateName.Should().Be("Tests");
@@ -350,7 +349,6 @@ public class AgentHubTests
         result.TestsPassed.Should().Be(42);
         result.TestsFailed.Should().Be(0);
         result.TestsSkipped.Should().Be(2);
-        result.CoveragePercent.Should().Be(87.5);
     }
 
     // ── AgentLabels ─────────────────────────────────────────────────────
