@@ -462,8 +462,7 @@ public class PromptConstructionPropertyTests
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed with exit code 1. 3 error(s), 2 warning(s)." },
-            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "Tests passed: 42 passed, 0 failed, 0 skipped" },
-            Coverage = new GateResult { GateName = "Coverage", Passed = true, Details = "Coverage 85.0% meets threshold 40.0%" }
+            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "Tests passed: 42 passed, 0 failed, 0 skipped" }
         };
 
         var prompt = QualityGateExecutor.BuildQualityGateRetryPrompt(report, 1, 3);
@@ -471,7 +470,6 @@ public class PromptConstructionPropertyTests
         prompt.Should().Contain("Quality gates failed (attempt 1/3):");
         prompt.Should().Contain("- Compilation: FAILED");
         prompt.Should().Contain("- Tests: PASSED");
-        prompt.Should().Contain("- Coverage: PASSED");
         prompt.Should().Contain(AgentWorkspacePaths.QualityGatesOutputDirectory);
         prompt.Should().Contain("List the files there and read the relevant ones");
     }

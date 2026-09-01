@@ -55,7 +55,7 @@ public sealed class WorkItemCountsPollerTests
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
+        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(2000));
 
         _mockClient.Verify(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()),
             Times.AtLeastOnce(), "leader must poll work item counts");

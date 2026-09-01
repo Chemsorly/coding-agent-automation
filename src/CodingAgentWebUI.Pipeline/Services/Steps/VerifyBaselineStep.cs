@@ -73,8 +73,6 @@ public sealed class VerifyBaselineStep : IPipelineStep
             context.Callbacks.EmitOutputLine($"    ❌ Compilation: {qgc.Compilation.Details}");
         if (qgc.Tests is { Passed: false })
             context.Callbacks.EmitOutputLine($"    ❌ Tests: {qgc.Tests.Details}");
-        if (qgc.Coverage is { Passed: false })
-            context.Callbacks.EmitOutputLine($"    ❌ Coverage: {qgc.Coverage.Details}");
         if (qgc.SecurityScan is { Passed: false })
             context.Callbacks.EmitOutputLine($"    ❌ Security: {qgc.SecurityScan.Details}");
     }
@@ -88,8 +86,6 @@ public sealed class VerifyBaselineStep : IPipelineStep
             context.Callbacks.EmitOutputLine($"  ❌ Compilation: {report.Compilation.Details}");
         if (report.Tests is { Passed: false })
             context.Callbacks.EmitOutputLine($"  ❌ Tests: {report.Tests.Details}");
-        if (report.Coverage is { Passed: false })
-            context.Callbacks.EmitOutputLine($"  ❌ Coverage: {report.Coverage.Details}");
         if (report.SecurityScan is { Passed: false })
             context.Callbacks.EmitOutputLine($"  ❌ Security: {report.SecurityScan.Details}");
         if (report.ExternalCi is { Passed: false })

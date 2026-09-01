@@ -88,7 +88,6 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     {
         PipelineTelemetry.QualityGateNames.Compilation.Should().Be("compilation");
         PipelineTelemetry.QualityGateNames.Tests.Should().Be("tests");
-        PipelineTelemetry.QualityGateNames.Coverage.Should().Be("coverage");
         PipelineTelemetry.QualityGateNames.Security.Should().Be("security");
         PipelineTelemetry.QualityGateNames.ExternalCi.Should().Be("external_ci");
     }

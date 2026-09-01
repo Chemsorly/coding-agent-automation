@@ -363,6 +363,57 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     }
 
     /// <summary>
+    /// Updates the <see cref="WorkItemEntity.PriorityWeight"/> of a Pending work item.
+    /// Returns <see langword="true"/> on success, <see langword="false"/> if not found or not Pending.
+    /// The caller is responsible for range validation (0–1000) before calling this method.
+    /// Retries up to <paramref name="maxRetries"/> times on DbUpdateConcurrencyException.
+    /// </summary>
+    public async Task<UpdatePriorityWeightResult> UpdatePriorityWeightAsync(
+        Guid workItemId,
+        int priorityWeight,
+        CancellationToken ct,
+        int maxRetries = 3)
+    {
+        Exception? lastConcurrencyEx = null;
+
+        for (int attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var item = await db.WorkItems.FindAsync([workItemId], ct);
+            if (item is null)
+                return UpdatePriorityWeightResult.NotFound;
+
+            if (item.Status != WorkItemStatus.Pending)
+                return UpdatePriorityWeightResult.NotPending;
+
+            item.PriorityWeight = priorityWeight;
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                return UpdatePriorityWeightResult.Success;
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                lastConcurrencyEx = ex;
+                if (attempt < maxRetries)
+                {
+                    _logger.LogInformation(
+                        ex,
+                        "Concurrency conflict on WorkItem {WorkItemId} PriorityWeight update, retry {Attempt}/{MaxRetries}",
+                        workItemId, attempt + 1, maxRetries);
+                }
+            }
+        }
+
+        _logger.LogWarning(
+            lastConcurrencyEx,
+            "WorkItem {WorkItemId} PriorityWeight update failed after all {MaxRetries} retries (concurrency exhausted)",
+            workItemId, maxRetries);
+        return UpdatePriorityWeightResult.ConcurrencyConflict;
+    }
+
+    /// <summary>
     /// Re-queues a work item: transitions back to Pending, increments RetryCount,
     /// clears DispatchedAt and AssignedAgentId so the drain service picks it up again.
     /// </summary>
@@ -377,10 +428,6 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     }
 
     /// <inheritdoc />
-    // TODO: No integration test exists to verify this query correctly filters only
-    // FailureReason.AgentError and excludes Timeout, InfrastructureFailure, and
-    // TokenRefreshFailure. The unit tests mock the interface so the actual DB filtering
-    // logic has no coverage. A regression in the EF predicate would go undetected.
     public async Task<bool> HasAgentErrorSinceAsync(
         IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId,
         DateTimeOffset since, CancellationToken ct)
@@ -412,4 +459,19 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             .Select(w => w.CompletedAt)
             .MaxAsync(ct);
     }
+}
+
+/// <summary>
+/// Result codes returned by <see cref="WorkItemTransitionService.UpdatePriorityWeightAsync"/>.
+/// </summary>
+public enum UpdatePriorityWeightResult
+{
+    /// <summary>Update succeeded.</summary>
+    Success,
+    /// <summary>Work item was not found.</summary>
+    NotFound,
+    /// <summary>Work item exists but is not in Pending status.</summary>
+    NotPending,
+    /// <summary>Save failed after all retry attempts due to repeated concurrency conflicts.</summary>
+    ConcurrencyConflict
 }

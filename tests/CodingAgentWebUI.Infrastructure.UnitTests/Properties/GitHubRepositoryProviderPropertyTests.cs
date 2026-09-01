@@ -115,7 +115,6 @@ public class GitHubRepositoryProviderPropertyTests
                 TestsPassed = passed.Get,
                 TestsFailed = failed.Get,
                 TestsSkipped = skipped.Get,
-                CoveragePercent = 85.5,
                 FileChanges = fileChanges,
                 IssueTitle = title.Get,
                 CloseReference = $"Closes {issueRef}",
@@ -130,8 +129,6 @@ public class GitHubRepositoryProviderPropertyTests
         body.Should().Contain($"Passed: {passed.Get}");
         body.Should().Contain($"Failed: {failed.Get}");
         body.Should().Contain($"Skipped: {skipped.Get}");
-        body.Should().Contain("## Coverage");
-        body.Should().Contain("85.5%");
         body.Should().Contain($"Closes {issueRef}");
     }
 }

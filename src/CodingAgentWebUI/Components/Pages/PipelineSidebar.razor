@@ -773,10 +773,6 @@
         {
             <span class="@(tests.Passed ? "qg-pass" : "qg-fail")">Tests: @(tests.TestsPassed ?? 0)/@((tests.TestsPassed ?? 0) + (tests.TestsFailed ?? 0))</span>
         }
-        @if (qgcResult.Coverage is { } cov)
-        {
-            <span class="@(cov.Passed ? "qg-pass" : "qg-fail")">Cov: @(cov.CoveragePercent?.ToString("F1") ?? "N/A")%</span>
-        }
     };
 
     private static RenderFragment RenderSingleQgcResult(QualityGateReport qr) => __builder =>
@@ -788,19 +784,7 @@
             @if (qr.Tests.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Tests
             <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
         </div>
-        @RenderCoverageLine(qr)
         @RenderSecurityLine(qr)
-    };
-
-    private static RenderFragment RenderCoverageLine(QualityGateReport qr) => __builder =>
-    {
-        @if (qr.Coverage is { } cov)
-        {
-            <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
-                @if (cov.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Coverage
-                <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
-            </div>
-        }
     };
 
     private static RenderFragment RenderSecurityLine(QualityGateReport qr) => __builder =>
@@ -840,9 +824,8 @@
                 @for (var i = 0; i < history.Length - 1; i++)
                 {
                     var h = history[i];
-                    var covPct = h.Coverage?.CoveragePercent;
                     <div class="qg-history-item">
-                        #@(i + 1): @if (h.AllPassed) {<text>Passed </text><Icon Name="check-circle" />} else if (covPct.HasValue) {<text>Coverage @(covPct.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture))% </text><Icon Name="x-circle" />} else {<text>Failed </text><Icon Name="x-circle" />}
+                        #@(i + 1): @if (h.AllPassed) {<text>Passed </text><Icon Name="check-circle" />} else {<text>Failed </text><Icon Name="x-circle" />}
                     </div>
                 }
             </div>
