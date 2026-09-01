@@ -1467,15 +1467,22 @@ public class ChatJobDispatcherTests
     {
         long sessionDelta = 0;
 
+        // Use a string literal instead of ChatTelemetry.SessionsActive.Name to avoid triggering
+        // the ChatTelemetry static initializer inside the InstrumentPublished callback.
+        // listener.Start() iterates over all published instruments and fires InstrumentPublished
+        // for each; accessing a static field there triggers the type's cctor, which in turn calls
+        // Meter.CreateHistogram — re-entering InstrumentPublished and causing a TypeInitializationException.
+        const string sessionsActiveName = "workdistribution.chat.sessions_active";
+
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
-            if (instrument.Name == ChatTelemetry.SessionsActive.Name)
+            if (instrument.Name == sessionsActiveName)
                 l.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
         {
-            if (instrument.Name == ChatTelemetry.SessionsActive.Name)
+            if (instrument.Name == sessionsActiveName)
                 Interlocked.Add(ref sessionDelta, measurement);
         });
         listener.Start();
