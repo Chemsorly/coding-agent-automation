@@ -1340,6 +1340,20 @@ public class ChatJobDispatcherTests
             "pod must be force-deleted when cross-replica heartbeats stop");
     }
 
+    // TODO: [WARNING] Four regression tests for Redis idle-kill scenarios were removed in the PR-body
+    // cleanup change (issue #2248) without justification or tombstone comments. The guarded production
+    // paths remain live in ChatJobDispatcher.cs:
+    //   - TryGetRedisHeartbeatAsync (reads Redis heartbeat key)
+    //   - The `redisAvailable` skip guard (does not idle-kill when Redis is available but returns recent heartbeat)
+    //   - Key-not-found fallback to local ticks (Redis available but key absent → use local LastClientHeartbeatTicks)
+    //   - redis=null single-replica path (Redis not configured → always use local ticks)
+    // These paths were added by issue #2207 (commit ead0f1b6) to fix a multi-replica idle-kill bug.
+    // Restore: WatcherIdleKill_WhenRedisReturnsRecentHeartbeat_DoesNotIdleKillSession,
+    //          WatcherIdleKill_WhenRedisThrows_DoesNotIdleKillSession,
+    //          WatcherIdleKill_WhenRedisKeyNotFound_FallsBackToLocalTicksAndIdleKills,
+    //          WatcherIdleKill_WhenRedisIsNull_LocalTicksAreAuthoritative_IdleKillFires
+    // or document why the #2207 regression protection is intentionally removed.
+
     // ─── 26. WatchJobUntilTerminalAsync — fault guard ─────────────────────────
 
     /// <summary>

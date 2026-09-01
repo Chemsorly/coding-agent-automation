@@ -322,20 +322,9 @@ public class PipelineFormattingTests
         result.Should().Contain("Compilation ❌");
     }
 
-    [Fact]
-    public void FormatQualityGateSummary_WithCoverage_IncludesCoverageDetails()
-    {
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
-            Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" },
-            Coverage = new GateResult { GateName = "Coverage", Passed = false, Details = "26.7% below threshold 40.0%" }
-        };
-
-        var result = PipelineFormatting.FormatQualityGateSummary(report);
-
-        result.Should().Contain("Coverage ❌ (26.7% below threshold 40.0%)");
-    }
+    // Deleted (behavior removed): FormatQualityGateSummary_WithCoverage_IncludesCoverageDetails —
+    // Coverage property was retired from QualityGateReport (Key(1) tombstoned); coverage is now
+    // surfaced via QgcResults and is not shown in the one-line summary.
 
     [Fact]
     public void FormatQualityGateSummary_WithExternalCi_IncludesCiStatus()

@@ -90,20 +90,21 @@ public class PipelineModelCoverageTests
     }
 
     [Fact]
-    public void FormatQualityGateSummary_WithCoverageAndSecurity_IncludesAll()
+    public void FormatQualityGateSummary_WithSecurityOnly_IncludesSecurityStatus()
     {
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
             Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" },
-            Coverage = new GateResult { GateName = "Coverage", Passed = true, Details = "80%", CoveragePercent = 80.0 },
             SecurityScan = new GateResult { GateName = "Security", Passed = false, Details = "1 vulnerability" }
         };
         var summary = PipelineFormatting.FormatQualityGateSummary(report);
         summary.Should().Contain("Compilation");
-        summary.Should().Contain("Coverage");
         summary.Should().Contain("Security");
     }
+
+    // Deleted (behavior removed): FormatQualityGateSummary_WithCoverageAndSecurity_IncludesAll —
+    // Coverage property was retired from QualityGateReport (Key(1) tombstoned).
 
     // Deleted (behavior removed): GeneratePrBody_WithFileChanges_IncludesTable — asserted | Modified | from ## Files Changed
     // Deleted (behavior removed): GeneratePrBody_WithCodeReviewSummary_IncludesReviewSection — asserted "Code Review"

@@ -197,7 +197,7 @@ public static partial class PipelineFormatting
 
     /// <summary>
     /// Formats a one-line quality gate summary with emoji status indicators.
-    /// Example: "🏗️ Quality gates: Compilation ✅ | Tests ✅ (42 passed, 0 failed) | Coverage ❌ (26.7%, threshold 40%)"
+    /// Example: "🏗️ Quality gates: Compilation ✅ | Tests ✅ (42 passed, 0 failed) | External CI ✅"
     /// </summary>
     public static string FormatQualityGateSummary(QualityGateReport report)
     {
@@ -207,8 +207,6 @@ public static partial class PipelineFormatting
             FormatTestGateSummary(report.Tests)
         };
 
-        if (report.Coverage is not null)
-            parts.Add($"Coverage {(report.Coverage.Passed ? "✅" : "❌")} ({report.Coverage.Details})");
         if (report.SecurityScan is not null)
             parts.Add($"Security {(report.SecurityScan.Passed ? "✅" : "❌")}");
         if (report.ExternalCi is not null)
