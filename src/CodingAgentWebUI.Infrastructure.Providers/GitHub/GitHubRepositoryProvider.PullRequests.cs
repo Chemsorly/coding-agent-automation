@@ -228,7 +228,7 @@ public partial class GitHubRepositoryProvider
                     new PullRequestUpdate { Body = body }),
                 "UpdatePullRequest", ct);
 
-            // Mark as ready for review if requested.
+            // Change draft status if requested.
             // GitHub REST API doesn't support changing draft status — requires GraphQL mutation.
             if (markReady)
             {
@@ -249,6 +249,40 @@ public partial class GitHubRepositoryProvider
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     Log.Warning(ex, "Failed to mark PR #{PrNumber} as ready for review (non-fatal)", pullRequestNumber);
+                }
+            }
+            else
+            {
+                // Convert to draft if currently ready-for-review.
+                // GitHub REST API does not support changing draft status — requires GraphQL mutation.
+                try
+                {
+                    // TODO: The GET below is always issued for every markReady=false call, even when the PR is already
+                    // draft. A GET failure is silently swallowed by the catch below, collapsing "already-draft" and
+                    // "GET failed" into the same no-op outcome with no way to distinguish them from the caller.
+                    // Consider returning the PR object from the preceding PATCH (if the Octokit client exposes it)
+                    // to avoid the extra round-trip and make the two failure modes distinguishable.
+                    var pr = await ExecuteWithResilienceAsync(
+                        client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+                        "GetPullRequestForDraftConversion", ct);
+
+                    if (!pr.Draft)
+                    {
+                        var client = await GetClientAsync(ct);
+                        // TODO: pr.NodeId is embedded via string interpolation without JSON escaping. GitHub-issued
+                        // node IDs are safe in practice, but a proper JSON serializer or GraphQL variable binding
+                        // should be used here (and in the markPullRequestReadyForReview branch above) to eliminate
+                        // the theoretical risk of a malformed mutation if NodeId ever contains '"' or '\'.
+                        var graphqlBody = $"{{\"query\":\"mutation {{ convertPullRequestToDraft(input: {{pullRequestId: \\\"{pr.NodeId}\\\"}}) {{ pullRequest {{ isDraft }} }} }}\"}}";
+                        // TODO: CancellationToken is not propagated to IConnection.Post — the Octokit overload used
+                        // here has no CT parameter. Track for a future Octokit upgrade that adds CT support.
+                        await client.Connection.Post<object>(DeriveGraphQlUri(), graphqlBody, "application/json", "application/json"); // NOSONAR S8949 — Octokit IConnection.Post has no CancellationToken overload
+                        Log.Information("Converted PR #{PrNumber} to draft", pullRequestNumber);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Log.Warning(ex, "Failed to convert PR #{PrNumber} to draft (non-fatal)", pullRequestNumber);
                 }
             }
         }
