@@ -34,6 +34,7 @@ public sealed class AgentMonitoringPageServiceTests
     private readonly Mock<IPendingWorkQuery> _mockPendingWorkQuery = new();
     private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
     private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistoryClient = new();
+    private readonly Mock<IPipelineApiWorkItemClient> _mockWorkItemClient = new();
     private readonly AgentMonitoringPageService _sut;
 
     public AgentMonitoringPageServiceTests()
@@ -64,7 +65,7 @@ public sealed class AgentMonitoringPageServiceTests
             _mockPendingWorkQuery.Object,
             _mockWorkDistributor.Object,
             _mockRunHistoryClient.Object,
-            new Mock<IPipelineApiWorkItemClient>().Object));
+            _mockWorkItemClient.Object));
     }
 
     private static PipelineRun CreateRun(string runId, string agentId = "agent-1")
@@ -443,10 +444,50 @@ public sealed class AgentMonitoringPageServiceTests
         _sut.Agents.Should().BeEmpty("no agent registered, no run with AgentId");
     }
 
-    // TODO: Add tests for AgentMonitoringPageService.SetPriorityAsync:
-    // 1. On success: returns (true, null) and triggers a data refresh (pending work query is called).
-    // 2. On failure (HttpRequestException): returns (false, ex.Message) and still triggers a refresh
-    //    so the displayed value reverts to the server's authoritative value.
-    // These behaviours back the acceptance criterion "A failed update shows an error and reverts
-    // the displayed value" at the service layer and are currently untested.
+    // ── SetPriorityAsync ──
+
+    [Fact]
+    public async Task SetPriorityAsync_Success_ReturnsTrueAndTriggersRefresh()
+    {
+        // Arrange
+        var workItemId = Guid.NewGuid();
+        _mockWorkItemClient
+            .Setup(c => c.SetPriorityAsync(workItemId, 300, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var (success, error) = await _sut.SetPriorityAsync(workItemId, 300);
+
+        // Assert
+        success.Should().BeTrue();
+        error.Should().BeNull();
+        // A data refresh must fire so the UI reflects the authoritative server value.
+        _mockPendingWorkQuery.Verify(
+            q => q.GetPendingJobsAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task SetPriorityAsync_Failure_ReturnsFalseWithMessageAndStillTriggersRefresh()
+    {
+        // Arrange — server rejects the update (e.g. 400 Bad Request)
+        var workItemId = Guid.NewGuid();
+        var serverError = new HttpRequestException("400 Bad Request");
+        _mockWorkItemClient
+            .Setup(c => c.SetPriorityAsync(workItemId, 9999, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(serverError);
+
+        // Act
+        var (success, error) = await _sut.SetPriorityAsync(workItemId, 9999);
+
+        // Assert
+        success.Should().BeFalse();
+        error.Should().Be(serverError.Message);
+        // Refresh must still fire on the failure path so any optimistic UI state is reverted
+        // to the authoritative server value, backing the acceptance criterion
+        // "A failed update shows an error and reverts the displayed value".
+        _mockPendingWorkQuery.Verify(
+            q => q.GetPendingJobsAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 }
