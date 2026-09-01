@@ -103,16 +103,15 @@ internal static class DispatchLoopHelpers
             "app.kubernetes.io/managed-by=caa-orchestrator",
             ct);
 
-        // TODO [WARNING]: This query does not filter terminal jobs. A completed K8s Job within the
-        // 600s log-retention window still has its PVC listed in .Spec.Template.Spec.Volumes, causing
-        // this method to treat that PVC as occupied and return null — starving the pool for up to 600s
-        // even though BuildConcurrencyMapAsync correctly excludes the same terminal job from the
-        // concurrency count. The two methods are now inconsistent: concurrency says "slot free, dispatch
-        // allowed", but PVC selection says "all PVCs busy, hold the item". Under a full kiro pool (e.g.
-        // 3 PVCs, 3 agents completing within the retention window), no new kiro dispatch can proceed for
-        // up to 600s. Fix: filter jobs using IsJobTerminal before populating claimedNames, mirroring
-        // the approach in BuildConcurrencyMapAsync. See review finding for issue #2176.
+        // Only consider non-terminal jobs when determining which PVCs are claimed.
+        // A completed K8s Job within the log-retention window still has its PVC listed in
+        // .Spec.Template.Spec.Volumes. Without this filter, the PVC is treated as occupied and
+        // SelectAvailablePvcAsync returns null — starving the pool for up to 600s even though
+        // BuildConcurrencyMapAsync correctly excludes the same terminal job from the concurrency
+        // count. Filtering here keeps both methods consistent: a terminal job that does not
+        // consume a concurrency slot also does not block a PVC from being reused. (issue #2176)
         var claimedNames = jobs.Items
+            .Where(j => !IsJobTerminal(j))
             .SelectMany(j => j.Spec?.Template?.Spec?.Volumes ?? [])
             .Where(v => v.PersistentVolumeClaim?.ClaimName is not null)
             .Select(v => v.PersistentVolumeClaim!.ClaimName!)

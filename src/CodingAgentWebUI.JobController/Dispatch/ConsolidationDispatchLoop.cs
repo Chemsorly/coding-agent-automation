@@ -148,6 +148,15 @@ public sealed class ConsolidationDispatchLoop
 
                 // Claim and create Job inside the lock so no concurrent loop can observe the same
                 // free PVC between SelectAvailablePvcAsync and CreateJobAsync.
+                //
+                // TODO [WARNING]: ClaimAsync is called while holding _pvcSelectLock. A slow or
+                // timed-out HTTP round-trip to the orchestrator API serializes ALL kiro dispatch items
+                // (both ConsolidationDispatchLoop and DispatchLoop) for the full latency of this call.
+                // Under sustained orchestrator API latency every kiro item in the cycle queues behind
+                // this single HTTP call, degrading throughput. To fix, perform ClaimAsync before
+                // acquiring the lock; if Job creation then fails, issue a compensating unclaim call
+                // to release the item. Alternatively, narrow the critical section to
+                // SelectAvailablePvcAsync + CreateJobAsync only (release and re-acquire around ClaimAsync).
 
                 // Claim (API does payload enrichment + token vending server-side)
                 try
@@ -179,7 +188,9 @@ public sealed class ConsolidationDispatchLoop
                 {
                     WorkItemId = item.Id,
                     AgentSelector = selector,
-                    TimeoutSeconds = Math.Max(item.TimeoutSeconds, _options.AgentJobTimeoutSeconds),
+                    TimeoutSeconds = item.TimeoutSeconds > 0
+                        ? item.TimeoutSeconds
+                        : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
                     JobName = jobName,
                     ClaimedPvc = pvcName,
                     OrchestratorUrl = _options.OrchestratorUrl,
@@ -244,7 +255,9 @@ public sealed class ConsolidationDispatchLoop
             {
                 WorkItemId = item.Id,
                 AgentSelector = selector,
-                TimeoutSeconds = Math.Max(item.TimeoutSeconds, _options.AgentJobTimeoutSeconds),
+                TimeoutSeconds = item.TimeoutSeconds > 0
+                    ? item.TimeoutSeconds
+                    : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
                 JobName = jobName,
                 ClaimedPvc = pvcName,
                 OrchestratorUrl = _options.OrchestratorUrl,

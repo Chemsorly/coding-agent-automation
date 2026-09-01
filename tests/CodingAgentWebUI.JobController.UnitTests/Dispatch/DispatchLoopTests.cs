@@ -46,7 +46,6 @@ public sealed class DispatchLoopTests
             Namespace = "test-ns",
             PollIntervalSeconds = 1,
             RateLimitPerSecond = 100,
-            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120
         };
 
@@ -247,7 +246,6 @@ public sealed class DispatchLoopTests
         {
             Namespace = "test-ns",
             RateLimitPerSecond = 100,
-            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120,
             KiroPvcPool = ["kiro-pvc-0", "kiro-pvc-1"]
         };
@@ -561,9 +559,9 @@ public sealed class DispatchLoopTests
     // ─── Math.Max timeout selection ───────────────────────────────────────────
 
     [Fact]
-    public async Task WhenItemTimeoutExceedsGlobal_K8sJob_ActiveDeadlineSeconds_UsesItemTimeout()
+    public async Task WhenItemHasExplicitTimeout_K8sJob_ActiveDeadlineSeconds_UsesItemTimeout()
     {
-        // item timeout (28800s) > global timeout (7200s) → activeDeadlineSeconds == 28860
+        // item timeout (28800s) is set explicitly — effectiveTimeout = 28800s → activeDeadlineSeconds == 28860
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending(timeoutSeconds: 28800)]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
@@ -574,7 +572,7 @@ public sealed class DispatchLoopTests
             .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
             .Returns(Task.CompletedTask);
 
-        var loop = CreateLoop(); // _options.AgentJobTimeoutSeconds == 7200
+        var loop = CreateLoop();
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         capturedJob.Should().NotBeNull();
@@ -582,11 +580,12 @@ public sealed class DispatchLoopTests
     }
 
     [Fact]
-    public async Task WhenGlobalTimeoutExceedsItem_K8sJob_ActiveDeadlineSeconds_UsesGlobalTimeout()
+    public async Task WhenItemTimeoutIsZero_K8sJob_ActiveDeadlineSeconds_UsesDefaultAgentTimeout()
     {
-        // item timeout (3600s) < global timeout (7200s) → activeDeadlineSeconds == 7260
+        // item.TimeoutSeconds == 0 (not set) → falls back to PipelineConstants.DefaultAgentTimeout (30 min = 1800s)
+        // activeDeadlineSeconds == 1800 + 60 == 1860
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending(timeoutSeconds: 3600)]);
+            .ReturnsAsync([MakePending(timeoutSeconds: 0)]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
 
@@ -595,16 +594,13 @@ public sealed class DispatchLoopTests
             .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
             .Returns(Task.CompletedTask);
 
-        var loop = CreateLoop(); // _options.AgentJobTimeoutSeconds == 7200
+        var loop = CreateLoop();
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         capturedJob.Should().NotBeNull();
-        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(7260L); // 7200 + 60
+        // DefaultAgentTimeout = 30 min = 1800s; JobSpecBuilder adds 60s grace period → 1860
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(1860L); // 1800 + 60
     }
-
-    // TODO: Add equal-values edge case test — WhenItemTimeoutEqualsGlobal_K8sJob_ActiveDeadlineSeconds_UsesSharedTimeout
-    // where item.TimeoutSeconds == agentJobTimeoutSeconds (e.g. both 7200s) → activeDeadlineSeconds == 7260.
-    // This boundary condition confirms that floor and ceiling converge cleanly at the same value.
 
     // ─── Concurrency map: completed jobs within retention window ─────────────
 
@@ -858,6 +854,12 @@ public sealed class DispatchLoopTests
         // Retrying job still occupies a concurrency slot — dispatch must be blocked
         _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // TODO [WARNING]: The assertions above verify that ClaimAsync and CreateJobAsync were never called,
+        // but do not distinguish between "blocked by concurrency limit" and other early-exit paths (e.g.
+        // BuildConcurrencyMapAsync threw and returned an empty map, eligibility gate failure, etc.).
+        // A tighter assertion would also verify RequeueAsync is NOT called (confirming no error requeue
+        // occurred) and PostStatusAsync is NOT called (confirming no cancellation occurred), making the
+        // "dispatch blocked by concurrency" semantic explicit and ruling out silent short-circuits.
     }
 
     // TODO: Restore concurrent PVC-selection tests now that the lock scope has been extended to cover
@@ -1186,6 +1188,87 @@ public sealed class DispatchLoopTests
 
         // Must not throw — SafeCancelWorkItemAsync swallows the exception
         await loop.RunOneCycleAsync(CancellationToken.None);
+    }
+
+    // ─── PVC selection: completed jobs within retention window ────────────────
+
+    /// <summary>
+    /// Regression test for issue #2176 — PVC selection must also exclude terminal jobs.
+    /// A completed K8s Job within the log-retention window still lists its PVC in
+    /// .Spec.Template.Spec.Volumes. SelectAvailablePvcAsync must filter terminal jobs so
+    /// that a PVC mounted by a completed job is treated as available for re-use, keeping
+    /// concurrency counting and PVC selection consistent.
+    ///
+    /// Scenario: pool has one PVC; the only K8s Job mounting it is completed.
+    /// Expected: PVC is treated as free → dispatch proceeds.
+    /// </summary>
+    [Fact]
+    public async Task WhenOnlyJobMountingPvcIsCompleted_PvcIsConsideredFree_AndDispatchProceeds()
+    {
+        const string kiroYaml = """
+            - labels: dotnet10,kiro
+              image: chemsorly/coding-agent:kiro-dotnet10
+              providerType: kiro
+              maxConcurrent: 0
+            """;
+        var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
+        var oneVcOptions = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            RateLimitPerSecond = 100,
+            ChatPodConnectTimeoutSeconds = 120,
+            KiroPvcPool = ["kiro-pvc-0"] // pool has one PVC
+        };
+
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,kiro")]);
+        _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeClaimed());
+
+        // The only job mounting kiro-pvc-0 is a completed job (terminal)
+        var completedJobWithPvc = new V1Job
+        {
+            Metadata = new V1ObjectMeta { Name = "completed-job" },
+            Spec = new V1JobSpec
+            {
+                Template = new V1PodTemplateSpec
+                {
+                    Spec = new V1PodSpec
+                    {
+                        Volumes =
+                        [
+                            new V1Volume
+                            {
+                                Name = "kiro-data",
+                                PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource { ClaimName = "kiro-pvc-0" }
+                            }
+                        ]
+                    }
+                }
+            },
+            Status = new V1JobStatus
+            {
+                Conditions =
+                [
+                    new V1JobCondition { Type = "Complete", Status = "True" }
+                ],
+                Succeeded = 1,
+                Active = 0
+            }
+        };
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [completedJobWithPvc] });
+
+        var loop = new DispatchLoop(
+            _workItemClient.Object, _configClient.Object, _k8sClient.Object,
+            kiroStore, oneVcOptions, _pvcSelectLock, _providerFactory.Object);
+
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Completed job's PVC must not block dispatch — item should be claimed and a Job created
+        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
