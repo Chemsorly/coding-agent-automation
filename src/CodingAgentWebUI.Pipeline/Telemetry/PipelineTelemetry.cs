@@ -146,7 +146,6 @@ public static class PipelineTelemetry
     {
         public const string Compilation = "compilation";
         public const string Tests = "tests";
-        public const string Coverage = "coverage";
         public const string Security = "security";
         public const string ExternalCi = "external_ci";
     }

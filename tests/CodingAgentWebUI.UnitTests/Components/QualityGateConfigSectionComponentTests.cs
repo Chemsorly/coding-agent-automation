@@ -65,7 +65,6 @@ public class QualityGateConfigSectionComponentTests : BunitContext
                     CompilationArguments = new[] { "build", "--no-restore" },
                     TestCommand = "dotnet",
                     TestArguments = new[] { "test", "--no-restore" },
-                    CoverageThreshold = 80.0,
                     Enabled = true,
                     ExecutionOrder = 1
                 }
@@ -75,7 +74,6 @@ public class QualityGateConfigSectionComponentTests : BunitContext
 
         Assert.Contains(".NET Quality Gates", cut.Markup);
         Assert.Contains("dotnet", cut.Markup);
-        Assert.Contains("80", cut.Markup);
     }
 
     [Fact]
@@ -130,28 +128,6 @@ public class QualityGateConfigSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public void Section_ShowsNoCoverageThreshold_AsDash()
-    {
-        _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<QualityGateConfiguration>
-            {
-                new()
-                {
-                    Id = "qgc-1",
-                    DisplayName = "No Coverage",
-                    CompilationCommand = "dotnet",
-                    CoverageThreshold = null,
-                    Enabled = true
-                }
-            });
-
-        var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
-
-        // The "—" dash is used when no coverage threshold
-        Assert.Contains("—", cut.Markup);
-    }
-
-    [Fact]
     public void Section_ShowsEditAndDeleteButtons()
     {
         _mockStore.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
@@ -186,7 +162,6 @@ public class QualityGateConfigSectionComponentTests : BunitContext
         Assert.Contains("Display Name", cut.Markup);
         Assert.Contains("Compilation Command", cut.Markup);
         Assert.Contains("Test Command", cut.Markup);
-        Assert.Contains("Coverage Threshold", cut.Markup);
     }
 
     [Fact]
@@ -418,7 +393,6 @@ public class QualityGateConfigSectionComponentTests : BunitContext
         Assert.Contains("Display Name", cut.Markup);
         Assert.Contains("Match Labels", cut.Markup);
         Assert.Contains("Commands", cut.Markup);
-        Assert.Contains("Coverage", cut.Markup);
         Assert.Contains("Enabled", cut.Markup);
         Assert.Contains("Order", cut.Markup);
         Assert.Contains("Actions", cut.Markup);

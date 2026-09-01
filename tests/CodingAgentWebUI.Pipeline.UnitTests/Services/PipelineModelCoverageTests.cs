@@ -90,18 +90,16 @@ public class PipelineModelCoverageTests
     }
 
     [Fact]
-    public void FormatQualityGateSummary_WithCoverageAndSecurity_IncludesAll()
+    public void FormatQualityGateSummary_WithSecurityOnly_IncludesSecurity()
     {
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
             Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" },
-            Coverage = new GateResult { GateName = "Coverage", Passed = true, Details = "80%", CoveragePercent = 80.0 },
             SecurityScan = new GateResult { GateName = "Security", Passed = false, Details = "1 vulnerability" }
         };
         var summary = PipelineFormatting.FormatQualityGateSummary(report);
         summary.Should().Contain("Compilation");
-        summary.Should().Contain("Coverage");
         summary.Should().Contain("Security");
     }
 
@@ -119,7 +117,6 @@ public class PipelineModelCoverageTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = 80.0,
                 FileChanges = fileChanges,
                 IssueTitle = "Fix bug",
             });
@@ -136,7 +133,6 @@ public class PipelineModelCoverageTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
                 ModelName = "claude-sonnet-4",
@@ -153,7 +149,6 @@ public class PipelineModelCoverageTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
                 CodeReviewSummary = new CodeReviewSummary(
@@ -180,7 +175,6 @@ public class PipelineModelCoverageTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
                 Comments = comments,
@@ -198,7 +192,6 @@ public class PipelineModelCoverageTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
                 IsDraft = true,
@@ -220,30 +213,11 @@ public class PipelineModelCoverageTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
                 Comments = comments,
             });
         body.Should().Contain("user1");
-    }
-
-
-
-    [Fact]
-    public void GeneratePrBody_WithCoverage_IncludesCoveragePercent()
-    {
-        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#42",
-                TestsPassed = 10,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                CoveragePercent = 75.5,
-                FileChanges = Array.Empty<FileChangeSummary>(),
-                IssueTitle = "Fix bug",
-            });
-        body.Should().Contain("75.5");
     }
 
     [Fact]
@@ -255,7 +229,6 @@ public class PipelineModelCoverageTests
                 TestsPassed = 8,
                 TestsFailed = 2,
                 TestsSkipped = 1,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
             });
@@ -271,7 +244,6 @@ public class PipelineModelCoverageTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
             });
@@ -287,7 +259,6 @@ public class PipelineModelCoverageTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
                 CodeReviewSummary = new CodeReviewSummary(
@@ -312,7 +283,6 @@ public class PipelineModelCoverageTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
                 Comments = comments,
@@ -330,7 +300,6 @@ public class PipelineModelCoverageTests
                 TestsPassed = 10,
                 TestsFailed = 0,
                 TestsSkipped = 0,
-                CoveragePercent = null,
                 FileChanges = Array.Empty<FileChangeSummary>(),
                 IssueTitle = "Fix bug",
             });

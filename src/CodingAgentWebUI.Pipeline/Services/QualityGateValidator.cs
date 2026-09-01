@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Parsers;
@@ -12,7 +11,8 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// <summary>
 /// Validates generated code against quality thresholds by running
 /// dotnet build and dotnet test in the workspace directory.
-/// Uses TRX and Cobertura XML reports for accurate test/coverage data.
+/// TODO: [WARNING] Stale XML doc comment: "Uses TRX and Cobertura XML reports for accurate test/coverage data."
+/// — Cobertura/coverage support was removed (issue #2249). Update to: "Uses TRX reports for accurate test data."
 /// Optionally validates against an external CI/CD pipeline.
 /// </summary>
 public class QualityGateValidator : IQualityGateValidator
@@ -94,7 +94,6 @@ public class QualityGateValidator : IQualityGateValidator
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
                 Tests = null,
-                Coverage = null,
                 SecurityScan = null
             }, true);
         }
@@ -109,28 +108,8 @@ public class QualityGateValidator : IQualityGateValidator
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
                 Tests = testsResult,
-                Coverage = null,
                 SecurityScan = null
             }, true);
-        }
-
-        GateResult? coverageResult = null;
-        if (qgc.CoverageThreshold is > 0)
-        {
-            coverageResult = ParseCoverageFromReports(workspacePath, qgc);
-
-            if (coverageResult is { Passed: false })
-            {
-                return (new QgcExecutionResult
-                {
-                    QgcId = qgc.Id,
-                    DisplayName = qgc.DisplayName,
-                    Compilation = compilationResult,
-                    Tests = testsResult,
-                    Coverage = coverageResult,
-                    SecurityScan = null
-                }, true);
-            }
         }
 
         return (new QgcExecutionResult
@@ -139,7 +118,6 @@ public class QualityGateValidator : IQualityGateValidator
             DisplayName = qgc.DisplayName,
             Compilation = compilationResult,
             Tests = testsResult,
-            Coverage = coverageResult,
             SecurityScan = null
         }, false);
     }
@@ -181,16 +159,10 @@ public class QualityGateValidator : IQualityGateValidator
             TestsSkipped = totalTestsSkipped
         };
 
-        // Aggregate coverage: take the first non-null coverage result
-        var aggregateCoverage = qgcResults
-            .Select(r => r.Coverage)
-            .FirstOrDefault(c => c != null);
-
         return new QualityGateReport
         {
             Compilation = aggregateCompilation,
             Tests = aggregateTests,
-            Coverage = aggregateCoverage,
             SecurityScan = null,
             QgcResults = qgcResults
         };
@@ -276,7 +248,6 @@ public class QualityGateValidator : IQualityGateValidator
             : string.Empty;
 
         var isDotnet = string.Equals(qgc.TestCommand, "dotnet", StringComparison.OrdinalIgnoreCase);
-        var collectCoverage = qgc.CoverageThreshold is > 0;
         string? resultsDir = null;
         string fullArgs;
 
@@ -287,8 +258,6 @@ public class QualityGateValidator : IQualityGateValidator
             Directory.CreateDirectory(resultsDir);
 
             fullArgs = $"{arguments} --logger trx --results-directory \"{resultsDir}\"";
-            if (collectCoverage && string.Equals(qgc.CoverageReportFormat, "cobertura", StringComparison.OrdinalIgnoreCase))
-                fullArgs += " --collect:\"XPlat Code Coverage\"";
         }
         else
         {
@@ -323,9 +292,8 @@ public class QualityGateValidator : IQualityGateValidator
 
         var gatePassed = exitCode == ExitCodes.Success;
 
-        // Clean up results directory (non-fatal) — skip if coverage was collected,
-        // because ParseCoverageFromReports needs the Cobertura XML files afterward.
-        if (isDotnet && resultsDir != null && !collectCoverage)
+        // Clean up results directory (non-fatal)
+        if (isDotnet && resultsDir != null)
             TryDeleteResultsDirectory(resultsDir);
 
         var details = gatePassed
@@ -405,126 +373,6 @@ public class QualityGateValidator : IQualityGateValidator
         var result = TrxTestResultParser.ParseTestResults(resultsDir);
         return (result.Passed, result.Failed, result.Skipped);
     }
-
-    /// <summary>
-    /// Locates and parses coverage reports based on the QGC configuration.
-    /// Supports Cobertura XML (default) and JaCoCo XML formats.
-    /// Uses CoverageReportPaths if specified, otherwise falls back to convention-based discovery.
-    /// </summary>
-    private GateResult ParseCoverageFromReports(string workspacePath, QualityGateConfiguration qgc)
-    {
-        using var activity = PipelineTelemetry.ActivitySource.StartActivity("QualityGate.Coverage");
-        activity?.SetTag("gate_name", "coverage");
-
-        var threshold = qgc.CoverageThreshold!.Value;
-        var format = qgc.CoverageReportFormat ?? "cobertura";
-        var isDotnet = string.Equals(qgc.TestCommand, "dotnet", StringComparison.OrdinalIgnoreCase);
-
-        // Discover coverage report files
-        var reportFiles = DiscoverCoverageReportFiles(workspacePath, qgc.CoverageReportPaths, format, isDotnet);
-
-        if (reportFiles.Length == 0)
-        {
-            _logger.Warning("No {Format} coverage files found in {WorkspacePath}", format, workspacePath);
-            return new GateResult
-            {
-                GateName = "Coverage",
-                Passed = false,
-                Details = $"No coverage data — {format} XML not found",
-                CoveragePercent = null
-            };
-        }
-
-        // Parse based on format
-        var coveragePercent = string.Equals(format, "jacoco", StringComparison.OrdinalIgnoreCase)
-            ? ParseCoverageFromJacoco(reportFiles)
-            : ParseCoverageFromCobertura(reportFiles);
-
-        _logger.Information("Coverage ({Format}): {CoveragePercent:F1}% (threshold: {Threshold:F1}%)",
-            format, coveragePercent, threshold);
-
-        var passed = coveragePercent >= threshold;
-        return new GateResult
-        {
-            GateName = "Coverage",
-            Passed = passed,
-            Details = passed
-                ? $"Coverage {coveragePercent.ToString("F1", CultureInfo.InvariantCulture)}% meets threshold {threshold.ToString("F1", CultureInfo.InvariantCulture)}%"
-                : $"Coverage {coveragePercent.ToString("F1", CultureInfo.InvariantCulture)}% below threshold {threshold.ToString("F1", CultureInfo.InvariantCulture)}%",
-            CoveragePercent = coveragePercent
-        };
-    }
-
-    /// <summary>
-    /// Discovers coverage report files based on explicit paths or convention-based defaults.
-    /// </summary>
-    private string[] DiscoverCoverageReportFiles(
-        string workspacePath, IReadOnlyList<string>? explicitPaths, string format, bool isDotnet)
-    {
-        if (explicitPaths is { Count: > 0 })
-        {
-            // Use explicit paths (relative to workspace root)
-            var files = new List<string>();
-            foreach (var pattern in explicitPaths)
-            {
-                var fullPattern = Path.Combine(workspacePath, pattern);
-                var dir = Path.GetDirectoryName(fullPattern) ?? workspacePath;
-                var filePattern = Path.GetFileName(fullPattern);
-
-                if (Directory.Exists(dir))
-                {
-                    files.AddRange(Directory.GetFiles(dir, filePattern, SearchOption.TopDirectoryOnly));
-                }
-                else
-                {
-                    // Try recursive search from workspace root with the pattern as filename
-                    files.AddRange(Directory.GetFiles(workspacePath, filePattern, SearchOption.AllDirectories)
-                        .Where(f => f.Replace('\\', '/').Contains(pattern.Replace('\\', '/'))));
-                }
-            }
-            return files.ToArray();
-        }
-
-        // Convention-based discovery
-        if (isDotnet)
-        {
-            // .NET: coverlet outputs to TestResults/**/coverage.cobertura.xml
-            var resultsDir = Path.GetFullPath(Path.Combine(workspacePath, "TestResults"));
-            return Directory.Exists(resultsDir)
-                ? Directory.GetFiles(resultsDir, "coverage.cobertura.xml", SearchOption.AllDirectories)
-                : [];
-        }
-
-        if (string.Equals(format, "jacoco", StringComparison.OrdinalIgnoreCase))
-        {
-            // Java/Maven: JaCoCo outputs to target/site/jacoco/jacoco.xml
-            var files = Directory.GetFiles(workspacePath, "jacoco.xml", SearchOption.AllDirectories);
-            return files;
-        }
-
-        // Non-.NET Cobertura (e.g., Python pytest-cov): search for coverage.xml or *.cobertura.xml
-        var coberturaFiles = new List<string>();
-        coberturaFiles.AddRange(Directory.GetFiles(workspacePath, "coverage.xml", SearchOption.AllDirectories));
-        coberturaFiles.AddRange(Directory.GetFiles(workspacePath, "*.cobertura.xml", SearchOption.AllDirectories));
-        return coberturaFiles.Distinct().ToArray();
-    }
-
-    /// <summary>
-    /// Parses Cobertura XML files and returns the merged line coverage percentage.
-    /// When multiple reports cover the same source file, line-level hits are merged
-    /// (max hit count per line) to avoid double-counting in multi-project solutions.
-    /// </summary>
-    internal static double ParseCoverageFromCobertura(string[] coberturaFiles)
-        => CoberturaParser.ParseCoverage(coberturaFiles);
-
-    /// <summary>
-    /// Parses JaCoCo XML files and returns the aggregate line coverage percentage.
-    /// JaCoCo uses counter elements with type="LINE" at the class level:
-    /// <![CDATA[<counter type="LINE" missed="6" covered="10"/>]]>
-    /// When multiple reports cover the same source file, counters are summed.
-    /// </summary>
-    internal static double ParseCoverageFromJacoco(string[] jacocoFiles)
-        => JacocoParser.ParseCoverage(jacocoFiles);
 
     /// <summary>
     /// Fallback: parses test counts from stdout when TRX files are not available.
