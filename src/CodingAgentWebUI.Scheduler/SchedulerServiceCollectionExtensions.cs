@@ -231,6 +231,7 @@ public static class SchedulerServiceCollectionExtensions
             DependencyChecker     = sp.GetRequiredService<IDependencyChecker>(),
             HousekeepingService   = sp.GetRequiredService<IHousekeepingService>(),
             LeaderElection        = sp.GetService<ILeaderElectionService>(),
+            WorkItemClient        = sp.GetRequiredService<IPipelineApiWorkItemClient>(),
         });
         services.AddSingleton<PipelineLoopService>();
         services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());
