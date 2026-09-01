@@ -186,12 +186,8 @@ public sealed class DispatchLoop
         }
         catch (Exception ex)
         {
-            // TODO: OperationCanceledException thrown when ct is cancelled mid-eligibility-check is caught
-            // here and logged as Warning, producing noise on graceful shutdown. Consider checking
-            // ct.IsCancellationRequested before the catch (or re-throwing OperationCanceledException)
-            // to avoid false Warning alerts on every shutdown. The foreach loop already breaks on
-            // ct.IsCancellationRequested before ProcessItemAsync is called, but cancellation mid-call
-            // reaches this catch instead.
+            // TODO: OperationCanceledException on graceful shutdown is caught here and logged as
+            // Warning. Re-throw OCE (or check ct.IsCancellationRequested) to avoid shutdown noise.
             Log.Warning(ex,
                 "DispatchLoop: eligibility check failed for issue {IssueIdentifier} (WorkItem {Id}) — skipping this cycle",
                 item.IssueIdentifier, item.Id);
@@ -427,12 +423,9 @@ public sealed class DispatchLoop
     private async Task<(EligibilityResult Result, string? Reason)> FetchEligibilityAsync(
         PendingWorkItemDto item, CancellationToken ct)
     {
-        // TODO: GetProviderConfigsWithSecretsAsync is called once per distinct (IssueProviderConfigId,
-        // IssueIdentifier) cache key, meaning a cycle with N items across N distinct issues but all
-        // sharing the same provider config fetches the config list N times. Consider hoisting this
-        // call to RunOneCycleAsync (fetched once per cycle) and passing the config collection into
-        // FetchEligibilityAsync to eliminate redundant secret-bearing HTTP round-trips.
-        // Fetch with secrets — the masked form ("****") would fail GitHub App / GitLab auth.
+        // TODO: Consider hoisting GetProviderConfigsWithSecretsAsync to RunOneCycleAsync (once per
+        // cycle) to avoid fetching the config list once per distinct issue when all items share the
+        // same provider config. Current behaviour: one HTTP call per unique (ConfigId, IssueId) key.
         var configs = await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
         var config = configs.FirstOrDefault(c => c.Id == item.IssueProviderConfigId);
         if (config is null)
@@ -534,11 +527,8 @@ public sealed class DispatchLoop
         }
         catch (Exception ex)
         {
-            // TODO: OperationCanceledException when ct is cancelled during graceful shutdown is
-            // caught here and logged at Error level, producing misleading noise. Consider logging
-            // OperationCanceledException at Debug/Information (or re-throwing it) so shutdown
-            // cancellations are not surfaced as errors. The WorkItem remains Pending and will be
-            // re-evaluated (and cancelled) on the next cycle — no state is lost.
+            // TODO: OperationCanceledException on graceful shutdown is caught here and logged at
+            // Error level, producing misleading noise. Log at Debug/Info or re-throw OCE.
             Log.Error(ex, "Failed to cancel WorkItem {Id}", workItemId);
         }
     }

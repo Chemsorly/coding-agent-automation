@@ -957,9 +957,7 @@ public sealed class DispatchLoopTests
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         // AC #1: cancellation posted with Cancelled status and a non-empty reason
-        // TODO: The ErrorMessage assertion only checks non-empty — it should verify the message
-        // contains "Issue closed" to match the contract string used in production. A refactor that
-        // passes a generic message (e.g., "Cancelled") would still pass this assertion.
+        // TODO: Assert ErrorMessage contains "Issue closed" specifically, not just any non-empty string.
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
             It.Is<WorkItemStatusUpdate>(u =>
@@ -978,12 +976,8 @@ public sealed class DispatchLoopTests
 
     // ─── Eligibility gate — ineligible labels (AC #2) ─────────────────────────
 
-    // TODO: These four tests are structurally identical (only the label differs) and should be
-    // consolidated into a single [Theory] with [InlineData] entries. Additionally, none of them
-    // assert on ErrorMessage — the reason string should contain the specific label name
-    // (e.g., "Issue has ineligible label: agent:error") so that a refactor writing a blank or
-    // generic reason is caught. A parameterised theory with an ErrorMessage assertion would close
-    // both gaps simultaneously.
+    // TODO: Consolidate into a single [Theory]/[InlineData] and add ErrorMessage assertions
+    // that verify the specific label name is included in the cancellation reason.
 
     /// <summary>AC #2: issue has agent:error — must cancel.</summary>
     [Fact]
@@ -1141,10 +1135,8 @@ public sealed class DispatchLoopTests
         var loop = CreateLoop();
         await loop.RunOneCycleAsync(CancellationToken.None);
 
-        // TODO: This test only covers the exception path through IsIssueClosedAsync. The case
-        // where the issue is open but GetIssueAsync throws (label fetch fails) is not tested.
-        // A regression that cancels the WorkItem on GetIssueAsync failure would not be caught.
-        // Add a second test that throws from GetIssueAsync and asserts the same fail-open behaviour.
+        // TODO: This test only covers IsIssueClosedAsync failure. Add a test for GetIssueAsync
+        // failure (issue open, label fetch fails) to verify the same fail-open behaviour.
 
         // Must NOT cancel (fail open)
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -1167,17 +1159,9 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenMultipleItemsReferenceSameIssue_ShouldCallProviderOnce()
     {
-        // TODO: This test verifies the provider call count but does not assert that
-        // GetProviderConfigsWithSecretsAsync is called only once for the shared provider config.
-        // In a cycle with N items across N *distinct* issues sharing the same provider config,
-        // GetProviderConfigsWithSecretsAsync is still called N times (once per FetchEligibilityAsync
-        // invocation) because the config list is not separately cached. A test with two items
-        // referencing different issues but the same IssueProviderConfigId would expose this gap.
-        // TODO: The caching of FailOpen results is also untested. A second item referencing the
-        // same (ConfigId, IssueIdentifier) after a config-not-found failure on the first should
-        // hit the cached FailOpen result without re-calling GetProviderConfigsWithSecretsAsync.
-        // If caching were inadvertently restricted to Eligible/Ineligible only, this silent retry
-        // would not be caught.
+        // TODO: Assert GetProviderConfigsWithSecretsAsync call count (not covered by this test).
+        // TODO: Add test for FailOpen result caching — second item hitting cached FailOpen must
+        // not re-call GetProviderConfigsWithSecretsAsync.
         var id1 = Guid.NewGuid();
         var id2 = Guid.NewGuid();
 

@@ -37,11 +37,8 @@ public static class DispatchServiceRegistration
         // the eligibility path only calls CreateIssueProvider (which doesn't touch the config
         // store). ApiPipelineConfigStore is the pragmatic safe choice matching the Scheduler pattern.
         // Registration order: concrete first, interface forwarded second (Scheduler convention).
-        // TODO: The forwarding-singleton pattern (concrete type registered first, interface forwarded
-        // second) is fragile: if a future extension method or library also registers IPipelineConfigStore,
-        // GetRequiredService<IPipelineConfigStore>() will silently resolve the last-registered one.
-        // This is consistent with the Scheduler's pattern, but worth noting if the JobController host
-        // DI container is extended further.
+        // TODO: The forwarding-singleton pattern is fragile if a future caller also registers
+        // IPipelineConfigStore — DI will silently resolve the last-registered one.
         services.AddSingleton<ApiPipelineConfigStore>(sp =>
             new ApiPipelineConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>()));
         services.AddSingleton<IPipelineConfigStore>(sp =>
