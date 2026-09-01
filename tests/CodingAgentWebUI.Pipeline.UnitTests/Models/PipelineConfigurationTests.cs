@@ -119,6 +119,7 @@ public class PipelineConfigurationTests
             DbRetentionSweepInterval = TimeSpan.FromHours(12),
             TransientRetryDelay = TimeSpan.FromSeconds(45),
             QueueSweepEnabled = true,
+            CiCancelledMoveMaxRetries = 7,
         };
 
         // Act
@@ -138,7 +139,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(73,
+        keyPropertyCount.Should().Be(74,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -163,7 +164,7 @@ public class PipelineConfigurationTests
         config.CiNotStartedTimeout.Should().Be(PipelineConstants.DefaultCiNotStartedTimeout);
         config.CiNotStartedMaxRetries.Should().Be(PipelineConstants.DefaultCiNotStartedMaxRetries);
         config.MaxInfrastructureRetries.Should().Be(5);
-
+        config.CiCancelledMoveMaxRetries.Should().Be(PipelineConstants.DefaultCiCancelledMoveMaxRetries);
         // ClosedLoop sub-config defaults
         config.ClosedLoopAutoStart.Should().BeFalse();
         config.ClosedLoopPollInterval.Should().Be(PipelineConstants.DefaultClosedLoopPollInterval);

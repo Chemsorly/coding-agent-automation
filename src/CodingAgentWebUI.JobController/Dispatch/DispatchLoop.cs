@@ -3,14 +3,13 @@ using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
-using Serilog;
 
 namespace CodingAgentWebUI.JobController.Dispatch;
 
 /// <summary>
 /// Core poll-claim-create logic for the Job Controller dispatch cycle.
 /// Called once per poll cycle by <see cref="DispatchService"/>.
-/// Stateless aside from the PVC select lock and startup-validation flag.
+/// Stateless aside from the startup-validation flag.
 /// </summary>
 public sealed class DispatchLoop
 {
@@ -21,15 +20,7 @@ public sealed class DispatchLoop
     private readonly IKubernetesJobClient _k8sClient;
     private readonly JobTemplateStore _templateStore;
     private readonly DispatchServiceOptions _options;
-
-    /// <summary>
-    /// Shared process-wide lock that guards the check-available-PVC → create-K8s-Job critical
-    /// section across BOTH <see cref="DispatchLoop"/> and <see cref="ConsolidationDispatchLoop"/>.
-    /// A single <see cref="PvcSelectLock"/> singleton is injected by DI so that the two loops
-    /// cannot race each other and select the same free PVC concurrently (cross-loop TOCTOU).
-    /// </summary>
     private readonly PvcSelectLock _pvcSelectLock;
-
     private readonly IProviderFactory _providerFactory;
 
     private bool _startupValidationDone;
@@ -89,8 +80,10 @@ public sealed class DispatchLoop
 
         Log.Debug("DispatchLoop: {Count} pending work item(s) found, building concurrency map", pending.Count);
 
-        // Refresh concurrency map from live K8s Jobs each cycle
-        var activeConcurrency = await BuildConcurrencyMapAsync(ct);
+        // Refresh concurrency map from live K8s Jobs each cycle.
+        // Only active (non-terminal) jobs count toward the limit (issue #2176).
+        var activeConcurrency = await DispatchLoopHelpers.BuildConcurrencyMapAsync(
+            _k8sClient, _options.Namespace, nameof(DispatchLoop), ct);
 
         // Per-cycle eligibility cache: keyed by (IssueProviderConfigId, IssueIdentifier).
         // Prevents N HTTP calls for N WorkItems referencing the same issue in one cycle.
@@ -131,9 +124,6 @@ public sealed class DispatchLoop
             Log.Warning(ex, "Dispatch startup validation failed; continuing without it");
         }
     }
-
-    private Task<Dictionary<string, int>> BuildConcurrencyMapAsync(CancellationToken ct) =>
-        DispatchLoopHelpers.BuildConcurrencyMapAsync(_k8sClient, _options.Namespace, nameof(DispatchLoop), ct);
 
     private async Task ProcessItemAsync(
         PendingWorkItemDto item,
@@ -200,12 +190,116 @@ public sealed class DispatchLoop
         // WorkItem through AssignedAgentId when serving /assignment and /status.
         var jobName = GenerateJobName(item.Id);
 
+        // PVC assignment for kiro agents — the critical section must span SelectAvailablePvcAsync
+        // through CreateJobAsync to close the cross-loop TOCTOU race: without holding the lock
+        // until the K8s Job exists, a concurrent DispatchLoop or ConsolidationDispatchLoop cycle
+        // can observe the same free PVC (no Job yet) and mount it in a second pod (issue #2176).
+        // WaitAsync is called inside the try so an OperationCanceledException thrown before
+        // acquisition does not trigger Release() — see PvcSelectLock XML doc for the invariant.
         var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-        var dispatched = isKiroAgent
-            ? await DispatchKiroAgentAsync(item, selector, jobName, template, ct)
-            : await DispatchNonKiroAgentAsync(item, selector, jobName, template, ct);
+        string? pvcName = null;
+        WorkItemClaimResponse? claimed;
+        bool created;
 
-        if (!dispatched) return;
+        if (isKiroAgent)
+        {
+            var acquired = false;
+            try
+            {
+                await _pvcSelectLock.WaitAsync(ct);
+                acquired = true;
+
+                pvcName = await DispatchLoopHelpers.SelectAvailablePvcAsync(
+                    _k8sClient, _options.Namespace, _options.KiroPvcPool, ct);
+
+                if (pvcName is null)
+                {
+                    Log.Information(
+                        "DispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
+                        item.Id);
+                    // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
+                    // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting the
+                    // field (issue #2129). Simply return; the next dispatch cycle will retry.
+                    return;
+                }
+
+                // Claim and create Job inside the lock so no concurrent loop can observe the same
+                // free PVC between SelectAvailablePvcAsync and CreateJobAsync.
+                //
+                // TODO [WARNING]: TryClaimWorkItemAsync is called while holding _pvcSelectLock.
+                // A slow or timed-out HTTP round-trip to the orchestrator API serializes ALL kiro
+                // dispatch items (both DispatchLoop and ConsolidationDispatchLoop) for the full
+                // latency of the claim call. Under sustained orchestrator API latency every kiro item
+                // in the cycle queues behind this single HTTP call, degrading throughput.
+                // To fix, perform the claim before acquiring the lock; if Job creation then fails,
+                // issue a compensating unclaim call to release the item. Alternatively, narrow the
+                // critical section to SelectAvailablePvcAsync + CreateJobAsync only.
+                claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct);
+                if (claimed is null) return;
+
+                // Build and create K8s Job
+                // Do NOT set DerivedKeySecretName — work-item pods use the master key file mount.
+                // Key derivation happens inside the agent at runtime: HubConnectionManager and
+                // WorkItemHttpClient both call HMAC(AGENT_API_KEY, AGENT_ID) internally.
+                // Setting DerivedKeySecretName would cause double-derivation: the pod would
+                // receive an already-derived key and the agent would derive it again.
+                var buildContextKiro = new JobSpecBuilder.BuildContext
+                {
+                    WorkItemId = item.Id,
+                    AgentSelector = selector,
+                    TimeoutSeconds = item.TimeoutSeconds > 0
+                        ? item.TimeoutSeconds
+                        : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+                    JobName = jobName,
+                    ClaimedPvc = pvcName,
+                    OrchestratorUrl = _options.OrchestratorUrl,
+                    AgentApiKeySecretName = _options.AgentApiKeySecretName,
+                    AgentServiceAccountName = _options.AgentServiceAccountName,
+                    Namespace = _options.Namespace,
+                    OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
+                    TraceParent = item.TraceParent
+                };
+
+                created = await TryCreateK8sJobAsync(item.Id, jobName, template, buildContextKiro, ct);
+                if (!created) return;
+            }
+            finally
+            {
+                if (acquired) _pvcSelectLock.Release();
+            }
+        }
+        else
+        {
+            // Non-kiro agents do not use a PVC — claim and create Job without acquiring the lock.
+            claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct);
+            if (claimed is null) return;
+
+            // Build and create K8s Job
+            // Do NOT set DerivedKeySecretName — work-item pods use the master key file mount.
+            // Key derivation happens inside the agent at runtime: HubConnectionManager and
+            // WorkItemHttpClient both call HMAC(AGENT_API_KEY, AGENT_ID) internally.
+            // Setting DerivedKeySecretName would cause double-derivation: the pod would
+            // receive an already-derived key and the agent would derive it again.
+            var buildContext = new JobSpecBuilder.BuildContext
+            {
+                WorkItemId = item.Id,
+                AgentSelector = selector,
+                TimeoutSeconds = item.TimeoutSeconds > 0
+                    ? item.TimeoutSeconds
+                    : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
+                JobName = jobName,
+                ClaimedPvc = pvcName,
+                OrchestratorUrl = _options.OrchestratorUrl,
+                AgentApiKeySecretName = _options.AgentApiKeySecretName,
+                AgentServiceAccountName = _options.AgentServiceAccountName,
+                Namespace = _options.Namespace,
+                OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
+                TraceParent = item.TraceParent
+            };
+
+            created = await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, ct);
+            if (!created) return;
+        }
 
         activeConcurrency[selector] = currentConcurrency + 1;
 
@@ -227,102 +321,6 @@ public sealed class DispatchLoop
             agentSelector: item.AgentSelector);
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
-
-    /// <summary>
-    /// Dispatches a kiro-type work item: selects a PVC under the shared lock, claims the item,
-    /// and creates the K8s Job — all within the PVC select lock to prevent TOCTOU races.
-    /// Returns <c>true</c> on success, <c>false</c> to skip this item.
-    /// </summary>
-    private async Task<bool> DispatchKiroAgentAsync(
-        PendingWorkItemDto item, string selector, string jobName, JobTemplate template, CancellationToken ct)
-    {
-        // NOTE: _pvcSelectLock.WaitAsync(ct) throws OperationCanceledException if ct is cancelled
-        // before the semaphore is acquired. In that case the finally block must NOT call Release() —
-        // tracking `acquired` guards against corrupting the semaphore count above its maximum (1)
-        // on graceful shutdown.
-        var acquired = false;
-        try
-        {
-            await _pvcSelectLock.WaitAsync(ct);
-            acquired = true;
-
-            var pvcName = await SelectAvailablePvcAsync(ct);
-            if (pvcName is null)
-            {
-                Log.Information(
-                    "DispatchLoop: no PVC available for kiro agent {Id}, holding item in Pending until next cycle",
-                    item.Id);
-                // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
-                // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting
-                // the field (issue #2129). Simply return; the next dispatch cycle will retry.
-                // NOTE: _reconciliationTrigger.RequestImmediateCycle() is no longer called on PVC
-                // starvation. Re-add the call here if PVC starvation latency is unacceptable.
-                return false;
-            }
-
-            // NOTE: TryClaimWorkItemAsync (ClaimAsync HTTP call) is made while holding
-            // _pvcSelectLock. A slow or timing-out ClaimAsync call serializes ALL kiro dispatch items
-            // for the duration of the network round-trip (N × latency per cycle under load).
-            // Accepted trade-off: throughput may degrade under sustained network latency.
-            var claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct);
-            if (claimed is null) return false;
-
-            // Build and create K8s Job inside the lock so no other cycle can claim the same PVC
-            // between our availability check and the actual Job creation.
-            var buildContext = BuildJobContext(item, selector, jobName, pvcName);
-            return await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, ct);
-        }
-        finally
-        {
-            if (acquired) _pvcSelectLock.Release();
-        }
-    }
-
-    /// <summary>
-    /// Dispatches a non-kiro work item (no PVC required): claims the item and creates the K8s Job
-    /// without acquiring the PVC select lock.
-    /// Returns <c>true</c> on success, <c>false</c> to skip this item.
-    /// </summary>
-    private async Task<bool> DispatchNonKiroAgentAsync(
-        PendingWorkItemDto item, string selector, string jobName, JobTemplate template, CancellationToken ct)
-    {
-        var claimed = await TryClaimWorkItemAsync(item.Id, jobName, ct);
-        if (claimed is null) return false;
-
-        var buildContext = BuildJobContext(item, selector, jobName, pvcName: null);
-        return await TryCreateK8sJobAsync(item.Id, jobName, template, buildContext, ct);
-    }
-
-    /// <summary>
-    /// Queries live K8s Jobs to find the first PVC name from the configured pool that is
-    /// not already mounted by a running Job. Returns <c>null</c> if all configured PVCs
-    /// are claimed or the pool is empty.
-    /// Must be called under <see cref="_pvcSelectLock"/>.
-    /// </summary>
-    private Task<string?> SelectAvailablePvcAsync(CancellationToken ct) =>
-        DispatchLoopHelpers.SelectAvailablePvcAsync(_k8sClient, _options.Namespace, _options.KiroPvcPool, ct);
-
-    private JobSpecBuilder.BuildContext BuildJobContext(
-        PendingWorkItemDto item, string selector, string jobName, string? pvcName) =>
-        new()
-        {
-            WorkItemId = item.Id,
-            AgentSelector = selector,
-            // Guard against legacy rows where TimeoutSeconds was not yet populated (DB column default 0).
-            // A zero timeout would produce activeDeadlineSeconds = 60, killing the agent after 60s.
-            // Match the same fallback used by ReconciliationLoop.EnforceTimeoutsAsync.
-            TimeoutSeconds = item.TimeoutSeconds > 0
-                ? item.TimeoutSeconds
-                : (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds,
-            JobName = jobName,
-            ClaimedPvc = pvcName,
-            OrchestratorUrl = _options.OrchestratorUrl,
-            AgentApiKeySecretName = _options.AgentApiKeySecretName,
-            AgentServiceAccountName = _options.AgentServiceAccountName,
-            Namespace = _options.Namespace,
-            OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
-            TraceParent = item.TraceParent
-        };
 
     /// <summary>
     /// Atomically claims a work item. Returns the claim response on success, null to signal the
@@ -390,6 +388,13 @@ public sealed class DispatchLoop
             Log.Error(ex, "Failed to requeue WorkItem {Id}", workItemId);
         }
     }
+
+    /// <summary>
+    /// Generates a deterministic K8s Job name from a WorkItem ID.
+    /// Format: caa-agent-{first-11-chars-of-guid-no-dashes} — short enough to stay under K8s 63-char limit.
+    /// </summary>
+    internal static string GenerateJobName(Guid workItemId) =>
+        $"caa-agent-{workItemId:N}"[..21]; // "caa-agent-" (10) + 11 hex chars = 21 total
 
     // ─── Eligibility gate ─────────────────────────────────────────────────────
 
@@ -537,11 +542,4 @@ public sealed class DispatchLoop
             Log.Error(ex, "Failed to cancel WorkItem {Id}", workItemId);
         }
     }
-
-    /// <summary>
-    /// Generates a deterministic K8s Job name from a WorkItem ID.
-    /// Format: caa-agent-{first-11-chars-of-guid-no-dashes} — short enough to stay under K8s 63-char limit.
-    /// </summary>
-    internal static string GenerateJobName(Guid workItemId) =>
-        $"caa-agent-{workItemId:N}"[..21]; // "caa-agent-" (10) + 11 hex chars = 21 total
 }

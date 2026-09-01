@@ -486,6 +486,17 @@ public sealed class ReconciliationLoop
 
         // Fall back to counters
         if (job.Status?.Succeeded > 0) return JobPhaseSucceeded;
+        // TODO [WARNING]: This fallback returns JobPhaseFailed when Failed > 0 without checking
+        // Active == 0, which is incorrect for a retrying job. When a job's first pod attempt fails
+        // (Status.Failed=1, Status.Active=1), Kubernetes creates a retry pod and only sets the
+        // "Failed" condition type once all retries are exhausted. Until then, this path returns
+        // JobPhaseFailed prematurely, potentially causing ReconciliationLoop to mark a still-running
+        // work item as failed and cancel the K8s Job while a retry pod is executing (data-corruption
+        // risk under default backoffLimit ≥ 1). Fix: guard with Active == 0:
+        //   if (job.Status?.Failed > 0 && (job.Status?.Active ?? 0) == 0) return JobPhaseFailed;
+        // Note: IsJobTerminal in DispatchLoopHelpers already applies this guard correctly — the two
+        // subsystems are inconsistent in this fallback path. Tracked as pre-existing defect surfaced
+        // during issue #2176 investigation. See also issue #2177.
         if (job.Status?.Failed > 0) return JobPhaseFailed;
         return "Active";
     }
