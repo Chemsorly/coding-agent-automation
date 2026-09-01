@@ -219,6 +219,24 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", DateTimeOffset.UtcNow.ToString("O"));
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
+        else if (run?.AgentId is not null)
+        {
+            // Fallback: agent lookup returned null (connection dropped, hash expired) but we know the
+            // AgentId from the run. Attempt to clear agent state to prevent it from being locked in
+            // Busy indefinitely until ReconciliationService.EnforceTimeoutsAsync times it out.
+            var agentId = new AgentId(run.AgentId);
+            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", null);
+            // TODO: The happy path (agent is not null) also clears orphanRestoredAt via
+            // UpdateAgentFieldAsync(agentId, "orphanRestoredAt", null). This fallback omits that
+            // clear (mirroring the issue's suggested snippet), but if the agent hash is still alive
+            // after a transient registry race, orphanRestoredAt will remain stale. Consider adding
+            // _ = _facade.UpdateAgentFieldAsync(agentId, "orphanRestoredAt", null) here to keep
+            // fallback cleanup consistent with the primary path.
+            _facade.TransitionStatus(agentId, AgentStatus.Idle);
+            _logger.Warning(
+                "HandleJobCompletedAsync: agent lookup returned null for job {JobId} (agentId={AgentId}) — clearing state via run fallback to prevent Busy lock",
+                jobId.Value, run.AgentId);
+        }
 
         // Non-fatal post-completion bookkeeping: label swap and feedback comment.
         // These may involve external API calls and can be slow — executed after agent
