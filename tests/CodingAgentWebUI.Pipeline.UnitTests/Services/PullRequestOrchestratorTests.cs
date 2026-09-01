@@ -145,10 +145,10 @@ public class PullRequestOrchestratorTests
         capturedInfo!.Body.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
     }
 
-    // ── No code review data → no summary section ──
+    // ── PR body smoke test — issue context is always present ──
 
     [Fact]
-    public async Task CreatePullRequest_NoCodeReview_OmitsSummarySection()
+    public async Task CreatePullRequest_Always_ContainsIssueContextSection()
     {
         PullRequestInfo? capturedInfo = null;
         _mockRepo.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
@@ -156,17 +156,12 @@ public class PullRequestOrchestratorTests
             .ReturnsAsync("https://github.com/org/repo/pull/99");
 
         var run = CreateRun();
-        // CodeReviewAgentsRun is empty by default
 
         await _sut.CreatePullRequestAsync(
             run, CreateReport(), false, _mockRepo.Object,
             null, null, CreateConfig(), CancellationToken.None);
 
-        // TODO: [WARNING] This assertion is now tautological — AppendCodeReviewSection was removed from GeneratePrBody
-        // and CodeReviewSummary was removed from PrBodyParameters, so "Code Review" can never appear in the body
-        // regardless of run.CodeReviewAgentsRun. Consider replacing with an assertion on a section that IS still
-        // produced (e.g. "## Issue Context") to keep this as a live smoke test, or delete the test.
-        capturedInfo!.Body.Should().NotContain("Code Review");
+        capturedInfo!.Body.Should().Contain("## Issue Context");
     }
 
     // ── Rework path — updates existing PR ──
