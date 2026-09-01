@@ -197,6 +197,11 @@ public partial class GitLabRepositoryProvider
             {
                 update.Title = mr.Title["Draft: ".Length..];
             }
+            // Add "Draft: " prefix when converting to draft (if not already present)
+            else if (!markReady && !mr.Title.StartsWith("Draft: ", StringComparison.Ordinal))
+            {
+                update.Title = $"Draft: {mr.Title}";
+            }
 
             await ExecuteWriteWithResilienceAsync(
                 client =>

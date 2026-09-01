@@ -406,12 +406,13 @@ public sealed class ModelFetchJobServiceTests
         SetupReceiverReturns(TwoModels, null);
         var service = CreateService();
         var phases = new List<string>();
-        var progress = new Progress<string>(p => phases.Add(p));
+        // Use a synchronous IProgress<string> so callbacks fire inline, not on the thread pool.
+        // Progress<T> posts callbacks asynchronously (ThreadPool.QueueUserWorkItem) which makes
+        // Task.Delay-based flushing unreliable in unit tests with no SynchronizationContext.
+        IProgress<string> progress = new SyncProgress<string>(p => phases.Add(p));
 
         await service.FetchModelsAsync("kiro", CancellationToken.None, progress);
 
-        // Small delay so the Progress callbacks (posted to thread pool) are flushed
-        await Task.Delay(50);
         phases.Should().Contain("Creating job…",      "job creation phase must be reported");
         phases.Should().Contain("Waiting for agent to connect…", "waiting phase must be reported");
         phases.Should().Contain("Received results…",  "success phase must be reported");
@@ -423,11 +424,10 @@ public sealed class ModelFetchJobServiceTests
         SetupReceiverReturns([], "Agent timed out");
         var service = CreateService();
         var phases = new List<string>();
-        var progress = new Progress<string>(p => phases.Add(p));
+        IProgress<string> progress = new SyncProgress<string>(p => phases.Add(p));
 
         await service.FetchModelsAsync("kiro", CancellationToken.None, progress);
 
-        await Task.Delay(50);
         phases.Should().NotContain("Received results…",
             "success phase must NOT be reported on error");
     }
@@ -589,6 +589,21 @@ public sealed class ModelFetchJobServiceTests
               "maxConcurrent": 2
             }]
             """);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Synchronous IProgress<T> — avoids thread-pool dispatch of Progress<T>
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Synchronous <see cref="IProgress{T}"/> implementation that invokes the callback
+    /// inline on the calling thread. Unlike <see cref="Progress{T}"/>, which posts to
+    /// <see cref="System.Threading.SynchronizationContext"/> (or the ThreadPool when none is
+    /// present), this fires immediately so unit tests do not need Task.Delay-based flushing.
+    /// </summary>
+    private sealed class SyncProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value) => handler(value);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
