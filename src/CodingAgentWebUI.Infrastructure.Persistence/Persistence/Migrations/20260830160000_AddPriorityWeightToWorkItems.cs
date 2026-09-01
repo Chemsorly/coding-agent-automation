@@ -21,6 +21,16 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Persistence.Migrations
                 type: "integer",
                 nullable: false,
                 defaultValue: 0);
+
+            // TODO: Consider adding a composite index to support the new sort order efficiently.
+            // Three queries now execute WHERE Status = Pending ORDER BY PriorityWeight DESC, CreatedAt ASC.
+            // The existing IX_WorkItems_Status index supports the filter, but PostgreSQL must sort the
+            // entire pending set in memory on every dispatch cycle. A covering index such as:
+            //   CREATE INDEX IX_WorkItems_Status_PriorityWeight_CreatedAt
+            //     ON "WorkItems" ("Status", "PriorityWeight" DESC, "CreatedAt" ASC)
+            //     WHERE "Status" = 0  -- Pending
+            // would allow an index scan in sort order. Evaluate once queue depths are large enough
+            // to make the in-memory sort observable.
         }
 
         /// <inheritdoc />

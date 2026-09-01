@@ -206,6 +206,35 @@ public sealed class WorkItemEndpointTests
         updated.ErrorMessage.Should().Be("agent crashed");
     }
 
+    /// <summary>
+    /// Regression test for issue #2202 Fix C (primary).
+    /// PostStatus with failureReason="Timeout" must return 200 and persist FailureReason.Timeout.
+    /// The fix ensures EmitTerminalStatusTelemetryAsync parses request.FailureReason and passes it
+    /// to LogTerminalStatus instead of null, so workdistribution_workitems_terminated emits
+    /// failure_reason="Timeout" instead of "none".
+    /// </summary>
+    [Fact]
+    public async Task PostStatus_FailedWithTimeoutReason_Returns200AndPersistsFailureReason()
+    {
+        var entity = SeedEntity(WorkItemStatus.Running);
+        var update = new
+        {
+            status = "Failed",
+            failureReason = "Timeout",
+            errorMessage = "agent timed out"
+        };
+
+        var response = await _client.PostAsJsonAsync($"/api/work-items/{entity.Id}/status", update,
+            PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var db = _factory.CreateDbContext();
+        var updated = await db.WorkItems.FindAsync(entity.Id);
+        updated!.FailureReason.Should().Be(FailureReason.Timeout,
+            "FailureReason=Timeout must be persisted so the metric tag is accurate");
+    }
+
     [Theory]
     [InlineData(WorkItemStatus.Succeeded)]
     [InlineData(WorkItemStatus.Failed)]
@@ -1012,6 +1041,12 @@ public sealed class WorkItemEndpointTests
         entity!.PriorityWeight.Should().Be(0, "loop dispatch must receive PriorityWeight=0");
     }
 
+    // TODO: Add tests for InitiatedBy values that are neither "manual" nor "loop" (e.g. null,
+    // empty string, "automated", "cron", "MANUAL"). The production code uses StringComparison.Ordinal
+    // and maps everything non-"manual" to PriorityWeight=0. A caller sending "MANUAL" (wrong case)
+    // would silently receive weight 0. At minimum test null or empty → PriorityWeight=0 to lock in
+    // the intended fallback behavior.
+
     /// <summary>
     /// AC: GET /api/work-items/pending returns high-weight item before low-weight item
     /// regardless of CreatedAt.
@@ -1170,6 +1205,11 @@ public sealed class WorkItemEndpointTests
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
+
+    // TODO: Add a test for POST /{id}/priority with a missing or empty body (i.e. priorityWeight
+    // is null after deserialization, sending `{}` or no body). The production handler returns
+    // 400 "priorityWeight is required." for PriorityWeightRequest.PriorityWeight == null,
+    // but this path is currently untested.
 
     /// <summary>
     /// AC: POST /api/work-items/{id}/priority with boundary values 0 and 1000 returns 200.

@@ -583,6 +583,10 @@ public class WorkItemTransitionServiceAdditionalTests
 
         result.Should().Be(UpdatePriorityWeightResult.ConcurrencyConflict,
             "exhausting retries due to concurrent saves should return ConcurrencyConflict, not NotFound");
+        // TODO: [WARNING] No assertion verifies that PriorityWeight was NOT updated in the database
+        // after retry exhaustion. A scenario where the update was partially applied before the exception
+        // was swallowed would go undetected. Add: `verify.WorkItems.Find(item.Id).PriorityWeight.Should().Be(0)`
+        // (the seeded default) to confirm the column remains unchanged after exhaustion.
     }
 
     [Fact]
