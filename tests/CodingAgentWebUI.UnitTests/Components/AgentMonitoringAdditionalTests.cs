@@ -34,6 +34,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
     private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistoryClient = new();
     private readonly Mock<IConsolidationService> _mockConsolidation = new();
     private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
+    private readonly Mock<IPipelineApiWorkItemClient> _mockWorkItemClient = new();
 
     // Captured hub event handlers — set during On<> setup
     private Action<string, IReadOnlyList<string>>? _onOutputLines;
@@ -139,7 +140,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
         Services.AddSingleton<TimeProvider>(new FakeTimeProvider());
         Services.AddSingleton<IAgentHubConnection>(_mockHub.Object);
         Services.AddSingleton<IPipelineApiRunHistoryClient>(_mockRunHistoryClient.Object);
-        Services.AddSingleton<IPipelineApiWorkItemClient>(new Mock<IPipelineApiWorkItemClient>().Object);
+        Services.AddSingleton<IPipelineApiWorkItemClient>(_mockWorkItemClient.Object);
 
         Services.AddScoped(sp => new AgentMonitoringPageServiceDependencies(
             sp.GetRequiredService<IAgentRegistryService>(),
@@ -1427,6 +1428,53 @@ public class AgentMonitoringAdditionalTests : BunitContext
         runModelAfter.Should().NotBeNull();
         runModelAfter!.QualityGateHistory.Count.Should().Be(2,
             "QualityGateHistory must be drained before re-applying snapshot; Count must remain 2, not 4");
+    }
+
+    // ── HandleSetPriority ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task HandleSetPriority_OnSuccess_ClearsPriorityError()
+    {
+        // Arrange: work item client returns success (no throw)
+        var workItemId = Guid.NewGuid();
+        _mockWorkItemClient
+            .Setup(c => c.SetPriorityAsync(workItemId, 200, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var cut = Render<AgentMonitoring>();
+
+        // Pre-condition: seed a stale error so we can assert it is cleared
+        SetField(cut.Instance, "_priorityError", "stale error");
+
+        // Act: invoke HandleSetPriority directly
+        var method = typeof(AgentMonitoring)
+            .GetMethod("HandleSetPriority", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        await cut.InvokeAsync(() => (Task)method!.Invoke(cut.Instance, [(workItemId, 200)])!);
+
+        // Assert: error field is cleared after a successful update
+        var priorityError = GetField<string?>(cut.Instance, "_priorityError");
+        priorityError.Should().BeNull("a successful priority update must clear any previous error");
+    }
+
+    [Fact]
+    public async Task HandleSetPriority_OnFailure_SetsPriorityError()
+    {
+        // Arrange: work item client throws (server rejects)
+        var workItemId = Guid.NewGuid();
+        _mockWorkItemClient
+            .Setup(c => c.SetPriorityAsync(workItemId, 9999, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("400 Bad Request"));
+
+        var cut = Render<AgentMonitoring>();
+
+        // Act
+        var method = typeof(AgentMonitoring)
+            .GetMethod("HandleSetPriority", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        await cut.InvokeAsync(() => (Task)method!.Invoke(cut.Instance, [(workItemId, 9999)])!);
+
+        // Assert: error is surfaced to the component state
+        var priorityError = GetField<string?>(cut.Instance, "_priorityError");
+        priorityError.Should().NotBeNullOrEmpty("a failed priority update must populate _priorityError so the UI can display it");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
