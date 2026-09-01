@@ -580,6 +580,12 @@ public sealed class DistributedAgentRegistryServiceTests
         public Task<HashEntry[]> HashGetAllAsync(string key)
             => Task.FromResult(Array.Empty<HashEntry>());
 
+        // HashSetAsync never completes — this simulates the fire-and-forget gap where
+        // WriteRegistrationAsync is still in-flight and has not yet written the Redis hash.
+        // The incomplete task keeps _pendingRegistrationWrite populated so GetAgentRaw falls
+        // back to _localSnapshot. All other operations delegate to the inner store unchanged.
+        public Task HashSetAsync(string key, HashEntry[] fields) => new TaskCompletionSource<bool>().Task;
+
         // ── All other operations delegate unchanged ────────────────────────────
         public Task<bool> SetAsync(string key, string value, TimeSpan? expiry = null, StackExchange.Redis.When when = StackExchange.Redis.When.Always)
             => inner.SetAsync(key, value, expiry, when);
@@ -588,7 +594,6 @@ public sealed class DistributedAgentRegistryServiceTests
         public Task<bool> DeleteAsync(string key) => inner.DeleteAsync(key);
         public Task<bool> ExpireAsync(string key, TimeSpan expiry) => inner.ExpireAsync(key, expiry);
         public Task<bool> ExpireAtAsync(string key, DateTimeOffset expiry) => inner.ExpireAtAsync(key, expiry);
-        public Task HashSetAsync(string key, HashEntry[] fields) => inner.HashSetAsync(key, fields);
         public Task<bool> HashSetFieldAsync(string key, string field, string value) => inner.HashSetFieldAsync(key, field, value);
         public Task<long> SetAddAsync(string key, string value) => inner.SetAddAsync(key, value);
         public Task<long> SetRemoveAsync(string key, string value) => inner.SetRemoveAsync(key, value);

@@ -43,6 +43,12 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     // Same retention semantics as _connectionIndex: entry persists until explicit Deregister is called.
     private readonly ConcurrentDictionary<string, AgentEntry> _localSnapshot = new();
 
+    // Node-local: set of agentIds whose WriteRegistrationAsync fire-and-forget is still in-flight.
+    // GetAgentRaw consults _localSnapshot only for agentIds present here, ensuring the snapshot
+    // fallback is scoped strictly to the fire-and-forget write window and does not surface stale
+    // entries for TTL-expired or cross-replica-deregistered agents.
+    private readonly ConcurrentDictionary<string, byte> _pendingRegistrationWrite = new();
+
     // Cached snapshot of all agents, refreshed by GetAllAgentsAsync and write paths.
     // Used by GetByAgentId (cross-replica fallback) and async callers that want fresh Redis data
     // without waiting for a full cross-replica read. Write paths (Register, TransitionStatusAsync)
@@ -141,6 +147,9 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // completes without blocking on Redis I/O. The brief window between return and Redis
         // write means the dispatcher on another replica may not see the agent for one cycle.
         // Log any Redis write failures so they surface rather than being swallowed silently.
+        // Mark the agent as having a pending write so GetAgentRaw can return the snapshot
+        // during the fire-and-forget window. Cleared by WriteRegistrationAsync on completion.
+        _pendingRegistrationWrite[agentId] = 0;
         _ = WriteRegistrationAsync(agentId, connectionId, status, fields)
             .ContinueWith(t => _logger.Warning(t.Exception,
                 "WriteRegistrationAsync failed for agent {AgentId}", agentId),
@@ -191,6 +200,12 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             await _store.SetAddAsync(AgentsIdleKey, agentId);
         else
             await _store.SetRemoveAsync(AgentsIdleKey, agentId);
+
+        // Redis write confirmed — clear the pending flag so GetAgentRaw returns null
+        // (rather than the snapshot) if the hash is subsequently force-expired or deleted
+        // cross-replica, ensuring stale snapshot entries are not returned after the
+        // initial fire-and-forget write window has closed.
+        _pendingRegistrationWrite.TryRemove(agentId, out _);
     }
 
     // ── Deregister ────────────────────────────────────────────────────
@@ -672,16 +687,13 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
         // Redis hash absent: either the TTL has not yet been written (fire-and-forget from Register
         // has not completed) or the hash TTL expired between heartbeats.
-        // Fall back to the node-local snapshot ONLY if this replica owns the agent's connection
-        // (i.e. the agent's connectionId is in _connectionIndex). This prevents cross-replica
-        // false positives: agents registered on another replica are absent from _connectionIndex,
-        // and deregistered agents have their _connectionIndex entry cleared by DeregisterAsync
-        // before the Redis delete fires. Without this guard, a force-expired hash or a
-        // cross-replica deregister would cause GetByAgentId on the owning replica to return a
-        // stale snapshot entry instead of null.
-        if (_localSnapshot.TryGetValue(agentId, out var snap) &&
-            _connectionIndex.TryGetValue(snap.ConnectionId, out var indexedAgentId) &&
-            indexedAgentId == agentId)
+        // Fall back to the node-local snapshot ONLY if a WriteRegistrationAsync is still in-flight
+        // for this agentId (i.e. we are within the fire-and-forget write window). This prevents
+        // returning stale snapshot data for TTL-expired agents or agents deregistered cross-replica:
+        // _pendingRegistrationWrite is cleared by WriteRegistrationAsync on completion, and is
+        // never set on non-owning replicas (which never call Register for this agent).
+        if (_pendingRegistrationWrite.ContainsKey(agentId) &&
+            _localSnapshot.TryGetValue(agentId, out var snap))
             return snap;
 
         return null;
