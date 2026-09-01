@@ -447,6 +447,12 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     public async Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(agentId.Value);
+        // TODO (WARNING #2144): GetByAgentIdAsync does not apply the _localSnapshot fallback
+        // added to GetAgentRaw (sync path). The async path therefore still has the same
+        // fire-and-forget gap: a just-registered agent is invisible until the background
+        // WriteRegistrationAsync write lands in Redis. Apply the same fallback here when
+        // the async interface conversion (issue #2135) is done — the snapshot fallback
+        // applies equally to the async version.
         var hash = await _store.HashGetAllAsync(AgentKey(agentId.Value));
         return hash.Length == 0 ? null : HashToEntry(hash);
     }
@@ -661,7 +667,17 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     private AgentEntry? GetAgentRaw(string agentId)
     {
         var hash = _store.HashGetAllAsync(AgentKey(agentId)).GetAwaiter().GetResult(); // Safe: ThreadPool
-        return hash.Length == 0 ? null : HashToEntry(hash);
+        if (hash.Length > 0)
+            return HashToEntry(hash);
+
+        // Redis hash absent: either the TTL has not yet been written (fire-and-forget from Register
+        // has not completed) or the hash TTL expired between heartbeats.
+        // Fall back to the node-local snapshot so that a just-registered agent is visible
+        // immediately after Register() returns, and a TTL-expired-but-live agent remains visible
+        // until UpdateHeartbeatAsync re-registers it.
+        // DeregisterAsync removes the snapshot entry before the Redis delete, so a deregistered
+        // agent correctly returns null here even if the Redis delete is still in-flight.
+        return _localSnapshot.TryGetValue(agentId, out var snap) ? snap : null;
     }
 
     private static AgentEntry? HashToEntry(HashEntry[] hash)
