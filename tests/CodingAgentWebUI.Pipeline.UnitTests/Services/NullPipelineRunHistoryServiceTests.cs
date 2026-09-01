@@ -139,11 +139,11 @@ public class NullPipelineRunHistoryServiceTests
             QualityGateConfigs = [new QualityGateConfiguration { Id = "gate-1", DisplayName = "Build" }]
         };
 
-        // Act & Assert: should not throw NullReferenceException
-        await executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
+        // Act & Assert: should not throw NullReferenceException — explicit assertion
+        var ex = await Record.ExceptionAsync(
+            () => executor.ProceedToQualityGatesAsync(context, CancellationToken.None));
 
-        // If we get here without NullReferenceException, the null-safe history service works.
-        // The run may or may not reach Completed depending on full executor flow,
-        // but no exception means requirement 17.3 is satisfied.
+        ex.Should().BeNull(
+            "NullPipelineRunHistoryService must not cause NullReferenceException — requirement 17.3");
     }
 }

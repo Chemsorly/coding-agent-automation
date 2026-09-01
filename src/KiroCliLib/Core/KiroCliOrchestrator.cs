@@ -53,22 +53,16 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     /// <summary>
     /// Creates a new orchestrator with explicit component factories for testability.
     /// </summary>
-    /// <param name="config">The configuration for the CLI.</param>
     /// <param name="logger">The logger instance.</param>
     /// <param name="processWrapperFactory">Factory to create <see cref="IProcessWrapper"/> instances.</param>
     /// <param name="outputParserFactory">Factory to create <see cref="IOutputParser"/> instances.</param>
     /// <param name="fileSystemMonitorFactory">Factory to create <see cref="IFileSystemMonitor"/> instances.</param>
     public KiroCliOrchestrator(
-        // NOTE: The `config` parameter is not used within this constructor body (the 2-arg convenience constructor captures it in a
-        // ProcessWrapper factory lambda, but that path never reaches here). This is a dead parameter flagged by the .NET specialist
-        // review. Removing it requires updating all direct callers of this overload and their test setup.
-        Configuration.Configuration config,
         ILogger logger,
         Func<IProcessWrapper> processWrapperFactory,
         Func<IOutputParser> outputParserFactory,
         Func<IFileSystemMonitor> fileSystemMonitorFactory)
     {
-        ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(processWrapperFactory);
         ArgumentNullException.ThrowIfNull(outputParserFactory);
@@ -86,7 +80,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         Configuration.Configuration config,
         ILogger logger,
         Func<IProcessWrapper> processWrapperFactory)
-        : this(config, logger, processWrapperFactory, () => new OutputParser(), () => new FileSystemMonitor())
+        : this(logger, processWrapperFactory, () => new OutputParser(), () => new FileSystemMonitor())
     {
     }
 
@@ -95,7 +89,6 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     /// </summary>
     public KiroCliOrchestrator(Configuration.Configuration config, ILogger logger)
         : this(
-            config,
             logger,
             () => new ProcessWrapper(config, logger),
             () => new OutputParser(),

@@ -13,18 +13,9 @@ namespace CodingAgentWebUI.Pipeline.LeaderElection;
 /// </para>
 /// <para>
 /// <see cref="ILeaderGate.IsLeader"/> and <see cref="ILeaderGate.LeaderToken"/> are inherited
-/// from <see cref="ILeaderGate"/>. This interface adds event-based notification members on top.
+/// from <see cref="ILeaderGate"/>.
 /// </para>
 /// </summary>
 public interface ILeaderElectionService : ILeaderGate
 {
-    /// <summary>
-    /// Fires when leadership is acquired. Subscribers can start leader-only work.
-    /// </summary>
-    event Action? OnStartedLeading;
-
-    /// <summary>
-    /// Fires when leadership is lost. Subscribers should stop leader-only work.
-    /// </summary>
-    event Action? OnStoppedLeading;
 }
