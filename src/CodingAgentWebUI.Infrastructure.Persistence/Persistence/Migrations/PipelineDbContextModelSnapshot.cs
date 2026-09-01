@@ -376,7 +376,6 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .HasColumnType("jsonb");
 
                     b.Property<int>("PriorityWeight")
-                        .HasDefaultValue(0)
                         .HasColumnType("integer");
 
                     b.Property<Guid?>("ProjectId")

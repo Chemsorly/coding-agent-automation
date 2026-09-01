@@ -13,7 +13,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CodingAgentWebUI.Infrastructure.Persistence.Persistence.Migrations
 {
     [DbContext(typeof(PipelineDbContext))]
-    [Migration("20260830160000_AddPriorityWeightToWorkItems")]
+    [Migration("20260831000000_AddPriorityWeightToWorkItems")]
     partial class AddPriorityWeightToWorkItems
     {
         /// <inheritdoc />

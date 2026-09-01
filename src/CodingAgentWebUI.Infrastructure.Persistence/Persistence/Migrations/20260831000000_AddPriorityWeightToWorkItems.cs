@@ -15,12 +15,24 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Persistence.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            // DEFAULT 0 is specified to backfill existing rows; the DB-level default is
+            // immediately dropped afterwards so the EF model (no HasDefaultValue) stays
+            // in sync with the schema. The application always supplies the value explicitly.
             migrationBuilder.AddColumn<int>(
                 name: "PriorityWeight",
                 table: "WorkItems",
                 type: "integer",
                 nullable: false,
                 defaultValue: 0);
+
+            migrationBuilder.AlterColumn<int>(
+                name: "PriorityWeight",
+                table: "WorkItems",
+                type: "integer",
+                nullable: false,
+                oldClrType: typeof(int),
+                oldType: "integer",
+                oldDefaultValue: 0);
 
             // TODO: Consider adding a composite index to support the new sort order efficiently.
             // Three queries now execute WHERE Status = Pending ORDER BY PriorityWeight DESC, CreatedAt ASC.
