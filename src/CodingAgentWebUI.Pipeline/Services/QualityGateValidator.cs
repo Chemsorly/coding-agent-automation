@@ -11,8 +11,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// <summary>
 /// Validates generated code against quality thresholds by running
 /// dotnet build and dotnet test in the workspace directory.
-/// TODO: [WARNING] Stale XML doc comment: "Uses TRX and Cobertura XML reports for accurate test/coverage data."
-/// — Cobertura/coverage support was removed (issue #2249). Update to: "Uses TRX reports for accurate test data."
+/// Uses TRX reports for accurate test data.
 /// Optionally validates against an external CI/CD pipeline.
 /// </summary>
 public class QualityGateValidator : IQualityGateValidator
