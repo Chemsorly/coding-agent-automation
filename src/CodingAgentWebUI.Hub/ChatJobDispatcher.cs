@@ -484,21 +484,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                         // Redis fault — skip idle-kill for this cycle and continue polling.
                         // The session is preserved until Redis recovers and the next check sees
                         // either a recent heartbeat (no kill) or a genuinely expired one (kill).
-                        // TODO [WARNING]: swallowing OperationCanceledException here is consistent with the
-                        // catch-and-swallow pattern elsewhere in this loop (~line 511), but it means
-                        // cancellation during this delay exits via the while-condition rather than
-                        // the outer catch (OperationCanceledException) block. The CAS guard in
-                        // CleanupSession ensures the "shutdown" outcome is still recorded correctly,
-                        // so there is no functional regression, but propagating the OCE here would
-                        // be more idiomatic and match the normal cancellation exit path.
-                        // Additionally: if StopAsync fires while the watcher is sleeping here,
-                        // the OCE is swallowed and the loop exits via the while-condition without
-                        // calling CleanupSession("shutdown"). The normal cancellation path (~line 555)
-                        // does call CleanupSession; this path silently skips it. The CAS guard in
-                        // CleanupSession means the first call wins, so if shutdown fires before any
-                        // cleanup call, the "shutdown" outcome is never recorded for this session.
-                        // Fix: let the OCE propagate so the outer catch handles cleanup uniformly.
-                        try { await Task.Delay(pollInterval, ct); } catch (OperationCanceledException) { }
+                        // Let OCE propagate so the outer catch handles CleanupSession("shutdown") uniformly.
+                        await Task.Delay(pollInterval, ct);
                         continue;
                     }
                     lastHeartbeat = redisHeartbeat ?? new DateTimeOffset(
