@@ -559,7 +559,7 @@
         PipelineStep.RunningQualityGates => Run.LatestQualityReport != null,
         PipelineStep.ExtractingLinkedIssues => true,
         PipelineStep.PostingFindings => true,
-        PipelineStep.PreparingForPullRequest => false,
+        PipelineStep.PreparingForPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
         PipelineStep.CreatingPullRequest => !string.IsNullOrEmpty(Run.PullRequestUrl),
         PipelineStep.ReflectingOnRun => Run.BrainProviderConfigId != null,
         PipelineStep.SyncingBrainRepoPostRun => Run.BrainProviderConfigId != null,
@@ -588,6 +588,8 @@
             => RenderRunningQualityGatesDetails(state),
         PipelineStep.ExtractingLinkedIssues => RenderExtractingLinkedIssuesDetails(state),
         PipelineStep.PostingFindings => RenderPostingFindingsDetails(state),
+        PipelineStep.PreparingForPullRequest when !string.IsNullOrEmpty(Run.PullRequestUrl)
+            => RenderPreparingForPullRequestDetails(state),
         PipelineStep.CreatingPullRequest when !string.IsNullOrEmpty(Run.PullRequestUrl)
             => RenderCreatingPullRequestDetails(state),
         PipelineStep.ReflectingOnRun when Run.BrainProviderConfigId != null
@@ -876,6 +878,17 @@
                     <div><a href="@Run.ReviewPrUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View PR</a></div>
                 }
             }
+        </div>
+    };
+
+    private RenderFragment RenderPreparingForPullRequestDetails(StepState state) => __builder =>
+    {
+        <div class="step-detail-box">
+            @* TODO: When PullRequestNumber is null/empty the label renders with an awkward double-space before the draft/final indicator
+               ("Existing PR  (final)"). Same pre-existing cosmetic defect exists in RenderCreatingPullRequestDetails.
+               Fix by trimming or restructuring the interpolation to omit the space when PullRequestNumber is absent. *@
+            <div>Existing PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "") @(Run.IsDraftPr ? "(draft)" : "(final)")</div>
+            <div><a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View on GitHub</a></div>
         </div>
     };
 
