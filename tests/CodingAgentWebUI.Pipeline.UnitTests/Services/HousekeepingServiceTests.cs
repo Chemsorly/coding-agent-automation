@@ -20,7 +20,7 @@ public class HousekeepingServiceTests
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static PullRequestSummary MakePr(int number, string branch = "feature/pr", bool isDraft = false)
+    private static PullRequestSummary MakePr(int number, string branch = "feature/pr", bool isDraft = false, bool hasAutoMerge = false)
         => new()
         {
             Number = number,
@@ -31,7 +31,8 @@ public class HousekeepingServiceTests
             BranchName = branch,
             TargetBranch = "main",
             Url = $"https://example.com/pr/{number}",
-            IsDraft = isDraft
+            IsDraft = isDraft,
+            HasAutoMerge = hasAutoMerge,
         };
 
     private static IssueDetail MakeIssue(string id, params string[] labels) => new()
@@ -338,10 +339,10 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── In-flight Behind → evicted and re-selected same tick ─────────────────
+    // ── In-flight Behind → evicted and re-selected after cooldown ────────────
 
     [Fact]
-    public async Task ExecuteAsync_InFlightPrWithBehind_EvictedAndReselected()
+    public async Task ExecuteAsync_InFlightPrWithBehind_EvictedAndReselectedAfterCooldown()
     {
         var (svc, provider, issues, _) = Create();
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
@@ -349,10 +350,40 @@ public class HousekeepingServiceTests
         provider.Setup(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
+        var clock = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => clock;
+        svc.TriggerCooldown = TimeSpan.FromMinutes(25);
+
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
+
+        // Advance clock past cooldown so the PR is eligible again
+        clock = clock.AddMinutes(26);
+
         await ExecAsync(svc, provider, issues, [MakePr(10)]);
 
         provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_InFlightPrWithBehind_WithinCooldown_NotReselected()
+    {
+        var (svc, provider, issues, _) = Create();
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        var clock = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => clock;
+        svc.TriggerCooldown = TimeSpan.FromMinutes(25);
+
+        await ExecAsync(svc, provider, issues, [MakePr(10)]);
+
+        // Do NOT advance clock — second call is within cooldown window
+        await ExecAsync(svc, provider, issues, [MakePr(10)]);
+
+        // Only the first trigger should have fired; cooldown blocked the second
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── In-flight absent from list → evicted ─────────────────────────────────
@@ -874,5 +905,112 @@ public class HousekeepingServiceTests
 
         ex.Should().BeNull("ListAgentBranches failure must be swallowed");
         provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── HasAutoMerge priority (3-tier sort) ───────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_AutoMergePr_TriggerredBeforeNonAutoMergePr()
+    {
+        // Two behind PRs, limit 1. Auto-merge PR should always win the slot.
+        var (svc, provider, issues, _) = Create();
+
+        var autoMergePr = MakePr(10, "feature/auto", hasAutoMerge: true);
+        var regularPr   = MakePr(20, "feature/regular");
+
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(20, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        // Fix clock so no cooldown applies
+        svc.UtcNow = () => DateTimeOffset.UtcNow;
+        svc.TriggerCooldown = TimeSpan.FromMinutes(25);
+
+        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
+
+        // With limit 1, the auto-merge PR must be the one triggered
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once,
+            "auto-merge PR must take priority over regular PR");
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Never,
+            "regular PR must not be triggered when auto-merge PR takes the slot");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AutoMergePrInCooldown_RegularPrTriggeredInstead()
+    {
+        // Auto-merge PR is still in cooldown, regular PR is not — regular wins the slot.
+        var (svc, provider, issues, _) = Create();
+
+        var autoMergePr = MakePr(10, "feature/auto", hasAutoMerge: true);
+        var regularPr   = MakePr(20, "feature/regular");
+
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(20, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        var clock = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => clock;
+        svc.TriggerCooldown = TimeSpan.FromMinutes(25);
+
+        // First cycle: auto-merge PR gets triggered (enters cooldown)
+        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Second cycle immediately (auto-merge PR still in cooldown, regular not)
+        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
+
+        // Regular PR should now take the slot since auto-merge is cooling down
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once,
+            "regular PR must take slot when auto-merge PR is in cooldown");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MultipleAutoMergePrs_LimitOne_SelectionVaries()
+    {
+        // Multiple auto-merge PRs all past cooldown — random selection among peers.
+        var (svc, provider, issues, _) = Create();
+
+        var pr1 = MakePr(1, "feature/a", hasAutoMerge: true);
+        var pr2 = MakePr(2, "feature/b", hasAutoMerge: true);
+        var pr3 = MakePr(3, "feature/c", hasAutoMerge: true);
+
+        foreach (var prNum in new[] { 1, 2, 3 })
+        {
+            provider.Setup(p => p.IsPullRequestBehindBaseAsync(prNum, It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(PrMergeabilityStatus.Behind);
+        }
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        var triggeredPrs = new HashSet<int>();
+        var clock = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => clock;
+        svc.TriggerCooldown = TimeSpan.FromMinutes(25);
+
+        // Run 30 cycles advancing past cooldown each time
+        for (var i = 0; i < 30; i++)
+        {
+            clock = clock.AddMinutes(30);
+            svc.UtcNow = () => clock;
+            var svcLocal = svc; // capture for lambda
+            provider.Invocations.Clear();
+            await ExecAsync(svcLocal, provider, issues, [pr1, pr2, pr3]);
+
+            // Find which PR was triggered this cycle
+            var triggered = provider.Invocations
+                .Where(inv => inv.Method.Name == nameof(IRepositoryProvider.UpdatePullRequestBranchAsync))
+                .Select(inv => (int)inv.Arguments[0])
+                .FirstOrDefault();
+            if (triggered != 0) triggeredPrs.Add(triggered);
+        }
+
+        triggeredPrs.Should().HaveCountGreaterThan(1,
+            "random selection within the auto-merge tier must produce variety over many cycles");
     }
 }
