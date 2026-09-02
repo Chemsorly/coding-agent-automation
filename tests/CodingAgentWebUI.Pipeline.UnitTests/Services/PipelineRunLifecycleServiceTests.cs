@@ -377,17 +377,11 @@ public class PipelineRunLifecycleServiceTests
         // StepOrder._order, causing GetOrder(ReviewingPlan) to return -1 and the HWM guard
         // to never fire. Verify that transitioning to ReviewingPlan (logical order 5) from
         // GeneratingPlan (logical order 4) correctly advances the HighWaterMark.
-        // TODO: This test verifies the lower-bound ordering invariant (ReviewingPlan > GeneratingPlan)
-        // via the HWM assertion, but does not directly assert the upper-bound invariant:
-        // StepOrder.GetOrder(ReviewingPlan) < StepOrder.GetOrder(PostingPlan). A future edit that
-        // assigned ReviewingPlan an order >= PostingPlan (e.g., = 99) would still pass this test
-        // while violating the acceptance criterion. Add a StepOrder unit test (or additional
-        // assertions here) that explicitly checks:
-        //   StepOrder.GetOrder(PipelineStep.ReviewingPlan) > StepOrder.GetOrder(PipelineStep.GeneratingPlan)
-        //   StepOrder.GetOrder(PipelineStep.ReviewingPlan) < StepOrder.GetOrder(PipelineStep.PostingPlan)
+        // Note: this test verifies the lower-bound ordering invariant (ReviewingPlan > GeneratingPlan)
+        // via the HWM assertion. The upper-bound invariant (ReviewingPlan < PostingPlan) is not
+        // asserted here; see StepOrderTests for direct order-value coverage.
         var service = CreateService();
         var run = CreateRun(step: PipelineStep.GeneratingPlan);
-        run.HighWaterMark = PipelineStep.GeneratingPlan;
 
         service.TransitionTo(run, PipelineStep.ReviewingPlan);
 
