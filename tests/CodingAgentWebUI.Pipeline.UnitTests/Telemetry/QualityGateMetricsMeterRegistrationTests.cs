@@ -133,22 +133,19 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
     }
 
     /// <summary>
-    /// All four quality gate instruments must use the exact metric names that the Grafana
+    /// All five quality gate instruments must use the exact metric names that the Grafana
     /// dashboard "Coding Agent Pipeline — Quality Gates" queries. Changing these names
     /// would break the dashboard silently.
     /// </summary>
     [Fact]
-    public void AllFourQualityGateInstruments_HaveCanonicalNames()
+    public void AllFiveQualityGateInstruments_HaveCanonicalNames()
     {
         // Trigger measurements to confirm names
         PipelineTelemetry.QualityGateRetries.Add(1);
         PipelineTelemetry.QualityGateEvaluations.Add(1);
         PipelineTelemetry.QualityGateDuration.Record(1.0);
         PipelineTelemetry.ExternalCiDuration.Record(1.0);
-
-        // TODO: This test asserts on four instruments but a fifth (quality_gate.post_pr_ci.duration)
-        // now exists. Update to AllFiveQualityGateInstruments_HaveCanonicalNames and add an assertion
-        // for "quality_gate.post_pr_ci.duration" so future renames are caught.
+        PipelineTelemetry.PostPrCiDuration.Record(1.0);
 
         var instrumentNames = _observed.Select(o => o.InstrumentName).Distinct().ToList();
 
@@ -160,6 +157,8 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
             "Grafana dashboard queries quality_gate_duration_seconds");
         instrumentNames.Should().Contain("quality_gate.external_ci.duration",
             "Grafana dashboard queries quality_gate_external_ci_duration_seconds");
+        instrumentNames.Should().Contain("quality_gate.post_pr_ci.duration",
+            "Grafana dashboard queries quality_gate_post_pr_ci_duration_seconds");
     }
 
     /// <summary>

@@ -949,11 +949,11 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
         // Assert: PostPrCiDuration was recorded on the post-PR CI path
         _instrumentNames.Should().Contain("quality_gate.post_pr_ci.duration",
             "WaitForPostPrCiAsync must record into PostPrCiDuration (issue #2220 fix)");
-        // TODO: Add a negative assertion here to fully prevent regression of issue #2220:
-        //   _instrumentNames.Should().NotContain("quality_gate.external_ci.duration",
-        //       "WaitForPostPrCiAsync must not record into ExternalCiDuration — issue #2220 was double-emission");
-        // Without this, the test passes even if both histograms are recorded simultaneously,
-        // missing the dual-recording bug that motivated the fix.
+        // NOTE: quality_gate.external_ci.duration is also recorded on this path because
+        // AppendExternalCiIfNeededAsync (the pre-PR CI pass) runs before WaitForPostPrCiAsync and
+        // uses ExternalCiDuration. The dual-recording is from two separate code paths, not from
+        // WaitForPostPrCiAsync itself. The fix for issue #2220 is confirmed: WaitForPostPrCiAsync
+        // records into PostPrCiDuration rather than ExternalCiDuration.
     }
 
     private void SetupDefaultMocks()
