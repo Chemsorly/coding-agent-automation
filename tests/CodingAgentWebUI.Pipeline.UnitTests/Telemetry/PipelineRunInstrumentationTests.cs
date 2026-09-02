@@ -96,10 +96,6 @@ public class PipelineRunInstrumentationTests : IDisposable
         instrumentation.Activity.GetTagItem("pipeline.issue").Should().Be("owner/repo#42");
         instrumentation.Activity.GetTagItem("pipeline.project_id").Should().Be("proj-A");
         instrumentation.Activity.GetTagItem("pipeline.project_name").Should().Be("Project A");
-        // TODO [WARNING]: This assertion only covers PipelineRunType.Review (the value already used by this test).
-        // The canonical coverage for all run_type values is the Start_SetsRunTypeTagOnActivity theory below.
-        // If that theory is ever removed, this single-variant assertion would silently give false confidence
-        // that the other four enum values are handled correctly.
         instrumentation.Activity.GetTagItem("pipeline.run_type").Should().Be("Review");
     }
 
