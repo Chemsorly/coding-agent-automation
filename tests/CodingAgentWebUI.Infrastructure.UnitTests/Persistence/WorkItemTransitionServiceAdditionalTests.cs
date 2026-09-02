@@ -288,6 +288,132 @@ public class WorkItemTransitionServiceAdditionalTests
         result.Should().BeFalse();
     }
 
+    // ── TransitionDetailedAsync ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task TransitionDetailedAsync_ItemNotFound_ReturnsNotFound()
+    {
+        var opts = CreateDbOptions();
+        await using var ctx = new TestPipelineDbContext(opts);
+        ctx.Database.EnsureCreated();
+
+        var svc = CreateService(opts);
+        var result = await svc.TransitionDetailedAsync(Guid.NewGuid(), WorkItemStatus.Dispatched);
+
+        result.Should().Be(TransitionResult.NotFound);
+    }
+
+    [Fact]
+    public async Task TransitionDetailedAsync_AlreadyAtTarget_ReturnsAlreadyAtTarget()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
+        var svc = CreateService(opts);
+
+        var result = await svc.TransitionDetailedAsync(item.Id, WorkItemStatus.Dispatched);
+
+        result.Should().Be(TransitionResult.AlreadyAtTarget,
+            "item is already at the target status — should be an idempotent no-op");
+    }
+
+    [Fact]
+    public async Task TransitionDetailedAsync_InvalidTransition_ReturnsRejected()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var svc = CreateService(opts);
+
+        // TODO: Pending → Running is used here as an invalid transition fixture. If the state
+        // machine is ever extended to allow that pair directly, this test will silently exercise
+        // a valid-transition path and likely return TransitionResult.Transitioned instead of
+        // Rejected — causing a test failure for the wrong reason. Consider using a structurally
+        // impossible transition (e.g. a terminal status → any non-terminal status, such as
+        // Failed → Running) which cannot become valid regardless of future state-machine changes.
+        // Also consider adding a DB-state re-read assertion to verify the item's status is still
+        // Pending after the rejected call (guards against silent partial mutations).
+        // Pending → Running is not a valid transition
+        var result = await svc.TransitionDetailedAsync(item.Id, WorkItemStatus.Running);
+
+        result.Should().Be(TransitionResult.Rejected);
+    }
+
+    [Fact]
+    public async Task TransitionDetailedAsync_ValidTransition_ReturnsTransitioned()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
+        var svc = CreateService(opts);
+
+        var result = await svc.TransitionDetailedAsync(item.Id, WorkItemStatus.Dispatched);
+
+        result.Should().Be(TransitionResult.Transitioned);
+
+        await using var verify = new TestPipelineDbContext(opts);
+        var updated = await verify.WorkItems.FindAsync(item.Id);
+        updated!.Status.Should().Be(WorkItemStatus.Dispatched);
+    }
+
+    [Fact]
+    public async Task TransitionDetailedAsync_ValidTransition_InvokesMutate()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+        var svc = CreateService(opts);
+        var completedAt = DateTimeOffset.UtcNow;
+
+        var result = await svc.TransitionDetailedAsync(item.Id, WorkItemStatus.Succeeded,
+            mutate: entity => entity.CompletedAt = completedAt);
+
+        result.Should().Be(TransitionResult.Transitioned);
+        await using var verify = new TestPipelineDbContext(opts);
+        var updated = await verify.WorkItems.FindAsync(item.Id);
+        updated!.CompletedAt.Should().BeCloseTo(completedAt, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task TransitionDetailedAsync_AlreadyAtTarget_DoesNotInvokeMutate()
+    {
+        // The mutate callback must NOT be invoked for idempotent no-ops.
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Succeeded,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        var svc = CreateService(opts);
+
+        var mutateCalled = false;
+        var result = await svc.TransitionDetailedAsync(item.Id, WorkItemStatus.Succeeded,
+            mutate: _ => mutateCalled = true);
+
+        result.Should().Be(TransitionResult.AlreadyAtTarget);
+        mutateCalled.Should().BeFalse("mutate must not be called on the idempotent no-op path");
+    }
+
+    // Bool-overload backward-compatibility: AlreadyAtTarget maps to true
+    [Fact]
+    public async Task TransitionAsync_Bool_AlreadyAtTarget_StillReturnsTrue()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
+        var svc = CreateService(opts);
+
+        var result = await svc.TransitionAsync(item.Id, WorkItemStatus.Dispatched);
+
+        result.Should().BeTrue("the bool overload must preserve the idempotent-true contract");
+    }
+
+    // Bool-overload backward-compatibility: NotFound maps to false
+    [Fact]
+    public async Task TransitionAsync_Bool_NotFound_ReturnsFalse()
+    {
+        var opts = CreateDbOptions();
+        await using var ctx = new TestPipelineDbContext(opts);
+        ctx.Database.EnsureCreated();
+
+        var svc = CreateService(opts);
+        var result = await svc.TransitionAsync(Guid.NewGuid(), WorkItemStatus.Dispatched);
+
+        result.Should().BeFalse("the bool overload must map NotFound to false");
+    }
+
     // ── GetRetryCountAsync ────────────────────────────────────────────────────
 
     [Fact]
