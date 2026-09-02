@@ -1333,13 +1333,6 @@ public sealed class ReconciliationLoopErrorTests
     /// must fall back to <see cref="JobNameFactory.ForWorkItem"/> when checking whether a live K8s
     /// Job exists for the item.
     /// </summary>
-    // TODO: This test only asserts the downstream outcome (PostStatusAsync called with "Failed")
-    // and does not verify that JobNameFactory.ForWorkItem specifically is used as the lookup key.
-    // Changing the fallback from ForWorkItem to ForBrain would not be caught because the live job
-    // list is empty regardless of which name format is checked. Consider also adding a positive
-    // case: populate the live job list with JobNameFactory.ForWorkItem(id) and assert the item is
-    // NOT marked Failed — this directly guards the fallback format used for the lookup.
-    // (TestQualityReviewer warning)
     [Fact]
     public async Task EnforceDispatchedTimeout_WhenK8sJobNameIsNull_FallsBackToForWorkItemFormat()
     {

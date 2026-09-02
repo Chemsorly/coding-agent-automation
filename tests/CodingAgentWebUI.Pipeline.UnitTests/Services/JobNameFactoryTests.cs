@@ -17,11 +17,6 @@ public class JobNameFactoryTests
     /// <summary>
     /// For any GUID, ForWorkItem produces caa-agent-{first-11-hex-chars} = 21 chars.
     /// </summary>
-    // TODO: This test is tautological — the expected value uses the same expression as the
-    // implementation. A regression where both the implementation and this formula are changed
-    // in lockstep (e.g., widening the slice to [..22]) would not be caught. Consider adding
-    // an exact-string assertion for a known GUID input to independently anchor the format.
-    // (TestQualityReviewer warning)
     [Property(MaxTest = 20)]
     public void ForWorkItem_MatchesDeterministicFormula(Guid id)
     {
@@ -37,9 +32,6 @@ public class JobNameFactoryTests
     /// <summary>
     /// For any GUID, ForConsolidation produces caa-cons-{first-12-hex-chars} = 21 chars.
     /// </summary>
-    // TODO: Same tautology as ForWorkItem_MatchesDeterministicFormula — expected value mirrors
-    // the implementation. Consider adding an exact-string assertion for a known GUID input.
-    // (TestQualityReviewer warning)
     [Property(MaxTest = 20)]
     public void ForConsolidation_MatchesDeterministicFormula(Guid id)
     {
@@ -56,9 +48,6 @@ public class JobNameFactoryTests
     /// For any GUID, ForBrain produces "caa-" + first-8-hex-chars = 12 chars.
     /// The assertion form matches DispatchServiceJobNamingPropertyTests for equivalence verification.
     /// </summary>
-    // TODO: Same tautology — expected value mirrors the implementation. Consider adding an
-    // exact-string assertion for a known GUID input to independently anchor the format.
-    // (TestQualityReviewer warning)
     [Property(MaxTest = 20)]
     public void ForBrain_MatchesDeterministicFormula(Guid id)
     {

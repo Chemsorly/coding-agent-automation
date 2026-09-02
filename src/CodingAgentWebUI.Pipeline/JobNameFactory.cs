@@ -1,8 +1,3 @@
-// TODO: Verify that CodingAgentWebUI.Api.csproj already has a ProjectReference to
-// CodingAgentWebUI.Pipeline before merge. DispatchLifecycleService now imports this
-// namespace; if the reference did not previously exist a new cross-assembly dependency
-// has been introduced. (DotNetSpecialist review warning)
-
 namespace CodingAgentWebUI.Pipeline;
 
 /// <summary>
@@ -49,10 +44,6 @@ public static class JobNameFactory
     /// Used by <c>DispatchLifecycleService</c> in the API assembly.
     /// </summary>
     /// <param name="workItemId">The WorkItem ID.</param>
-    // TODO: Consider replacing `workItemId.ToString("N")[..8]` with the interpolation
-    // form `$"caa-{workItemId:N}"[..12]` to match the expression style of ForWorkItem
-    // and ForConsolidation. Both produce identical output; the current form creates an
-    // intermediate string before slicing. (DotNetSpecialist review warning)
     public static string ForBrain(Guid workItemId) =>
-        $"caa-{workItemId.ToString("N")[..8]}"; // "caa-" (4) + 8 hex chars = 12 total
+        $"caa-{workItemId:N}"[..12]; // "caa-" (4) + 8 hex chars = 12 total
 }
