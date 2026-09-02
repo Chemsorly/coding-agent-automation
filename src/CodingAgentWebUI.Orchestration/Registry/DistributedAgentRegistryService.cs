@@ -522,20 +522,31 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
         // Merge idle results into the all-agents cache so GetAllAgents() stays reasonably fresh.
         // This is a best-effort update; GetAllAgentsAsync provides a complete refresh.
-        var idleIds = new HashSet<string>(list.Select(e => e.AgentId.Value));
-        var existing = _allAgentsCache;
-        var merged = existing
-            .Where(e => !idleIds.Contains(e.AgentId.Value))
-            .Concat(list)
-            .ToList()
-            .AsReadOnly();
-        // TODO: Race condition — this read-modify-write on _allAgentsCache is not protected by
-        // _cacheUpdateLock. A concurrent Register/DeregisterAsync that runs between reading
-        // `existing` and assigning `merged` will have its cache update silently overwritten.
-        // For example: DeregisterAsync for agent-A calls RemoveFromAllAgentsCache (sets cache to
-        // [B]), then this line restores [A, B] — resurrecting the deregistered agent.
-        // Fix: wrap the merge-and-assign in lock(_cacheUpdateLock), or accept and document staleness.
-        _allAgentsCache = merged;
+        // The merge-and-assign is wrapped in lock(_cacheUpdateLock) to serialise this assignment
+        // with concurrent Register/DeregisterAsync write paths (which also hold the lock), so that
+        // their cache updates cannot be silently overwritten by this assignment.
+        // TODO (WARNING): The lock narrows but does not eliminate the resurrection race. The Redis
+        // reads (SetMembersAsync + Task.WhenAll HGETALL) happen *before* the lock is acquired, so
+        // `list` may still contain a deregistered agent if DeregisterAsync runs after the idle-set
+        // fetch but before this lock entry. Concretely: (1) SetMembersAsync returns [A, B];
+        // (2) DeregisterAsync acquires lock, RemoveFromAllAgentsCache → cache=[B], releases lock,
+        // then removes A from Redis; (3) this lock is acquired, existing=[B], merged=[A,B] —
+        // agent-A is resurrected until the next write-path update. This residual staleness is
+        // acceptable for the OTel gauge (dispatch reads Redis directly and is unaffected), but
+        // the comment should not claim the lock *prevents* resurrection — it only prevents the
+        // write-overwrite race where a concurrent lock-protected update is silently clobbered.
+        // No await inside the lock — only in-memory list operations after all Redis I/O is done.
+        lock (_cacheUpdateLock)
+        {
+            var idleIds = new HashSet<string>(list.Select(e => e.AgentId.Value));
+            var existing = _allAgentsCache;
+            var merged = existing
+                .Where(e => !idleIds.Contains(e.AgentId.Value))
+                .Concat(list)
+                .ToList()
+                .AsReadOnly();
+            _allAgentsCache = merged;
+        }
 
         return idleList;
     }
@@ -555,7 +566,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var members = await _store.SetMembersAsync(AgentsAllKey);
         if (members.Length == 0)
         {
-            _allAgentsCache = [];
+            // Wrap under lock for the same reason as the main path: a concurrent Register
+            // that runs between SetMembersAsync returning empty and this assignment would have
+            // its cache update silently overwritten with an empty list.
+            lock (_cacheUpdateLock) { _allAgentsCache = []; }
             return Array.Empty<AgentEntry>();
         }
 
@@ -572,13 +586,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         }
 
         var readOnly = list.AsReadOnly();
-        // TODO: Race condition — assigning _allAgentsCache here without holding _cacheUpdateLock
-        // means a concurrent Register (which acquires the lock and updates the cache) that runs
-        // between the Task.WhenAll above and this assignment will have its update overwritten.
-        // Less dangerous than GetIdleAgentsAsync's partial merge (this is a full replacement), but
-        // a newly registered agent can still disappear from sync reads until the next write-path update.
-        // Fix: wrap in lock(_cacheUpdateLock).
-        _allAgentsCache = readOnly;
+        // Wrap under lock so a concurrent Register/DeregisterAsync (which also acquires
+        // _cacheUpdateLock) cannot be silently overwritten by this full-replacement assignment.
+        // A Register that races between Task.WhenAll and this line would otherwise disappear
+        // from sync reads until the next write-path update.
+        lock (_cacheUpdateLock) { _allAgentsCache = readOnly; }
         return readOnly;
     }
 
