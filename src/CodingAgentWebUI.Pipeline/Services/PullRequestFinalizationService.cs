@@ -144,6 +144,12 @@ public sealed class PullRequestFinalizationService
             await transitionCallback(PipelineStep.GeneratingPrDescription);
             await GeneratePrDescriptionAsync(run, agentProvider, repoProvider, config, emitOutputLine, ct);
         }
+        else
+        {
+            _logger.Information(
+                "Pipeline {RunId} skipping PR description: isDraft={IsDraft}, hasPrNumber={HasPrNumber}",
+                run.RunId, isDraft, !string.IsNullOrEmpty(run.PullRequestNumber));
+        }
 
         if (!isDraft && brainProvider is not null && brainSync is not null && !config.BrainReadOnly)
         {
@@ -153,11 +159,30 @@ public sealed class PullRequestFinalizationService
             await transitionCallback(PipelineStep.SyncingBrainRepoPostRun);
             await SyncBrainPostRunAsync(run, brainSync, brainProvider, config, emitOutputLine, ct);
         }
+        else
+        {
+            // Emit a tagged skip counter so brain.sync.skipped always appears in Prometheus
+            // for runs that reach finalization, making the skip reason diagnosable without Loki.
+            // Priority: isDraft wins → no_provider → no_sync_service → read_only.
+            var skipReason = isDraft ? "is_draft"
+                : brainProvider is null ? "no_provider"
+                : brainSync is null ? "no_sync_service"
+                : "read_only";
+            PipelineTelemetry.BrainSyncSkipped.Add(1,
+                new KeyValuePair<string, object?>("reason", skipReason));
+            // TODO [WARNING]: The five log arguments (RunId, isDraft, brainProvider!=null, brainSync!=null, BrainReadOnly)
+            // resolve to Information(string, params object[]) because Serilog's ILogger has generic overloads only up to
+            // 3 type params. Moq Verify calls targeting this log must match the params-array overload, not individual
+            // typed matchers, to avoid silently vacuous assertions.
+            _logger.Information(
+                "Pipeline {RunId} skipping brain post-run sync: isDraft={IsDraft}, brainProvider={HasProvider}, brainSync={HasSync}, brainReadOnly={ReadOnly}",
+                run.RunId, isDraft, brainProvider is not null, brainSync is not null, config.BrainReadOnly);
+        }
 
         // No step transition for feedback — intentionally matches existing behavior
         if (!isDraft)
         {
-            await CollectFeedbackAsync(run, agentProvider, feedbackService, historyService, emitOutputLine, ct);
+            await CollectFeedbackAsync(run, agentProvider, feedbackService, historyService, emitOutputLine, ct, config);
         }
     }
 
@@ -222,7 +247,7 @@ public sealed class PullRequestFinalizationService
             }
             var currentBody = run.PullRequestBody ?? "";
             var newBody = $"{description}\n\n---\n\n{currentBody}";
-            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, false, ct);
+            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, null, ct);
             run.PullRequestBody = newBody;
 
             _logger.Information("Pipeline {RunId} PR description generated and applied", run.RunId);
@@ -304,9 +329,14 @@ public sealed class PullRequestFinalizationService
     /// Collects structured feedback from the agent about the run.
     /// On failure, creates a fallback feedback record via feedbackService.
     /// </summary>
+    // TODO: The optional `config` parameter creates an asymmetry with QualityGateExecutor.RetryLoop, which always
+    // reads from context.Config. Any future call site that omits config will silently fall back to the 60s constant
+    // rather than the operator-configured value, bypassing project-level overrides. Consider making config required
+    // or moving this method to a context-based signature to match the failure path. (Warning from review #2225)
     public async Task CollectFeedbackAsync(
         PipelineRun run, IAgentProvider agentProvider, FeedbackService feedbackService,
-        IPipelineRunHistoryService? historyService, Action<string> emitOutputLine, CancellationToken ct)
+        IPipelineRunHistoryService? historyService, Action<string> emitOutputLine, CancellationToken ct,
+        PipelineConfiguration? config = null)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("FeedbackCollection");
         activity?.SetTag(PipelineRunIdTag, run.RunId);
@@ -325,7 +355,7 @@ public sealed class PullRequestFinalizationService
                 {
                     Prompt = feedbackPrompt,
                     WorkspacePath = run.WorkspacePath!,
-                    Timeout = TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds),
+                    Timeout = TimeSpan.FromSeconds(config?.FeedbackTimeoutSeconds ?? FeedbackConstraints.FailureFeedbackTimeoutSeconds),
                     UseResume = true
                 },
                 ct,

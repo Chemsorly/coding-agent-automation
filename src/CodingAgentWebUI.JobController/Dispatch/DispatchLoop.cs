@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -220,6 +221,8 @@ public sealed class DispatchLoop
                     // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
                     // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting the
                     // field (issue #2129). Simply return; the next dispatch cycle will retry.
+                    WorkDistributionTelemetry.PvcPoolExhaustions.Add(1,
+                        new KeyValuePair<string, object?>("pool", "kiro"));
                     return;
                 }
 
@@ -391,10 +394,11 @@ public sealed class DispatchLoop
 
     /// <summary>
     /// Generates a deterministic K8s Job name from a WorkItem ID.
+    /// Delegates to <see cref="JobNameFactory.ForWorkItem"/> — the canonical definition of this format.
     /// Format: caa-agent-{first-11-chars-of-guid-no-dashes} — short enough to stay under K8s 63-char limit.
     /// </summary>
     internal static string GenerateJobName(Guid workItemId) =>
-        $"caa-agent-{workItemId:N}"[..21]; // "caa-agent-" (10) + 11 hex chars = 21 total
+        JobNameFactory.ForWorkItem(workItemId);
 
     // ─── Eligibility gate ─────────────────────────────────────────────────────
 

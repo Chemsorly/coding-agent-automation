@@ -70,7 +70,13 @@ public sealed class AssignmentEnricherTests
         TaskType = WorkItemTaskType.Implementation,
         AgentSelector = agentSelector,
         TimeoutSeconds = 3600,
-        // New-schema: ProviderConfigs is null (identity-only payload)
+        // New-schema: PayloadSchemaVersion == 1 (identity-only payload; ProviderConfigs is null)
+        // TODO: [WARNING] PayloadSchemaVersion is not set here (field remains null). The comment above
+        // claims new-schema semantics but this fixture is old-schema by the discriminator definition.
+        // AssignmentEnricherTests call EnrichAsync directly (not via GetAssignment) so the discriminator
+        // is not exercised here — no test is broken. However, if a future test calls GetAssignment with
+        // this fixture, it will silently route to the old-schema path. Set PayloadSchemaVersion = 1 here
+        // to match the comment and prevent future misclassification.
     };
 
     private static PipelineProject MakeProject() => new()

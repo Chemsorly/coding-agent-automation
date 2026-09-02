@@ -51,8 +51,18 @@ public class HousekeepingServiceTests
         var providerMock = new Mock<IRepositoryProvider>();
         var issueProviderMock = new Mock<IIssueProvider>();
         var runsMock = new Mock<IOrchestratorRunService>();
+        var activeRunList = (activeRuns ?? Enumerable.Empty<PipelineRun>()).ToList();
         runsMock.Setup(r => r.GetActiveRuns())
-                .Returns((activeRuns ?? Enumerable.Empty<PipelineRun>()).ToList().AsReadOnly());
+                .Returns(activeRunList.AsReadOnly());
+        // Also set up the async branch-name method, which HousekeepingService uses since #2270.
+        // The default interface implementation derives from GetActiveRuns(), but Moq does not
+        // automatically execute default interface members — we must set it up explicitly.
+        var activeBranches = activeRunList
+            .Where(r => r.BranchName != null)
+            .Select(r => r.BranchName!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(activeBranches);
 
         var svc = new HousekeepingService(runsMock.Object, Log.Logger);
         svc.FireAndForget = task => task;
@@ -123,6 +133,58 @@ public class HousekeepingServiceTests
         await ExecAsync(svc, provider, issues, [MakePr(1, branch: "feature/pr-1")]);
 
         provider.Verify(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── ExecuteAsync_BranchUpdate_BranchIsActive_IsSkipped ───────────────────
+
+    /// <summary>
+    /// Acceptance-criteria test (Issue #2270): asserts UpdatePullRequestBranchAsync is never
+    /// called when <c>activeRunBranches</c> contains the PR's branch name.
+    /// The active run is injected via IOrchestratorRunService.GetActiveRuns() (in-process path).
+    /// See also <see cref="SchedulerRunQueryServiceTests"/> for the Scheduler-specific variant
+    /// that exercises the API-backed override of GetActiveRunBranchesAsync.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_BranchUpdate_BranchIsActive_IsSkipped()
+    {
+        // Arrange: PR #1 is behind base, but its branch has an active pipeline run.
+        var activeBranch = "feature/auto-42-my-feature";
+        var (svc, provider, issues, _) = Create(activeRuns: [ActiveRun(activeBranch)]);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+
+        // Act
+        await ExecAsync(svc, provider, issues, [MakePr(1, branch: activeBranch)]);
+
+        // Assert: branch update must be skipped
+        provider.Verify(
+            p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "UpdatePullRequestBranchAsync must not be called when the PR's branch has an active run");
+    }
+
+    /// <summary>
+    /// Complementary test: a PR on a *different* branch from the active run is still updated.
+    /// Guards against a "any active run → skip all PRs" regression.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_BranchUpdate_DifferentBranchIsActive_ProceedsWithUpdate()
+    {
+        // Arrange: active run is on a different branch from the PR being evaluated.
+        var (svc, provider, issues, _) = Create(activeRuns: [ActiveRun("feature/auto-99-other")]);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        // Act
+        await ExecAsync(svc, provider, issues, [MakePr(1, branch: "feature/auto-42-my-feature")]);
+
+        // Assert: branch update proceeds for the unrelated PR
+        provider.Verify(
+            p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "UpdatePullRequestBranchAsync must be called when only a different branch is active");
     }
 
     // ── Blocked / Unknown → slot kept ────────────────────────────────────────
@@ -231,7 +293,7 @@ public class HousekeepingServiceTests
 
         selectedPrs.Should().HaveCountGreaterThan(1,
             "with random selection, both PR #10 and PR #20 should be selected at least once across 20 trials");
-        // TODO: HaveCountGreaterThan(1) only confirms diversity, not fairness — a heavily biased shuffle (e.g.,
+        // NOTE: HaveCountGreaterThan(1) only confirms diversity, not fairness — a heavily biased shuffle (e.g.,
         // 19 of 20 selections always picking PR #10) would still pass. Consider asserting that each candidate
         // appears in at least some minimum fraction of trials if stricter distribution validation is needed.
     }
@@ -359,28 +421,45 @@ public class HousekeepingServiceTests
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── GetActiveRuns throws → continues ─────────────────────────────────────
+    // ── GetActiveRunBranchesAsync throws → conservative skip ──────────────────
 
     [Fact]
-    public async Task ExecuteAsync_GetActiveRunsThrows_ContinuesWithEmptySet()
+    public async Task ExecuteAsync_GetActiveRunsThrows_SkipsBranchUpdatesConservatively()
     {
         var providerMock = new Mock<IRepositoryProvider>();
         var issuesMock = new Mock<IIssueProvider>();
         var runsMock = new Mock<IOrchestratorRunService>();
-        runsMock.Setup(r => r.GetActiveRuns()).Throws(new InvalidOperationException("DB down"));
+        // Simulate failure of the active-branch lookup (e.g. API down in Scheduler deployment).
+        runsMock.Setup(r => r.GetActiveRunBranchesAsync(It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("API down"));
 
         var svc = new HousekeepingService(runsMock.Object, Log.Logger);
         svc.FireAndForget = task => task;
 
         providerMock.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
                     .ReturnsAsync(PrMergeabilityStatus.Behind);
-        providerMock.Setup(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()))
-                    .Returns(Task.CompletedTask);
 
-        await svc.ExecuteAsync(providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
-            [MakePr(1)], 1, false, 60, CancellationToken.None);
+        // Act: must not throw
+        var ex = await Record.ExceptionAsync(() =>
+            svc.ExecuteAsync(providerMock.Object, RepoId, issuesMock.Object, IssueProviderId,
+                [MakePr(1)], 1, false, 60, CancellationToken.None));
 
-        providerMock.Verify(p => p.UpdatePullRequestBranchAsync(1, It.IsAny<CancellationToken>()), Times.Once);
+        ex.Should().BeNull("HousekeepingService must not propagate GetActiveRunBranchesAsync exceptions");
+
+        // Assert: conservative fallback — branch update must be SKIPPED, not called.
+        // Requirement: "If branch name data is unavailable, housekeeping MUST default to
+        // conservative behavior: skip branch updates for PRs where branch state cannot be confirmed."
+        providerMock.Verify(
+            p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "UpdatePullRequestBranchAsync must not be called when active-run branch data is unavailable");
+        // NOTE: This test only asserts the Step 6b (branch update) path of the conservative
+        //   fallback. The activeRunBranchesUnavailable flag also gates the Step 6a rework-swap path
+        //   (if (activeRunBranchesUnavailable || activeRunBranches.Contains(pr.BranchName))).
+        //   A regression that removes the flag check from Step 6a while leaving Step 6b intact
+        //   would pass all tests. Add a complementary test with a Conflicted PR that asserts
+        //   the rework-swap (label change / TriggerReworkAsync) is also skipped when
+        //   GetActiveRunBranchesAsync throws.
     }
 
     // ── Limit = 0 → clamped to 1 ─────────────────────────────────────────────
@@ -795,5 +874,50 @@ public class HousekeepingServiceTests
 
         ex.Should().BeNull("ListAgentBranches failure must be swallowed");
         provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Conflicted + agent:epic-review → no rework swap ───────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_ConflictedPr_IssueWithEpicReview_SkipsReworkSwap()
+    {
+        var (svc, provider, issues, _) = Create();
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+        provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)["42"]);
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", AgentLabels.EpicReview));
+
+        await ExecAsync(svc, provider, issues, [MakePr(1)]);
+
+        // TODO: also verify RemoveLabelAsync is never called — SwapAsync invokes both Remove+Add, so a
+        // regression that removes the label but correctly guards the add would not be caught here.
+        // Pre-existing gap shared with ExecuteAsync_ConflictedPr_IssueAgentInProgress_SkipsSwap.
+        issues.Verify(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "issue has agent:epic-review — awaiting human review, must not be re-queued for rework");
+        issues.Verify(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "issue was fetched (guard fired after fetch, not before)");
+    }
+
+    // ── Branch with agent:epic-review issue → not deleted ────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_BranchWithEpicReviewIssue_NotDeleted()
+    {
+        var (svc, provider, issues, _) = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}42-epic-decomp";
+
+        provider.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", AgentLabels.EpicReview));
+
+        await ExecAsync(svc, provider, issues, [], branchCleanup: true, intervalMinutes: 0);
+
+        provider.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "issue has agent:epic-review — awaiting human review, branch must not be deleted");
     }
 }

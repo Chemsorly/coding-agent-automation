@@ -151,17 +151,17 @@ public static class WorkItemEndpoints
     /// <item>
     /// <term>Old schema (full snapshot)</term>
     /// <description>
-    /// Work items created before #2171: <c>Payload</c> contains a full <see cref="JobDistributionRequest"/>
+    /// Work items created before #2221: <c>Payload</c> contains a full <see cref="JobDistributionRequest"/>
     /// including <c>ProviderConfigs</c>, <c>QualityGateConfigs</c>, etc. Detected by
-    /// <c>ProviderConfigs != null</c>. Served directly from payload as before — the frozen
+    /// <c>PayloadSchemaVersion == null</c>. Served directly from payload as before — the frozen
     /// snapshot is returned as-is (tokens may be expired for long-queued items).
     /// </description>
     /// </item>
     /// <item>
     /// <term>New schema (minimal identity)</term>
     /// <description>
-    /// Work items created after #2171: <c>Payload</c> contains only identity fields
-    /// (<c>ProviderConfigs == null</c>). Mutable config is fetched fresh from the database
+    /// Work items created after #2221: <c>Payload</c> contains only identity fields
+    /// (<c>PayloadSchemaVersion == 1</c>). Mutable config is fetched fresh from the database
     /// at assignment time via <see cref="AssignmentEnricher"/>, vending fresh tokens and
     /// picking up the latest steering, QG, and pipeline configuration.
     /// </description>
@@ -198,30 +198,22 @@ public static class WorkItemEndpoints
             return TypedResults.NotFound();
 
         // ── Backward-compatibility: detect payload schema ─────────────────
-        // Old schema: ProviderConfigs != null → serve from frozen snapshot.
-        // New schema: ProviderConfigs == null → fresh-fetch all mutable config.
-        // NOTE: [WARNING] The null-discriminator is fragile: an old-schema row where ProviderConfigs
-        // happened to deserialize as null (serialization bug, manually inserted row, future
-        // [JsonIgnore] refactor) would be misclassified as new-schema and enter the enrichment path.
-        // A versioned discriminator field (e.g., PayloadSchemaVersion) would eliminate the ambiguity.
-        // TODO: Restore the versioned PayloadSchemaVersion discriminator (was: PayloadSchemaVersion == 1)
-        // that was removed in the #2172 refactor. The null-ProviderConfigs signal is a fragile fallback.
-        // Either set PayloadSchemaVersion = 1 in BuildMinimalPayload and use it here, or remove the
-        // field and its documentation to prevent the mismatch. Consider splitting this into its own PR.
-        if (request.ProviderConfigs is null && assignmentEnricher is not null)
+        // Old schema: PayloadSchemaVersion == null → serve from frozen snapshot.
+        // New schema: PayloadSchemaVersion == 1  → fresh-fetch all mutable config.
+        if (request.PayloadSchemaVersion == 1 && assignmentEnricher is not null)
             request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
-        // TODO: When assignmentEnricher is null and request.ProviderConfigs is null (new-schema path),
+        // TODO: When assignmentEnricher is null and request.PayloadSchemaVersion == 1 (new-schema path),
         // enrichment is silently skipped and an identity-only 200 is returned with no log output.
         // A DI misconfiguration that drops AssignmentEnricher is now undetectable from logs at this site.
         // Restore a Log.Warning when the enricher is null on the new-schema path (was present before #2172).
 
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
         // TODO: [WARNING] InjectProjectSecretsAsync is now called unconditionally for all GetAssignment
-        // requests, including old-schema requests where request.ProviderConfigs is not null. In the
+        // requests, including old-schema requests where request.PayloadSchemaVersion == null. In the
         // prior code, secret injection was inside the isNewSchema branch. Old-schema callers that log
         // or persist the full response message will now receive live ProjectSecrets where they did not
         // before, widening the exposure surface even though the endpoint already requires Operator auth.
-        // Gate this call on request.ProviderConfigs is null (new-schema path only), or document the
+        // Gate this call on request.PayloadSchemaVersion == 1 (new-schema path only), or document the
         // intentional behavior change so callers are aware secrets are now injected on all paths.
         message = await InjectProjectSecretsAsync(message, request, projectStore, ct);
 
@@ -229,7 +221,7 @@ public static class WorkItemEndpoints
     }
 
     /// <summary>
-    /// Enriches a new-schema request (ProviderConfigs == null) by fetching mutable config fresh
+    /// Enriches a new-schema request (PayloadSchemaVersion == 1) by fetching mutable config fresh
     /// from the database. Resolves the project for steering + config override context, falling
     /// back to a minimal stub for project-less items.
     /// If enrichment fails, returns the original request as a best-effort degraded response.
@@ -302,6 +294,12 @@ public static class WorkItemEndpoints
     /// Validates transition via WorkItemTransitionService, updates in-memory state.
     /// 200, 400 (invalid transition), or 404.
     /// </summary>
+    // TODO: PostStatus takes WorkItemTransitionService as a concrete type because TransitionDetailedAsync
+    // is not declared on any interface (IWorkItemTransitionService only exposes TransitionIfAsync).
+    // This prevents interface-level mocking of the transition service in tests; callers must use the
+    // concrete class with an in-memory DB. Consider adding TransitionDetailedAsync to an interface
+    // (e.g. IWorkItemTransitionService or a new IWorkItemTransitionDetailedService) so PostStatus can
+    // be tested with pure mocks and to allow future DI substitution.
     internal static async Task<IResult> PostStatus(
         Guid id,
         WorkItemStatusRequest request,
@@ -311,50 +309,54 @@ public static class WorkItemEndpoints
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
         CancellationToken ct = default)
     {
-        var success = await transitionService.TransitionAsync(
+        var transitionResult = await transitionService.TransitionDetailedAsync(
             id, request.Status,
             mutate: entity => ApplyStatusMutation(entity, request),
             ct: ct);
 
-        if (!success)
+        if (transitionResult == TransitionResult.NotFound)
+            return TypedResults.NotFound();
+
+        if (transitionResult == TransitionResult.Rejected)
+            return TypedResults.BadRequest("Invalid status transition");
+
+        // Only drive lifecycle events and emit telemetry on an ACTUAL state change.
+        // For idempotent no-ops (AlreadyAtTarget), fall through to Ok() silently.
+        //
+        // FailRunAsync / CancelRunAsync trigger label-swap, dedup-guard, and history writes.
+        // Calling them on a repeated PostStatus (e.g. after a leadership flip that clears the
+        // jobcontroller's reconciledTerminalIds cache) risks double label swaps and spurious
+        // history entries — so they must be gated on TransitionResult.Transitioned, not on
+        // success==true as before (which included AlreadyAtTarget).
+        if (transitionResult == TransitionResult.Transitioned)
         {
-            if (dbFactory is not null)
+            // For terminal transitions, drive the run through RunLifecycleManager so history,
+            // label-swap, registry clear, and dedup-guard are all updated — mirrors what
+            // AgentJobLifecycleService does for agent-reported completions. Without this,
+            // infrastructure-killed runs (agent disconnect, reconciliation timeout) never appear
+            // in IPipelineRunHistoryService and WaitForHistoryAsync in E2E tests times out.
+            if (request.Status == WorkItemStatus.Failed)
             {
-                await using var db = await dbFactory.CreateDbContextAsync(ct);
-                var exists = await db.WorkItems.AnyAsync(w => w.Id == id, ct);
-                if (!exists)
-                    return TypedResults.NotFound();
+                var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
+                await runLifecycleManager.FailRunAsync(
+                    new RunId(id.ToString()),
+                    failureReason,
+                    ct,
+                    CodingAgentWebUI.Pipeline.Models.FailureReason.InfrastructureFailure);
+            }
+            else if (request.Status == WorkItemStatus.Cancelled)
+            {
+                await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
             }
 
-            return TypedResults.BadRequest("Invalid status transition");
+            // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
+            // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
+            // Pass CancellationToken.None because the task runs independently of the HTTP request
+            // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
+            // warnings when ASP.NET Core cancels the token as soon as the response is sent.
+            if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
         }
-
-        // For terminal transitions, drive the run through RunLifecycleManager so history,
-        // label-swap, registry clear, and dedup-guard are all updated — mirrors what
-        // AgentJobLifecycleService does for agent-reported completions. Without this,
-        // infrastructure-killed runs (agent disconnect, reconciliation timeout) never appear
-        // in IPipelineRunHistoryService and WaitForHistoryAsync in E2E tests times out.
-        if (request.Status == WorkItemStatus.Failed)
-        {
-            var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
-            await runLifecycleManager.FailRunAsync(
-                new RunId(id.ToString()),
-                failureReason,
-                ct,
-                CodingAgentWebUI.Pipeline.Models.FailureReason.InfrastructureFailure);
-        }
-        else if (request.Status == WorkItemStatus.Cancelled)
-        {
-            await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
-        }
-
-        // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
-        // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
-        // Pass CancellationToken.None because the task runs independently of the HTTP request
-        // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
-        // warnings when ASP.NET Core cancels the token as soon as the response is sent.
-        if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-            _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
 
         return TypedResults.Ok();
     }
@@ -410,7 +412,7 @@ public static class WorkItemEndpoints
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
-            PriorityWeight = string.Equals(request.InitiatedBy, "manual", StringComparison.Ordinal) ? 100 : 0,
+            PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
             // Capture the W3C traceparent from the current API span so the worker K8s Job
             // can restore it and attach its spans to this trace rather than starting a new root.
             // Activity.Current here is the ASP.NET Core request span — the API span that the
@@ -521,13 +523,14 @@ public static class WorkItemEndpoints
                 }
                 : null,
 
-            // All mutable config intentionally omitted (null). Fields not listed above
-            // (ProviderConfigs, PipelineConfiguration, QualityGateConfigs, ReviewerConfigs,
+            // Schema version discriminator — marks this as new-schema (minimal identity payload).
+            // GetAssignment uses PayloadSchemaVersion == 1 to detect new-schema rows and trigger
+            // AssignmentEnricher. All mutable config intentionally omitted (null). Fields not listed
+            // above (ProviderConfigs, PipelineConfiguration, QualityGateConfigs, ReviewerConfigs,
             // McpServers, RepoSteeringContent, ProjectSteeringContent, IssueComments,
             // ParsedIssue, ExistingAnalysis, ResolvedProfileId, AgentProviderConfigId)
-            // are left at their default null values and re-fetched at assignment time by
-            // AssignmentEnricher. The absence of ProviderConfigs is the new-schema signal
-            // detected in GetAssignment.
+            // are left at their default null values and re-fetched at assignment time by AssignmentEnricher.
+            PayloadSchemaVersion = 1,
         };
     }
 

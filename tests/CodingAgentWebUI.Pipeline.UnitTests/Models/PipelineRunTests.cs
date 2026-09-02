@@ -146,6 +146,7 @@ public class PipelineRunTests
             Url = "https://github.com/org/repo/pull/42",
             IsDraft = false
         };
+        run.RunMode = RunMode.Rework;
         run.Feedback = new RunFeedback
         {
             Outcome = FeedbackOutcome.Success,
@@ -162,6 +163,7 @@ public class PipelineRunTests
         };
         run.Metrics.PhaseBreakdown["analysis"] = new PhaseUsage(10_000, 0.25m);
         run.Metrics.PhaseBreakdown["codegen"] = new PhaseUsage(140_000, 3.25m);
+        run.BranchName = "feature/auto-2270-fix";
 
         // Act
         var summary = run.ToSummary();
@@ -192,7 +194,7 @@ public class PipelineRunTests
         summary.AgentId.Should().Be("agent-dotnet-1");
         summary.InitiatedBy.Should().Be("loop");
         summary.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
-        summary.IsRework.Should().BeTrue();
+        summary.RunMode.Should().Be(RunMode.Rework);
         summary.FailureReason.Should().BeNull();
         summary.Feedback.Should().BeSameAs(run.Feedback);
         summary.TotalTokens.Should().Be(150_000);
@@ -206,6 +208,7 @@ public class PipelineRunTests
         summary.DecompositionSubIssuesAttempted.Should().Be(6);
         summary.ProjectName.Should().Be("MyProject");
         summary.DecompositionSource.Should().BeNull(); // CreateReview does not set DecompositionSource
+        summary.BranchName.Should().Be("feature/auto-2270-fix");
     }
 
     [Fact]
@@ -387,7 +390,7 @@ public class PipelineRunTests
             AgentId = "agent-dotnet-1",
             InitiatedBy = "loop",
             AnalysisRecommendation = AnalysisGateResult.Ready,
-            IsRework = true,
+            RunMode = RunMode.Rework,
             FailureReason = null,
             Feedback = new RunFeedback
             {
@@ -454,7 +457,7 @@ public class PipelineRunTests
         deserialized.AgentId.Should().Be(original.AgentId);
         deserialized.InitiatedBy.Should().Be(original.InitiatedBy);
         deserialized.AnalysisRecommendation.Should().Be(original.AnalysisRecommendation);
-        deserialized.IsRework.Should().Be(original.IsRework);
+        deserialized.RunMode.Should().Be(original.RunMode);
         deserialized.FailureReason.Should().Be(original.FailureReason);
         deserialized.TotalTokens.Should().Be(original.TotalTokens);
         deserialized.TotalCost.Should().Be(original.TotalCost);
