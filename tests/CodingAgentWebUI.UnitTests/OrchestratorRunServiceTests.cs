@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.Time.Testing;
 using Moq;
@@ -385,6 +386,82 @@ public class OrchestratorRunServiceTests
         // Advance past TTL from second mark
         fakeTime.Advance(TimeSpan.FromSeconds(25));
         service.WasRecentlyCompleted("issue-1", "provider-1").Should().BeFalse();
+    }
+
+    #endregion
+
+    #region GetActiveRunBranchesAsync — default interface method
+
+    /// <summary>
+    /// Verifies that the default interface method GetActiveRunBranchesAsync derives
+    /// its result from GetActiveRuns() — exercising the DIM body in IOrchestratorRunService.
+    /// OrchestratorRunService does not override this method so it runs the DIM code.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveRunBranchesAsync_DefaultImpl_DerivesFromGetActiveRuns()
+    {
+        var service = CreateService();
+        var run1 = new PipelineRun
+        {
+            RunId = "run-a",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Run A",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            BranchName = "feature/auto-1-task-a"
+        };
+        var run2 = new PipelineRun
+        {
+            RunId = "run-b",
+            IssueIdentifier = "org/repo#2",
+            IssueTitle = "Run B",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            BranchName = null // branch not yet set
+        };
+        service.AddRun(run1);
+        service.AddRun(run2);
+
+        // Cast to interface to invoke the default interface method (C# DIMs are only callable via the interface type)
+        var branches = await ((IOrchestratorRunService)service).GetActiveRunBranchesAsync(CancellationToken.None);
+
+        branches.Should().ContainSingle(
+            "only runs with a non-null BranchName should be included");
+        branches.Should().Contain("feature/auto-1-task-a");
+    }
+
+    [Fact]
+    public async Task GetActiveRunBranchesAsync_DefaultImpl_IsCaseInsensitive()
+    {
+        var service = CreateService();
+        service.AddRun(new PipelineRun
+        {
+            RunId = "run-ci",
+            IssueIdentifier = "org/repo#3",
+            IssueTitle = "Case test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            BranchName = "Feature/Auto-99-MyFeature"
+        });
+
+        // Cast to interface to invoke the default interface method
+        var branches = await ((IOrchestratorRunService)service).GetActiveRunBranchesAsync();
+
+        branches.Contains("feature/auto-99-myfeature").Should().BeTrue(
+            "default implementation uses case-insensitive HashSet");
+        branches.Contains("FEATURE/AUTO-99-MYFEATURE").Should().BeTrue(
+            "default implementation uses case-insensitive HashSet");
+    }
+
+    [Fact]
+    public async Task GetActiveRunBranchesAsync_DefaultImpl_EmptyWhenNoActiveRuns()
+    {
+        var service = CreateService();
+
+        // Cast to interface to invoke the default interface method
+        var branches = await ((IOrchestratorRunService)service).GetActiveRunBranchesAsync();
+
+        branches.Should().BeEmpty("no active runs means no active branches");
     }
 
     #endregion

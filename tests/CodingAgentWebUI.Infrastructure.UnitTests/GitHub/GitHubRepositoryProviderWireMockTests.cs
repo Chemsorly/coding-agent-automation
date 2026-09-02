@@ -224,12 +224,9 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
     {
         StubPatch(ApiPath($"/repos/{Owner}/{Repo}/pulls/42"),
             BuildDetailedPullRequestJson(42, "feature/branch", false, true));
-        // NEW: else branch GETs the PR to check draft status; return draft:true so GraphQL is skipped
-        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/42"),
-            BuildDetailedPullRequestJson(42, "feature/branch", draft: true, mergeable: true));
 
         await using var provider = CreateProvider();
-        await provider.UpdatePullRequestAsync(42, "Updated body content", false, CancellationToken.None);
+        await provider.UpdatePullRequestAsync(42, "Updated body content", null, CancellationToken.None);
 
         var body = GetRequestBody(ApiPath($"/repos/{Owner}/{Repo}/pulls/42"));
         body.Should().Contain("Updated body content");
