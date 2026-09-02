@@ -690,4 +690,14 @@ public sealed record PipelineConfiguration
     }
     private readonly int _ciCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries;
 
+    /// <summary>
+    /// Timeout in seconds for the agent call during feedback collection (both success-path
+    /// <see cref="PullRequestFinalizationService.CollectFeedbackAsync"/> and failure-path
+    /// <c>CollectFailureFeedbackAsync</c> in <c>QualityGateExecutor</c>).
+    /// Default: 60 — matches the previous hard-coded <see cref="FeedbackConstraints.FailureFeedbackTimeoutSeconds"/>.
+    /// </summary>
+    [Key(81)]
+    [ProjectOverridable(Order = 32)]
+    public int FeedbackTimeoutSeconds { get; init; } = FeedbackConstraints.FailureFeedbackTimeoutSeconds;
+
 }
