@@ -71,16 +71,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     }
 
     /// <summary>
-    /// Creates an instance with a custom provider resolver. For testing only.
-    /// </summary>
-    internal LocalPipelineExecutor(LocalPipelineExecutorDependencies deps, IAgentProviderResolver providerResolver)
-        : this(deps)
-    {
-        ArgumentNullException.ThrowIfNull(providerResolver);
-        _providerResolver = providerResolver;
-    }
-
-    /// <summary>
     /// Executes the full pipeline for the given job assignment.
     /// Reports all progress to the orchestrator via the hub connection.
     /// </summary>
@@ -152,15 +142,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             // will be silently skipped, and brain_updates_* metrics will never be populated.
             // Review and Decomposition runs reach pre-run brain sync but never reach post-run finalization
             // (they exit at PostingFindings/PostPlan), so the absence of a brain provider is expected there.
-            if (job.RunType is not (PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
-                && string.IsNullOrEmpty(job.BrainProviderConfigId))
-            {
-                _logger.Warning(
-                    "Job {JobId} for {IssueIdentifier} has no BrainProviderConfigId configured. " +
-                    "Post-run reflection and brain sync will be skipped. " +
-                    "Set BrainProviderId on the job template to enable brain updates.",
-                    job.JobId, job.IssueIdentifier);
-            }
+            WarnIfNoBrainProvider(job);
 
             // Merge provider-specific paths into configurable blacklist AND store for hardcoded enforcement
             config = PipelineConfigurationResolver.ApplyProviderBlacklist(config, agentProvider.PipelineInjectedPaths);
@@ -341,6 +323,24 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         TotalCost = run.TotalCost,
         FinalLabel = run.FinalLabel
     };
+
+    /// <summary>
+    /// Emits a warning when an implementation-type run has no brain provider configured.
+    /// Extracted so it can be tested without going through the full <see cref="ExecuteAsync"/> pipeline
+    /// (which emits pipeline telemetry counters that pollute cross-assembly MeterListener tests).
+    /// </summary>
+    internal void WarnIfNoBrainProvider(JobAssignmentMessage job)
+    {
+        if (job.RunType is not (PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+            && string.IsNullOrEmpty(job.BrainProviderConfigId))
+        {
+            _logger.Warning(
+                "Job {JobId} for {IssueIdentifier} has no BrainProviderConfigId configured. " +
+                "Post-run reflection and brain sync will be skipped. " +
+                "Set BrainProviderId on the job template to enable brain updates.",
+                job.JobId, job.IssueIdentifier);
+        }
+    }
 
 }
 
