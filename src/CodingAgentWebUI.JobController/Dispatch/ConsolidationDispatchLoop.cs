@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
@@ -397,9 +398,10 @@ public sealed class ConsolidationDispatchLoop
 
     /// <summary>
     /// Generates a deterministic K8s Job name from a WorkItem ID.
+    /// Delegates to <see cref="JobNameFactory.ForConsolidation"/> — the canonical definition of this format.
     /// Uses "caa-cons-" prefix to distinguish consolidation Jobs from regular agent Jobs.
     /// Format stays under the K8s 63-char label limit.
     /// </summary>
     internal static string GenerateJobName(Guid workItemId) =>
-        $"caa-cons-{workItemId:N}"[..21]; // "caa-cons-" + 12 hex chars = 21 chars
+        JobNameFactory.ForConsolidation(workItemId);
 }
