@@ -1927,7 +1927,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         // Assert — PR body was updated with feedback link
         mockRepoProvider.Verify(r => r.UpdatePullRequestAsync(99,
             It.Is<string>(body => body.Contains("## Agent Feedback") && body.Contains("issuecomment-999")),
-            false, It.IsAny<CancellationToken>()), Times.Once);
+            (bool?)null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

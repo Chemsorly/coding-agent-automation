@@ -163,6 +163,7 @@ public class PipelineRunTests
         };
         run.Metrics.PhaseBreakdown["analysis"] = new PhaseUsage(10_000, 0.25m);
         run.Metrics.PhaseBreakdown["codegen"] = new PhaseUsage(140_000, 3.25m);
+        run.BranchName = "feature/auto-2270-fix";
 
         // Act
         var summary = run.ToSummary();
@@ -207,6 +208,7 @@ public class PipelineRunTests
         summary.DecompositionSubIssuesAttempted.Should().Be(6);
         summary.ProjectName.Should().Be("MyProject");
         summary.DecompositionSource.Should().BeNull(); // CreateReview does not set DecompositionSource
+        summary.BranchName.Should().Be("feature/auto-2270-fix");
     }
 
     [Fact]

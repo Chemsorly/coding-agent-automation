@@ -103,4 +103,11 @@ public sealed class PipelineRunSummary
 
     /// <summary>Agent provider config ID for display name resolution in the UI.</summary>
     public string? AgentProviderConfigId { get; init; }
+
+    /// <summary>
+    /// Feature branch name for this run, or null if not yet set (e.g. run is still in analysis).
+    /// Populated from <see cref="PipelineRun.BranchName"/> so the active-runs API endpoint
+    /// can return it to the Scheduler for the housekeeping branch-update guard.
+    /// </summary>
+    public string? BranchName { get; init; }
 }

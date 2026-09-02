@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -12,12 +13,14 @@ namespace CodingAgentWebUI.Scheduler.Services;
 /// <b>Known limitations (Spec 047 deferred items):</b>
 /// <list type="bullet">
 ///   <item><description>
-///     <see cref="GetActiveRuns"/> always returns empty. The API's active-run endpoint does not
-///     yet expose <c>BranchName</c>, so <see cref="HousekeepingService"/>'s stale-branch
-///     exclusion guard is currently disabled. This is conservative (no false branch deletions).
+///     <see cref="GetActiveRuns"/> always returns empty. Active run state lives in the API/orchestrator
+///     process's in-memory collection. Use <see cref="GetActiveRunBranchesAsync"/> instead —
+///     it calls <c>GET /api/pipeline-runs/active-branches</c> and returns accurate branch names
+///     for the housekeeping branch-update guard.
 ///   </description></item>
 ///   <item><description>
-///     <see cref="IsIssueBeingProcessed"/> always returns false for the same reason.
+///     <see cref="IsIssueBeingProcessed"/> always returns false because in-memory run state is
+///     unavailable in the Scheduler process.
 ///     <see cref="OrphanedLabelRecoveryService"/> uses Defense 3 (<see cref="IPipelineApiWorkItemClient.IsIssueDistributedAsync"/>)
 ///     as its primary active-run exclusion check, with Defense 1 (re-fetch current labels from GitHub)
 ///     as the terminal-label guard. Defense 2 (recently-completed in-memory cache) is inoperative here
@@ -30,11 +33,11 @@ namespace CodingAgentWebUI.Scheduler.Services;
 ///     populated — Defense 2 of orphan recovery is inoperative in this process.
 ///   </description></item>
 /// </list>
-/// To fix all three: add <c>BranchName</c> to the active-run API response and expose
-/// <c>IPipelineApiRunHistoryClient.GetActiveRunsAsync()</c>.
 /// </summary>
 public sealed class SchedulerRunQueryService : IOrchestratorRunService
 {
+    private readonly IPipelineApiRunHistoryClient _runHistoryClient;
+
     // Local in-memory recently-completed cache (IssueIdentifier:ProviderConfigId → expiry).
     // Note: populated only if MarkRecentlyCompleted is called in this process — currently
     // it is only called by RunLifecycleManager in the API, so this cache is always empty.
@@ -42,12 +45,24 @@ public sealed class SchedulerRunQueryService : IOrchestratorRunService
     private const int RecentlyCompletedTtlSeconds = 120;
     private readonly Lock _lock = new();
 
+    /// <summary>
+    /// Constructs a <see cref="SchedulerRunQueryService"/> backed by the given API client.
+    /// </summary>
+    /// <param name="runHistoryClient">
+    /// HTTP client for <c>/api/pipeline-runs</c>. Used by
+    /// <see cref="GetActiveRunBranchesAsync"/> to fetch active-run branch names.
+    /// </param>
+    public SchedulerRunQueryService(IPipelineApiRunHistoryClient runHistoryClient)
+    {
+        ArgumentNullException.ThrowIfNull(runHistoryClient);
+        _runHistoryClient = runHistoryClient;
+    }
+
     // ── Read methods used by HousekeepingService and OrphanedLabelRecoveryService ──
 
     /// <summary>
-    /// Always returns empty until the API's active-run endpoint exposes BranchName.
-    /// HousekeepingService conservatively skips branch deletion when no active branches
-    /// are tracked — no false deletions occur.
+    /// Always returns empty — in-memory run state is unavailable in the Scheduler process.
+    /// Use <see cref="GetActiveRunBranchesAsync"/> to obtain active branch names via the API.
     /// </summary>
     public IReadOnlyList<PipelineRun> GetActiveRuns() => [];
 
@@ -87,6 +102,19 @@ public sealed class SchedulerRunQueryService : IOrchestratorRunService
         {
             _recentlyCompleted[key] = DateTimeOffset.UtcNow.AddSeconds(RecentlyCompletedTtlSeconds);
         }
+    }
+
+    /// <summary>
+    /// Calls <c>GET /api/pipeline-runs/active-branches</c> to retrieve branch names of all
+    /// active pipeline runs from the orchestrator process.
+    /// Overrides the default interface implementation so the housekeeping branch-update guard
+    /// works correctly in the Scheduler deployment — the in-memory <see cref="GetActiveRuns"/>
+    /// is always empty here, but the API returns the live set.
+    /// </summary>
+    public async Task<HashSet<string>> GetActiveRunBranchesAsync(CancellationToken ct = default)
+    {
+        var branches = await _runHistoryClient.GetActiveBranchesAsync(ct);
+        return branches.ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     // ── Write methods — not used by Scheduler ──
