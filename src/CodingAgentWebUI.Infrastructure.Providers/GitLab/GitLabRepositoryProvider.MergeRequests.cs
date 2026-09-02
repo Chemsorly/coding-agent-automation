@@ -172,7 +172,7 @@ public partial class GitLabRepositoryProvider
     }
 
     /// <inheritdoc />
-    public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct)
+    public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool? markReady, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(body);
 
@@ -193,12 +193,13 @@ public partial class GitLabRepositoryProvider
             };
 
             // Remove "Draft: " prefix from title when marking ready
-            if (markReady && mr.Title.StartsWith("Draft: ", StringComparison.Ordinal))
+            if (markReady == true && mr.Title.StartsWith("Draft: ", StringComparison.Ordinal))
             {
                 update.Title = mr.Title["Draft: ".Length..];
             }
-            // Add "Draft: " prefix when converting to draft (if not already present)
-            else if (!markReady && !mr.Title.StartsWith("Draft: ", StringComparison.Ordinal))
+            // Add "Draft: " prefix when explicitly converting to draft (if not already present).
+            // null = body-only update; leave draft state untouched.
+            else if (markReady == false && !mr.Title.StartsWith("Draft: ", StringComparison.Ordinal))
             {
                 update.Title = $"Draft: {mr.Title}";
             }
