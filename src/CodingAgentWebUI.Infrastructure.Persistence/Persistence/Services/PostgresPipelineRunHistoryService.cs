@@ -233,7 +233,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
             var batch = entities
                 .Select(DeserializeSummary)
-                .Where(s => s is not null && !s.InitiatedBy.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal))
+                .Where(s => s is not null && s.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) != true)
                 .Where(s => include is null || include(s!))
                 .Select(s => s!)
                 .ToList();
@@ -294,7 +294,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         // even when SummaryJson is null or corrupt — consolidation ghost entries are excluded in both paths.
         return entities
             .Select(DeserializeSummary)
-            .Where(s => s is not null && !s.InitiatedBy.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal))
+            .Where(s => s is not null && s.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) != true)
             .Select(s => s!)
             .ToList();
     }

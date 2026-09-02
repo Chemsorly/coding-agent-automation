@@ -17,6 +17,9 @@ public static class InitiatedByConstants
 {
     // ── Automated dispatch loop ──────────────────────────────────────────────
 
+    /// <summary>Common prefix for all loop-dispatched run types (e.g. <c>"loop:issue"</c>).</summary>
+    public const string LoopPrefix = "loop:";
+
     /// <summary>Issue-implementation run dispatched by the main polling loop.</summary>
     public const string LoopIssue = "loop:issue";
 
