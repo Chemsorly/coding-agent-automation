@@ -100,10 +100,11 @@ public class InlineCommentSettingsTests
     }
 
     [Fact]
-    public void CodeReviewConfiguration_WithLegacyReviewIsolation_IgnoresFieldGracefully()
+    public void CodeReviewConfiguration_WithLegacyReviewIsolation_MapsSharedToIsolated()
     {
-        // Backward compatibility: old JSON configs may still contain ReviewIsolation.
-        // System.Text.Json silently ignores unknown properties.
+        // Backward compatibility: old JSON configs may still contain "Shared" for ReviewIsolation.
+        // ReviewIsolationJsonConverter (registered at the enum type level) maps unknown string
+        // values — including the legacy "Shared" — to Isolated without throwing.
         var json = """
         {
             "MaxIterations": 3,
@@ -116,6 +117,7 @@ public class InlineCommentSettingsTests
         config.Should().NotBeNull();
         config!.MaxIterations.Should().Be(3);
         config.InlineComments.Should().NotBeNull();
+        config.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
     }
 
     [Fact]
