@@ -217,6 +217,8 @@ public class SettingsResolutionDeterminismPropertyTests
             result.BrainReadOnly.Should().Be(project.BrainReadOnly.Value);
         if (project.CiCancelledMoveMaxRetries.HasValue)
             result.CiCancelledMoveMaxRetries.Should().Be(project.CiCancelledMoveMaxRetries.Value);
+        if (project.FeedbackTimeoutSeconds.HasValue)
+            result.FeedbackTimeoutSeconds.Should().Be(project.FeedbackTimeoutSeconds.Value);
     }
 }
 
@@ -343,6 +345,7 @@ public class SettingsResolutionArbitraries
             BlacklistedPaths = blacklistedPaths,
             BrainReadOnly = brainReadOnly,
             CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,
+            FeedbackTimeoutSeconds = 60,
         };
 
     private static Gen<PipelineProject?> GenProject() =>
@@ -380,6 +383,7 @@ public class SettingsResolutionArbitraries
             (1, GenBlacklistedPaths().Select<IReadOnlyList<string>, IReadOnlyList<string>?>(p => p)))
         from brainReadOnly in Gen.Elements<bool?>(null, true, false)
         from ciCancelledMoveMaxRetries in Gen.Elements<int?>(null, 0, 3, 7, 10)
+        from feedbackTimeoutSeconds in Gen.Elements<int?>(null, 60, 90, 120)
         select new PipelineProject
         {
             Id = Guid.NewGuid().ToString(),
@@ -409,6 +413,7 @@ public class SettingsResolutionArbitraries
             BlacklistedPaths = blacklistedPaths,
             BrainReadOnly = brainReadOnly,
             CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,
+            FeedbackTimeoutSeconds = feedbackTimeoutSeconds,
         };
 
     public static Arbitrary<SettingsResolutionInput> SettingsResolutionInputArb()
