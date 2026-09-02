@@ -330,6 +330,7 @@ public class PipelineStepTests
 
         Assert.Equal(StepResult.Continue, result);
         _run.LinkedPullRequest.Should().Be(pr);
+        _run.RunMode.Should().Be(RunMode.Rework);
     }
 
     [Fact]
@@ -347,6 +348,7 @@ public class PipelineStepTests
 
         Assert.Equal(StepResult.Continue, result);
         _run.LinkedPullRequest.Should().BeNull();
+        _run.RunMode.Should().Be(RunMode.Retry);
         _repoProvider.Verify(p => p.ClosePullRequestAsync(7, It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -375,6 +377,7 @@ public class PipelineStepTests
 
         Assert.Equal(StepResult.Continue, result);
         _run.LinkedPullRequest.Should().BeNull();
+        _run.RunMode.Should().Be(RunMode.New);
     }
 
     [Fact]
@@ -389,6 +392,7 @@ public class PipelineStepTests
 
         Assert.Equal(StepResult.Continue, result);
         _run.LinkedPullRequest.Should().BeNull();
+        _run.RunMode.Should().Be(RunMode.New, "detection failure falls back to new-issue flow leaving RunMode unchanged");
     }
 
     [Fact]
@@ -410,6 +414,7 @@ public class PipelineStepTests
 
         Assert.Equal(StepResult.Continue, result);
         _run.LinkedPullRequest.Should().BeNull();
+        _run.RunMode.Should().Be(RunMode.Retry);
         _repoProvider.Verify(p => p.ClosePullRequestAsync(10, It.IsAny<CancellationToken>()), Times.Once);
         _repoProvider.Verify(p => p.ClosePullRequestAsync(12, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -433,8 +438,9 @@ public class PipelineStepTests
 
         Assert.Equal(StepResult.Continue, result);
         _run.LinkedPullRequest.Should().Be(prs[0]);
+        _run.RunMode.Should().Be(RunMode.Rework);
         _repoProvider.Verify(p => p.ClosePullRequestAsync(11, It.IsAny<CancellationToken>()), Times.Once);
-        // TODO: Add Times.Never verification for non-draft PR #8 to ensure it is not incorrectly closed
+        _repoProvider.Verify(p => p.ClosePullRequestAsync(8, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -454,6 +460,7 @@ public class PipelineStepTests
 
         Assert.Equal(StepResult.Continue, result);
         _run.LinkedPullRequest.Should().Be(prs[1]);
+        _run.RunMode.Should().Be(RunMode.Rework);
     }
 
     [Fact]
@@ -475,6 +482,7 @@ public class PipelineStepTests
 
         Assert.Equal(StepResult.Continue, result);
         _run.LinkedPullRequest.Should().Be(prs[0]);
+        _run.RunMode.Should().Be(RunMode.Rework);
         _repoProvider.Verify(p => p.ClosePullRequestAsync(15, It.IsAny<CancellationToken>()), Times.Once);
         _repoProvider.Verify(p => p.ClosePullRequestAsync(5, It.IsAny<CancellationToken>()), Times.Never);
     }
