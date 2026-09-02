@@ -219,6 +219,18 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", DateTimeOffset.UtcNow.ToString("O"));
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
+        else if (run?.AgentId is not null)
+        {
+            // Fallback: agent lookup returned null (connection dropped, hash expired) but we know the
+            // AgentId from the run. Attempt to clear agent state to prevent it from being locked in
+            // Busy indefinitely until ReconciliationService.EnforceTimeoutsAsync times it out.
+            var agentId = new AgentId(run.AgentId);
+            _ = _facade.UpdateAgentFieldAsync(agentId, "activeJobId", null);
+            _facade.TransitionStatus(agentId, AgentStatus.Idle);
+            _logger.Warning(
+                "HandleJobCompletedAsync: agent lookup returned null for job {JobId} (agentId={AgentId}) — clearing state via run fallback to prevent Busy lock",
+                jobId.Value, run.AgentId);
+        }
 
         // Non-fatal post-completion bookkeeping: label swap and feedback comment.
         // These may involve external API calls and can be slow — executed after agent

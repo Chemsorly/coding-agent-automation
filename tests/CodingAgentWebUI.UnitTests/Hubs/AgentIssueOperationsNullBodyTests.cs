@@ -89,7 +89,7 @@ public sealed class AgentIssueOperationsNullBodyTests
             It.Is<string>(body =>
                 body.Contains("Local PR body without feedback section") &&
                 body.Contains("## Agent Feedback")),
-            false,
+            (bool?)null,
             It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -132,7 +132,7 @@ public sealed class AgentIssueOperationsNullBodyTests
         mockRepo.Verify(r => r.UpdatePullRequestAsync(
             99,
             It.Is<string>(body => body.Contains("## Agent Feedback")),
-            false,
+            (bool?)null,
             It.IsAny<CancellationToken>()),
             Times.Once);
     }

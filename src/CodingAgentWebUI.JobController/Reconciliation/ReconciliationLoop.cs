@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
@@ -204,7 +205,14 @@ public sealed class ReconciliationLoop
                 // a different naming format ("caa-{first8hex}") than the job controller's DispatchLoop
                 // ("caa-agent-{first11hex}"). Recomputing via DispatchLoop.GenerateJobName would miss
                 // jobs created by the API path (consolidation/brain runs) and leave live pods running.
-                var jobName = item.K8sJobName ?? DispatchLoop.GenerateJobName(item.Id);
+                //
+                // Null-fallback: K8sJobName may be null for legacy WorkItems dispatched before the field
+                // was persisted. Falling back to JobNameFactory.ForWorkItem (caa-agent-{first11hex}) is
+                // intentional for the job-controller dispatch path only. If K8sJobName is null AND the
+                // item was dispatched by the API path (brain/consolidation), this fallback will produce
+                // the wrong name and the K8s Job will not be found or deleted — a known limitation
+                // documented here rather than silently inherited from DispatchLoop.GenerateJobName.
+                var jobName = item.K8sJobName ?? JobNameFactory.ForWorkItem(item.Id);
 
                 WorkDistributionTelemetry.LogTerminalStatus(
                     item.Id, WorkItemStatus.Failed,
@@ -270,7 +278,15 @@ public sealed class ReconciliationLoop
             // a different naming format ("caa-{first8hex}") than the job controller's DispatchLoop
             // ("caa-agent-{first11hex}"). Recomputing via DispatchLoop.GenerateJobName would miss
             // jobs created by the API path (consolidation/brain runs) and kill live pods.
-            var expectedJobName = item.K8sJobName ?? DispatchLoop.GenerateJobName(item.Id);
+            //
+            // Null-fallback: K8sJobName may be null for legacy WorkItems dispatched before the field
+            // was persisted. Falling back to JobNameFactory.ForWorkItem (caa-agent-{first11hex}) is
+            // intentional for the job-controller dispatch path only. If K8sJobName is null AND the
+            // item was dispatched by the API path (brain/consolidation), this fallback will produce
+            // the wrong name; the item will be treated as having no live Job and incorrectly marked
+            // Failed — a known limitation documented here rather than silently inherited from
+            // DispatchLoop.GenerateJobName.
+            var expectedJobName = item.K8sJobName ?? JobNameFactory.ForWorkItem(item.Id);
             if (liveJobNames.Contains(expectedJobName)) continue; // job exists, not orphaned
 
             Log.Warning("WorkItem {Id} stuck in Dispatched for >{Seconds}s with no K8s Job (issue={IssueIdentifier}) — marking Failed",
