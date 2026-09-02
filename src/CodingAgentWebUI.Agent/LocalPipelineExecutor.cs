@@ -42,7 +42,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOpenIssueContextWriter _openIssueContextWriter;
     private readonly AgentId _agentId;
-    private readonly AgentProviderResolver _providerResolver;
+    private readonly IAgentProviderResolver _providerResolver;
     private readonly PipelineExecutionContextBuilder _contextBuilder;
     private readonly Serilog.ILogger _logger;
 
@@ -68,6 +68,16 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 deps.QualityGateValidator, reporterFactory, feedbackService, _agentId, deps.Logger,
                 deps.BrainUpdateService, deps.HistoryService, finalization));
         _logger = deps.Logger;
+    }
+
+    /// <summary>
+    /// Creates an instance with a custom provider resolver. For testing only.
+    /// </summary>
+    internal LocalPipelineExecutor(LocalPipelineExecutorDependencies deps, IAgentProviderResolver providerResolver)
+        : this(deps)
+    {
+        ArgumentNullException.ThrowIfNull(providerResolver);
+        _providerResolver = providerResolver;
     }
 
     /// <summary>
