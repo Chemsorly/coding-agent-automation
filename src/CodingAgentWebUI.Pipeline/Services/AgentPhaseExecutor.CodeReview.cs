@@ -89,7 +89,7 @@ public partial class AgentPhaseExecutor
         if (config.CodeReview.MaxIterations <= 0)
             return;
 
-        // Determine which agents to run — skip review entirely if none resolved (Option B)
+        // Determine which agents to run — skip review with observable signal if none resolved (Option B)
         IReadOnlyList<ReviewAgentConfig> agents;
         if (resolvedReviewerConfigs is { Count: > 0 })
         {
@@ -97,9 +97,20 @@ public partial class AgentPhaseExecutor
         }
         else
         {
+            _logger.Warning(
+                "Pipeline {RunId} no reviewer configurations matched — review phase skipped (no configs or all disabled). " +
+                "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
+                run.RunId);
+            PipelineTelemetry.ReviewSkipped.Add(1,
+                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
             return;
         }
 
+        // TODO [WARNING]: This silent return is analogous to the empty-configs path fixed above — if
+        // ReviewerResolver.FlattenAgents returns an empty list from a non-empty resolvedReviewerConfigs
+        // (e.g., all configs have AgentNames = []), review is silently skipped with no log warning and
+        // no telemetry counter. Consider adding a _logger.Warning + PipelineTelemetry counter here,
+        // mirroring the empty-configs signal above. (Correctness review, issue #2228)
         if (agents.Count == 0)
             return;
 
