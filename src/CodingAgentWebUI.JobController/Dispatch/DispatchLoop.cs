@@ -220,6 +220,8 @@ public sealed class DispatchLoop
                     // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
                     // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting the
                     // field (issue #2129). Simply return; the next dispatch cycle will retry.
+                    WorkDistributionTelemetry.PvcPoolExhaustions.Add(1,
+                        new KeyValuePair<string, object?>("pool", "kiro"));
                     return;
                 }
 

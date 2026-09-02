@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
 using ILogger = Serilog.ILogger;
 
@@ -143,6 +144,8 @@ public sealed class ConsolidationDispatchLoop
                     // Do NOT call SafeRequeueAsync — the item is already Pending and must remain there.
                     // Calling RequeueAsync increments RetryCount on every starvation cycle, corrupting the
                     // field (issue #2129). Simply return; the next dispatch cycle will retry.
+                    WorkDistributionTelemetry.PvcPoolExhaustions.Add(1,
+                        new KeyValuePair<string, object?>("pool", "kiro"));
                     return;
                 }
 
