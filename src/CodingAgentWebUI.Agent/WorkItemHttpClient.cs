@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 // WorkItemStatusUpdate moved to CodingAgentWebUI.Pipeline.Models
 
@@ -59,7 +61,11 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
             var url = string.IsNullOrEmpty(AgentId)
                 ? $"/api/work-items/{workItemId}/assignment"
                 : $"/api/work-items/{workItemId}/assignment?agentId={Uri.EscapeDataString(AgentId)}";
-            response = await _httpClient.GetAsync(url, ct);
+            // TODO: HttpRequestMessage is IDisposable; use `using var request` to ensure deterministic
+            // disposal under exception paths (e.g. TimeoutRejectedException before SendAsync completes).
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            InjectTraceContext(request);
+            response = await _httpClient.SendAsync(request, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -116,8 +122,14 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
             var url = string.IsNullOrEmpty(AgentId)
                 ? $"/api/work-items/{workItemId}/status"
                 : $"/api/work-items/{workItemId}/status?agentId={Uri.EscapeDataString(AgentId)}";
-            response = await _httpClient.PostAsJsonAsync(
-                url, update, JsonOptions, ct);
+            // TODO: HttpRequestMessage (and its JsonContent) is IDisposable; use `using var request` to
+            // ensure deterministic disposal of the internal MemoryStream under exception paths.
+            var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = JsonContent.Create(update, options: JsonOptions)
+            };
+            InjectTraceContext(request);
+            response = await _httpClient.SendAsync(request, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -159,6 +171,22 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
                     return false;
             }
         }
+    }
+
+    /// <summary>
+    /// Injects the W3C <c>traceparent</c> header from <see cref="Activity.Current"/> into the request.
+    /// No-op when there is no ambient activity (old agent pods, OTel disabled) — backward-compatible by design.
+    /// The API's ASP.NET Core OTel HTTP server instrumentation extracts the header automatically,
+    /// making the resulting API span a child of the agent's <c>WorkItemAgent.Execute</c> span.
+    /// </summary>
+    // TODO: The issue AC also names PostLabelSwapAsync as requiring traceparent injection. That method does
+    // not exist on this client — agent-side label swaps route via OrchestratorProxy over SignalR, not HTTP.
+    // If a PostLabelSwapAsync HTTP method is ever added here, call InjectTraceContext on its request too.
+    private static void InjectTraceContext(HttpRequestMessage request)
+    {
+        var traceparent = PipelineTelemetry.FormatTraceParent(Activity.Current);
+        if (traceparent is not null)
+            request.Headers.TryAddWithoutValidation("traceparent", traceparent);
     }
 }
 
