@@ -35,6 +35,7 @@ Projects can override most general settings on a per-project basis using a nulla
 | `transientRetryDelay` | 00:00:30 | Delay between retry loop iterations when a transient provider error (`ProviderRateLimit` or `ProviderOverload`) is encountered. Default: 30 seconds. Set to zero in tests for faster execution. |
 | `heartbeatSweepIntervalSeconds` | 60 | Seconds between heartbeat monitor sweeps |
 | `heartbeatTimeoutSeconds` | 90 | Seconds without a heartbeat before an agent is considered stale |
+| `feedbackTimeoutSeconds` | 60 | Timeout in seconds for the agent call during feedback collection (both post-PR success path and post-retry-exhaustion failure path). Increase for slow models or large repositories. Configurable per project. |
 | `analysisCommitThreshold` | 30 | Number of commits on the default branch since last analysis that triggers automatic analysis refresh. Set to 0 to disable commit-count staleness detection |
 
 ### Feature Toggles

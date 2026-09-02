@@ -318,16 +318,16 @@ public partial class QualityGateExecutor
             var feedbackPrompt = FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
                 run, issue, latestReport, harnessCategories, issueCategories);
 
-            // Execute agent with UseResume = true and 60-second timeout
+            // Execute agent with UseResume = true and configured timeout
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds));
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(context.Config.FeedbackTimeoutSeconds));
 
             var agentResult = await context.AgentProvider.ExecuteAsync(
                 new AgentRequest
                 {
                     Prompt = feedbackPrompt,
                     WorkspacePath = run.WorkspacePath!,
-                    Timeout = TimeSpan.FromSeconds(FeedbackConstraints.FailureFeedbackTimeoutSeconds),
+                    Timeout = TimeSpan.FromSeconds(context.Config.FeedbackTimeoutSeconds),
                     UseResume = true
                 },
                 timeoutCts.Token,
@@ -345,7 +345,7 @@ public partial class QualityGateExecutor
         {
             // Timeout on the feedback call itself (not pipeline cancellation)
             _logger.Warning(ex, "Pipeline {RunId} failure feedback collection timed out after {Timeout}s",
-                run.RunId, FeedbackConstraints.FailureFeedbackTimeoutSeconds);
+                run.RunId, context.Config.FeedbackTimeoutSeconds);
             run.Feedback = _feedbackService.CreateFallbackFeedback(
                 FeedbackOutcome.Failure, "Feedback collection timed out", DateTime.UtcNow);
         }
