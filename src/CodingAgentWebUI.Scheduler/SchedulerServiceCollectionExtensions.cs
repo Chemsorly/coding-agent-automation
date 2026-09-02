@@ -192,8 +192,10 @@ public static class SchedulerServiceCollectionExtensions
                 Log.Logger));
 
         // SchedulerRunQueryService provides the IOrchestratorRunService the loop needs.
-        // Read-only — active runs always empty until API exposes BranchName (see SchedulerRunQueryService).
-        services.AddSingleton<SchedulerRunQueryService>();
+        // It overrides GetActiveRunBranchesAsync() to call the API instead of the always-empty
+        // GetActiveRuns(), so HousekeepingService's branch-update guard works correctly here.
+        services.AddSingleton<SchedulerRunQueryService>(sp =>
+            new SchedulerRunQueryService(sp.GetRequiredService<IPipelineApiRunHistoryClient>()));
         services.AddSingleton<IOrchestratorRunService>(sp =>
             sp.GetRequiredService<SchedulerRunQueryService>());
 

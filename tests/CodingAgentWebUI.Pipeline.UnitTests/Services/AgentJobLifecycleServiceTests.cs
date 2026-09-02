@@ -416,6 +416,117 @@ public sealed class AgentJobLifecycleServiceTests
         _issueOps.Verify(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>()), Times.Never);
     }
 
+    // ── HandleJobCompletedAsync — agent null fallback ─────────────────────
+
+    [Fact]
+    public async Task HandleJobCompletedAsync_AgentIsNull_AndRunHasAgentId_TransitionsAgentToIdle()
+    {
+        // Arrange: agent lookup returned null (connection dropped / hash expired),
+        // but the run knows which agent was assigned.
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1"); // AgentId = "agent-1" from MakeRun
+
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+
+        var payload = MakePayload();
+
+        // Act: agent is null — simulates registry lookup race
+        await _sut.HandleJobCompletedAsync(jobId, agent: null, payload, CancellationToken.None);
+
+        // Assert: fallback path clears activeJobId and transitions to Idle using run's AgentId
+        var expectedAgentId = new AgentId("agent-1");
+        _facade.Verify(f => f.TransitionStatus(expectedAgentId, AgentStatus.Idle), Times.Once);
+        _facade.Verify(f => f.UpdateAgentFieldAsync(expectedAgentId, "activeJobId", null), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleJobCompletedAsync_AgentIsNull_AndRunHasAgentId_LogsWarning()
+    {
+        // Arrange
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1"); // AgentId = "agent-1"
+
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+
+        var payload = MakePayload();
+
+        // Act
+        await _sut.HandleJobCompletedAsync(jobId, agent: null, payload, CancellationToken.None);
+
+        // Assert: a Warning is logged with the job ID and agent ID.
+        // The log call is: _logger.Warning("{template}", jobId.Value /*string*/, run.AgentId /*string*/)
+        // Compiler selects Warning<T0, T1>(string, T0, T1) — use typed matchers per brain entry dotnet.md#moq-serilog.
+        _logger.Verify(
+            l => l.Warning(
+                It.Is<string>(s => s.Contains("agent lookup returned null") && s.Contains("{JobId}") && s.Contains("{AgentId}")),
+                It.IsAny<string>(),
+                It.IsAny<string>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleJobCompletedAsync_AgentIsNull_AndRunAgentIdIsNull_DoesNotCallTransitionStatus()
+    {
+        // Arrange: run exists but was never assigned to an agent (AgentId = null)
+        var jobId = new JobId("job-1");
+        var run = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "job-1",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Test issue",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "github-repo",
+            // AgentId intentionally omitted → PipelineRun.AgentId = null
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "test",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>()))
+            .Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+
+        var payload = MakePayload();
+
+        // Act
+        await _sut.HandleJobCompletedAsync(jobId, agent: null, payload, CancellationToken.None);
+
+        // Assert: no fallback fires — TransitionStatus must never be called
+        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleJobCompletedAsync_AgentIsNull_AndRunIsNull_DoesNotCallTransitionStatus()
+    {
+        // Arrange: orphaned run path — run was already cleaned up (RevertFailedDistributionAsync)
+        var jobId = new JobId("job-1");
+
+        _facade.Setup(f => f.GetRun(jobId)).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.TransitionWorkItemAsync(jobId, It.IsAny<WorkItemStatus>(),
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(true);
+        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync(jobId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string IssueIdentifier, string IssueProviderConfigId)?)null);
+
+        var payload = MakePayload();
+
+        // Act: agent is null, run is null — no fallback is possible
+        await _sut.HandleJobCompletedAsync(jobId, agent: null, payload, CancellationToken.None);
+
+        // Assert: TransitionStatus must never be called
+        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
+    }
+
     // ── HandleStepTransition ──────────────────────────────────────────────
 
     [Fact]

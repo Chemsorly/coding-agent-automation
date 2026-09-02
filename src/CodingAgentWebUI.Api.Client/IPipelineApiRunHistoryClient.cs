@@ -15,4 +15,11 @@ public interface IPipelineApiRunHistoryClient
     /// Called by the orchestrator on terminal run completion instead of writing directly to DB.
     /// </summary>
     Task AddRunToHistoryAsync(PipelineRunSummary summary, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the branch names of all currently active (non-terminal) pipeline runs.
+    /// Calls <c>GET /api/pipeline-runs/active-branches</c>.
+    /// Used by <c>SchedulerRunQueryService</c> to populate the housekeeping active-run guard.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetActiveBranchesAsync(CancellationToken ct = default);
 }

@@ -151,17 +151,17 @@ public static class WorkItemEndpoints
     /// <item>
     /// <term>Old schema (full snapshot)</term>
     /// <description>
-    /// Work items created before #2171: <c>Payload</c> contains a full <see cref="JobDistributionRequest"/>
+    /// Work items created before #2221: <c>Payload</c> contains a full <see cref="JobDistributionRequest"/>
     /// including <c>ProviderConfigs</c>, <c>QualityGateConfigs</c>, etc. Detected by
-    /// <c>ProviderConfigs != null</c>. Served directly from payload as before — the frozen
+    /// <c>PayloadSchemaVersion == null</c>. Served directly from payload as before — the frozen
     /// snapshot is returned as-is (tokens may be expired for long-queued items).
     /// </description>
     /// </item>
     /// <item>
     /// <term>New schema (minimal identity)</term>
     /// <description>
-    /// Work items created after #2171: <c>Payload</c> contains only identity fields
-    /// (<c>ProviderConfigs == null</c>). Mutable config is fetched fresh from the database
+    /// Work items created after #2221: <c>Payload</c> contains only identity fields
+    /// (<c>PayloadSchemaVersion == 1</c>). Mutable config is fetched fresh from the database
     /// at assignment time via <see cref="AssignmentEnricher"/>, vending fresh tokens and
     /// picking up the latest steering, QG, and pipeline configuration.
     /// </description>
@@ -198,30 +198,22 @@ public static class WorkItemEndpoints
             return TypedResults.NotFound();
 
         // ── Backward-compatibility: detect payload schema ─────────────────
-        // Old schema: ProviderConfigs != null → serve from frozen snapshot.
-        // New schema: ProviderConfigs == null → fresh-fetch all mutable config.
-        // NOTE: [WARNING] The null-discriminator is fragile: an old-schema row where ProviderConfigs
-        // happened to deserialize as null (serialization bug, manually inserted row, future
-        // [JsonIgnore] refactor) would be misclassified as new-schema and enter the enrichment path.
-        // A versioned discriminator field (e.g., PayloadSchemaVersion) would eliminate the ambiguity.
-        // TODO: Restore the versioned PayloadSchemaVersion discriminator (was: PayloadSchemaVersion == 1)
-        // that was removed in the #2172 refactor. The null-ProviderConfigs signal is a fragile fallback.
-        // Either set PayloadSchemaVersion = 1 in BuildMinimalPayload and use it here, or remove the
-        // field and its documentation to prevent the mismatch. Consider splitting this into its own PR.
-        if (request.ProviderConfigs is null && assignmentEnricher is not null)
+        // Old schema: PayloadSchemaVersion == null → serve from frozen snapshot.
+        // New schema: PayloadSchemaVersion == 1  → fresh-fetch all mutable config.
+        if (request.PayloadSchemaVersion == 1 && assignmentEnricher is not null)
             request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
-        // TODO: When assignmentEnricher is null and request.ProviderConfigs is null (new-schema path),
+        // TODO: When assignmentEnricher is null and request.PayloadSchemaVersion == 1 (new-schema path),
         // enrichment is silently skipped and an identity-only 200 is returned with no log output.
         // A DI misconfiguration that drops AssignmentEnricher is now undetectable from logs at this site.
         // Restore a Log.Warning when the enricher is null on the new-schema path (was present before #2172).
 
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
         // TODO: [WARNING] InjectProjectSecretsAsync is now called unconditionally for all GetAssignment
-        // requests, including old-schema requests where request.ProviderConfigs is not null. In the
+        // requests, including old-schema requests where request.PayloadSchemaVersion == null. In the
         // prior code, secret injection was inside the isNewSchema branch. Old-schema callers that log
         // or persist the full response message will now receive live ProjectSecrets where they did not
         // before, widening the exposure surface even though the endpoint already requires Operator auth.
-        // Gate this call on request.ProviderConfigs is null (new-schema path only), or document the
+        // Gate this call on request.PayloadSchemaVersion == 1 (new-schema path only), or document the
         // intentional behavior change so callers are aware secrets are now injected on all paths.
         message = await InjectProjectSecretsAsync(message, request, projectStore, ct);
 
@@ -229,7 +221,7 @@ public static class WorkItemEndpoints
     }
 
     /// <summary>
-    /// Enriches a new-schema request (ProviderConfigs == null) by fetching mutable config fresh
+    /// Enriches a new-schema request (PayloadSchemaVersion == 1) by fetching mutable config fresh
     /// from the database. Resolves the project for steering + config override context, falling
     /// back to a minimal stub for project-less items.
     /// If enrichment fails, returns the original request as a best-effort degraded response.
@@ -521,13 +513,14 @@ public static class WorkItemEndpoints
                 }
                 : null,
 
-            // All mutable config intentionally omitted (null). Fields not listed above
-            // (ProviderConfigs, PipelineConfiguration, QualityGateConfigs, ReviewerConfigs,
+            // Schema version discriminator — marks this as new-schema (minimal identity payload).
+            // GetAssignment uses PayloadSchemaVersion == 1 to detect new-schema rows and trigger
+            // AssignmentEnricher. All mutable config intentionally omitted (null). Fields not listed
+            // above (ProviderConfigs, PipelineConfiguration, QualityGateConfigs, ReviewerConfigs,
             // McpServers, RepoSteeringContent, ProjectSteeringContent, IssueComments,
             // ParsedIssue, ExistingAnalysis, ResolvedProfileId, AgentProviderConfigId)
-            // are left at their default null values and re-fetched at assignment time by
-            // AssignmentEnricher. The absence of ProviderConfigs is the new-schema signal
-            // detected in GetAssignment.
+            // are left at their default null values and re-fetched at assignment time by AssignmentEnricher.
+            PayloadSchemaVersion = 1,
         };
     }
 
