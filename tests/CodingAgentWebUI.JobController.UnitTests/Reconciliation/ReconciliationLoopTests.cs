@@ -1582,7 +1582,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         (countAfter - countBefore).Should().Be(1,
             "pipeline.jobs.completed must be incremented once for a Succeeded status");
 
-        // TODO: WARNING — this test embeds two distinct behavioral assertions. The second
+        // NOTE: This test embeds two distinct behavioral assertions. The second
         // LogTerminalStatus call below (used only to verify the negative path) also increments
         // pipeline.jobs.completed, which bleeds into the shared snapshot bag and could confuse
         // concurrent tests. The negative assertion is also weak: failedCountBefore may already
@@ -1634,7 +1634,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                  && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "timeout"),
             "failure_reason tag must be snake_case 'timeout', not PascalCase 'Timeout'");
 
-        // TODO: WARNING — the negative assertion below (completed not emitted for Failed) is weak:
+        // NOTE: The negative assertion below (completed not emitted for Failed) is weak:
         // completedCountBefore is captured after the first LogTerminalStatus call has already run,
         // so it avoids contamination from that call, but it is still vulnerable to a race window
         // where stray parallel tests fire between the snapshot and the assertion. The assertion
@@ -1701,12 +1701,12 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         histCountAfter.Should().Be(histCountBefore,
             "pipeline.jobs.duration must not be emitted when duration is null");
 
-        // TODO: WARNING — this test only covers duration:null for Failed status. There is no equivalent
+        // NOTE: This test only covers duration:null for Failed status. There is no equivalent
         // test for Succeeded with duration:null. The null guard in production applies to both, so an
         // accidental regression on the Succeeded path would not be caught. Add a parallel test:
         // LogTerminalStatus_Succeeded_NoDuration_DoesNotEmitDuration.
 
-        // TODO: WARNING — the duration >= 0 guard is not tested for the boundary case of TimeSpan.Zero.
+        // NOTE: The duration >= 0 guard is not tested for the boundary case of TimeSpan.Zero.
         // A zero-second duration is >= 0 and should be recorded. A future change tightening the guard
         // to > 0 would silently drop zero-duration recordings without a test failure. Consider adding
         // an explicit test: LogTerminalStatus_Succeeded_ZeroDuration_EmitsDurationWithZeroValue.
@@ -1768,7 +1768,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         (durationCountAfter - durationCountBefore).Should().Be(1,
             "ReconcileOnceAsync must emit pipeline.jobs.duration = 300s for a job that ran 300s");
 
-        // TODO: WARNING — this test does not assert that pipeline.jobs.failed is NOT emitted for the
+        // NOTE: This test does not assert that pipeline.jobs.failed is NOT emitted for the
         // Succeeded path through ReconcileOnceAsync. The unit-level tests cover this negative path via
         // LogTerminalStatus directly, but the end-to-end reconciliation path leaves it unverified here.
         // Consider adding: var failedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
@@ -1823,7 +1823,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         (failedCountAfter - failedCountBefore).Should().Be(1,
             "ReconcileOnceAsync with a Failed K8s job must emit pipeline.jobs.failed with failure_reason='agent_error'");
 
-        // TODO: WARNING — this assertion only checks the tag-filtered count, not the total unfiltered
+        // NOTE: This assertion only checks the tag-filtered count, not the total unfiltered
         // delta for pipeline.jobs.failed. If the production code emitted pipeline.jobs.failed twice for
         // the same job (e.g. a double-call bug in HandleJobCompletedAsync), the filtered count would
         // still increase by 1 if the second emission used a different failure_reason tag, and this test

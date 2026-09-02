@@ -329,24 +329,23 @@ public static class WorkDistributionTelemetry
         var statusTag = new KeyValuePair<string, object?>("status", status.ToString());
         if (status == WorkItemStatus.Succeeded)
         {
-            // TODO: WARNING — statusTag adds a "status" label to pipeline_jobs_completed_total that the
+            // NOTE: statusTag adds a "status" label to pipeline_jobs_completed_total that the
             // agent-pod emitter (PipelineRunInstrumentation.Dispose) does NOT include. This creates two
             // structurally incompatible label sets on the same metric family: the Job Controller series
             // has {status="Succeeded"} while the agent-pod series has no status label. A bare
             // increase(pipeline_jobs_completed_total[24h]) sums both correctly, but any Prometheus query
-            // filtering on {status="Succeeded"} will silently exclude agent-pod recordings. Consider
-            // removing statusTag from this Add() call so both emitters produce the same label shape,
-            // or document this prominently in observability.md as a known query footgun.
+            // filtering on {status="Succeeded"} will silently exclude agent-pod recordings.
+            // See observability.md — "Reliable sources by use case" for query guidance.
             PipelineTelemetry.JobsCompleted.Add(1, statusTag);
         }
         else
         {
-            // TODO: WARNING — WorkItemStatus.Cancelled is a real terminal status that reaches this else
-            // branch (via WorkItemEndpoints.EmitTerminalStatusTelemetryAsync), causing it to increment
+            // NOTE: WorkItemStatus.Cancelled is a real terminal status that reaches this else branch
+            // (via WorkItemEndpoints.EmitTerminalStatusTelemetryAsync), causing it to increment
             // pipeline_jobs_failed_total with status="Cancelled", failure_reason="unknown". This
             // inflates the failure counter and diverges from the agent-side PipelineRunInstrumentation
-            // which emits nothing for cancellations. Consider skipping emission for Cancelled (or routing
-            // it to a distinct treatment) so pipeline_jobs_failed_total reflects only genuine failures.
+            // which emits nothing for cancellations. Use workdistribution_workitems_terminated_total
+            // (which tags status accurately) for exact counts by status.
             // snake_case failure_reason matches PipelineRunInstrumentation.Dispose() convention so
             // that label-filtered Prometheus queries work uniformly across both emitters.
             var failureReasonSnake = failureReason.HasValue

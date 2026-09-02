@@ -33,7 +33,6 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 internal sealed class NullConfigurationStore : IConfigurationStore
 {
-
     public Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct) =>
         Task.FromResult(new PipelineConfiguration());
 
