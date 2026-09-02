@@ -394,7 +394,7 @@ public partial class GitHubRepositoryProvider
                     var uri = new Uri(client.Connection.BaseAddress,
                         $"repos/{Owner}/{Repo}/pulls/{issue.Number}");
                     var response = await client.Connection.Get<GitHubPrDetailDto>(
-                        uri, null, "application/vnd.github+json", CancellationToken.None);
+                        uri, null, "application/vnd.github+json", ct);
                     return response.Body;
                 },
                 "ListOpenPullRequests.GetDetail", ct);

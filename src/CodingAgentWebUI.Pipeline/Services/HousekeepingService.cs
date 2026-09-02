@@ -61,11 +61,13 @@ public sealed class HousekeepingService : IHousekeepingService
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastCleanupAt = new();
 
     /// <summary>
-    /// Tracks when each PR last had a branch update triggered, keyed by PR number.
+    /// Tracks when each PR last had a branch update triggered, keyed by (repoProviderId, prNumber).
+    /// Keyed by repo to prevent cross-repo collisions when the singleton handles multiple repos
+    /// (two repos can both have a PR #N — their cooldown entries must not interfere).
     /// Used to deprioritise recently-triggered PRs so the single concurrency slot
     /// drains the queue fairly instead of re-selecting the same PR on every cycle.
     /// </summary>
-    private readonly ConcurrentDictionary<int, DateTimeOffset> _lastTriggeredAt = new();
+    private readonly ConcurrentDictionary<(string repoId, int prNumber), DateTimeOffset> _lastTriggeredAt = new();
 
     /// <summary>
     /// Minimum time between consecutive branch-update triggers for the same PR.
@@ -122,7 +124,7 @@ public sealed class HousekeepingService : IHousekeepingService
             if (!currentPrNumbers.Contains(prNumber))
             {
                 inFlight.Remove(prNumber);
-                _lastTriggeredAt.TryRemove(prNumber, out _); // PR merged/closed — clear cooldown state
+                _lastTriggeredAt.TryRemove((repoProviderId, prNumber), out _); // PR merged/closed — clear cooldown state
                 PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
             else
@@ -174,7 +176,7 @@ public sealed class HousekeepingService : IHousekeepingService
         var sorted = agentDonePrs
             .OrderBy(pr =>
             {
-                var lastTriggered = _lastTriggeredAt.GetValueOrDefault(pr.Number, DateTimeOffset.MinValue);
+                var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, pr.Number), DateTimeOffset.MinValue);
                 var cooledDown = (now5 - lastTriggered) >= TriggerCooldown;
                 if (!cooledDown)     return 2;   // recently triggered — back of queue
                 if (pr.HasAutoMerge) return 0;   // auto-merge + cooled — front
@@ -254,7 +256,7 @@ public sealed class HousekeepingService : IHousekeepingService
             // This prevents a PR whose CI hasn't finished yet (Blocked→clean→behind
             // fast-cycle) from immediately re-occupying the slot and starving others.
             var now6b = UtcNow();
-            var lastTriggered = _lastTriggeredAt.GetValueOrDefault(pr.Number, DateTimeOffset.MinValue);
+            var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, pr.Number), DateTimeOffset.MinValue);
             if ((now6b - lastTriggered) < TriggerCooldown)
             {
                 _logger.Debug(
@@ -264,7 +266,7 @@ public sealed class HousekeepingService : IHousekeepingService
                 continue;
             }
 
-            _lastTriggeredAt[pr.Number] = now6b;
+            _lastTriggeredAt[(repoProviderId, pr.Number)] = now6b;
             inFlight.Add(pr.Number);
             PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
             await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));

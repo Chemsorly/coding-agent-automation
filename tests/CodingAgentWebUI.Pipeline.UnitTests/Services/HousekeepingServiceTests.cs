@@ -925,8 +925,9 @@ public class HousekeepingServiceTests
         provider.Setup(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
-        // Fix clock so no cooldown applies
-        svc.UtcNow = () => DateTimeOffset.UtcNow;
+        // Frozen clock — no cooldown applies (last-triggered defaults to MinValue)
+        var clock = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => clock;
         svc.TriggerCooldown = TimeSpan.FromMinutes(25);
 
         await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
@@ -960,14 +961,20 @@ public class HousekeepingServiceTests
 
         // First cycle: auto-merge PR gets triggered (enters cooldown)
         await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
-        provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once);
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Once,
+            "cycle 1: auto-merge PR must be triggered");
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Never,
+            "cycle 1: regular PR must not be triggered");
 
         // Second cycle immediately (auto-merge PR still in cooldown, regular not)
+        provider.Invocations.Clear();
         await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
 
         // Regular PR should now take the slot since auto-merge is cooling down
         provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once,
-            "regular PR must take slot when auto-merge PR is in cooldown");
+            "cycle 2: regular PR must take slot when auto-merge PR is in cooldown");
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(10, It.IsAny<CancellationToken>()), Times.Never,
+            "cycle 2: auto-merge PR must not be re-triggered while in cooldown");
     }
 
     [Fact]
@@ -1012,5 +1019,52 @@ public class HousekeepingServiceTests
 
         triggeredPrs.Should().HaveCountGreaterThan(1,
             "random selection within the auto-merge tier must produce variety over many cycles");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AllPrsInCooldown_NothingTriggered()
+    {
+        // All behind PRs recently triggered — cooldown blocks all; no update fires.
+        var (svc, provider, issues, _) = Create();
+
+        var autoMergePr = MakePr(10, "feature/auto", hasAutoMerge: true);
+        var regularPr   = MakePr(20, "feature/regular");
+
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(10, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.IsPullRequestBehindBaseAsync(20, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(PrMergeabilityStatus.Behind);
+        provider.Setup(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+        // Use a very long cooldown so a single trigger puts each PR in cooldown for the test
+        var clock = DateTimeOffset.UtcNow;
+        svc.UtcNow = () => clock;
+        svc.TriggerCooldown = TimeSpan.FromHours(24);
+
+        // Cycle 1: triggers PR #10 (auto-merge, tier 0). PR #20 skipped (slot full, limit 1).
+        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
+
+        // Advance just enough that PR #10 is evicted from _inFlight (Behind → not Blocked/Unknown)
+        // but still within the 24h cooldown window.
+        clock = clock.AddMinutes(5);
+        svc.UtcNow = () => clock;
+
+        // Cycle 2: PR #10 is in cooldown (tier 2). PR #20 has no cooldown entry (tier 1) — triggers.
+        provider.Invocations.Clear();
+        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(20, It.IsAny<CancellationToken>()), Times.Once,
+            "cycle 2: regular PR must trigger once to enter cooldown");
+
+        // Advance another 5 minutes — both PRs now triggered within 24h window.
+        clock = clock.AddMinutes(5);
+        svc.UtcNow = () => clock;
+
+        // Cycle 3: both PRs are in cooldown — nothing should trigger.
+        provider.Invocations.Clear();
+        await ExecAsync(svc, provider, issues, [autoMergePr, regularPr]);
+
+        provider.Verify(p => p.UpdatePullRequestBranchAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never, "no PR should be triggered when both are within their 24h cooldown window");
     }
 }
