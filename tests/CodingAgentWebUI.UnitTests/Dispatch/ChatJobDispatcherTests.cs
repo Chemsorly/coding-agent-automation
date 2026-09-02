@@ -1496,6 +1496,15 @@ public class ChatJobDispatcherTests
         // This also ensures EnableMeasurementEvents is called before any Add() calls.
         _ = ChatTelemetry.SessionsActive;
 
+        var (dispatcher, _, _) = CreateFaultingDispatcher();
+        var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        var watcherTask = dispatcher.TryGetWatcherTask(agentId);
+
+        // Start the listener AFTER dispatch so that decrements from other concurrent test
+        // instances (which also call DispatchChatPodAsync and trigger their own CleanupSession)
+        // do not inflate the count. The watcher task for this dispatcher has not yet fired
+        // its decrement at this point — that fires asynchronously inside WatchJobUntilTerminalAsync.
+        // Starting the listener here narrows the measurement window to just this test's watcher.
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
@@ -1510,10 +1519,6 @@ public class ChatJobDispatcherTests
                 Interlocked.Increment(ref decrementCount);
         });
         listener.Start();
-
-        var (dispatcher, _, _) = CreateFaultingDispatcher();
-        var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
-        var watcherTask = dispatcher.TryGetWatcherTask(agentId);
 
         // Wait for the fault to fire and CleanupSession to run
         await watcherTask!.WaitAsync(TimeSpan.FromSeconds(10));
