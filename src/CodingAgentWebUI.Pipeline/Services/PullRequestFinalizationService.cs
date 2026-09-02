@@ -222,7 +222,7 @@ public sealed class PullRequestFinalizationService
             }
             var currentBody = run.PullRequestBody ?? "";
             var newBody = $"{description}\n\n---\n\n{currentBody}";
-            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, false, ct);
+            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, null, ct);
             run.PullRequestBody = newBody;
 
             _logger.Information("Pipeline {RunId} PR description generated and applied", run.RunId);

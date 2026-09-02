@@ -217,7 +217,7 @@ public partial class GitHubRepositoryProvider
         return results.ToList();
     }
 
-    public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct)
+    public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool? markReady, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(body);
 
@@ -228,9 +228,10 @@ public partial class GitHubRepositoryProvider
                     new PullRequestUpdate { Body = body }),
                 "UpdatePullRequest", ct);
 
-            // Change draft status if requested.
+            // Change draft status only when markReady has an explicit value.
+            // null = body-only update; leave draft state untouched.
             // GitHub REST API doesn't support changing draft status — requires GraphQL mutation.
-            if (markReady)
+            if (markReady == true)
             {
                 try
                 {
@@ -251,7 +252,7 @@ public partial class GitHubRepositoryProvider
                     Log.Warning(ex, "Failed to mark PR #{PrNumber} as ready for review (non-fatal)", pullRequestNumber);
                 }
             }
-            else
+            else if (markReady == false)
             {
                 // Convert to draft if currently ready-for-review.
                 // GitHub REST API does not support changing draft status — requires GraphQL mutation.

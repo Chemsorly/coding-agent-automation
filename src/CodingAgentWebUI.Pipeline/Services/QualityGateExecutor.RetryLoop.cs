@@ -204,11 +204,7 @@ public partial class QualityGateExecutor
             var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
 
-            // TODO: ExternalCiDuration is recorded here AND in AppendExternalCiIfNeededAsync.
-            // On paths where both pre-PR and post-PR CI run, two histogram samples are emitted
-            // per pipeline run, inflating p50/p99 dashboards. Consider a separate metric
-            // (PostPrCiDuration) or aggregate at run level rather than per-poll.
-            PipelineTelemetry.ExternalCiDuration.Record(
+            PipelineTelemetry.PostPrCiDuration.Record(
                 ciPollStopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
 
