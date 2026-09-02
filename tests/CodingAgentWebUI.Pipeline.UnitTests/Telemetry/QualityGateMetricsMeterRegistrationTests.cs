@@ -6,7 +6,7 @@ using CodingAgentWebUI.Pipeline.Telemetry;
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
-/// Regression tests verifying that all four quality_gate.* metric instruments are registered
+/// Regression tests verifying that all five quality_gate.* metric instruments are registered
 /// under <see cref="PipelineTelemetry.SourceName"/>.
 ///
 /// Background: The worker agent's Program.cs registers
@@ -43,12 +43,13 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
 
         _listener.Start();
 
-        // Force-observe all four quality gate instruments by emitting warm-up measurements.
+        // Force-observe all five quality gate instruments by emitting warm-up measurements.
         // MeterListener may miss instruments created before Start() unless we trigger them.
         PipelineTelemetry.QualityGateRetries.Add(0);
         PipelineTelemetry.QualityGateEvaluations.Add(0);
         PipelineTelemetry.QualityGateDuration.Record(0.0);
         PipelineTelemetry.ExternalCiDuration.Record(0.0);
+        PipelineTelemetry.PostPrCiDuration.Record(0.0);
 
         _observed.Clear();
     }
@@ -117,18 +118,34 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
     }
 
     /// <summary>
-    /// All four quality gate instruments must use the exact metric names that the Grafana
+    /// quality_gate_post_pr_ci_duration_seconds must be on PipelineTelemetry.SourceName.
+    /// </summary>
+    [Fact]
+    public void PostPrCiDuration_IsOnPipelineTelemetryMeter()
+    {
+        PipelineTelemetry.PostPrCiDuration.Record(1.0);
+
+        var entry = _observed.FirstOrDefault(o => o.InstrumentName == "quality_gate.post_pr_ci.duration");
+        entry.MeterName.Should().Be(PipelineTelemetry.SourceName,
+            "quality_gate.post_pr_ci.duration must be defined on the PipelineTelemetry meter. " +
+            "The agent's Program.cs calls AddMeter(PipelineTelemetry.SourceName) to enable OTLP export. " +
+            "If this instrument moves to a different meter it will be silently skipped by the exporter.");
+    }
+
+    /// <summary>
+    /// All five quality gate instruments must use the exact metric names that the Grafana
     /// dashboard "Coding Agent Pipeline — Quality Gates" queries. Changing these names
     /// would break the dashboard silently.
     /// </summary>
     [Fact]
-    public void AllFourQualityGateInstruments_HaveCanonicalNames()
+    public void AllFiveQualityGateInstruments_HaveCanonicalNames()
     {
         // Trigger measurements to confirm names
         PipelineTelemetry.QualityGateRetries.Add(1);
         PipelineTelemetry.QualityGateEvaluations.Add(1);
         PipelineTelemetry.QualityGateDuration.Record(1.0);
         PipelineTelemetry.ExternalCiDuration.Record(1.0);
+        PipelineTelemetry.PostPrCiDuration.Record(1.0);
 
         var instrumentNames = _observed.Select(o => o.InstrumentName).Distinct().ToList();
 
@@ -140,6 +157,8 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
             "Grafana dashboard queries quality_gate_duration_seconds");
         instrumentNames.Should().Contain("quality_gate.external_ci.duration",
             "Grafana dashboard queries quality_gate_external_ci_duration_seconds");
+        instrumentNames.Should().Contain("quality_gate.post_pr_ci.duration",
+            "Grafana dashboard queries quality_gate_post_pr_ci_duration_seconds");
     }
 
     /// <summary>
