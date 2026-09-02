@@ -504,14 +504,26 @@ public partial class GitHubRepositoryProvider
         // Body uses ParseClosingKeywords only (Closes/Fixes/Resolves #N) — the broad SimpleHashPattern
         // picks up any bare #N in the body prose (e.g., "PR #2194" in AI review text), which can
         // return spurious numbers including the PR's own number.
-        var pr = await ExecuteWithResilienceAsync(
-            client => client.PullRequest.Get(Owner, Repo, prNumber),
-            "ExtractLinkedIssues.GetPr", ct);
+        // GetPr is guarded independently so a transient failure here does not discard timeline results.
+        Octokit.PullRequest? pr = null;
+        try
+        {
+            pr = await ExecuteWithResilienceAsync(
+                client => client.PullRequest.Get(Owner, Repo, prNumber),
+                "ExtractLinkedIssues.GetPr", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warning(ex, "Failed to fetch PR metadata for #{PrNumber}, skipping title/body parsing", prNumber);
+        }
 
-        // Title first (priority b) — full patterns including (#N) parenthetical convention
-        ParseIssueReferences(pr.Title, issueNumbers);
-        // Body (priority c) — closing keywords only to avoid false positives from prose mentions
-        IssueReferenceParser.ParseClosingKeywords(pr.Body, issueNumbers);
+        if (pr is not null)
+        {
+            // Title first (priority b) — full patterns including (#N) parenthetical convention
+            ParseIssueReferences(pr.Title, issueNumbers);
+            // Body (priority c) — closing keywords only to avoid false positives from prose mentions
+            IssueReferenceParser.ParseClosingKeywords(pr.Body, issueNumbers);
+        }
 
         return issueNumbers.ToList().AsReadOnly();
     }
