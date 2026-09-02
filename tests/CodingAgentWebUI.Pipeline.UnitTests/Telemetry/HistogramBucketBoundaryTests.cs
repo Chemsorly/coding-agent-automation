@@ -25,6 +25,14 @@ public class HistogramBucketBoundaryTests
         boundaries.Should().Equal(5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600);
     }
 
+    [Fact]
+    public void BrainSyncDuration_HasExpectedBucketBoundaries()
+    {
+        var boundaries = PipelineTelemetry.BrainSyncDuration.Advice?.HistogramBucketBoundaries;
+        boundaries.Should().NotBeNull("BrainSyncDuration must have explicit InstrumentAdvice boundaries");
+        boundaries.Should().Equal(1, 2, 5, 10, 20, 30, 60, 120, 300);
+    }
+
     // ── WorkDistributionTelemetry histograms ────────────────────────────────────
     // These guard against removing InstrumentAdvice, which would revert to the SDK default
     // ms-scale boundaries (max = 1000ms) — useless for dispatch durations measured in seconds.
