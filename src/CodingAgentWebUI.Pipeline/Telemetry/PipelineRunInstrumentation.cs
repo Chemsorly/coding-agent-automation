@@ -67,6 +67,7 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
         var activity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline", kind, parentContext);
         activity?.SetTag("pipeline.run_id", runId);
         activity?.SetTag("pipeline.issue", issueIdentifier);
+        activity?.SetTag("pipeline.run_type", runType.ToString());
         PipelineTelemetry.SetProjectTags(activity, projectId, projectName);
         var tags = PipelineTelemetry.BuildTags(runType, projectId, projectName);
         return new PipelineRunInstrumentation(activity, tags, runType, projectId, projectName);
