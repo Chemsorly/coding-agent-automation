@@ -110,24 +110,36 @@ Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use t
 
 ### K8s Agent Pod Metrics
 
-The `pipeline.jobs.*` metrics (Prometheus: `pipeline_jobs_dispatched_total`, `pipeline_jobs_completed_total`, `pipeline_jobs_failed_total`, `pipeline_jobs_duration_seconds`) are emitted by **agent pods** — ephemeral K8s Jobs that exit after processing a single work item.
+The `pipeline.jobs.*` metrics (Prometheus: `pipeline_jobs_dispatched_total`, `pipeline_jobs_completed_total`, `pipeline_jobs_failed_total`, `pipeline_jobs_duration_seconds`) are emitted by two sources:
 
-**Flush behavior:** Before triggering host shutdown, agent pods call `MeterProvider.ForceFlush()` to ensure buffered metrics are exported to the OTLP collector. Under normal conditions, this guarantees delivery within 3 seconds of pipeline completion.
+1. **Agent pods** (ephemeral K8s Jobs) — via `PipelineRunInstrumentation.Dispose()`, with rich tags: `run_type`, `pipeline.project_id`, `pipeline.project_name`. These carry `service.name=coding-agent` and provide per-project, per-run-type breakdowns.
 
-**Edge cases where metrics may be lost:**
+2. **Job Controller** (long-lived deployment) — via `WorkDistributionTelemetry.LogTerminalStatus()`, with minimal tags: `status` (and `failure_reason` for failed jobs, in snake_case). These carry `service.name=coding-agent-jobcontroller` and are **not subject to pod-exit flush races**.
+
+**Why two emitters?** Agent-pod recordings provide richer label sets but can be lost if the pod exits before the 5-second `ForceFlush` window completes (e.g., SIGKILL, OOM-kill, slow OTLP collector). The Job Controller recording is the durable, at-least-once source that satisfies reliability requirements. `pipeline_jobs_dispatched_total` continues to be emitted from the agent pod only (recorded at pod startup — not subject to the exit-time race).
+
+**Double-counting:** When both the agent pod and the Job Controller emit for the same job (the normal case when the pod exits cleanly), `pipeline_jobs_completed_total` and `pipeline_jobs_failed_total` increment by 2 in Prometheus. These metrics are therefore "at-least-once" — **not suitable for exact job counts**. Use `workdistribution_workitems_terminated_total` for exact counts.
+
+**Tag conventions:**
+- Agent-pod series: `run_type`, `pipeline.project_id`, `pipeline.project_name` — no `status` or `failure_reason`.
+- Job-Controller series: `status` (PascalCase, e.g. `"Succeeded"`, `"Failed"`), `failure_reason` (snake_case, e.g. `"agent_error"`, `"timeout"`) — no `run_type` or project tags.
+- Filter by `service.name` to isolate one emitter.
+
+**Edge cases where agent-pod metrics may be lost:**
 - Pod receives SIGKILL before ForceFlush completes (e.g., `terminationGracePeriodSeconds` exceeded)
 - Pod is OOM-killed during execution
 - OTLP collector is unreachable and the flush timeout expires
 
-**Reliable fallback:** For alerting and dashboards where metric reliability is critical, use the Job Controller-side equivalents from the `CodingAgent.WorkDistribution` meter (emitted by the long-lived `CodingAgentWebUI.JobController` process — `service.name=coding-agent-jobcontroller`):
+The Job Controller-side recordings are not affected by any of the above.
 
-| Agent-side metric (may have gaps) | Job Controller-side equivalent (reliable) |
-|-----------------------------------|------------------------------------------|
-| `pipeline.jobs.dispatched` (`pipeline_jobs_dispatched_total`) | `workdistribution.workitems_terminated` (`workdistribution_workitems_terminated_total`) |
-| `pipeline.jobs.completed` (`pipeline_jobs_completed_total`) | `workdistribution.workitems_terminated` with `status="Succeeded"` |
-| `pipeline.jobs.failed` (`pipeline_jobs_failed_total`) | `workdistribution.workitems_terminated` with `status="Failed"` |
+**Reliable sources by use case:**
 
-The Job Controller metrics are emitted from a long-lived process and are not subject to pod exit timing issues.
+| Use case | Recommended metric |
+|----------|--------------------|
+| Alert: jobs completing / failing (reliability critical) | `workdistribution_workitems_terminated_total` (exact counts) |
+| Dashboard: jobs completed over 24h (non-exact OK) | `increase(pipeline_jobs_completed_total[24h])` (sums both emitters) |
+| Dashboard: per-run-type breakdown | `pipeline_jobs_completed_total{service_name="coding-agent"}` |
+| Dashboard: job duration percentiles | `pipeline_jobs_duration_seconds` (both emitters contribute) |
 
 ### Work Distribution Metrics
 

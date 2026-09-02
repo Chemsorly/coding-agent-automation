@@ -124,7 +124,7 @@ public sealed class AgentIssueOperations : IHubIssueOperations
             var feedbackSection = $"\n\n## Agent Feedback\n⚠️ Agent posted feedback on the issue [here]({commentUrl}). Read before merging.";
             var newBody = currentBody + feedbackSection;
 
-            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, false, CancellationToken.None);
+            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, null, CancellationToken.None);
             run.PullRequestBody = newBody;
 
             _logger.Information("Appended feedback link to PR #{PrNumber} for run {RunId}", run.PullRequestNumber, run.RunId);
