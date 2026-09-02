@@ -412,7 +412,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             RepoProviderConfigId = result.CreatedRun.RepoProviderConfigId,
             BrainProviderConfigId = result.CreatedRun.BrainProviderConfigId,
             PipelineProviderConfigId = result.CreatedRun.PipelineProviderConfigId,
-            InitiatedBy = result.CreatedRun.InitiatedBy ?? "loop",
+            InitiatedBy = result.CreatedRun.InitiatedBy ?? InitiatedByConstants.Rehydrated,
             TaskType = taskType,
             AgentSelector = agentSelector,
             TimeoutSeconds = (int)result.PipelineConfiguration.AgentTimeout.TotalSeconds,

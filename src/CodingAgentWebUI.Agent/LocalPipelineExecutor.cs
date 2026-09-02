@@ -42,7 +42,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IOpenIssueContextWriter _openIssueContextWriter;
     private readonly AgentId _agentId;
-    private readonly AgentProviderResolver _providerResolver;
+    private readonly IAgentProviderResolver _providerResolver;
     private readonly PipelineExecutionContextBuilder _contextBuilder;
     private readonly Serilog.ILogger _logger;
 
@@ -138,6 +138,12 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             pipelineProvider = resolved.PipelineProvider;
             additionalRepoProviders = resolved.AdditionalRepoProviders;
 
+            // Warn when an implementation run has no brain provider — post-run reflection and brain sync
+            // will be silently skipped, and brain_updates_* metrics will never be populated.
+            // Review and Decomposition runs reach pre-run brain sync but never reach post-run finalization
+            // (they exit at PostingFindings/PostPlan), so the absence of a brain provider is expected there.
+            WarnIfNoBrainProvider(job);
+
             // Merge provider-specific paths into configurable blacklist AND store for hardcoded enforcement
             config = PipelineConfigurationResolver.ApplyProviderBlacklist(config, agentProvider.PipelineInjectedPaths);
             config = config with { PipelineInjectedPaths = agentProvider.PipelineInjectedPaths };
@@ -226,6 +232,12 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 case PipelineExecutionOutcome.CompletedOutcome:
                     // For review/decomposition runs, the step pipeline ends at PostingFindings/PostPlan/PostSummary.
                     // Transition to Completed here (implementation runs do this in CreatePullRequestAsync).
+                    // NOTE: Because review/decomposition runs terminate here without going through
+                    // CreatePullRequestAsync → RunFullPrCreationAsync → RunPostPrSequenceAsync,
+                    // post-run brain sync (and brain_updates_* metrics) is NEVER executed for these run types.
+                    // This is by design. brain_syncs_completed_total (pre-run) will still increment for
+                    // review/decomposition runs if a brain provider is configured, creating an apparent
+                    // asymmetry where pre-run brain metrics exist but post-run metrics are absent.
                     if (run.RunType is PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
                         && run.CurrentStep is not PipelineStep.Failed and not PipelineStep.Cancelled)
                     {
@@ -251,7 +263,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                         FinalStep = PipelineStep.Cancelled,
                         CompletedAt = DateTimeOffset.UtcNow,
                         RetryCount = run.RetryCount,
-                        IsRework = run.LinkedPullRequest is not null,
+                        RunMode = run.RunMode,
                         FinalLabel = AgentLabels.Cancelled
                     };
 
@@ -295,7 +307,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         FinalStep = PipelineStep.Failed, // Placeholder — callers override via 'with'
         CompletedAt = DateTimeOffset.UtcNow, // Placeholder — callers override via 'with'
         RetryCount = run.RetryCount,
-        IsRework = run.LinkedPullRequest is not null,
+        RunMode = run.RunMode,
         FilesChangedCount = run.FilesChangedCount,
         LinesAdded = run.LinesAdded,
         LinesRemoved = run.LinesRemoved,
@@ -311,6 +323,24 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         TotalCost = run.TotalCost,
         FinalLabel = run.FinalLabel
     };
+
+    /// <summary>
+    /// Emits a warning when an implementation-type run has no brain provider configured.
+    /// Extracted so it can be tested without going through the full <see cref="ExecuteAsync"/> pipeline
+    /// (which emits pipeline telemetry counters that pollute cross-assembly MeterListener tests).
+    /// </summary>
+    internal void WarnIfNoBrainProvider(JobAssignmentMessage job)
+    {
+        if (job.RunType is not (PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+            && string.IsNullOrEmpty(job.BrainProviderConfigId))
+        {
+            _logger.Warning(
+                "Job {JobId} for {IssueIdentifier} has no BrainProviderConfigId configured. " +
+                "Post-run reflection and brain sync will be skipped. " +
+                "Set BrainProviderId on the job template to enable brain updates.",
+                job.JobId, job.IssueIdentifier);
+        }
+    }
 
 }
 

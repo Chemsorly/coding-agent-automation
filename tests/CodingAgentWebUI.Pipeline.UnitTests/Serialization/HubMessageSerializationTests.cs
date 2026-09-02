@@ -77,7 +77,7 @@ public class HubMessageSerializationTests
             LinesRemoved = 120,
             BrainUpdatesPushed = true,
             AnalysisRecommendation = AnalysisGateResult.Ready,
-            IsRework = true,
+            RunMode = RunMode.Rework,
             AnalysisConcerns = new[] { "Thread safety concern", "Missing null check" },
             AnalysisBlockingIssues = new[] { "Dependency #99 not merged" },
             BlacklistedFilesDetected = new[] { ".env.production", "secrets/keys.json" },
@@ -126,7 +126,7 @@ public class HubMessageSerializationTests
         deserialized.LinesRemoved.Should().Be(120);
         deserialized.BrainUpdatesPushed.Should().BeTrue();
         deserialized.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
-        deserialized.IsRework.Should().BeTrue();
+        deserialized.RunMode.Should().Be(RunMode.Rework);
         deserialized.TotalTokens.Should().Be(125000);
         deserialized.TotalCost.Should().Be(2.47m);
         deserialized.FinalLabel.Should().Be("agent:done");
