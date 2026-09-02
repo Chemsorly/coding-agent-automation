@@ -30,6 +30,7 @@ internal static class JobCompletionMapper
         run.LinesRemoved = payload.LinesRemoved;
         run.BrainUpdatesPushed = payload.BrainUpdatesPushed;
         run.AnalysisRecommendation = payload.AnalysisRecommendation;
+        run.RunMode = payload.RunMode;
         run.AnalysisConcerns = payload.AnalysisConcerns;
         run.AnalysisBlockingIssues = payload.AnalysisBlockingIssues;
         run.BlacklistedFilesDetected = payload.BlacklistedFilesDetected;
@@ -38,5 +39,6 @@ internal static class JobCompletionMapper
         run.Feedback = payload.Feedback;
         run.TotalTokens = payload.TotalTokens;
         run.TotalCost = payload.TotalCost;
+        run.FinalLabel = payload.FinalLabel;
     }
 }

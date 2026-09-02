@@ -412,7 +412,7 @@ public static class WorkItemEndpoints
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
-            PriorityWeight = string.Equals(request.InitiatedBy, "manual", StringComparison.Ordinal) ? 100 : 0,
+            PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
             // Capture the W3C traceparent from the current API span so the worker K8s Job
             // can restore it and attach its spans to this trace rather than starting a new root.
             // Activity.Current here is the ASP.NET Core request span — the API span that the

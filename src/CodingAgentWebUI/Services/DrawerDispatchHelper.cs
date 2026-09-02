@@ -9,8 +9,6 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 internal static class DrawerDispatchHelper
 {
-    private const string InitiatedByManual = "manual";
-
     /// <summary>
     /// Shared orchestration dispatch flow: resolve project → prepare request → distribute →
     /// return result tuple.
@@ -35,6 +33,6 @@ internal static class DrawerDispatchHelper
         return (true, null, outcome.Queued ? queuedMessage : dispatchedMessage);
     }
 
-    /// <summary>Returns "manual" — the initiator string used for all manual dispatches.</summary>
-    public static string ManualInitiator => InitiatedByManual;
+    /// <summary>Returns the initiator string used for all manual dispatches.</summary>
+    public static string ManualInitiator => InitiatedByConstants.Manual;
 }

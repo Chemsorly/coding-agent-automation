@@ -53,7 +53,7 @@
                 </div>
                 <div><strong>Duration:</strong> @FormatDuration(Run.StartedAt, Run.CompletedAt)</div>
                 <div><strong>Agent:</strong> @(_resolvedAgentName ?? Run.AgentId ?? "—")</div>
-                <div><strong>Initiated By:</strong> @Run.InitiatedBy</div>
+                <div><strong>Initiated By:</strong> @InitiatedByConstants.ToDisplayString(Run.InitiatedBy, Run.RunMode)</div>
                 @if (Run.RunType == PipelineRunType.Review)
                 {
                     @if (!string.IsNullOrEmpty(Run.ReviewPrUrl))
@@ -123,9 +123,9 @@
                 {
                     <div><strong>Brain:</strong> Used @(Run.BrainUpdatesPushed ? "(updates pushed)" : "(read-only)")</div>
                 }
-                @if (Run.IsRework)
+                @if (Run.RunMode != RunMode.New)
                 {
-                    <div><strong>Rework:</strong> Yes</div>
+                    <div><strong>Run Mode:</strong> @Run.RunMode</div>
                 }
                 @if (!string.IsNullOrEmpty(Run.PullRequestUrl) && Run.RunType != PipelineRunType.Review)
                 {

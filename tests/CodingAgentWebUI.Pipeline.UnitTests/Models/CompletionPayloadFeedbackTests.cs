@@ -182,7 +182,7 @@ public class CompletionPayloadFeedbackTests
             "RetryCount": 1,
             "PullRequestUrl": "https://github.com/org/repo/pull/42",
             "BrainUpdatesPushed": true,
-            "IsRework": false
+            "RunMode": 0
         }
         """;
 

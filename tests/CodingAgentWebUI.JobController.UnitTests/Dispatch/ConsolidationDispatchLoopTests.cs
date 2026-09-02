@@ -1,7 +1,10 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 
 namespace CodingAgentWebUI.JobController.UnitTests.Dispatch;
 
@@ -451,6 +454,86 @@ public sealed class ConsolidationDispatchLoopTests
 
         capturedJob.Should().NotBeNull();
         capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(960L); // 900 + 60
+    }
+
+    // ── Metric / telemetry tests ───────────────────────────────────────────────
+    // These tests use MeterListener directly (IDisposable, no [Collection] fixture)
+    // because the JobController test project has no Metrics collection definition.
+    // Assertions use Contain-style checks to remain robust against process-wide meter
+    // pollution from parallel tests.
+
+    [Fact]
+    public async Task WhenAllPvcsClaimed_ShouldIncrementPvcPoolExhaustionsCounter()
+    {
+        // Arrange — kiro template, both PVCs already mounted by live jobs
+        const string kiroYaml = """
+            - labels: dotnet10,kiro
+              image: chemsorly/coding-agent:kiro-dotnet10
+              providerType: kiro
+              maxConcurrent: 0
+            """;
+        var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
+        var twoVcOptions = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            RateLimitPerSecond = 100,
+            KiroPvcPool = ["kiro-pvc-0", "kiro-pvc-1"]
+        };
+
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,kiro")]);
+
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList
+            {
+                Items =
+                [
+                    MakeJobWithPvc("job-0", "kiro-pvc-0"),
+                    MakeJobWithPvc("job-1", "kiro-pvc-1")
+                ]
+            });
+
+        var loop = new ConsolidationDispatchLoop(
+            _consolidationClient.Object, _k8sClient.Object,
+            kiroStore, twoVcOptions, _pvcSelectLock);
+
+        // Wire up MeterListener to capture Counter<long> measurements from WorkDistribution meter
+        var recordings = new ConcurrentBag<(string InstrumentName, long Value, string? Pool)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            string? pool = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "pool") { pool = tag.Value?.ToString(); break; }
+            }
+            recordings.Add((instrument.Name, measurement, pool));
+        });
+        // TODO [WARNING]: listener.Start() MUST remain before RunOneCycleAsync. Start() triggers a
+        // retroactive InstrumentPublished callback for already-existing static instruments on
+        // WorkDistributionTelemetry.Meter, enabling measurement capture. Moving Start() after the
+        // await would miss all measurements and the assertion would silently pass vacuously.
+        listener.Start();
+
+        // Act
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Assert — at least one PvcPoolExhaustions recording with value=1, pool=kiro
+        recordings.Should().Contain(
+            r => r.InstrumentName == "workdistribution.pvc_pool_exhaustions"
+                 && r.Value == 1L
+                 && r.Pool == "kiro",
+            "PvcPoolExhaustions must be incremented by 1 with pool=kiro when no PVC is available");
+        // TODO [WARNING]: Consider also asserting that ClaimAsync and CreateJobAsync are not invoked
+        // (Times.Never) when the PVC pool is exhausted. Without it, a future regression that removes
+        // the early-return would still pass this test if the counter fires before execution continues.
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
