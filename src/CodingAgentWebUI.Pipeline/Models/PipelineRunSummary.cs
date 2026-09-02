@@ -8,6 +8,9 @@ public sealed class PipelineRunSummary
 
     /// <summary>Web URL of the issue on the provider, or null if unknown. Enables "open in provider" links.</summary>
     public string? IssueUrl { get; init; }
+
+    /// <summary>Per-gate pass/fail outcomes from the run's final quality-gate report, or null if gates didn't run. Powers the Insights per-gate ranking.</summary>
+    public IReadOnlyList<GateOutcome>? QualityGateOutcomes { get; init; }
     public required PipelineStep FinalStep { get; init; }
 
     [Obsolete("Use StartedAtOffset for timezone-safe comparisons")]

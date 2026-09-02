@@ -365,6 +365,7 @@ public sealed partial class PipelineRun
         IssueIdentifier = IssueIdentifier,
         IssueTitle = IssueTitle,
         IssueUrl = IssueUrl,
+        QualityGateOutcomes = LatestQualityReport is { } qgReport ? FlattenQualityGates(qgReport) : null,
         FinalStep = finalStepOverride ?? CurrentStep,
         StartedAt = StartedAt,
         CompletedAt = CompletedAt,
@@ -402,4 +403,26 @@ public sealed partial class PipelineRun
         AgentProviderConfigId = AgentProviderConfigId
     };
     #pragma warning restore CS0618
+
+    /// <summary>Flattens a quality-gate report into slim per-gate (name, passed) outcomes for the summary.</summary>
+    private static IReadOnlyList<GateOutcome> FlattenQualityGates(QualityGateReport report)
+    {
+        var outcomes = new List<GateOutcome>();
+        if (report.QgcResults.Count > 0)
+        {
+            // Quality-gate-command mode: each configured command is its own named gate.
+            foreach (var qgc in report.QgcResults)
+                outcomes.Add(new GateOutcome(qgc.DisplayName, qgc.Passed));
+        }
+        else
+        {
+            // Legacy mode: the built-in gates that ran (Compilation + Tests are always present).
+            outcomes.Add(new GateOutcome(report.Compilation.GateName, report.Compilation.Passed));
+            outcomes.Add(new GateOutcome(report.Tests.GateName, report.Tests.Passed));
+            if (report.Coverage is { } coverage) outcomes.Add(new GateOutcome(coverage.GateName, coverage.Passed));
+            if (report.SecurityScan is { } security) outcomes.Add(new GateOutcome(security.GateName, security.Passed));
+        }
+        if (report.ExternalCi is { } externalCi) outcomes.Add(new GateOutcome(externalCi.GateName, externalCi.Passed));
+        return outcomes;
+    }
 }

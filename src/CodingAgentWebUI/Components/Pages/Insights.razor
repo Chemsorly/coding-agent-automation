@@ -13,7 +13,8 @@
     Insights — trends over the most recent runs (see docs/frontend-redesign-handoff.md).
     All figures are computed from the fetched run window and labelled as such (not a fake 24h).
     Cost coverage is honest: TotalCost is null for Kiro, set for OpenCode.
-    Per-gate failure ranking needs QualityGateReport data that isn't on PipelineRunSummary — deferred.
+    Per-gate failure ranking: PipelineRunSummary.QualityGateOutcomes (flattened from the run's
+    LatestQualityReport at ToSummary) aggregated across the fetched window — failures counted per gate.
 *@
 
 <PageTitle>Insights - Coding Agent</PageTitle>
@@ -130,8 +131,30 @@
             </div>
         </div>
 
-        <div class="cockpit-card cockpit-card-pad" style="font-size: 12px; color: var(--text-muted);">
-            <Icon Name="info" Size="14" /> Per-gate failure ranking (Build / Tests / Coverage / External CI) needs the quality-gate report, which isn't on the run summary yet — deferred until a gate-stats source is added.
+        <div class="cockpit-card">
+            <div class="cockpit-card-header"><h2>Quality gate failures</h2><span style="font-size: 12px; color: var(--text-muted);">recent runs with gate data</span></div>
+            @if (_gateRanking.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">No quality-gate failures in the fetched window.</div>
+            }
+            else
+            {
+                @foreach (var g in _gateRanking)
+                {
+                    var rate = g.Total > 0 ? (int)Math.Round(100.0 * g.Failed / g.Total) : 0;
+                    <div class="cockpit-run-row" style="cursor: default;">
+                        <div style="min-width: 0; flex: 1;">
+                            <div style="font-size: 13.5px; font-weight: 600;">@g.GateName</div>
+                            <div style="height: 6px; border-radius: 3px; background: var(--surface-alt); margin-top: 6px; overflow: hidden;">
+                                <div style="height: 100%; width: @rate%; background: var(--error);"></div>
+                            </div>
+                        </div>
+                        <span style="flex-shrink: 0; font-size: 12.5px; color: var(--text-muted); min-width: 130px; text-align: right;">
+                            <span style="font-weight: 700; color: var(--error);">@g.Failed</span> / @g.Total failed · @rate%
+                        </span>
+                    </div>
+                }
+            }
         </div>
     }
 </div>
@@ -150,6 +173,7 @@
     private Dictionary<string, int> _byType = new();
     private List<DayBucket> _days = new();
     private int _maxDay = 1;
+    private List<GateStat> _gateRanking = new();
 
     protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
 
@@ -174,7 +198,7 @@
         _total = 0; _completed = 0; _failed = 0; _cancelled = 0;
         _successRate = 0; _retryRate = 0; _costCoverage = 0;
         _avgCycle = "—"; _avgTokens = 0; _totalCost = 0;
-        _byType = new(); _days = new(); _maxDay = 1;
+        _byType = new(); _days = new(); _maxDay = 1; _gateRanking = new();
         try
         {
             var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
@@ -217,6 +241,23 @@
                 })
                 .ToList();
             _maxDay = Math.Max(1, _days.Max(d => d.Total));
+
+            // Per-gate failure ranking: flatten each run's gate outcomes, count runs + failures per gate.
+            var gateStats = new Dictionary<string, (int Total, int Failed)>(StringComparer.Ordinal);
+            foreach (var run in items)
+            {
+                foreach (var gate in run.QualityGateOutcomes ?? [])
+                {
+                    var s = gateStats.GetValueOrDefault(gate.GateName);
+                    gateStats[gate.GateName] = (s.Total + 1, s.Failed + (gate.Passed ? 0 : 1));
+                }
+            }
+            _gateRanking = gateStats
+                .Where(kv => kv.Value.Failed > 0)
+                .OrderByDescending(kv => kv.Value.Failed)
+                .ThenByDescending(kv => kv.Value.Total == 0 ? 0 : (double)kv.Value.Failed / kv.Value.Total)
+                .Select(kv => new GateStat(kv.Key, kv.Value.Total, kv.Value.Failed))
+                .ToList();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -236,6 +277,8 @@
     {
         public int Total => Completed + Failed + Cancelled;
     }
+
+    private sealed record GateStat(string GateName, int Total, int Failed);
 
     private static string RunTypeLabel(PipelineRunType t) => t switch
     {
