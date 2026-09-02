@@ -257,11 +257,11 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         // Retry exhaustion is a semantic failure (agent did not produce required outputs), not an
         // infrastructure crash. Must label agent:needs-refinement, not agent:error.
         _mockIssueOps.Verify(o => o.SwapLabelAsync("42", AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Once);
-        // TODO: The Times.Never assertion below is a weak guard — it only proves AgentLabels.Error
+        // Note: The Times.Never assertion below is a weak guard — it only proves AgentLabels.Error
         // was not called, but would pass even if the production code used a third label constant.
-        // If stronger exclusivity is needed, enumerate all other AgentLabels constants and assert
-        // Times.Never for each, or restructure to capture the actual label argument and assert
-        // strict equality to AgentLabels.NeedsRefinement.
+        // The meaningful safety net is the Times.Once check on NeedsRefinement above. If stronger
+        // exclusivity is needed, enumerate all other AgentLabels constants and assert Times.Never
+        // for each, or capture the actual label argument and assert strict equality.
         _mockIssueOps.Verify(o => o.SwapLabelAsync("42", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Never);
     }
 
