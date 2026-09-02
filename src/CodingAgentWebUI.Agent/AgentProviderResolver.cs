@@ -19,7 +19,7 @@ namespace CodingAgentWebUI.Agent;
 ///   <item>Cleanup on partial failure (disposes all successfully-created providers)</item>
 /// </list>
 /// </remarks>
-internal sealed class AgentProviderResolver
+internal sealed class AgentProviderResolver : IAgentProviderResolver
 {
     private readonly Serilog.ILogger _logger;
 

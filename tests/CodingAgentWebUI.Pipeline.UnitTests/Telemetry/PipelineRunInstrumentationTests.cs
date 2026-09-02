@@ -96,6 +96,32 @@ public class PipelineRunInstrumentationTests : IDisposable
         instrumentation.Activity.GetTagItem("pipeline.issue").Should().Be("owner/repo#42");
         instrumentation.Activity.GetTagItem("pipeline.project_id").Should().Be("proj-A");
         instrumentation.Activity.GetTagItem("pipeline.project_name").Should().Be("Project A");
+        instrumentation.Activity.GetTagItem("pipeline.run_type").Should().Be("Review");
+    }
+
+    [Theory]
+    [InlineData(PipelineRunType.Implementation, "Implementation")]
+    [InlineData(PipelineRunType.Review, "Review")]
+    [InlineData(PipelineRunType.DecompositionAnalysis, "DecompositionAnalysis")]
+    [InlineData(PipelineRunType.Decomposition, "Decomposition")]
+    [InlineData(PipelineRunType.Consolidation, "Consolidation")]
+    public void Start_SetsRunTypeTagOnActivity(PipelineRunType runType, string expectedTagValue)
+    {
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == PipelineTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        using var instrumentation = PipelineRunInstrumentation.Start(
+            "run-1", "owner/repo#1", runType, "proj-1", "Project 1");
+
+        instrumentation.Activity.Should().NotBeNull();
+        // Span tag must be PascalCase (e.g. "Implementation"), NOT lowercased.
+        // Metric tag uses lowercase via PipelineTelemetry.RunTypeTag() — that is a separate concern.
+        // See docs/internals/observability-internals.md: "span pipeline.run_type values are PascalCase".
+        instrumentation.Activity!.GetTagItem("pipeline.run_type").Should().Be(expectedTagValue);
     }
 
     [Fact]

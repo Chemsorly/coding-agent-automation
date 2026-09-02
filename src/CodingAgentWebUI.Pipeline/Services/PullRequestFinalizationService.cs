@@ -144,6 +144,12 @@ public sealed class PullRequestFinalizationService
             await transitionCallback(PipelineStep.GeneratingPrDescription);
             await GeneratePrDescriptionAsync(run, agentProvider, repoProvider, config, emitOutputLine, ct);
         }
+        else
+        {
+            _logger.Information(
+                "Pipeline {RunId} skipping PR description: isDraft={IsDraft}, hasPrNumber={HasPrNumber}",
+                run.RunId, isDraft, !string.IsNullOrEmpty(run.PullRequestNumber));
+        }
 
         if (!isDraft && brainProvider is not null && brainSync is not null && !config.BrainReadOnly)
         {
@@ -152,6 +158,25 @@ public sealed class PullRequestFinalizationService
 
             await transitionCallback(PipelineStep.SyncingBrainRepoPostRun);
             await SyncBrainPostRunAsync(run, brainSync, brainProvider, config, emitOutputLine, ct);
+        }
+        else
+        {
+            // Emit a tagged skip counter so brain.sync.skipped always appears in Prometheus
+            // for runs that reach finalization, making the skip reason diagnosable without Loki.
+            // Priority: isDraft wins → no_provider → no_sync_service → read_only.
+            var skipReason = isDraft ? "is_draft"
+                : brainProvider is null ? "no_provider"
+                : brainSync is null ? "no_sync_service"
+                : "read_only";
+            PipelineTelemetry.BrainSyncSkipped.Add(1,
+                new KeyValuePair<string, object?>("reason", skipReason));
+            // TODO [WARNING]: The five log arguments (RunId, isDraft, brainProvider!=null, brainSync!=null, BrainReadOnly)
+            // resolve to Information(string, params object[]) because Serilog's ILogger has generic overloads only up to
+            // 3 type params. Moq Verify calls targeting this log must match the params-array overload, not individual
+            // typed matchers, to avoid silently vacuous assertions.
+            _logger.Information(
+                "Pipeline {RunId} skipping brain post-run sync: isDraft={IsDraft}, brainProvider={HasProvider}, brainSync={HasSync}, brainReadOnly={ReadOnly}",
+                run.RunId, isDraft, brainProvider is not null, brainSync is not null, config.BrainReadOnly);
         }
 
         // No step transition for feedback — intentionally matches existing behavior
@@ -222,7 +247,7 @@ public sealed class PullRequestFinalizationService
             }
             var currentBody = run.PullRequestBody ?? "";
             var newBody = $"{description}\n\n---\n\n{currentBody}";
-            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, false, ct);
+            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, null, ct);
             run.PullRequestBody = newBody;
 
             _logger.Information("Pipeline {RunId} PR description generated and applied", run.RunId);

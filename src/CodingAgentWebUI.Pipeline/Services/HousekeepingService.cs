@@ -122,18 +122,31 @@ public sealed class HousekeepingService : IHousekeepingService
 
         // ── Step 4: Get active run branches (for rework exclusion) ───────────
         HashSet<string> activeRunBranches;
+        bool activeRunBranchesUnavailable = false;
         try
         {
-            activeRunBranches = _runService.GetActiveRuns()
-                .Where(r => r.BranchName != null)
-                .Select(r => r.BranchName!)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            activeRunBranches = await _runService.GetActiveRunBranchesAsync(ct);
         }
         catch (Exception ex)
         {
+            // Conservative fallback: if branch data is unavailable (e.g. Scheduler cannot reach the
+            // orchestrator API), we must NOT proceed with branch updates — we cannot confirm which
+            // branches are safe to update. Branch updates are skipped for this cycle (Steps 6a and 6b).
+            // Requirement: "If branch name data is unavailable, housekeeping MUST default to
+            // conservative behavior: skip branch updates for PRs where branch state cannot be confirmed."
+            // NOTE: The Scheduler-deployment path reaches here when GET /api/pipeline-runs/active-branches
+            //   fails (API pod down, auth misconfiguration, 5xx, etc.). The conservative skip covers correctness,
+            //   but the root causes should also be addressed:
+            //   1. PipelineApiRunHistoryClient.GetActiveBranchesAsync uses GetFromJsonAsync which silently
+            //      returns null (→ []) on non-2xx responses instead of throwing — add EnsureSuccessStatusCode()
+            //      before deserialization so HTTP errors propagate and trigger this conservative path.
+            //   2. The /api/pipeline-runs/active-branches endpoint requires ApiAuthPolicies.Operator — the
+            //      Scheduler HttpClient must authenticate with an operator-tier key, not an agent-tier key,
+            //      or 403s will be silently swallowed as empty lists.
             _logger.Warning(ex,
-                "HousekeepingService: failed to get active runs for branch exclusion; proceeding without exclusion");
+                "HousekeepingService: failed to get active runs for branch exclusion; skipping all branch updates this cycle (conservative fallback)");
             activeRunBranches = [];
+            activeRunBranchesUnavailable = true;
         }
 
         // ── Step 5: Shuffle candidates (uniform random) to prevent oldest-first starvation ────
@@ -148,7 +161,9 @@ public sealed class HousekeepingService : IHousekeepingService
             // Skip if the branch still has an active run — the pod is live and the issue
             // will be re-queued naturally when the run completes. Swapping the label now
             // would leave the issue stuck at agent:next with no new dispatch possible.
-            if (activeRunBranches.Contains(pr.BranchName))
+            // Also skip conservatively when active-run data was unavailable (Step 4 threw) —
+            // we cannot confirm whether the branch is safe to rework.
+            if (activeRunBranchesUnavailable || activeRunBranches.Contains(pr.BranchName))
             {
                 _logger.Debug(
                     "HousekeepingService: PR #{PrNumber} is conflicted but branch '{Branch}' has an active run — skipping rework swap",
@@ -166,6 +181,20 @@ public sealed class HousekeepingService : IHousekeepingService
                 break;
 
             if (pr.IsDraft)
+            {
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                continue;
+            }
+
+            // Conservative fallback: if active-run branch data was unavailable (Step 4 threw),
+            // skip ALL branch updates this cycle — we cannot confirm which branches are safe.
+            // NOTE: The telemetry counter is incremented per-PR but no per-PR log is emitted
+            //   for the conservative-skip path. If the API is down for an extended period (e.g. 30 min),
+            //   operators have no per-PR visibility into which PRs were skipped — only the aggregate
+            //   counter and the single Warning-level log from Step 4. Consider logging PR number and
+            //   branch name here (Debug or Information level) so housekeeping cycles with many
+            //   conservative skips can be diagnosed without ambiguity.
+            if (activeRunBranchesUnavailable)
             {
                 PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
                 continue;

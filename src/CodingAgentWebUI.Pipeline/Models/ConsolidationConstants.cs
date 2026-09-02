@@ -14,7 +14,15 @@ public static class ConsolidationConstants
     public const string ProviderConfigId = "consolidation";
 
     /// <summary>
-    /// Value for <see cref="JobDistributionRequest.InitiatedBy"/> on consolidation WorkItems.
+    /// Legacy prefix used for fallback detection of consolidation runs when the full
+    /// <c>InitiatedBy</c> value is not available (e.g. missing SummaryJson in history rows).
+    /// All consolidation <c>InitiatedBy</c> values start with this prefix.
     /// </summary>
-    public const string InitiatedBy = "consolidation";
+    public const string InitiatedByPrefix = "consolidation";
+
+    /// <summary>
+    /// Value for <see cref="JobDistributionRequest.InitiatedBy"/> on consolidation WorkItems
+    /// triggered manually via the UI.
+    /// </summary>
+    public const string InitiatedBy = InitiatedByConstants.ConsolidationManual;
 }
