@@ -1,6 +1,5 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using Serilog;
 
 namespace CodingAgentWebUI.Agent;
 
@@ -34,7 +33,6 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 internal sealed class NullConfigurationStore : IConfigurationStore
 {
-    private static readonly Serilog.ILogger Log = Serilog.Log.ForContext<NullConfigurationStore>();
 
     public Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct) =>
         Task.FromResult(new PipelineConfiguration());
@@ -68,9 +66,6 @@ internal sealed class NullConfigurationStore : IConfigurationStore
 
     public Task<IReadOnlyList<QualityGateConfiguration>> LoadQualityGateConfigsAsync(CancellationToken ct)
     {
-        Log.Warning("NullConfigurationStore.LoadQualityGateConfigsAsync called — returning empty list. " +
-                    "PreResolvedQualityGateConfigs was null; quality gate steps will be skipped. " +
-                    "This is unexpected on the agent path. Verify job assignment includes QualityGateConfigs.");
         return Task.FromResult<IReadOnlyList<QualityGateConfiguration>>([]);
     }
 
@@ -82,9 +77,6 @@ internal sealed class NullConfigurationStore : IConfigurationStore
 
     public Task<IReadOnlyList<ReviewerConfiguration>> LoadReviewerConfigsAsync(CancellationToken ct)
     {
-        Log.Warning("NullConfigurationStore.LoadReviewerConfigsAsync called — returning empty list. " +
-                    "PreResolvedReviewerConfigs was null; code review will run with zero reviewers. " +
-                    "This is unexpected on the agent path. Verify job assignment includes ReviewerConfigs.");
         return Task.FromResult<IReadOnlyList<ReviewerConfiguration>>([]);
     }
 
