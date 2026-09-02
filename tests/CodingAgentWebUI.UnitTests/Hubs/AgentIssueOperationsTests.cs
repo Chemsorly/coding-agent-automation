@@ -361,7 +361,7 @@ public sealed class AgentIssueOperationsTests
         await ops.PostIssueFeedbackCommentAsync(run);
 
         // UpdatePullRequestAsync must NOT be called (remote body already has feedback)
-        mockRepoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        mockRepoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── AppendFeedbackLinkToPrBodyAsync — append succeeds ──────────────────
@@ -403,8 +403,70 @@ public sealed class AgentIssueOperationsTests
         mockRepoProvider.Verify(r => r.UpdatePullRequestAsync(
             77,
             It.Is<string>(body => body.Contains("## Agent Feedback") && body.Contains("issuecomment-99")),
-            false,
+            (bool?)null,
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── AppendFeedbackLinkToPrBodyAsync — must not change draft state ─────
+    // Regression: before the bool→bool? fix, this call passed markReady=false,
+    // which triggered convertPullRequestToDraft on GitHub, silently converting
+    // ready-for-review PRs back to draft after the pipeline completed successfully.
+
+    [Fact]
+    public async Task PostIssueFeedbackCommentAsync_AppendFeedbackLink_DoesNotChangeDraftState()
+    {
+        // Arrange — simulate a run with a ready-for-review (non-draft) PR
+        var run = MakeRun(prNumber: "55", prBody: "Existing PR body");
+        run.Feedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Failure,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback(),
+            Issue = new IssueFeedback { Description = "Agent missed AC #2." }
+        };
+
+        var issueConfig = new ProviderConfig { Id = "issue-cfg-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test" };
+        _facade.Setup(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/issues/10#issuecomment-55");
+        mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _facade.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
+
+        var repoConfig = new ProviderConfig { Id = "repo-cfg-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test" };
+        _facade.Setup(f => f.GetProviderConfigByIdAsync("repo-cfg-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfig);
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.GetPullRequestBodyAsync(55, It.IsAny<CancellationToken>()))
+            .ReturnsAsync("Existing PR body");
+        mockRepoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockRepoProvider.Setup(r => r.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _facade.Setup(f => f.CreateRepositoryProvider(repoConfig)).Returns(mockRepoProvider.Object);
+
+        var ops = CreateOps();
+
+        // Act
+        await ops.PostIssueFeedbackCommentAsync(run);
+
+        // Assert — markReady must be null (body-only update), never false.
+        // Passing false would trigger convertPullRequestToDraft on GitHub,
+        // silently converting a ready-for-review PR back to draft.
+        mockRepoProvider.Verify(r => r.UpdatePullRequestAsync(
+            55,
+            It.IsAny<string>(),
+            (bool?)null,
+            It.IsAny<CancellationToken>()), Times.Once,
+            "Feedback append must pass markReady=null to avoid converting a ready PR back to draft");
+
+        mockRepoProvider.Verify(r => r.UpdatePullRequestAsync(
+            It.IsAny<int>(),
+            It.IsAny<string>(),
+            false,
+            It.IsAny<CancellationToken>()), Times.Never,
+            "Feedback append must never pass markReady=false — that would call convertPullRequestToDraft");
     }
 
     // ── AppendFeedbackLinkToPrBodyAsync — exception in append is swallowed ─

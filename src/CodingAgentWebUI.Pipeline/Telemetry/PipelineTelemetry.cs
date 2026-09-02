@@ -52,8 +52,14 @@ public static class PipelineTelemetry
         "quality_gate.duration", "s", "Total time in quality gate phase");
     public static readonly Counter<long> QualityGateEvaluations = Meter.CreateCounter<long>(
         "quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
+    // TODO: Verify that ExternalCiDuration bucket boundaries are not configured via an AddView/ExplicitBucketHistogramConfiguration
+    // in the SDK host (Program.cs). If custom 30s–6h buckets are applied to ExternalCiDuration via a view, PostPrCiDuration must
+    // be covered by the same view. Both histograms currently have no InstrumentAdvice — if explicit buckets are required per the
+    // telemetry philosophy decision, add matching InstrumentAdvice<double> { HistogramBucketBoundaries = [...] } to both.
     public static readonly Histogram<double> ExternalCiDuration = Meter.CreateHistogram<double>(
         "quality_gate.external_ci.duration", "s", "Time waiting for external CI");
+    public static readonly Histogram<double> PostPrCiDuration = Meter.CreateHistogram<double>(
+        "quality_gate.post_pr_ci.duration", "s", "Time waiting for post-PR CI (pull_request event workflows)");
 
     public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
         "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue",

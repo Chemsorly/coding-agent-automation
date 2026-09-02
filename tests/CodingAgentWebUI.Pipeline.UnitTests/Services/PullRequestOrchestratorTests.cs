@@ -169,7 +169,7 @@ public class PullRequestOrchestratorTests
     [Fact]
     public async Task CreatePullRequest_Rework_CallsUpdateInsteadOfCreate()
     {
-        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun();
@@ -189,7 +189,7 @@ public class PullRequestOrchestratorTests
     [Fact]
     public async Task CreatePullRequest_ReworkNotDraft_MarksReady()
     {
-        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun();
@@ -254,8 +254,8 @@ public class PullRequestOrchestratorTests
     public async Task FinalizePullRequest_PrBodyContainsExpectedFields()
     {
         string? capturedBody = null;
-        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
             .Returns(Task.CompletedTask);
 
         var run = CreateRun();
@@ -288,8 +288,8 @@ public class PullRequestOrchestratorTests
 
         // Capture body from FinalizePullRequestAsync
         string? capturedFinalizeBody = null;
-        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedFinalizeBody = body)
+        _mockRepo.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedFinalizeBody = body)
             .Returns(Task.CompletedTask);
 
         var report = new QualityGateReport
