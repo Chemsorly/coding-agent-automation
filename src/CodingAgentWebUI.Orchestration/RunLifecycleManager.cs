@@ -157,10 +157,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
                 {
                     WorkItemStatus.Succeeded => AgentLabels.Done,
                     WorkItemStatus.Failed    => AgentLabels.Error,
-                    // TODO: The Cancelled arm is not covered by any unit test in RunLifecycleManagerTests.
-                    // Add a test that calls CompleteRunAsync with WorkItemStatus.Cancelled and asserts
-                    // the label swap to AgentLabels.Cancelled, to prevent silent regressions if this
-                    // arm is removed or reordered in a future refactor.
                     WorkItemStatus.Cancelled => AgentLabels.Cancelled,
                     _                        => null
                 };
@@ -217,9 +213,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 6. Swap label
         await _labelService.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "RunLifecycleManager", ct);
 
-        // 7. Delete K8s Job to prevent pod retries (backoffLimit)
-        // TODO: Consider making _jobCleanup non-nullable and using GetRequiredService in all DI registrations
-        // to resolve mode differences entirely at DI registration time (per design goal).
+        // 7. Delete K8s Job to prevent pod retries consuming backoffLimit (mirrors CancelRunAsync step 7).
         if (_jobCleanup is not null)
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 

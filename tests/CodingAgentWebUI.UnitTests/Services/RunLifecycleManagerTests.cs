@@ -266,9 +266,6 @@ public sealed class RunLifecycleManagerTests
     public async Task CompleteRunAsync_NonTerminalStep_MapsToFailed_WhenStatusFailed()
     {
         // Arrange: run stuck at a non-terminal step (edge case — normally JobCompletionMapper sets terminal step)
-        // TODO: [BUG-12] Parameterize with all observed non-terminal steps (RunningQualityGates, ReviewingCode,
-        // PreparingForPullRequest, SyncingBrainRepoPostRun) to catch regressions where guard uses hardcoded
-        // step check instead of IsTerminal().
         var run = CreateRun("run-nonterminal-fail", PipelineRunType.Implementation);
         run.CurrentStep = PipelineStep.RunningQualityGates;
         _runService.AddRun(run);
@@ -344,14 +341,10 @@ public sealed class RunLifecycleManagerTests
         // Acceptance criteria: simulate hub crash after CompleteRunAsync — PostCompletionBookkeepingAsync
         // is never called — and assert the label was already swapped by CompleteRunAsync itself.
         //
-        // TODO: This test is structurally identical to CompleteRunAsync_RemovesRun_PersistsHistory_MarksIssueComplete
-        // (same setup, same assertion). At the unit-test level, there is no observable difference between a
-        // "hub crash scenario" and a normal CompleteRunAsync invocation — PostCompletionBookkeepingAsync is
-        // never present in unit tests. The acceptance criterion (label is swapped independently of the hub) is
-        // a design property, not a branch that can be exercised differently here. To meaningfully validate the
-        // crash-window guarantee, an integration-level test would need to verify that PostCompletionBookkeepingAsync
-        // is NOT called while confirming the label was still swapped. This unit test is kept for explicit
-        // documentation of the acceptance criterion, but it does not add independent code coverage.
+        // Note: at the unit-test level there is no observable difference between a "hub crash scenario"
+        // and a normal CompleteRunAsync invocation — PostCompletionBookkeepingAsync is never present in
+        // unit tests. This test documents the design property: the label swap in CompleteRunAsync is
+        // independent of whether the hub's post-completion path executes.
         var run = CreateRun("run-hub-crash", PipelineRunType.Implementation);
         run.CurrentStep = PipelineStep.Completed;
         _runService.AddRun(run);
@@ -412,13 +405,6 @@ public sealed class RunLifecycleManagerTests
     public async Task CompleteRunAsync_ReviewRun_SwapsLabelViaRepoProviderAndPullRequestTarget()
     {
         // Review runs swap labels on the PR (via repo provider), not the issue.
-        // TODO: The consolidation-skip guard in CompleteRunAsync checks run.IssueProviderConfigId against
-        // ConsolidationConstants.ProviderConfigId. For a review run where IssueProviderConfigId happens to
-        // equal ConsolidationConstants.ProviderConfigId (hypothetically, if a review is dispatched on a
-        // consolidation issue), the guard would incorrectly suppress the label swap on the PR. Consider
-        // whether the guard should be tightened to also check RunType != PipelineRunType.Review, or whether
-        // this combination is structurally impossible by dispatch constraints. Until confirmed impossible,
-        // the behavior is undocumented.
         var run = CreateRun("run-review-complete", PipelineRunType.Review);
         run.CurrentStep = PipelineStep.Completed;
         _runService.AddRun(run);
@@ -433,12 +419,6 @@ public sealed class RunLifecycleManagerTests
     [Fact]
     public async Task CompleteRunAsync_FailedStatus_SwapsLabelToError()
     {
-        // TODO: This test exercises the same production branch (WorkItemStatus.Failed → AgentLabels.Error)
-        // as the label-swap assertion already added to CompleteRunAsync_NonTerminalStep_MapsToFailed_WhenStatusFailed.
-        // The only structural difference is that this test starts with PipelineStep.Failed (already terminal)
-        // while the other starts from PipelineStep.RunningQualityGates (non-terminal, triggering the guard).
-        // Both exercise the same switch arm. Consider merging or removing this test if the duplicate coverage
-        // creates maintenance burden in future refactors.
         var run = CreateRun("run-failed-complete", PipelineRunType.Implementation);
         run.CurrentStep = PipelineStep.Failed;
         _runService.AddRun(run);
@@ -476,9 +456,6 @@ public sealed class RunLifecycleManagerTests
     public async Task CancelRunAsync_RemovesRun_PersistsHistory_ClearsAgent_SwapsLabel()
     {
         // Arrange
-        // TODO: Set run.FailureReason = "Cancelled by user" before calling CancelRunAsync to match the
-        // production flow in AgentMonitoring.razor. Without this, a regression where FailureReason is
-        // overwritten by CancelRunAsync would go undetected.
         var run = CreateRun("run-cancel", PipelineRunType.Implementation);
         run.AgentId = "agent-1";
         _runService.AddRun(run);
@@ -753,11 +730,6 @@ public sealed class RunLifecycleManagerJobCleanupTests
             RunType = PipelineRunType.Implementation
         };
         _runService.AddRun(run);
-        // TODO: Verify whether RegisterAgent is actually required for this cancellation path or is
-        // incidental setup. If CancelRunAsync does not consult the agent registry, this call is redundant
-        // and its removal should not break the test — which would indicate an unchecked precondition.
-        // If it IS required, add a complementary test verifying that cancellation behaves correctly when
-        // no agent is registered (e.g., still invokes job cleanup even without an assigned agent).
         RegisterAgent("agent-1");
 
         // Act
