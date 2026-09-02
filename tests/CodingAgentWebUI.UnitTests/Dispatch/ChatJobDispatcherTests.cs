@@ -1508,6 +1508,14 @@ public class ChatJobDispatcherTests
         // This also ensures EnableMeasurementEvents is called before any Add() calls.
         _ = ChatTelemetry.SessionsActive;
 
+        // Gate: only count decrements while the faulting watcher is in flight.
+        // Without this gate, background watcher tasks left by other tests in this class
+        // (dispatchers are not disposed — they run until their 90-second idle timeout) fire
+        // their own CleanupSession → SessionsActive.Add(-1) into this globally-active listener,
+        // producing a spurious count of 2 on a loaded CI runner. We close the window by setting
+        // this flag immediately after our specific watcher task completes.
+        int accepting = 1;
+
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
@@ -1516,9 +1524,9 @@ public class ChatJobDispatcherTests
         };
         listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
         {
-            // Track only decrements — this is the acceptance criterion: CleanupSession must
-            // fire SessionsActive.Add(-1) after the watcher faults.
-            if (instrument.Name == sessionsActiveName && measurement < 0)
+            // Track only decrements while our watcher is in flight.
+            // CleanupSession must fire SessionsActive.Add(-1) after the watcher faults.
+            if (instrument.Name == sessionsActiveName && measurement < 0 && Volatile.Read(ref accepting) == 1)
                 Interlocked.Increment(ref decrementCount);
         });
         listener.Start();
@@ -1529,6 +1537,10 @@ public class ChatJobDispatcherTests
 
         // Wait for the fault to fire and CleanupSession to run
         await watcherTask!.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Close the measurement window immediately: our watcher has completed, so any further
+        // SessionsActive.Add(-1) calls come from background watcher tasks of other tests.
+        Volatile.Write(ref accepting, 0);
 
         // Assert the decrement happened exactly once: -1 must be emitted by CleanupSession
         // after the watcher faults. Tracking only the decrement avoids sensitivity to whether
