@@ -189,7 +189,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 {
                     var json = File.ReadAllText(file.FullName);
                     var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, JsonOptions);
-                    if (summary != null && summary.InitiatedBy != ConsolidationConstants.InitiatedBy)
+                    if (summary != null && summary.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) != true)
                         summaries.Add(summary);
                 }
                 catch (Exception ex)
