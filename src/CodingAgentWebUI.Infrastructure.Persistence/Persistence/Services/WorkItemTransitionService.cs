@@ -48,17 +48,23 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
     }
 
     /// <summary>
-    /// Attempts a state transition with retry-on-conflict.
-    /// Re-reads the row after DbUpdateConcurrencyException and re-validates
-    /// that the transition is still legal against the refreshed state.
-    /// Returns true if transition succeeded, false if rejected or row moved past target.
+    /// Attempts a state transition with retry-on-conflict and returns a rich <see cref="TransitionResult"/>
+    /// discriminating between an actual state change, an idempotent no-op, a rejected transition, and a
+    /// missing work item.
     /// </summary>
+    /// <remarks>
+    /// Use this overload when the caller needs to distinguish an idempotent no-op
+    /// (item already at <paramref name="target"/>) from a real transition — for example,
+    /// to gate telemetry or lifecycle events that must fire exactly once.
+    /// All other callers should use <see cref="TransitionAsync"/> which preserves the historical
+    /// <c>bool</c> contract.
+    /// </remarks>
     /// <param name="workItemId">The work item to transition.</param>
     /// <param name="target">The desired target status.</param>
-    /// <param name="mutate">Optional action to set additional fields during the transition (e.g., CompletedAt, ErrorMessage).</param>
+    /// <param name="mutate">Optional action to set additional fields during the transition (e.g., CompletedAt, ErrorMessage). Not called on the idempotent no-op path.</param>
     /// <param name="maxRetries">Maximum retry attempts on concurrency conflict (default 3).</param>
     /// <param name="ct">Cancellation token.</param>
-    public async Task<bool> TransitionAsync(
+    public async Task<TransitionResult> TransitionDetailedAsync(
         Guid workItemId, WorkItemStatus target,
         Action<WorkItemEntity>? mutate = null,
         int maxRetries = 3,
@@ -74,7 +80,33 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
         return await TransitionCoreAsync(workItemId, target, mutate, ct, maxRetries);
     }
 
-    private async Task<bool> TransitionCoreAsync(
+    /// <summary>
+    /// Attempts a state transition with retry-on-conflict.
+    /// Re-reads the row after DbUpdateConcurrencyException and re-validates
+    /// that the transition is still legal against the refreshed state.
+    /// Returns true if transition succeeded OR the item was already at the target state
+    /// (idempotent); returns false if rejected or the work item does not exist.
+    /// </summary>
+    /// <remarks>
+    /// When the caller must distinguish an idempotent no-op from a real transition (e.g. to gate
+    /// telemetry that should fire exactly once), use <see cref="TransitionDetailedAsync"/> instead.
+    /// </remarks>
+    /// <param name="workItemId">The work item to transition.</param>
+    /// <param name="target">The desired target status.</param>
+    /// <param name="mutate">Optional action to set additional fields during the transition (e.g., CompletedAt, ErrorMessage).</param>
+    /// <param name="maxRetries">Maximum retry attempts on concurrency conflict (default 3).</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<bool> TransitionAsync(
+        Guid workItemId, WorkItemStatus target,
+        Action<WorkItemEntity>? mutate = null,
+        int maxRetries = 3,
+        CancellationToken ct = default)
+    {
+        var result = await TransitionDetailedAsync(workItemId, target, mutate, maxRetries, ct);
+        return result is TransitionResult.Transitioned or TransitionResult.AlreadyAtTarget;
+    }
+
+    private async Task<TransitionResult> TransitionCoreAsync(
         Guid workItemId, WorkItemStatus target,
         Action<WorkItemEntity>? mutate,
         CancellationToken ct, int maxRetries)
@@ -86,11 +118,12 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             if (item is null)
             {
                 _logger.LogWarning("WorkItem {WorkItemId} not found during transition to {Target}", workItemId, target);
-                return false;
+                return TransitionResult.NotFound;
             }
 
-            // Already at target (idempotent)
-            if (item.Status == target) return true;
+            // Already at target — idempotent no-op, no DB write needed.
+            // Do NOT invoke mutate: the fields it would set were already applied on the first transition.
+            if (item.Status == target) return TransitionResult.AlreadyAtTarget;
 
             // Validate transition is legal from current state
             if (!IsValidTransition(item.Status, target))
@@ -98,7 +131,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
                 _logger.LogWarning(
                     "Invalid transition for WorkItem {WorkItemId}: {Current} → {Target}",
                     workItemId, item.Status, target);
-                return false;
+                return TransitionResult.Rejected;
             }
 
             item.Status = target;
@@ -107,7 +140,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             try
             {
                 await db.SaveChangesAsync(ct);
-                return true;
+                return TransitionResult.Transitioned;
             }
             catch (DbUpdateConcurrencyException) when (attempt < maxRetries)
             {
@@ -122,14 +155,20 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
                 _logger.LogWarning(ex,
                     "WorkItem {WorkItemId} transition to {Target} failed after all retries (concurrency exhausted)",
                     workItemId, target);
-                return false;
+                // TODO: ConcurrencyExhausted is semantically distinct from an invalid state-machine transition
+                // (e.g. Cancelled → Succeeded) but both surface here as TransitionResult.Rejected. PostStatus
+                // returns 400 BadRequest for Rejected, so a valid transition exhausted by write contention
+                // incorrectly produces a 400 instead of a 5xx. Consider adding a ConcurrencyExhausted member
+                // to TransitionResult (or mapping to 503 in PostStatus) to prevent false 400s under contention.
+                return TransitionResult.Rejected;
             }
         }
 
         _logger.LogWarning(
             "WorkItem {WorkItemId} transition to {Target} failed after exhausting all retries",
             workItemId, target);
-        return false;
+        // TODO: Same as above — concurrency exhaustion mapped to Rejected. See comment in the catch block above.
+        return TransitionResult.Rejected;
     }
 
     /// <summary>
