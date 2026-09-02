@@ -144,7 +144,8 @@ public static class WorkItemEndpoints
     /// <summary>
     /// GET /api/work-items/{id}/assignment
     /// Returns the job assignment payload for an agent.
-    /// 200 with JobAssignmentMessage, 404 if not found or null payload, 410 if terminal.
+    /// 200 with JobAssignmentMessage, 404 if not found or null payload, 410 if terminal,
+    /// 503 if enrichment fails (agent should retry; resilience handler handles this automatically).
     /// <para>
     /// Supports two payload schemas for backward compatibility:
     /// <list type="bullet">
@@ -209,7 +210,36 @@ public static class WorkItemEndpoints
         // Either set PayloadSchemaVersion = 1 in BuildMinimalPayload and use it here, or remove the
         // field and its documentation to prevent the mismatch. Consider splitting this into its own PR.
         if (request.ProviderConfigs is null && assignmentEnricher is not null)
-            request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+        {
+            JobDistributionRequest? enriched;
+            try
+            {
+                enriched = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // EnrichAsync swallows most exceptions and returns null, but projectStore calls
+                // inside EnrichRequestAsync (e.g., GetProjectByIdAsync) can throw. Treat any
+                // uncaught exception as a transient enrichment failure → 503 so the agent retries.
+                // TODO: [WARNING] Serilog.Log.Error (static logger) is used here because GetAssignment
+                // is a static method with no injected ILogger. This means the log entry lacks enriched
+                // context (request ID, trace ID, correlation ID) that an injected logger would carry,
+                // reducing observability on the error path for uncaught EnrichRequestAsync exceptions.
+                // Consider threading a logger through GetAssignment's parameter list or using
+                // IHttpContextAccessor to retrieve a scoped logger from DI.
+                Serilog.Log.Error(ex,
+                    "GetAssignment: unhandled exception from EnrichRequestAsync for WorkItem {WorkItemId}; returning 503",
+                    id);
+                return TypedResults.Problem(
+                    detail: "Enrichment failed; retry later.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            if (enriched is null)
+                return TypedResults.Problem(
+                    detail: "Enrichment failed; retry later.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            request = enriched;
+        }
         // TODO: When assignmentEnricher is null and request.ProviderConfigs is null (new-schema path),
         // enrichment is silently skipped and an identity-only 200 is returned with no log output.
         // A DI misconfiguration that drops AssignmentEnricher is now undetectable from logs at this site.
@@ -232,9 +262,9 @@ public static class WorkItemEndpoints
     /// Enriches a new-schema request (ProviderConfigs == null) by fetching mutable config fresh
     /// from the database. Resolves the project for steering + config override context, falling
     /// back to a minimal stub for project-less items.
-    /// If enrichment fails, returns the original request as a best-effort degraded response.
+    /// Returns null if enrichment fails; caller returns 503.
     /// </summary>
-    private static async Task<JobDistributionRequest> EnrichRequestAsync(
+    private static async Task<JobDistributionRequest?> EnrichRequestAsync(
         JobDistributionRequest request,
         IProjectStore projectStore,
         AssignmentEnricher assignmentEnricher,
@@ -258,10 +288,8 @@ public static class WorkItemEndpoints
             project = BuildMinimalProject(request);
         }
 
-        var enriched = await assignmentEnricher.EnrichAsync(request, project, ct);
-        // If enrichment fails, fall through to serve the identity-only request as a
-        // best-effort degraded response (missing configs, but RunId/IssueIdentifier intact).
-        return enriched ?? request;
+        // null propagates to caller; caller returns 503
+        return await assignmentEnricher.EnrichAsync(request, project, ct);
     }
 
     /// <summary>

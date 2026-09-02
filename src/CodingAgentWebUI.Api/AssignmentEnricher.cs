@@ -95,12 +95,11 @@ public class AssignmentEnricher
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // NOTE: [WARNING] This catch-all swallows both permanent failures (provider not found)
-            // and transient infrastructure failures (DB timeout, network error). For transient
-            // failures, returning 503 and letting the agent retry would be more correct than silently
-            // serving an incomplete assignment. Consider distinguishing exception types and propagating
-            // transient failures so the caller can return 503 instead of a degraded 200.
-            _logger.Warning(ex,
-                "AssignmentEnricher: failed to enrich assignment for WorkItem with IssueIdentifier {IssueIdentifier}; falling back to identity payload",
+            // and transient infrastructure failures (DB timeout, network error). The caller
+            // (GetAssignment) maps null to 503 so the agent retries rather than proceeding with
+            // a null-config job spec.
+            _logger.Error(ex,
+                "AssignmentEnricher: failed to enrich assignment for WorkItem with IssueIdentifier {IssueIdentifier}; returning null for 503",
                 identity.IssueIdentifier);
             return null;
         }
@@ -126,7 +125,15 @@ public class AssignmentEnricher
 
         if (profile is null)
         {
-            _logger.Warning(
+            // TODO: [WARNING] "No profile matches selector" is a permanent configuration failure,
+            // not a transient infrastructure error. Returning null here causes the caller (GetAssignment)
+            // to return 503, which causes the agent to retry until the reconciler TTL fires. For
+            // permanent failures like this, a distinct signal (e.g., a typed exception or a separate
+            // null return code) should allow the caller to return 422 Unprocessable Entity or a 503
+            // with a descriptive body explaining it is a permanent misconfiguration rather than a
+            // transient service error. See issue requirements: "Permanent failures should log at Error
+            // level and return a 422 or 503 with a descriptive body, not a degraded 200."
+            _logger.Error(
                 "AssignmentEnricher: no profile matches selector [{Selector}]; cannot enrich assignment",
                 identity.AgentSelector ?? "");
             return null;
@@ -147,7 +154,7 @@ public class AssignmentEnricher
         var core = await _infra.PrepareDispatchCoreAsync(coreRequest, ct);
         if (core is null)
         {
-            _logger.Warning(
+            _logger.Error(
                 "AssignmentEnricher: PrepareDispatchCoreAsync returned null for IssueIdentifier {IssueIdentifier}",
                 identity.IssueIdentifier);
             return null;

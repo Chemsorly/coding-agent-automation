@@ -133,6 +133,14 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             leaderMock.SetupGet(l => l.IsLeader).Returns(true);
             leaderMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
             services.AddSingleton(leaderMock.Object);
+
+            // Replace AssignmentEnricher with a stub that returns a minimal enriched result.
+            // The real implementation requires live provider infrastructure (IProviderFactory,
+            // IAgentProfileStore, DispatchInfrastructure) that is not available in tests.
+            // Tests that validate enrichment failure → 503 use GetAssignmentTests (direct
+            // method calls with FakeAssignmentEnricher) and do not go through this factory.
+            services.RemoveAll<AssignmentEnricher>();
+            services.AddSingleton<AssignmentEnricher>(new StubAssignmentEnricher());
         });
     }
 
@@ -221,5 +229,41 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             string w, AgentId a, CancellationToken ct)
             => Task.FromResult(false);
         public Task NotifyRunCancelledAsync(RunId r, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Test stub for <see cref="AssignmentEnricher"/> that returns a minimal enriched result
+    /// for every request. Used in HTTP-level integration tests where real provider infrastructure
+    /// (IProviderFactory, IAgentProfileStore, DispatchInfrastructure) is not available.
+    /// Returns the identity request with empty-but-non-null mutable config collections so
+    /// callers receive a valid 200 rather than a 503.
+    /// </summary>
+    private sealed class StubAssignmentEnricher : AssignmentEnricher
+    {
+        // TODO: [WARNING] Serilog.Log.Logger is the global static logger. If Serilog has not been
+        // configured at the time this constructor runs (e.g., in some test runners that build the
+        // factory before the test host is started), the base class receives the no-op logger.
+        // This is safe as long as EnrichAsync is fully overridden (which it is), but any future
+        // change that calls base.EnrichAsync from the override would silently swallow log output
+        // or hit a NullReferenceException if the base class guards are relaxed. Prefer passing
+        // a NullLogger (Serilog.Core.Logger.None) or a test-scoped logger instead.
+        public StubAssignmentEnricher() : base(Serilog.Log.Logger) { }
+
+        public override Task<JobDistributionRequest?> EnrichAsync(
+            JobDistributionRequest identity,
+            Pipeline.Models.PipelineProject project,
+            CancellationToken ct)
+        {
+            // Return identity with minimal mutable config populated so GetAssignment returns 200.
+            var enriched = identity with
+            {
+                ProviderConfigs = [],
+                QualityGateConfigs = [],
+                ReviewerConfigs = [],
+                McpServers = [],
+                PipelineConfiguration = new Pipeline.Models.PipelineConfiguration()
+            };
+            return Task.FromResult<JobDistributionRequest?>(enriched);
+        }
     }
 }

@@ -268,32 +268,89 @@ public sealed class GetAssignmentTests
             "JobId/RunId must always match WorkItemEntity.Id regardless of payload schema");
     }
 
+    // TODO: [WARNING] Missing test: old-schema (full-schema) payload with a non-null ProviderConfigs
+    // must skip the enrichment block entirely and return 200 without calling the enricher.
+    // Without this test, a regression that removes the `if (request.ProviderConfigs is null)` guard
+    // and always calls the enricher would silently break the old-schema path. Expected shape:
+    //   Arrange: seed WorkItem with MakeFullRequest() payload (ProviderConfigs != null)
+    //   Arrange: enricher that throws or returns null (would cause 503 if called)
+    //   Assert: result is 200 OK and enricher.CallCount == 0
+
+    // TODO: [WARNING] Missing test: WorkItemHttpClient.GetAssignmentAsync 503-retry contract.
+    // The current tests in WorkItemHttpClientResilienceTests.cs verify retry behavior using WireMock,
+    // but the acceptance criterion "WorkItemHttpClient.GetAssignmentAsync retries on 503 response"
+    // is satisfied only implicitly by AddStandardResilienceHandler's default 5xx predicate.
+    // There is no test that verifies a 503 triggers retry rather than WorkItemFetchException when
+    // the resilience handler IS configured. The existing GetAssignment_PersistentServerError_ThrowsAfterRetries
+    // covers exhaustion but not the intermediate retry-and-succeed path specifically for 503.
+    // Consider adding to WorkItemHttpClientResilienceTests: a test that returns 503 twice then 200,
+    // and asserts the final result is the successful JobAssignmentMessage (not an exception).
+
     [Fact]
-    public async Task GetAssignment_MinimalPayload_EnricherFails_StillReturns200WithIdentityData()
+    public async Task GetAssignment_MinimalPayload_EnricherReturnsNull_Returns503()
     {
-        // ARRANGE: enricher returns null (e.g., provider not found)
+        // ARRANGE: enricher returns null (simulates transient or permanent enrichment failure)
         var dbName = $"GetAssignment-EnricherFail-{Guid.NewGuid():N}";
         var dbFactory = CreateDbFactory(dbName);
         var minimalPayload = MakeMinimalRequest();
         var payloadJson = JsonSerializer.Serialize(minimalPayload, PipelineJsonOptions.Default);
         var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
 
-        // Enricher that returns null (simulates failure)
+        // Enricher that returns null (simulates enrichment failure — provider not found, DB timeout, etc.)
         var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(null));
 
-        // ACT: should not throw; fall through to serve identity payload
+        // ACT
         var result = await WorkItemEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), enricher);
 
-        // ASSERT: still returns 200 (degraded but not 500)
-        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
-        okResult.Should().NotBeNull(
-            "enrichment failure must fall through to identity-payload response, not crash the endpoint");
-        okResult!.Value!.JobId.Should().Be(id.ToString());
-        // TODO: [WARNING] This test does not assert that the degraded response has null/empty
-        // ProviderConfigs, QualityGateConfigs, etc. A regression that populated these fields from a
-        // stale source would not be caught. Add assertions like:
-        //   okResult.Value.ProviderConfigs.Should().BeNullOrEmpty("degraded response must not expose stale config");
+        // ASSERT: 503 returned — no degraded 200 fallback
+        var problemResult = result as Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult;
+        problemResult.Should().NotBeNull(
+            "enrichment failure must return 503 Service Unavailable so the agent retries, not a degraded 200");
+        problemResult!.StatusCode.Should().Be(503,
+            "the agent's resilience handler retries 503 — returning 200 would cause the agent to proceed with a null-config job spec");
+        // TODO: [WARNING] The `detail` field ("Enrichment failed; retry later.") is not asserted here.
+        // Add: problemResult.ProblemDetails.Detail.Should().Be("Enrichment failed; retry later.");
+        // Without this, a regression that returns 503 with an empty or misleading body (e.g., a generic
+        // unhandled exception response) would not be caught by this test.
+        enricher.CallCount.Should().Be(1, "enricher must be called once for the new-schema payload");
+    }
+
+    [Fact]
+    public async Task GetAssignment_MinimalPayload_EnricherThrows_Returns503()
+    {
+        // ARRANGE: enricher throws a transient exception (e.g., DB timeout escaping the enricher)
+        // This tests the try/catch in GetAssignment that wraps EnrichRequestAsync.
+        var dbName = $"GetAssignment-EnricherThrows-{Guid.NewGuid():N}";
+        var dbFactory = CreateDbFactory(dbName);
+        var minimalPayload = MakeMinimalRequest();
+        var payloadJson = JsonSerializer.Serialize(minimalPayload, PipelineJsonOptions.Default);
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
+
+        // Enricher that throws (simulates an uncaught transient failure escaping EnrichAsync)
+        var enricher = new FakeAssignmentEnricher((r, p) =>
+            Task.FromException<JobDistributionRequest?>(new InvalidOperationException("Simulated DB timeout")));
+
+        // ACT
+        var result = await WorkItemEndpoints.GetAssignment(
+            id, dbFactory, CreateNullProjectStore(), enricher);
+
+        // ASSERT: 503 returned — thrown exception must not become a 500
+        var problemResult = result as Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult;
+        problemResult.Should().NotBeNull(
+            "a thrown exception from EnrichAsync must return 503 Service Unavailable, not propagate as an unhandled 500");
+        problemResult!.StatusCode.Should().Be(503,
+            "transient enrichment exceptions must be converted to 503 so the agent retries");
+        // TODO: [WARNING] ProblemDetails.Detail is not asserted. Both the null-return path and the
+        // exception path return TypedResults.Problem(detail: "Enrichment failed; retry later.", statusCode: 503).
+        // Without asserting Detail, a regression that returns 503 from a different branch (e.g., unhandled
+        // exception middleware) would pass this test even though the correct catch block was never reached.
+        // Add: problemResult.ProblemDetails.Detail.Should().Be("Enrichment failed; retry later.");
+        // TODO: [WARNING] enricher.CallCount is not asserted. Without it, a regression that routes the
+        // thrown exception to the null-return path (bypassing the outer try/catch entirely) would still
+        // pass this test since both paths produce 503. This assertion confirms the exception path specifically
+        // exercised the outer catch in WorkItemEndpoints.GetAssignment.
+        // Add: enricher.CallCount.Should().Be(1, "enricher must be called once before throwing");
     }
 
     [Fact]

@@ -92,6 +92,13 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
 
                 default:
                     // TODO: Add explicit >= 500 check with "retries exhausted" message for consistency with PostStatusAsync
+                    // TODO: [WARNING] 503 (from enrichment failure on the server) reaches this branch only after
+                    // AddStandardResilienceHandler has exhausted all retries. The retry relies entirely on the
+                    // standard handler's default predicate covering ServiceUnavailable (5xx). If the resilience
+                    // handler is misconfigured or dropped at the DI registration site, a 503 would throw
+                    // WorkItemFetchException immediately with no retry, violating the 503-retry contract.
+                    // Consider adding an explicit HttpStatusCode.ServiceUnavailable case with a "retries exhausted"
+                    // message so the intent is auditable without reading AgentWorkItemModeRegistration.cs.
                     _logger.Error("Unexpected status {StatusCode} from GET /api/work-items/{WorkItemId}/assignment", (int)response.StatusCode, workItemId);
                     throw new WorkItemFetchException(
                         $"Unexpected status {(int)response.StatusCode} from GET /api/work-items/{workItemId}/assignment");
