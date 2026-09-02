@@ -5,6 +5,9 @@ public sealed class PipelineRunSummary
     public required string RunId { get; init; }
     public required IssueIdentifier IssueIdentifier { get; init; }
     public required string IssueTitle { get; init; }
+
+    /// <summary>Web URL of the issue on the provider, or null if unknown. Enables "open in provider" links.</summary>
+    public string? IssueUrl { get; init; }
     public required PipelineStep FinalStep { get; init; }
 
     [Obsolete("Use StartedAtOffset for timezone-safe comparisons")]

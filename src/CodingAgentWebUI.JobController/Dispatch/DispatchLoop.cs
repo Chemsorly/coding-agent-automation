@@ -65,7 +65,7 @@ public sealed class DispatchLoop
         IReadOnlyList<PendingWorkItemDto> pending;
         try
         {
-            pending = await _workItemClient.GetPendingAsync(maxResults: 50, ct);
+            pending = await _workItemClient.GetPendingAsync(maxResults: 50, ct: ct);
         }
         catch (Exception ex)
         {

@@ -104,7 +104,7 @@ public sealed class DispatchServiceTests
 
         // Assert: no API call was made — the inner loop was never entered
         _workItemClient.Verify(
-            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "DispatchLoop.RunOneCycleAsync must not be called when this instance is not the leader");
     }
@@ -120,7 +120,7 @@ public sealed class DispatchServiceTests
         var svc = MakeService(leaderElection);
 
         _workItemClient
-            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         using var stopCts = new CancellationTokenSource();
@@ -141,7 +141,7 @@ public sealed class DispatchServiceTests
 
         // Assert: inner loop was entered at least once
         _workItemClient.Verify(
-            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce,
             "DispatchLoop.RunOneCycleAsync must be called when this instance is the leader");
     }
@@ -157,7 +157,7 @@ public sealed class DispatchServiceTests
         var svc = MakeService(leaderElection);
 
         _workItemClient
-            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         using var stopCts = new CancellationTokenSource();
@@ -166,7 +166,7 @@ public sealed class DispatchServiceTests
         // Confirm no polling while waiting for leadership
         await Task.Delay(150);
         _workItemClient.Verify(
-            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Act: grant leadership
@@ -185,7 +185,7 @@ public sealed class DispatchServiceTests
         await executeTask;
 
         _workItemClient.Verify(
-            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);
     }
 }

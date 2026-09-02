@@ -85,9 +85,13 @@
 
         var implPr = run.RunType != PipelineRunType.Review ? run.PullRequestUrl : null;
         var reviewPr = run.RunType == PipelineRunType.Review ? run.ReviewPrUrl : null;
-        @if (!string.IsNullOrEmpty(implPr) || !string.IsNullOrEmpty(reviewPr))
+        @if (!string.IsNullOrEmpty(run.IssueUrl) || !string.IsNullOrEmpty(implPr) || !string.IsNullOrEmpty(reviewPr))
         {
             <div class="cockpit-links-rail">
+                @if (!string.IsNullOrEmpty(run.IssueUrl))
+                {
+                    <a href="@run.IssueUrl" target="_blank" rel="noopener" class="cockpit-link-chip"><Icon Name="clipboard-list" Size="14" /> Issue #@run.IssueIdentifier ↗</a>
+                }
                 @if (!string.IsNullOrEmpty(implPr))
                 {
                     <a href="@implPr" target="_blank" rel="noopener" class="cockpit-link-chip"><Icon Name="link" Size="14" /> Pull request ↗</a>

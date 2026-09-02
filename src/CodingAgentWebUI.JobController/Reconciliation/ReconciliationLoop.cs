@@ -91,7 +91,7 @@ public sealed class ReconciliationLoop
         IReadOnlyList<ActiveWorkItemDto> timedOut;
         try
         {
-            timedOut = await _workItemClient.GetActiveAsync(_options.AgentJobTimeoutSeconds, ct);
+            timedOut = await _workItemClient.GetActiveAsync(_options.AgentJobTimeoutSeconds, ct: ct);
         }
         catch (Exception ex)
         {
@@ -172,7 +172,7 @@ public sealed class ReconciliationLoop
         IReadOnlyList<ActiveWorkItemDto> items;
         try
         {
-            items = await _workItemClient.GetActiveAsync(_options.ChatPodConnectTimeoutSeconds, ct);
+            items = await _workItemClient.GetActiveAsync(_options.ChatPodConnectTimeoutSeconds, ct: ct);
         }
         catch (Exception ex)
         {
@@ -254,7 +254,7 @@ public sealed class ReconciliationLoop
             // Pass olderThanSeconds=0 to get ALL active (Dispatched+Running) work items regardless of age.
             // This builds the "active" set used to exclude Jobs from orphan deletion — we never want to
             // delete a Job that has a corresponding active WorkItem, even a brand-new one.
-            activeItems = await _workItemClient.GetActiveAsync(0, ct);
+            activeItems = await _workItemClient.GetActiveAsync(0, ct: ct);
         }
         catch (Exception ex)
         {

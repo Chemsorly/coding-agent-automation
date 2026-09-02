@@ -183,7 +183,7 @@
         // Queue (pending work items)
         try
         {
-            var pending = await WorkItems.GetPendingAsync(maxResults: 100, ct: _cts.Token);
+            var pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
             _queueCount = pending.Count;
         }
         catch (OperationCanceledException) { return; }
@@ -248,7 +248,7 @@
     public async ValueTask DisposeAsync()
     {
         LoopService.OnChange -= HandleLoopChanged;
-        State.OnChange -= HandleProjectChanged;
+        State.OnProjectChanged -= HandleProjectChanged;
         await _cts.CancelAsync();
         _cts.Dispose();
     }

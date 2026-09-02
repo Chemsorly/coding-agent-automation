@@ -3,8 +3,10 @@
 @implements IAsyncDisposable
 @using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Services
 @using CodingAgentWebUI.Components.Shared
 @inject IPipelineApiWorkItemClient WorkItems
+@inject CockpitState State
 @inject NavigationManager Nav
 
 @*
@@ -115,12 +117,25 @@
     private bool _loading = true;
     private string? _error;
 
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
+    // Re-query when the top-bar project scope changes (quiet — keeps the current view until data returns).
+    private async void HandleProjectChanged()
+    {
+        try
+        {
+            await RefreshQuietAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+    }
+
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, ct: _cts.Token);
-            _pending = await WorkItems.GetPendingAsync(maxResults: 100, ct: _cts.Token);
+            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -138,8 +153,8 @@
     {
         try
         {
-            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, ct: _cts.Token);
-            _pending = await WorkItems.GetPendingAsync(maxResults: 100, ct: _cts.Token);
+            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
             _error = null;
         }
         catch (OperationCanceledException) { }
@@ -168,6 +183,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        State.OnProjectChanged -= HandleProjectChanged;
         await _cts.CancelAsync();
         _cts.Dispose();
     }

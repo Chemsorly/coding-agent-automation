@@ -81,7 +81,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenClaimSucceeds_ShouldCallCreateJobAsync()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending()]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
@@ -97,7 +97,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenClaimReturns409_ShouldNotCallCreateJobAsync()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending()]);
         // null return = 409 (already claimed by another instance)
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
@@ -115,7 +115,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenK8sCreateFails_ShouldCallRequeueAsync()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending()]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
@@ -150,7 +150,7 @@ public sealed class DispatchLoopTests
             KiroPvcPool = [] // empty pool
         };
 
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
@@ -184,7 +184,7 @@ public sealed class DispatchLoopTests
             KiroPvcPool = [] // empty pool — TryClaim returns null
         };
 
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
@@ -229,7 +229,7 @@ public sealed class DispatchLoopTests
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [activeJob] });
 
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,opencode")]);
 
         var loop = new DispatchLoop(
@@ -247,7 +247,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenLabelSwapFails_ShouldNotCallRequeueAsync()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending()]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
@@ -268,7 +268,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task OnStartup_ShouldCallGetAgentProfilesAsync()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
         _configClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
@@ -285,7 +285,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenNoPendingItems_ShouldNotClaimOrCreate()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
@@ -314,7 +314,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenClaimSucceeds_ShouldCreateJob_ButNoDerivedKeySecret()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending()]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
@@ -338,7 +338,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenNoTemplateForSelector_ShouldNotClaimOrCreate()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("unknown,selector")]);
 
         var loop = CreateLoop();
@@ -353,7 +353,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenGetPendingThrows_ShouldReturnWithoutClaiming()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API unreachable"));
 
         var loop = CreateLoop();
@@ -367,7 +367,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenClaimThrowsNotFound_ShouldSkipWithoutRequeue()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending()]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new WorkItemNotFoundException(ItemId));
@@ -384,7 +384,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task OnStartup_ProfileWithNoMatchingTemplate_ShouldLogWarningAndContinue()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
         _configClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([
@@ -402,7 +402,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task OnStartup_WhenGetAgentProfilesThrows_ShouldContinue()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
         _configClient.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API unreachable"));
@@ -416,7 +416,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenLabelSwapFails_ShouldNotRequeue_JobAlreadyRunning()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending()]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
@@ -435,7 +435,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenK8sCreateFailsAndRequeueFails_ShouldNotThrow()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending()]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
@@ -461,7 +461,7 @@ public sealed class DispatchLoopTests
     [Fact]
     public async Task WhenK8sCreateFailsAndRequeueReturns409Silently_ShouldNotThrow()
     {
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending()]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
@@ -486,7 +486,7 @@ public sealed class DispatchLoopTests
     public async Task WhenItemTimeoutExceedsGlobal_K8sJob_ActiveDeadlineSeconds_UsesItemTimeout()
     {
         // item timeout (28800s) > global timeout (7200s) → activeDeadlineSeconds == 28860
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending(timeoutSeconds: 28800)]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
@@ -507,7 +507,7 @@ public sealed class DispatchLoopTests
     public async Task WhenGlobalTimeoutExceedsItem_K8sJob_ActiveDeadlineSeconds_UsesGlobalTimeout()
     {
         // item timeout (3600s) < global timeout (7200s) → activeDeadlineSeconds == 7260
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending(timeoutSeconds: 3600)]);
         _workItemClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());

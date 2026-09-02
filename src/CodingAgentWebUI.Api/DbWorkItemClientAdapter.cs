@@ -39,7 +39,7 @@ internal sealed class DbWorkItemClientAdapter : IPipelineApiWorkItemClient
     // ── Not used by KubernetesJobCleanup — throw to surface accidental usage ──
 
     [ExcludeFromCodeCoverage(Justification = "Intentional NotSupportedException stubs — never called by KubernetesJobCleanup")]
-    public Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults = 50, CancellationToken ct = default)
+    public Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults = 50, string? projectId = null, CancellationToken ct = default)
         => throw new NotSupportedException($"{nameof(DbWorkItemClientAdapter)} only supports {nameof(GetK8sJobNameAsync)}.");
 
     [ExcludeFromCodeCoverage(Justification = "Intentional NotSupportedException stub")]
@@ -75,7 +75,7 @@ internal sealed class DbWorkItemClientAdapter : IPipelineApiWorkItemClient
         => throw new NotSupportedException($"{nameof(DbWorkItemClientAdapter)} only supports {nameof(GetK8sJobNameAsync)}.");
 
     [ExcludeFromCodeCoverage(Justification = "Intentional NotSupportedException stub")]
-    public Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds, CancellationToken ct = default)
+    public Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds, string? projectId = null, CancellationToken ct = default)
         => throw new NotSupportedException($"{nameof(DbWorkItemClientAdapter)} only supports {nameof(GetK8sJobNameAsync)}.");
 
     [ExcludeFromCodeCoverage(Justification = "Intentional NotSupportedException stub")]

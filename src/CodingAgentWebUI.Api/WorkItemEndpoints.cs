@@ -331,16 +331,23 @@ public static class WorkItemEndpoints
     internal static async Task<IResult> GetPendingWorkItems(
         IDbContextFactory<PipelineDbContext> dbFactory,
         int maxResults = 50,
+        string? projectId = null,
         CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         // Phase 1: SQL projection — include Payload and ProjectId alongside the 7 scalar fields.
         // Payload is fetched here so we can extract display fields in-memory (Phase 2).
-        var raw = await db.WorkItems
+        var pending = db.WorkItems
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending
-                     && w.TaskType != WorkItemTaskType.Consolidation)
+                     && w.TaskType != WorkItemTaskType.Consolidation);
+        // Optional project scope. WorkItem.ProjectId is a uuid column while the switcher passes the
+        // project's id as a string (PipelineProject.Id is a Guid-string), so parse before comparing.
+        if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
+            pending = pending.Where(w => w.ProjectId == scopeProjectId);
+
+        var raw = await pending
             .OrderBy(w => w.CreatedAt)
             .Take(maxResults)
             .Select(w => new
@@ -630,19 +637,26 @@ public static class WorkItemEndpoints
     internal static async Task<IResult> GetActiveWorkItems(
         int olderThanSeconds,
         IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
+        string? projectId = null,
+        CancellationToken ct = default)
     {
         var cutoff = DateTimeOffset.UtcNow.AddSeconds(-olderThanSeconds);
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var items = await db.WorkItems
+        var active = db.WorkItems
             .AsNoTracking()
             .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
                      && (w.DispatchedAt < cutoff
                          // Fallback for items where DispatchedAt is null (e.g., claim write failed):
                          // use CreatedAt so they are not permanently invisible to timeout enforcement.
                          // 1C-001: NULL < cutoff evaluates to NULL (falsy) in SQL, excluding these rows.
-                         || (w.DispatchedAt == null && w.CreatedAt < cutoff)))
+                         || (w.DispatchedAt == null && w.CreatedAt < cutoff)));
+        // Optional project scope (not passed by reconciliation). ProjectId is a uuid column; parse the
+        // switcher's Guid-string id before comparing.
+        if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
+            active = active.Where(w => w.ProjectId == scopeProjectId);
+
+        var items = await active
             .Select(w => new ActiveWorkItemDto
             {
                 Id = w.Id,

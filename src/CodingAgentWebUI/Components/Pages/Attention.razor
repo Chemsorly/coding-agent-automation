@@ -6,14 +6,16 @@
 @using CodingAgentWebUI.Components.Shared
 @using CodingAgentWebUI.Services
 @inject IPipelineApiRunHistoryClient RunHistory
+@inject BlockedIssuesService BlockedIssues
 @inject CockpitState State
 @inject NavigationManager Nav
 
 @*
     Attention — things that may need a human (see docs/frontend-redesign-handoff.md).
     Real from run history: needs-refinement (AnalysisRecommendation == NotReady), failed runs,
-    decomposition plans posted. Blocked-by-dependency needs issue-provider readiness (the drawer
-    flow) — deferred, not faked. Rows deep-link to the run (and its PR where present).
+    decomposition plans posted. The blocked-issues section is a LIVE query (issue-provider + the
+    dependency checker, the same path the dispatch drawer uses) — loaded async after first render so
+    it never blocks the page. Rows deep-link to the run (and its PR / issue where present).
 *@
 
 <PageTitle>Attention - Coding Agent</PageTitle>
@@ -54,6 +56,10 @@
                             <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">@sec.Subline(r)</div>
                         </div>
                         <span style="display: inline-flex; align-items: center; gap: 12px; flex-shrink: 0;">
+                            @if (!string.IsNullOrEmpty(r.IssueUrl))
+                            {
+                                <a href="@r.IssueUrl" target="_blank" rel="noopener" class="mono" style="font-size: 11.5px; font-weight: 600;" @onclick:stopPropagation="true" title="Open the issue in the provider">Issue ↗</a>
+                            }
                             @if (!string.IsNullOrEmpty(r.PullRequestUrl))
                             {
                                 <a href="@r.PullRequestUrl" target="_blank" rel="noopener" class="mono" style="font-size: 11.5px; font-weight: 600;" @onclick:stopPropagation="true">PR ↗</a>
@@ -70,8 +76,35 @@
             <div class="cockpit-card"><div class="cockpit-empty">Nothing needs attention right now.</div></div>
         }
 
-        <div class="cockpit-card cockpit-card-pad" style="font-size: 12px; color: var(--text-muted);">
-            <Icon Name="info" Size="14" /> Blocked-by-dependency issues aren't listed here yet — that readiness comes from the issue-provider check (the dispatch-drawer flow); folding it in is a follow-up.
+        <div class="cockpit-card">
+            <div class="cockpit-card-header">
+                <h2>Blocked issues</h2>
+                <span style="font-size: 12px; color: var(--text-muted);">@(_blockedLoading ? "checking…" : _blockedIssues.Count.ToString())</span>
+            </div>
+            @if (_blockedLoading)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">Checking issue dependencies…</div>
+            }
+            else if (_blockedIssues.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">No open issues are blocked by dependencies.</div>
+            }
+            else
+            {
+                @foreach (var b in _blockedIssues)
+                {
+                    <div class="cockpit-run-row" style="cursor: default;">
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@b.Identifier @b.Title</div>
+                            <div style="font-size: 12px; color: var(--warning); margin-top: 2px;">Blocked by @string.Join(", ", b.BlockedBy.Select(n => $"#{n}"))</div>
+                        </div>
+                        @if (!string.IsNullOrEmpty(b.Url))
+                        {
+                            <a href="@b.Url" target="_blank" rel="noopener" class="mono" style="font-size: 11.5px; font-weight: 600; flex-shrink: 0;" title="Open the issue in the provider">Issue ↗</a>
+                        }
+                    </div>
+                }
+            }
         </div>
     }
 </div>
@@ -85,11 +118,59 @@
     private string? _error;
     private List<Section> _sections = new();
 
-    protected override async Task OnInitializedAsync()
+    // Blocked issues are a LIVE provider query (see BlockedIssuesService) — loaded after first render.
+    private IReadOnlyList<BlockedIssue> _blockedIssues = [];
+    private bool _blockedLoading = true;
+
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    // Kick off the blocked-issues query only after the run-based sections have rendered, so the live
+    // provider calls never delay the page's first paint.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await LoadBlockedIssuesAsync();
+    }
+
+    // Re-aggregate when the top-bar project scope changes. (SetAttentionCount raises OnChange, not
+    // OnProjectChanged, so publishing the count below cannot re-trigger this handler.)
+    private async void HandleProjectChanged()
     {
         try
         {
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, ct: _cts.Token);
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+            await LoadBlockedIssuesAsync();
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadBlockedIssuesAsync()
+    {
+        _blockedLoading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            _blockedIssues = await BlockedIssues.GetBlockedIssuesAsync(State.SelectedProjectId, _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch { /* the service already degrades to empty on provider errors */ }
+        finally
+        {
+            _blockedLoading = false;
+            try { await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { }
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
             var items = runs.Items;
 
             var needsRefinement = items.Where(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady).ToList();
@@ -125,6 +206,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        State.OnProjectChanged -= HandleProjectChanged;
         await _cts.CancelAsync();
         _cts.Dispose();
     }

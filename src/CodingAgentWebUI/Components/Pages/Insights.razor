@@ -151,7 +151,7 @@
     private List<DayBucket> _days = new();
     private int _maxDay = 1;
 
-    protected override void OnInitialized() => State.OnChange += HandleProjectChanged;
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
@@ -257,7 +257,7 @@
 
     public async ValueTask DisposeAsync()
     {
-        State.OnChange -= HandleProjectChanged;
+        State.OnProjectChanged -= HandleProjectChanged;
         await _cts.CancelAsync();
         _cts.Dispose();
     }

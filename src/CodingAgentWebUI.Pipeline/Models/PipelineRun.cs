@@ -28,6 +28,8 @@ public sealed partial class PipelineRun
     public required IssueIdentifier IssueIdentifier { get; init; }
     // NOTE: Semantically set-once (populated after construction from fetched issue title). Cannot be init-only without restructuring call sites.
     public required string IssueTitle { get; set; }
+    /// <summary>Web URL of the issue on the provider, or null if unknown (populated from the fetched issue).</summary>
+    public string? IssueUrl { get; set; }
     public required string IssueProviderConfigId { get; init; }
     public required string RepoProviderConfigId { get; init; }
 
@@ -362,6 +364,7 @@ public sealed partial class PipelineRun
         RunId = RunId,
         IssueIdentifier = IssueIdentifier,
         IssueTitle = IssueTitle,
+        IssueUrl = IssueUrl,
         FinalStep = finalStepOverride ?? CurrentStep,
         StartedAt = StartedAt,
         CompletedAt = CompletedAt,

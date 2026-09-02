@@ -172,7 +172,7 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             var workItemClientMock = new Mock<IPipelineApiWorkItemClient>();
             workItemClientMock.Setup(s => s.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<(string IssueIdentifier, string IssueProviderConfigId)>());
-            workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
             services.RemoveAll<IPipelineApiWorkItemClient>();
             services.AddSingleton(workItemClientMock.Object);

@@ -145,7 +145,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
             // Replace IPipelineApiWorkItemClient with a mock to prevent real HTTP calls.
             var workItemClientMock = new Mock<IPipelineApiWorkItemClient>();
-            workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((IReadOnlyList<PendingWorkItemDto>)Array.Empty<PendingWorkItemDto>());
             services.RemoveAll<IPipelineApiWorkItemClient>();
             services.AddSingleton(workItemClientMock.Object);
