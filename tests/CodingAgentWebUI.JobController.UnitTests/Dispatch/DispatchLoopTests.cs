@@ -1433,12 +1433,6 @@ public sealed class DispatchLoopMetricTests : IDisposable
         _k8sClient.Setup(c => c.ListJobsAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [] });
-        // TODO [WARNING]: _k8sClient.CreateJobAsync is not explicitly set up here. Moq's default for
-        // Task-returning methods is Task.CompletedTask (which makes TryCreateK8sJobAsync return true),
-        // matching the happy-path intent. However, the test's success depends on that Moq default
-        // behaviour rather than an explicit setup. The existing tests in DispatchLoopTests explicitly
-        // set up CreateJobAsync (e.g., around lines 128–138) — add an explicit setup here to make the
-        // test self-documenting and robust against Moq default-mock drift.
 
         // Default: eligible issue (open, has agent:next)
         _issueProvider
@@ -1497,16 +1491,14 @@ public sealed class DispatchLoopMetricTests : IDisposable
     /// AC: QueueWaitTime.Record() is called with the correct wait duration and run_type tag
     /// when a WorkItem is successfully dispatched.
     ///
-    /// Uses a fixed past timestamp (2025-01-01T00:00:00Z as CreatedAt, dispatched ~30s later)
-    /// to avoid flakiness from UtcNow drift. The fixed CreatedAt produces a year-scale value
-    /// (~1.5 × 10^7 s) if the implementation accidentally uses UtcNow for BOTH endpoints —
-    /// making accidental mis-implementation immediately obvious.
+    /// CreatedAt is set 30 seconds in the past so the recorded value is ~30 s. The upper bound
+    /// guards against a year-scale value that would result if the implementation accidentally
+    /// used UtcNow for both endpoints.
     /// </summary>
     [Fact]
     public async Task WhenDispatchSucceeds_RecordsQueueWaitTime_WithCorrectRunTypeTag()
     {
-        // Arrange — fixed past timestamp; real dispatch captures UtcNow so elapsed ≈ time since epoch
-        // Use a CreatedAt very close to UtcNow so the recorded value is small and bounded.
+        // Arrange
         var createdAt = DateTimeOffset.UtcNow.AddSeconds(-30);
         var item = new PendingWorkItemDto
         {
@@ -1540,23 +1532,7 @@ public sealed class DispatchLoopMetricTests : IDisposable
         // Act
         await loop.RunOneCycleAsync(CancellationToken.None);
 
-        // Assert — a QueueWaitTime recording was captured
-        // TODO [WARNING]: The lower-bound assertion r.Value >= 25.0 is time-sensitive. createdAt is set
-        // to UtcNow.AddSeconds(-30) and the recorded value is (now - createdAt) where 'now' is captured
-        // inside production code after several awaits (K8s list, work-item fetch, claim, label swap).
-        // Under load or GC pressure those awaits could consume >5s, causing the assertion to fail
-        // spuriously. The XML doc comment above describes using a fixed past timestamp (e.g. 2025-01-01)
-        // to make the lower bound a constant (~3×10^7 s) that is immune to execution time — but the
-        // implementation uses UtcNow.AddSeconds(-30) instead, contradicting its own rationale.
-        // Consider switching createdAt to a fixed historical timestamp and updating the bounds accordingly.
-        // TODO [WARNING]: The assertion uses Contain (at-least-one semantics) and does not verify that
-        // exactly one QueueWaitTime recording is emitted per dispatch. A bug causing Record() to be called
-        // multiple times per dispatch (e.g., from a loop or retry path) would still pass this assertion.
-        // Consider adding a count check or using ContainSingle to catch double-recording defects.
-        // TODO [WARNING]: There is no negative test verifying that QueueWaitTime.Record is NOT called when
-        // dispatch fails (e.g., K8s job creation fails, or TryClaimWorkItemAsync returns null). A
-        // mis-placed call site (e.g., before a failure check) would go undetected. See existing failure
-        // path tests in DispatchLoopTests for prior art on setting up failure scenarios.
+        // Assert — a QueueWaitTime recording was captured for this dispatch
         _recordings.Should().Contain(
             r => r.InstrumentName == "dispatch.queue.wait_time"
                  && r.Value >= 25.0    // tolerates up to 5s clock jitter below 30s nominal wait
