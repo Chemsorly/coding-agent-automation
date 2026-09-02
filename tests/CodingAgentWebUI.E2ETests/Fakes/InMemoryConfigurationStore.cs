@@ -80,6 +80,19 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
             }
         };
 
+        // Default agent profile matching the "kiro,dotnet" selector used by DistributeDirectlyAsync
+        // and other K8s-mode tests. Without this, AssignmentEnricher.EnrichCoreAsync cannot resolve
+        // a profile → returns null → GetAssignment returns 503 instead of 200.
+        _agentProfiles.Add(new AgentProfile
+        {
+            Id = "profile-e2e",
+            DisplayName = "E2E Agent Profile",
+            AgentProviderConfigId = "agent-e2e",
+            MatchLabels = ["kiro", "dotnet"],
+            Enabled = true,
+            Priority = 0
+        });
+
         _projects.Add(new PipelineProject
         {
             Id = WellKnownIds.DefaultProjectId,
