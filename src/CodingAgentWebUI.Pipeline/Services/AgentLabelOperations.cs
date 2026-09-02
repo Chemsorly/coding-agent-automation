@@ -82,12 +82,6 @@ public static class AgentLabelOperations
                     effectiveLogger.Warning(ex,
                         "AgentLabelOperations: removeLabel attempt {Attempt} failed for label {Label} on {Identifier} — retrying",
                         attempt + 1, label, identifier ?? "unknown");
-                    // TODO: [WARNING] Delays are 200 ms / 400 ms, shorter than the issue's suggested 1 s / 2 s backoff.
-                    // May provide insufficient relief against GitHub API rate-limit 422s. Consider increasing to
-                    // TimeSpan.FromSeconds(Math.Pow(2, attempt)) if transient failures remain frequent.
-                    // TODO: [WARNING] Cancellation fired during this Task.Delay propagates correctly as TaskCanceledException
-                    // (inherits OperationCanceledException) and is not swallowed, but the scenario of cancellation
-                    // occurring during the delay (rather than during removeLabel itself) is not covered by any test.
                     await Task.Delay(TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt)), ct);
                 }
                 catch (Exception ex)

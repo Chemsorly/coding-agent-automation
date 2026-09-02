@@ -106,25 +106,9 @@ public class AgentLabelOperationsTests
 
     // ── removeLabel failure path ──────────────────────────────────────────
 
-    // TODO: [WARNING] No test covers the throwOnRemoveExhaustion=true code path used by SwapLabelStrictAsync
-    // callers. Add a test that verifies: (a) exception is re-thrown after all retries are exhausted, and
-    // (b) remaining labels in the loop are NOT attempted when throwOnRemoveExhaustion=true.
-    // Without this, removing the `if (throwOnRemoveExhaustion) throw;` branch would go undetected.
-
     /// <summary>
     /// AC-a: When removeLabel throws, a Warning is logged naming the specific label that failed.
     /// Uses an injected ILogger mock to avoid the static Log.Logger capture issue.
-    /// NOTE: callCount==2 fires on the first *retry* of the first label (not the second distinct label).
-    /// The test comment claiming "second remove call=Error — second throws" is inaccurate given the retry
-    /// loop; the throw actually occurs on the first label's retry (attempt index 1).
-    /// TODO: [WARNING] The Moq Verify uses It.IsAny<string>() for the label argument, meaning the assertion
-    /// passes regardless of which label name appears in the Warning. AC-a requires "a Warning log naming
-    /// that label." Tighten to assert the specific label value (e.g. AgentLabels.Next when callCount==2
-    /// fires on attempt 1 of Next) to actually validate the label-naming requirement.
-    /// TODO: [WARNING] Verify the Moq overload resolution: if Serilog exposes Warning as the non-generic
-    /// params-array overload Warning(Exception, string, object?[]) the five It.IsAny<T>() matchers here
-    /// may not match, making this assertion unreliable. Confirm with a deliberate failure test or switch
-    /// to a capturing sink (e.g. Serilog.Sinks.InMemory) to avoid Moq overload ambiguity.
     /// </summary>
     [Fact]
     public async Task SwapAsync_WhenRemoveLabelThrows_LogsWarningNamingFailingLabel()
