@@ -178,6 +178,7 @@ public class PipelineConfigArbitraries
                 BrainReadOnly = brainReadOnly,
                 WorkspaceBaseDirectory = workspaceDir,
                 CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,
+                FeedbackTimeoutSeconds = 60,
             };
 
         return gen.ToArbitrary();
