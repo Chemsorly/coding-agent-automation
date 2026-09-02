@@ -16,18 +16,6 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 /// Unit tests for <see cref="ChatJobDispatcher"/>.
 /// Requirements: Req 2, Req 3, Req 12, Req 13.
 /// </summary>
-/// <remarks>
-/// Placed in [Collection("ActivityListenerTests")] to serialize with
-/// <see cref="ChatDispatcherObservabilityTests"/>. Both test classes install process-wide
-/// <see cref="System.Diagnostics.Metrics.MeterListener"/> instances that observe the static
-/// <see cref="CodingAgentWebUI.Pipeline.Telemetry.ChatTelemetry.SessionsActive"/> instrument.
-/// Without serialization, parallel execution causes cross-test measurement leakage: a
-/// <c>SessionsActive.Add(-1)</c> call from <see cref="ChatDispatcherObservabilityTests"/> is
-/// visible to the <c>decrementCount</c> listener in
-/// <c>WatchJobUntilTerminalAsync_WhenExceptionThrown_SessionsActiveDecremented</c>, causing
-/// a spurious count of 2 instead of the expected 1.
-/// </remarks>
-[Collection("ActivityListenerTests")]
 public class ChatJobDispatcherTests
 {
     private const string TestNamespace = "coding-agent";
