@@ -221,10 +221,6 @@ public class PipelineSidebarComponentTests : BunitContext
         var stepText = cut.Find("#step-PreparingForPullRequest").TextContent;
         Assert.Contains("#47", stepText);
         Assert.Contains("(final)", stepText);
-        // TODO: Add a test variant with PullRequestNumber = null to verify the detail box still renders without a "#" prefix
-        //       and without crashing (exercises the null-guard empty-string branch in RenderPreparingForPullRequestDetails).
-        // TODO: Add a test variant with IsDraftPr = true to verify "(draft)" is shown instead of "(final)".
-        //       If the ternary were accidentally inverted, neither existing test would catch it.
     }
 
     [Fact]
@@ -245,11 +241,6 @@ public class PipelineSidebarComponentTests : BunitContext
     {
         // Exercises the HasDetails fix (completed step path).
         // When run has moved past PreparingForPullRequest, the step must be expandable and show the detail box.
-        // TODO: Note that this test also causes CreatingPullRequest to render its detail box (same PullRequestUrl),
-        //       because CurrentStep=CreatingPullRequest and PullRequestUrl is set. The selectors are scoped to
-        //       #step-PreparingForPullRequest so false positives are unlikely, but consider advancing to a step
-        //       further along (e.g. ReflectingOnRun) to put both PreparingForPullRequest and CreatingPullRequest
-        //       in the Completed state — this would isolate the HasDetails fix for PreparingForPullRequest more precisely.
         var run = CreateRun(PipelineStep.CreatingPullRequest, PipelineStep.CreatingPullRequest);
         run.PullRequestUrl = "https://github.com/org/repo/pull/47";
         run.PullRequestNumber = "47";

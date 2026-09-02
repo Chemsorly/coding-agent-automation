@@ -884,9 +884,6 @@
     private RenderFragment RenderPreparingForPullRequestDetails(StepState state) => __builder =>
     {
         <div class="step-detail-box">
-            @* TODO: When PullRequestNumber is null/empty the label renders with an awkward double-space before the draft/final indicator
-               ("Existing PR  (final)"). Same pre-existing cosmetic defect exists in RenderCreatingPullRequestDetails.
-               Fix by trimming or restructuring the interpolation to omit the space when PullRequestNumber is absent. *@
             <div>Existing PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "") @(Run.IsDraftPr ? "(draft)" : "(final)")</div>
             <div><a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View on GitHub</a></div>
         </div>
