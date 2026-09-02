@@ -350,8 +350,8 @@ public class PullRequestFinalizationServiceTests
 
             agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
                 .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
                 .Returns(Task.CompletedTask);
 
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
@@ -386,8 +386,8 @@ public class PullRequestFinalizationServiceTests
 
             agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
                 .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
                 .Returns(Task.CompletedTask);
 
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
@@ -421,8 +421,8 @@ public class PullRequestFinalizationServiceTests
 
             agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
                 .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
                 .Returns(Task.CompletedTask);
 
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
@@ -458,8 +458,8 @@ public class PullRequestFinalizationServiceTests
 
             agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
                 .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
                 .Returns(Task.CompletedTask);
 
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
@@ -494,8 +494,8 @@ public class PullRequestFinalizationServiceTests
 
             agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
                 .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
                 .Returns(Task.CompletedTask);
 
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
@@ -536,8 +536,8 @@ public class PullRequestFinalizationServiceTests
 
             agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
                 .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
                 .Returns(Task.CompletedTask);
 
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
@@ -573,8 +573,8 @@ public class PullRequestFinalizationServiceTests
 
             agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
                 .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["I will run: git diff", "diff --git a/..."] });
-            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-                .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+                .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
                 .Returns(Task.CompletedTask);
 
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
@@ -625,7 +625,7 @@ public class PullRequestFinalizationServiceTests
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
 
             // UpdatePullRequestAsync must NOT have been called
-            repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+            repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()), Times.Never);
 
             // run.PullRequestBody is unchanged
             run.PullRequestBody.Should().Be("unchanged body");
@@ -851,7 +851,7 @@ public class PullRequestFinalizationServiceTests
             .ReturnsAsync(true);
         repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<FileChangeSummary>());
-        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         repoProvider.Setup(r => r.BaseBranch).Returns("main");
         repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");

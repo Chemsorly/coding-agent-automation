@@ -3,6 +3,7 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Autorest;
@@ -487,11 +488,16 @@ internal sealed class DispatchLifecycleService : IDisposable
 
     /// <summary>
     /// Generates a deterministic K8s Job name from a work item ID.
+    /// Delegates to <see cref="JobNameFactory.ForBrain"/> — the canonical definition of this format.
     /// Format: <c>caa-{first-8-chars-of-guid-no-dashes}</c>.
     /// Previously a static method on <c>DispatchService</c>; moved here (arch-audit 2026-08-22).
     /// </summary>
+    /// <remarks>
+    /// This wrapper must remain <c>internal static</c> — it is called directly by
+    /// <c>DispatchServiceJobNamingPropertyTests</c> via <c>InternalsVisibleTo</c>.
+    /// </remarks>
     internal static string GenerateJobName(Guid workItemId)
-        => $"caa-{workItemId.ToString("N")[..8]}";
+        => JobNameFactory.ForBrain(workItemId);
 
     public void Dispose()
     {
