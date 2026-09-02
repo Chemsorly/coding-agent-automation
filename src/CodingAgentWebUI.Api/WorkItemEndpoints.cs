@@ -294,6 +294,12 @@ public static class WorkItemEndpoints
     /// Validates transition via WorkItemTransitionService, updates in-memory state.
     /// 200, 400 (invalid transition), or 404.
     /// </summary>
+    // TODO: PostStatus takes WorkItemTransitionService as a concrete type because TransitionDetailedAsync
+    // is not declared on any interface (IWorkItemTransitionService only exposes TransitionIfAsync).
+    // This prevents interface-level mocking of the transition service in tests; callers must use the
+    // concrete class with an in-memory DB. Consider adding TransitionDetailedAsync to an interface
+    // (e.g. IWorkItemTransitionService or a new IWorkItemTransitionDetailedService) so PostStatus can
+    // be tested with pure mocks and to allow future DI substitution.
     internal static async Task<IResult> PostStatus(
         Guid id,
         WorkItemStatusRequest request,
@@ -303,50 +309,54 @@ public static class WorkItemEndpoints
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
         CancellationToken ct = default)
     {
-        var success = await transitionService.TransitionAsync(
+        var transitionResult = await transitionService.TransitionDetailedAsync(
             id, request.Status,
             mutate: entity => ApplyStatusMutation(entity, request),
             ct: ct);
 
-        if (!success)
+        if (transitionResult == TransitionResult.NotFound)
+            return TypedResults.NotFound();
+
+        if (transitionResult == TransitionResult.Rejected)
+            return TypedResults.BadRequest("Invalid status transition");
+
+        // Only drive lifecycle events and emit telemetry on an ACTUAL state change.
+        // For idempotent no-ops (AlreadyAtTarget), fall through to Ok() silently.
+        //
+        // FailRunAsync / CancelRunAsync trigger label-swap, dedup-guard, and history writes.
+        // Calling them on a repeated PostStatus (e.g. after a leadership flip that clears the
+        // jobcontroller's reconciledTerminalIds cache) risks double label swaps and spurious
+        // history entries — so they must be gated on TransitionResult.Transitioned, not on
+        // success==true as before (which included AlreadyAtTarget).
+        if (transitionResult == TransitionResult.Transitioned)
         {
-            if (dbFactory is not null)
+            // For terminal transitions, drive the run through RunLifecycleManager so history,
+            // label-swap, registry clear, and dedup-guard are all updated — mirrors what
+            // AgentJobLifecycleService does for agent-reported completions. Without this,
+            // infrastructure-killed runs (agent disconnect, reconciliation timeout) never appear
+            // in IPipelineRunHistoryService and WaitForHistoryAsync in E2E tests times out.
+            if (request.Status == WorkItemStatus.Failed)
             {
-                await using var db = await dbFactory.CreateDbContextAsync(ct);
-                var exists = await db.WorkItems.AnyAsync(w => w.Id == id, ct);
-                if (!exists)
-                    return TypedResults.NotFound();
+                var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
+                await runLifecycleManager.FailRunAsync(
+                    new RunId(id.ToString()),
+                    failureReason,
+                    ct,
+                    CodingAgentWebUI.Pipeline.Models.FailureReason.InfrastructureFailure);
+            }
+            else if (request.Status == WorkItemStatus.Cancelled)
+            {
+                await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
             }
 
-            return TypedResults.BadRequest("Invalid status transition");
+            // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
+            // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
+            // Pass CancellationToken.None because the task runs independently of the HTTP request
+            // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
+            // warnings when ASP.NET Core cancels the token as soon as the response is sent.
+            if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
         }
-
-        // For terminal transitions, drive the run through RunLifecycleManager so history,
-        // label-swap, registry clear, and dedup-guard are all updated — mirrors what
-        // AgentJobLifecycleService does for agent-reported completions. Without this,
-        // infrastructure-killed runs (agent disconnect, reconciliation timeout) never appear
-        // in IPipelineRunHistoryService and WaitForHistoryAsync in E2E tests times out.
-        if (request.Status == WorkItemStatus.Failed)
-        {
-            var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
-            await runLifecycleManager.FailRunAsync(
-                new RunId(id.ToString()),
-                failureReason,
-                ct,
-                CodingAgentWebUI.Pipeline.Models.FailureReason.InfrastructureFailure);
-        }
-        else if (request.Status == WorkItemStatus.Cancelled)
-        {
-            await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
-        }
-
-        // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
-        // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
-        // Pass CancellationToken.None because the task runs independently of the HTTP request
-        // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
-        // warnings when ASP.NET Core cancels the token as soon as the response is sent.
-        if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-            _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
 
         return TypedResults.Ok();
     }
@@ -402,7 +412,7 @@ public static class WorkItemEndpoints
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId,
             CreatedAt = DateTimeOffset.UtcNow,
-            PriorityWeight = string.Equals(request.InitiatedBy, "manual", StringComparison.Ordinal) ? 100 : 0,
+            PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
             // Capture the W3C traceparent from the current API span so the worker K8s Job
             // can restore it and attach its spans to this trace rather than starting a new root.
             // Activity.Current here is the ASP.NET Core request span — the API span that the

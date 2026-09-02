@@ -82,6 +82,17 @@ public static class PipelineTelemetry
         "brain.files.written", "{file}", "Total brain files committed across all runs");
     public static readonly Histogram<double> BrainSyncDuration = Meter.CreateHistogram<double>(
         "brain.sync.duration", "s", "Duration of brain sync operations");
+    /// <summary>
+    /// Incremented whenever the post-run brain sync gate is skipped in
+    /// <c>RunPostPrSequenceAsync</c>. Tags: <c>reason</c> — one of
+    /// <c>is_draft</c>, <c>no_provider</c>, <c>no_sync_service</c>, <c>read_only</c>.
+    /// Use this metric to diagnose why <c>brain.updates.committed</c> and
+    /// <c>brain.updates.empty</c> are absent: at least one post-run brain metric
+    /// will now be populated on every run that reaches finalization, making the
+    /// skip reason visible in Prometheus even when the sync itself is skipped.
+    /// </summary>
+    public static readonly Counter<long> BrainSyncSkipped = Meter.CreateCounter<long>(
+        "brain.sync.skipped", "{skip}", "Post-run brain sync gate skipped (not an error; tagged with reason)");
 
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(

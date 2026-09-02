@@ -321,6 +321,7 @@ public partial class AgentMonitoring : IAsyncDisposable
         model.BrainUpdatesPushed = summary.BrainUpdatesPushed;
         // Use the public ResetStartedAt method since StartedAtOffset setter is internal.
         model.ResetStartedAt(summary.StartedAtOffset);
+        model.RunMode = summary.RunMode;
 
         return model;
     }

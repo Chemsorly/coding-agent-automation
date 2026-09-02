@@ -177,7 +177,7 @@ public static class PipelineRunHashExtensions
             ReviewPrDescription = NullIfEmpty(d.GetValueOrDefault("reviewPrDescription")),
             ReviewPrAuthor = NullIfEmpty(d.GetValueOrDefault("reviewPrAuthor")),
             DecompositionSource = NullIfEmpty(d.GetValueOrDefault("decompositionSource")),
-            InitiatedBy = d.GetValueOrDefault("initiatedBy") ?? "manual",
+            InitiatedBy = d.GetValueOrDefault("initiatedBy") ?? InitiatedByConstants.Manual,
             RunType = runType,
         };
 
