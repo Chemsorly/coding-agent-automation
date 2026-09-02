@@ -38,5 +38,6 @@ internal static class JobCompletionMapper
         run.Feedback = payload.Feedback;
         run.TotalTokens = payload.TotalTokens;
         run.TotalCost = payload.TotalCost;
+        run.FinalLabel = payload.FinalLabel;
     }
 }

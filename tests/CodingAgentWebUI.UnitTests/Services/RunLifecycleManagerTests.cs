@@ -229,9 +229,6 @@ public sealed class RunLifecycleManagerTests
     public async Task CompleteRunAsync_RemovesRun_PersistsHistory_MarksIssueComplete()
     {
         // Arrange
-        // TODO: [BUG-12] Consider adding a full-lifecycle test for a run at a non-terminal step (e.g., Created)
-        // going through CompleteRunAsync — verifying run removed, history persisted, issue marked complete,
-        // and label NOT swapped — to complement the existing non-terminal guard tests which only check step mapping.
         var run = CreateRun("run-complete", PipelineRunType.Implementation);
         run.AgentId = "agent-1";
         run.CurrentStep = PipelineStep.Completed; // Normal flow: JobCompletionMapper.Apply sets terminal step
@@ -251,10 +248,11 @@ public sealed class RunLifecycleManagerTests
         _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
             It.Is<PipelineRun>(r => r.RunId == "run-complete"), It.IsAny<CancellationToken>()), Times.Once);
 
-        // CompleteRunAsync does NOT clear agent state or swap labels (caller does that)
+        // CompleteRunAsync does NOT clear agent state, but DOES swap labels as a fallback for hub crash scenarios.
+        // The PipelineRun overload routes via run.ProviderConfigIdForLabel and run.LabelTargetKind.
         _mockLabelService.Verify(l => l.SwapLabelAsync(
-            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
-            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+            "ip-1", "org/repo#1", AgentLabels.Done, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -286,6 +284,11 @@ public sealed class RunLifecycleManagerTests
         _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
             It.Is<PipelineRun>(r => r.RunId == "run-nonterminal-fail" && r.CurrentStep == PipelineStep.Failed),
             It.IsAny<CancellationToken>()), Times.Once);
+
+        // Label swapped to agent:error (derived from WorkItemStatus.Failed when no FinalLabel set)
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -307,6 +310,11 @@ public sealed class RunLifecycleManagerTests
         _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
             It.Is<PipelineRun>(r => r.RunId == "run-nonterminal-success" && r.CurrentStep == PipelineStep.Completed),
             It.IsAny<CancellationToken>()), Times.Once);
+
+        // Label swapped to agent:done (derived from WorkItemStatus.Succeeded when no FinalLabel set)
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Done, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -323,6 +331,143 @@ public sealed class RunLifecycleManagerTests
         // Assert: step unchanged — guard is a no-op
         result.Should().NotBeNull();
         result!.CurrentStep.Should().Be(PipelineStep.Completed);
+
+        // Label swapped to agent:done
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Done, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_WhenPostCompletionBookkeepingNotCalled_LabelIsSwapped()
+    {
+        // Acceptance criteria: simulate hub crash after CompleteRunAsync — PostCompletionBookkeepingAsync
+        // is never called — and assert the label was already swapped by CompleteRunAsync itself.
+        //
+        // TODO: This test is structurally identical to CompleteRunAsync_RemovesRun_PersistsHistory_MarksIssueComplete
+        // (same setup, same assertion). At the unit-test level, there is no observable difference between a
+        // "hub crash scenario" and a normal CompleteRunAsync invocation — PostCompletionBookkeepingAsync is
+        // never present in unit tests. The acceptance criterion (label is swapped independently of the hub) is
+        // a design property, not a branch that can be exercised differently here. To meaningfully validate the
+        // crash-window guarantee, an integration-level test would need to verify that PostCompletionBookkeepingAsync
+        // is NOT called while confirming the label was still swapped. This unit test is kept for explicit
+        // documentation of the acceptance criterion, but it does not add independent code coverage.
+        var run = CreateRun("run-hub-crash", PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Completed;
+        _runService.AddRun(run);
+
+        // Act: call CompleteRunAsync without calling PostCompletionBookkeepingAsync or any hub method
+        var result = await _sut.CompleteRunAsync("run-hub-crash", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        // Assert: label was swapped by CompleteRunAsync — issue is not stuck at agent:in-progress
+        result.Should().NotBeNull();
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Done, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_ConsolidationRun_SkipsLabelSwap()
+    {
+        // Consolidation runs have no associated issue label — the swap must be skipped.
+        var consolidationRun = new PipelineRun
+        {
+            RunId = "run-consolidation",
+            IssueIdentifier = "org/repo#99",
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            RunType = PipelineRunType.Implementation,
+            CurrentStep = PipelineStep.Completed
+        };
+        _runService.AddRun(consolidationRun);
+
+        await _sut.CompleteRunAsync("run-consolidation", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_WithFinalLabel_UsesRunFinalLabel()
+    {
+        // FinalLabel on the run takes precedence over the terminalStatus-derived label.
+        // In production, run.FinalLabel is populated by JobCompletionMapper.Apply (from payload.FinalLabel)
+        // before CompleteRunAsync is called.
+        var run = CreateRun("run-finallabel", PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Completed;
+        run.FinalLabel = AgentLabels.NeedsRefinement; // agent set needs-refinement
+        _runService.AddRun(run);
+
+        // Status says Succeeded but FinalLabel override takes precedence
+        await _sut.CompleteRunAsync("run-finallabel", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.NeedsRefinement, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_ReviewRun_SwapsLabelViaRepoProviderAndPullRequestTarget()
+    {
+        // Review runs swap labels on the PR (via repo provider), not the issue.
+        // TODO: The consolidation-skip guard in CompleteRunAsync checks run.IssueProviderConfigId against
+        // ConsolidationConstants.ProviderConfigId. For a review run where IssueProviderConfigId happens to
+        // equal ConsolidationConstants.ProviderConfigId (hypothetically, if a review is dispatched on a
+        // consolidation issue), the guard would incorrectly suppress the label swap on the PR. Consider
+        // whether the guard should be tightened to also check RunType != PipelineRunType.Review, or whether
+        // this combination is structurally impossible by dispatch constraints. Until confirmed impossible,
+        // the behavior is undocumented.
+        var run = CreateRun("run-review-complete", PipelineRunType.Review);
+        run.CurrentStep = PipelineStep.Completed;
+        _runService.AddRun(run);
+
+        await _sut.CompleteRunAsync("run-review-complete", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "rp-1", "org/repo#1", AgentLabels.Done, LabelTargetKind.PullRequest,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_FailedStatus_SwapsLabelToError()
+    {
+        // TODO: This test exercises the same production branch (WorkItemStatus.Failed → AgentLabels.Error)
+        // as the label-swap assertion already added to CompleteRunAsync_NonTerminalStep_MapsToFailed_WhenStatusFailed.
+        // The only structural difference is that this test starts with PipelineStep.Failed (already terminal)
+        // while the other starts from PipelineStep.RunningQualityGates (non-terminal, triggering the guard).
+        // Both exercise the same switch arm. Consider merging or removing this test if the duplicate coverage
+        // creates maintenance burden in future refactors.
+        var run = CreateRun("run-failed-complete", PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Failed;
+        _runService.AddRun(run);
+
+        await _sut.CompleteRunAsync("run-failed-complete", WorkItemStatus.Failed, CancellationToken.None);
+
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_InvalidFinalLabel_FallsBackToTerminalStatusLabel()
+    {
+        // A FinalLabel value not in AgentLabels.All is treated as unset — falls back to terminalStatus.
+        var run = CreateRun("run-invalid-label", PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Completed;
+        run.FinalLabel = "some-unknown-label"; // not in AgentLabels.All
+        _runService.AddRun(run);
+
+        await _sut.CompleteRunAsync("run-invalid-label", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        // Must swap to Done (Succeeded-derived), NOT "some-unknown-label"
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Done, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), "some-unknown-label",
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── CancelRunAsync ─────────────────────────────────────────────────
@@ -512,6 +657,7 @@ public sealed class RunLifecycleManagerResilienceTests
     {
         // Arrange
         var run = CreateRun("run-complete-err");
+        run.CurrentStep = PipelineStep.Completed; // Ensure terminal step so guard doesn't remap
         _runService.AddRun(run);
 
         _mockHistoryService
@@ -521,8 +667,13 @@ public sealed class RunLifecycleManagerResilienceTests
         // Act
         var result = await _sut.CompleteRunAsync("run-complete-err", WorkItemStatus.Succeeded, CancellationToken.None);
 
-        // Assert: still returned the run
+        // Assert: run still returned despite history exception
         result.Should().NotBeNull();
+
+        // Label swap must still fire — it runs after the history try/catch
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Done, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static PipelineRun CreateRun(string runId)

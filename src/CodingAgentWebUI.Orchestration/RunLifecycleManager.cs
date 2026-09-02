@@ -145,6 +145,29 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Error(ex, "CompleteRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
         }
 
+        // 3. Best-effort label swap (fallback for hub crash scenario — PostCompletionBookkeepingAsync
+        //    is the authoritative path but may not execute if the hub pod is killed between DB write
+        //    and the hub method returning). AgentLabelOperations.SwapAsync is idempotent, so calling
+        //    this here and in PostCompletionBookkeepingAsync in the happy path is safe.
+        if (run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
+        {
+            var label = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
+                ? run.FinalLabel
+                : terminalStatus switch
+                {
+                    WorkItemStatus.Succeeded => AgentLabels.Done,
+                    WorkItemStatus.Failed    => AgentLabels.Error,
+                    // TODO: The Cancelled arm is not covered by any unit test in RunLifecycleManagerTests.
+                    // Add a test that calls CompleteRunAsync with WorkItemStatus.Cancelled and asserts
+                    // the label swap to AgentLabels.Cancelled, to prevent silent regressions if this
+                    // arm is removed or reordered in a future refactor.
+                    WorkItemStatus.Cancelled => AgentLabels.Cancelled,
+                    _                        => null
+                };
+
+            if (label is not null)
+                await _labelService.TrySwapLabelAsync(run, label, _logger, "RunLifecycleManager", ct);
+        }
 
         _logger.Information(
             "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId})",
