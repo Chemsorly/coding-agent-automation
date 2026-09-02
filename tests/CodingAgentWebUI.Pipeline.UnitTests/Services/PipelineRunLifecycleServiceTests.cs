@@ -370,6 +370,32 @@ public class PipelineRunLifecycleServiceTests
         run.HighWaterMark.Should().Be(PipelineStep.GeneratingCode); // unchanged
     }
 
+    [Fact]
+    public void TransitionTo_ReviewingPlan_AdvancesHighWaterMark_InDecompositionRun()
+    {
+        // Regression guard for issue #2230: PipelineStep.ReviewingPlan was absent from
+        // StepOrder._order, causing GetOrder(ReviewingPlan) to return -1 and the HWM guard
+        // to never fire. Verify that transitioning to ReviewingPlan (logical order 5) from
+        // GeneratingPlan (logical order 4) correctly advances the HighWaterMark.
+        // TODO: This test verifies the lower-bound ordering invariant (ReviewingPlan > GeneratingPlan)
+        // via the HWM assertion, but does not directly assert the upper-bound invariant:
+        // StepOrder.GetOrder(ReviewingPlan) < StepOrder.GetOrder(PostingPlan). A future edit that
+        // assigned ReviewingPlan an order >= PostingPlan (e.g., = 99) would still pass this test
+        // while violating the acceptance criterion. Add a StepOrder unit test (or additional
+        // assertions here) that explicitly checks:
+        //   StepOrder.GetOrder(PipelineStep.ReviewingPlan) > StepOrder.GetOrder(PipelineStep.GeneratingPlan)
+        //   StepOrder.GetOrder(PipelineStep.ReviewingPlan) < StepOrder.GetOrder(PipelineStep.PostingPlan)
+        var service = CreateService();
+        var run = CreateRun(step: PipelineStep.GeneratingPlan);
+        run.HighWaterMark = PipelineStep.GeneratingPlan;
+
+        service.TransitionTo(run, PipelineStep.ReviewingPlan);
+
+        run.CurrentStep.Should().Be(PipelineStep.ReviewingPlan);
+        run.HighWaterMark.Should().Be(PipelineStep.ReviewingPlan,
+            "ReviewingPlan (logical order 5) is greater than GeneratingPlan (logical order 4) — HWM must advance");
+    }
+
     // ── CancelPipelineAsync CTS Race Condition ────────────────────────────
 
     // TODO: This test does not verify that _logger.Warning(...) was actually called.
