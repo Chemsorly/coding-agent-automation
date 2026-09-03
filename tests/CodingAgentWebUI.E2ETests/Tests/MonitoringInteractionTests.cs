@@ -100,10 +100,11 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         var runRow = Page.Locator(".cockpit-run-row").Filter(new() { HasTextString = "#71" });
         await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
-        await runRow.First.ClickAsync();
 
-        // Assert: we land on the run detail page and it shows the issue.
-        await Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 10_000 });
+        // Click and wait for navigation together to avoid a timing race on slow CI runners.
+        await Page.RunAndWaitForNavigationAsync(
+            async () => await runRow.First.ClickAsync(),
+            new() { UrlString = $"**/runs/{runId}", Timeout = 30_000 });
         var pageText = await Page.TextContentAsync("body");
         Assert.Contains("#71", pageText);
     }
