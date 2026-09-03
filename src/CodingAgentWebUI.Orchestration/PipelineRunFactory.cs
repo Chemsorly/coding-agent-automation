@@ -52,6 +52,7 @@ public static class PipelineRunFactory
                 RunId = request.RunId!,
                 IssueIdentifier = request.IssueIdentifier,
                 IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
+                IssueUrl = request.IssueDetail?.Url,
                 IssueProviderConfigId = request.IssueProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
                 RunType = PipelineRunType.Review,
@@ -71,6 +72,7 @@ public static class PipelineRunFactory
                 RunId = request.RunId!,
                 IssueIdentifier = request.IssueIdentifier,
                 IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
+                IssueUrl = request.IssueDetail?.Url,
                 IssueProviderConfigId = request.IssueProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
                 RunType = request.RunType,
@@ -85,6 +87,7 @@ public static class PipelineRunFactory
                 RunId = request.RunId!,
                 IssueIdentifier = request.IssueIdentifier,
                 IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
+                IssueUrl = request.IssueDetail?.Url,
                 IssueProviderConfigId = request.IssueProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
                 // TODO: InitiatedBy null fallback — consider whether "rehydrated" is the right

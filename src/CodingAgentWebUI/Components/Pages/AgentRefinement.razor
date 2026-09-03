@@ -1,15 +1,9 @@
 @page "/agent-refinement"
+@inject NavigationManager Nav
 
-<PageTitle>Agent Refinement - Coding Agent</PageTitle>
+@* Retired: this was a "Coming soon" placeholder. Issue refinement now happens on the provider;
+   the app surfaces "Needs refinement" items on the Attention screen. Redirect old links to Overview. *@
 
-<div class="about-page">
-    <header class="about-header">
-        <h1>Agent Refinement</h1>
-    </header>
-
-    <div class="about-content">
-        <section class="about-section">
-            <p class="about-muted">Coming soon.</p>
-        </section>
-    </div>
-</div>
+@code {
+    protected override void OnInitialized() => Nav.NavigateTo("overview", replace: true);
+}

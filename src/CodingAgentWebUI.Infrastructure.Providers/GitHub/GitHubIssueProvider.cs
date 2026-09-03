@@ -149,7 +149,8 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             Title = issue.Title ?? string.Empty,
             Description = issue.Body ?? string.Empty,
             Labels = issue.Labels?.Select(l => l.Name).ToList().AsReadOnly()
-                ?? (IReadOnlyList<string>)Array.Empty<string>()
+                ?? (IReadOnlyList<string>)Array.Empty<string>(),
+            Url = issue.HtmlUrl
         };
     }
 
@@ -374,7 +375,8 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             Description = issue.Body,
             Labels = issue.Labels?.Select(l => l.Name).ToList().AsReadOnly()
                 ?? (IReadOnlyList<string>)Array.Empty<string>(),
-            CreatedAt = issue.CreatedAt.UtcDateTime
+            CreatedAt = issue.CreatedAt.UtcDateTime,
+            Url = issue.HtmlUrl
         };
     }
 }

@@ -122,8 +122,8 @@ public sealed class ApiAgentRegistryServiceTests
     }
 
     /// <summary>
-    /// The whole point of the snapshot: many reads, one fetch. <c>AgentMonitoring.razor</c> calls
-    /// <c>GetAllAgents()</c> during render and re-renders every five seconds.
+    /// The whole point of the snapshot: many reads, one fetch. <c>SidebarHealthIndicators</c> and the
+    /// issue/epic/PR drawer services call <c>GetAllAgents()</c> during render on every re-render.
     /// </summary>
     [Fact]
     public async Task Reads_AreServedFromTheSnapshot_WithoutAdditionalApiCalls()

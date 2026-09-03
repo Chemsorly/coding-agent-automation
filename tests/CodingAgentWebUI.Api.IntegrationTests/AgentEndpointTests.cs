@@ -172,4 +172,31 @@ public sealed class AgentEndpointTests
 
         response.StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden);
     }
+
+    [Fact]
+    public async Task GetCredentialPool_ReturnsStatus_ThatRoundTripsThroughTheContract()
+    {
+        var response = await _client.GetAsync("/api/agents/credential-pool");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Load-bearing: the client deserializes with PipelineJsonOptions.Default.
+        var status = await response.Content.ReadFromJsonAsync<CredentialPoolStatus>(PipelineJsonOptions.Default);
+        status.Should().NotBeNull();
+        status!.Total.Should().BeGreaterThanOrEqualTo(0);
+        status.Available.Should().BeGreaterThanOrEqualTo(0);
+        status.Claimed.Should().BeGreaterThanOrEqualTo(0);
+        // Available can never exceed the configured pool.
+        status.Available.Should().BeLessThanOrEqualTo(status.Total);
+    }
+
+    [Fact]
+    public async Task GetCredentialPool_RejectsAgentKey()
+    {
+        using var badClient = _factory.CreateClient();
+        badClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "not-the-key");
+
+        var response = await badClient.GetAsync("/api/agents/credential-pool");
+
+        response.StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden);
+    }
 }

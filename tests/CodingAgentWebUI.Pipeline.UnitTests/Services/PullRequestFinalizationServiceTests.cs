@@ -154,6 +154,48 @@ public class PullRequestFinalizationServiceTests
         run.Feedback.Should().NotBeNull();
     }
 
+    [Fact]
+    public async Task CollectFeedbackAsync_UsesConfiguredTimeout()
+    {
+        // TODO: Add a test passing config: null and asserting Timeout == TimeSpan.FromSeconds(60).
+        // The null-coalescing branch (config?.FeedbackTimeoutSeconds ?? FeedbackConstraints.FailureFeedbackTimeoutSeconds)
+        // is not covered by the two tests below because both pass a non-null config. If the branch were accidentally
+        // broken (e.g., changed to config!.FeedbackTimeoutSeconds), these tests would still pass. (Warning from review #2225)
+        var run = CreateRun();
+        var agentProvider = new Mock<IAgentProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var config = new PipelineConfiguration { FeedbackTimeoutSeconds = 180 };
+        AgentRequest? capturedRequest = null;
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedRequest = req)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"testing","comment":"ok"}}"""] });
+
+        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, null, _ => { }, CancellationToken.None, config);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Timeout.Should().Be(TimeSpan.FromSeconds(180));
+    }
+
+    [Fact]
+    public async Task CollectFeedbackAsync_DefaultConfig_Uses60SecondTimeout()
+    {
+        var run = CreateRun();
+        var agentProvider = new Mock<IAgentProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var config = new PipelineConfiguration(); // default FeedbackTimeoutSeconds = 60
+        AgentRequest? capturedRequest = null;
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedRequest = req)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"testing","comment":"ok"}}"""] });
+
+        await _sut.CollectFeedbackAsync(run, agentProvider.Object, feedbackService, null, _ => { }, CancellationToken.None, config);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Timeout.Should().Be(TimeSpan.FromSeconds(60));
+    }
+
     // ── RunPostPrSequenceAsync ──
 
     [Fact]

@@ -52,6 +52,9 @@ public static class PipelineTelemetry
         "quality_gate.duration", "s", "Total time in quality gate phase");
     public static readonly Counter<long> QualityGateEvaluations = Meter.CreateCounter<long>(
         "quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
+    public static readonly Counter<long> ReviewSkipped = Meter.CreateCounter<long>(
+        "pipeline.review.skipped", "{skip}",
+        "Code review phase skipped due to empty resolved reviewer configs (all deleted or disabled)");
     // TODO: Verify that ExternalCiDuration bucket boundaries are not configured via an AddView/ExplicitBucketHistogramConfiguration
     // in the SDK host (Program.cs). If custom 30s–6h buckets are applied to ExternalCiDuration via a view, PostPrCiDuration must
     // be covered by the same view. Both histograms currently have no InstrumentAdvice — if explicit buckets are required per the
