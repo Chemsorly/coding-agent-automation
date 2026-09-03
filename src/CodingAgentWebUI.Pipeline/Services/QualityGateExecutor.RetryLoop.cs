@@ -198,53 +198,77 @@ public partial class QualityGateExecutor
         var priorInfraRetryCount = run.InfrastructureRetryCount;
         run.InfrastructureRetryCount = 0;
 
+        // Tracks the entire post-PR CI wait including polling and infra retries, so that
+        // pipeline_step_duration_seconds{step_name="WaitForPostPrCi"} accounts for time that
+        // would otherwise be invisible in the "Avg Step Duration" Grafana panel.
+        var waitSw = System.Diagnostics.Stopwatch.StartNew();
         GateResult ciGate;
         try
         {
-            var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
-
-            PipelineTelemetry.PostPrCiDuration.Record(
-                ciPollStopwatch.Elapsed.TotalSeconds,
-                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
-
-            ciGate = new GateResult
+            try
             {
-                GateName = "External CI",
-                Passed = ciPassed,
-                Details = ciPassed
-                    ? $"Post-PR CI passed. {ciStatus.Jobs.Count} job(s) completed."
-                    : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
-            };
+                var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
 
-            callbacks.EmitOutputLine(ciPassed
-                ? $"✅ Post-PR CI passed ({ciStatus.Jobs.Count} jobs)"
-                : $"❌ Post-PR CI failed: {ciGate.Details}");
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            ciGate = new GateResult
+                // PostPrCiDuration is a dedicated histogram for the post-PR CI wait, separate from
+                // ExternalCiDuration (which is recorded in AppendExternalCiIfNeededAsync for the
+                // pre-PR CI pass). Using a distinct metric avoids inflating pre-PR p50/p99 with
+                // post-PR observations and makes the per-phase time budget observable in Grafana.
+                PipelineTelemetry.PostPrCiDuration.Record(
+                    ciPollStopwatch.Elapsed.TotalSeconds,
+                    PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+
+                ciGate = new GateResult
+                {
+                    GateName = "External CI",
+                    Passed = ciPassed,
+                    Details = ciPassed
+                        ? $"Post-PR CI passed. {ciStatus.Jobs.Count} job(s) completed."
+                        : QualityGateValidator.BuildCiFailureDetails(ciStatus, ciLogPaths)
+                };
+
+                callbacks.EmitOutputLine(ciPassed
+                    ? $"✅ Post-PR CI passed ({ciStatus.Jobs.Count} jobs)"
+                    : $"❌ Post-PR CI failed: {ciGate.Details}");
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                GateName = "External CI", Passed = false,
-                Details = $"Post-PR CI timed out after {config.ExternalCiTimeout}"
-            };
-            callbacks.EmitOutputLine($"❌ Post-PR CI timed out after {config.ExternalCiTimeout}");
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
-            ciGate = new GateResult
+                ciGate = new GateResult
+                {
+                    GateName = "External CI", Passed = false,
+                    Details = $"Post-PR CI timed out after {config.ExternalCiTimeout}"
+                };
+                callbacks.EmitOutputLine($"❌ Post-PR CI timed out after {config.ExternalCiTimeout}");
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
             {
-                GateName = "External CI", Passed = false,
-                Details = $"Post-PR CI error: {ex.Message}"
-            };
+                _logger.Warning(ex, "Pipeline {RunId} post-PR CI check failed, treating as gate failure", run.RunId);
+                ciGate = new GateResult
+                {
+                    GateName = "External CI", Passed = false,
+                    Details = $"Post-PR CI error: {ex.Message}"
+                };
+            }
+            finally
+            {
+                // Restore the accumulated count so the run summary reflects the total infra retries
+                // across both pre-PR and post-PR CI polls.
+                run.InfrastructureRetryCount += priorInfraRetryCount;
+            }
         }
         finally
         {
-            // Restore the accumulated count so the run summary reflects the total infra retries
-            // across both pre-PR and post-PR CI polls.
-            run.InfrastructureRetryCount += priorInfraRetryCount;
+            waitSw.Stop();
+            var stepTags = PipelineTelemetry.BuildStepTags("WaitForPostPrCi", run);
+            // TODO: This finally block fires on genuine OperationCanceledException (ct.IsCancellationRequested).
+            // The inner catch (OperationCanceledException) { throw; } re-throws and the outer finally still
+            // executes, recording a partial elapsed time as a complete WaitForPostPrCi observation and
+            // incrementing the step count. For long CI waits (potentially hours) a cancellation mid-poll
+            // produces an unrealistically short sample that will distort p50/p99 histogram aggregations.
+            // Consider guarding with: if (!ct.IsCancellationRequested) { ... Record/Add ... }
+            PipelineTelemetry.StepDuration.Record(waitSw.Elapsed.TotalSeconds, stepTags);
+            PipelineTelemetry.StepCount.Add(1, stepTags);
         }
 
         return new QualityGateReport
@@ -318,7 +342,7 @@ public partial class QualityGateExecutor
             var feedbackPrompt = FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
                 run, issue, latestReport, harnessCategories, issueCategories);
 
-            // Execute agent with UseResume = true and configured timeout
+            // Execute agent with UseResume = true and operator-configured timeout
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(context.Config.FeedbackTimeoutSeconds));
 
@@ -344,8 +368,12 @@ public partial class QualityGateExecutor
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {
             // Timeout on the feedback call itself (not pipeline cancellation)
+            // TODO: FeedbackConstraints.FailureFeedbackTimeoutSeconds is used here but the actual
+            // CancellationTokenSource was created with context.Config.FeedbackTimeoutSeconds (above).
+            // If the operator configures a non-default FeedbackTimeoutSeconds the logged value will
+            // be wrong, making log-based diagnosis misleading. Change to context.Config.FeedbackTimeoutSeconds.
             _logger.Warning(ex, "Pipeline {RunId} failure feedback collection timed out after {Timeout}s",
-                run.RunId, context.Config.FeedbackTimeoutSeconds);
+                run.RunId, FeedbackConstraints.FailureFeedbackTimeoutSeconds);
             run.Feedback = _feedbackService.CreateFallbackFeedback(
                 FeedbackOutcome.Failure, "Feedback collection timed out", DateTime.UtcNow);
         }
