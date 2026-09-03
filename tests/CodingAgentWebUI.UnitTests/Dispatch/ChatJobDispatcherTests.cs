@@ -1508,18 +1508,24 @@ public class ChatJobDispatcherTests
             if (instrument.Name == sessionsActiveName)
                 l.EnableMeasurementEvents(instrument);
         };
-        // TODO [WARNING]: The callback has no tag guard (agent_selector filter was removed). If another
-        // concurrently running test's watcher faults between listener.Start() and listener.Dispose(),
-        // its -1 measurement will be captured here, inflating decrementCount and causing a spurious
-        // failure or masking a missing decrement from the test under test. The previous unique-selector
-        // approach was strictly more robust. Consider re-adding an agent_selector tag filter scoped to
-        // TestSelector to make this assertion immune to concurrent test noise.
-        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        // Filter by the agent_selector tag so that decrements from concurrently-running tests
+        // that also use different selectors are not captured here.
+        // TestSelector = "kiro,dotnet" → NormalizeLabels sorts → "dotnet,kiro" → encoded tag value = "dotnet_kiro".
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
         {
-            // Track only decrements — this is the acceptance criterion: CleanupSession must
-            // fire SessionsActive.Add(-1) after the watcher faults.
-            if (instrument.Name == sessionsActiveName && measurement < 0)
-                Interlocked.Increment(ref decrementCount);
+            // Track only decrements tagged with this test's selector — this is the acceptance
+            // criterion: CleanupSession must fire SessionsActive.Add(-1) after the watcher faults.
+            if (instrument.Name != sessionsActiveName || measurement >= 0)
+                return;
+
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "agent_selector" && tag.Value is string v && v == TestEncodedSelector)
+                {
+                    Interlocked.Increment(ref decrementCount);
+                    return;
+                }
+            }
         });
         listener.Start();
 
