@@ -1,4 +1,6 @@
 @page "/agent-coding"
+@page "/pipelines"
+@layout CockpitLayout
 @implements IDisposable
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Orchestration
@@ -6,11 +8,11 @@
 @using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
 
-<PageTitle>Agent Coding - Coding Agent</PageTitle>
+<PageTitle>Pipelines - Coding Agent</PageTitle>
 
 <div class="agent-coding-page">
     <header class="agent-header">
-        <h1>Agent Coding</h1>
+        <h1>Pipelines</h1>
     </header>
 
     @* ═══ Overlay toast stack ═══ *@
@@ -77,7 +79,7 @@
                     {
                         <text> · @queueLength job(s) queued</text>
                     }
-                    · <a href="agent-monitoring" style="color: var(--accent-light);">View Dashboard →</a>
+                    · <a href="work" style="color: var(--accent-light);">View work →</a>
                 </span>
                 <button class="agent-summary-dismiss" @onclick="DismissAgentSummary" title="Dismiss">✕</button>
             </div>
@@ -161,6 +163,9 @@
                     <button class="btn-save" @onclick="OpenPrDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse pull requests" : null)" data-testid="browse-prs-btn" style="background: var(--accent-secondary, #6366f1);">Browse Pull Requests</button>
                 </div>
             </section>
+
+            <!-- ═══ Consolidation triggers + harness suggestions (folded in from the Consolidation page) ═══ -->
+            <Consolidation />
         </div>
     </div>
     <UndoSnackbar @ref="_undoSnackbar" />

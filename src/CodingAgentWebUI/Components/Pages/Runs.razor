@@ -1,0 +1,272 @@
+@page "/runs"
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
+@using CodingAgentWebUI.Components.Shared
+@inject IPipelineApiRunHistoryClient RunHistory
+@inject CockpitState State
+@inject NavigationManager Nav
+
+@*
+    Runs — the list behind the Run Page (see docs/frontend-redesign-handoff.md).
+    Data: IPipelineApiRunHistoryClient.GetRunHistoryAsync → PagedResult<PipelineRunSummary>.
+    Consolidation runs are PipelineRunType.Consolidation and appear here folded in.
+*@
+
+<PageTitle>Runs - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Runs</h1>
+            <span class="cockpit-page-sub">Every dispatch — implementation, review, decomposition, and consolidation</span>
+        </div>
+    </div>
+
+    <div class="cockpit-toolbar">
+        <div class="cockpit-segmented" role="tablist" aria-label="Filter runs by outcome">
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.All ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.All)" @onclick="() => SetOutcome(OutcomeFilter.All)">All</button>
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Completed ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Completed)" @onclick="() => SetOutcome(OutcomeFilter.Completed)">Completed</button>
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Failed ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Failed)" @onclick="() => SetOutcome(OutcomeFilter.Failed)">Failed</button>
+            <button class="cockpit-seg-btn @(_outcome == OutcomeFilter.Cancelled ? "is-active" : "")" role="tab" aria-selected="@(_outcome == OutcomeFilter.Cancelled)" @onclick="() => SetOutcome(OutcomeFilter.Cancelled)">Cancelled</button>
+        </div>
+        <label class="cockpit-filter-toggle @(_feedbackOnly ? "is-on" : "")">
+            <input type="checkbox" checked="@_feedbackOnly" @onchange="ToggleFeedbackOnly" />
+            Feedback only
+        </label>
+    </div>
+
+    <AutoRefresh IntervalSeconds="12" OnTick="RefreshQuietAsync" />
+
+    <div class="cockpit-card">
+        @if (_loading)
+        {
+            <div class="cockpit-empty">Loading runs…</div>
+        }
+        else if (_error is not null)
+        {
+            <div class="cockpit-empty">@_error</div>
+        }
+        else if (_result is null || _result.Items.Count == 0)
+        {
+            <div class="cockpit-empty">No @(_outcome == OutcomeFilter.All ? "" : _outcome.ToString().ToLowerInvariant() + " ")runs@(_feedbackOnly ? " with feedback" : "") yet.</div>
+        }
+        else
+        {
+            <div class="monitoring-table-wrap">
+                <table class="monitoring-table">
+                    <thead>
+                        <tr>
+                            <th>Result</th>
+                            <th>Type</th>
+                            <th>Run</th>
+                            <th>Agent</th>
+                            <th>Duration</th>
+                            <th>Tokens</th>
+                            <th>When</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var run in _result.Items)
+                        {
+                            <tr class="monitoring-row-clickable" @onclick="() => OpenRun(run.RunId)">
+                                <td>
+                                    @{
+                                        var result = run.FinalStep switch
+                                        {
+                                            PipelineStep.Completed => "Completed",
+                                            PipelineStep.Failed => "Failed",
+                                            PipelineStep.Cancelled => "Cancelled",
+                                            _ => "Running"
+                                        };
+                                        var resultClass = run.FinalStep switch
+                                        {
+                                            PipelineStep.Completed => "step-completed",
+                                            PipelineStep.Cancelled => "step-cancelled",
+                                            PipelineStep.Failed => "step-failed",
+                                            _ => "step-running"
+                                        };
+                                    }
+                                    <span class="step-badge @resultClass" title="@run.FinalStep.ToDisplayName()">@result</span>
+                                </td>
+                                <td>
+                                    @if (run.RunType == PipelineRunType.Review)
+                                    {
+                                        <span class="run-type-badge run-type-review" title="PR Review"><Icon Name="search" Size="14" /> Review</span>
+                                    }
+                                    else if (run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+                                    {
+                                        <span class="run-type-badge run-type-decomp" title="@(run.RunType == PipelineRunType.DecompositionAnalysis ? "Decomposition Analysis" : "Decomposition")"><Icon Name="puzzle" Size="14" /> Decomp</span>
+                                    }
+                                    else if (run.RunType == PipelineRunType.Consolidation)
+                                    {
+                                        <span class="run-type-badge run-type-consolidation" title="Consolidation"><Icon Name="refresh-cw" Size="14" /> Consolidation</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /> Impl</span>
+                                    }
+                                </td>
+                                <td>
+                                    <span style="font-weight: 600;">@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier</span>
+                                    <span style="color: var(--text-muted);">@Truncate(run.IssueTitle, 60)</span>
+                                </td>
+                                <td class="monitoring-mono">@(run.AgentId ?? "—")</td>
+                                <td>@Dur(run.StartedAtOffset, run.CompletedAtOffset)</td>
+                                <td><span class="token-badge">@CostFormatter.FormatTokens(run.TotalTokens)</span></td>
+                                <td title="@run.StartedAtOffset.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(run.StartedAtOffset)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+
+    <div class="cockpit-pager">
+        <span class="cockpit-pager-info">Page @_page@(_result is { Items.Count: > 0 } ? $" · {_result.Items.Count} shown" : "")</span>
+        <div class="cockpit-pager-buttons">
+            <button class="cockpit-pager-btn" disabled="@(_page <= 1 || _loading)" @onclick="PrevPage">
+                <Icon Name="chevrons-left" Size="14" /> Prev
+            </button>
+            <button class="cockpit-pager-btn" disabled="@(_result is null || !_result.HasMore || _loading)" @onclick="NextPage">
+                Next <Icon Name="chevrons-right" Size="14" />
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private const int PageSize = 25;
+
+    private readonly CancellationTokenSource _cts = new();
+    private PagedResult<PipelineRunSummary>? _result;
+    private int _page = 1;
+    private bool _feedbackOnly;
+    private bool _loading = true;
+    private string? _error;
+
+    // Server-side outcome filter (All / Completed / Failed / Cancelled). Applied DB-side by the API,
+    // so pagination is correct across the whole history — not just the loaded page.
+    private enum OutcomeFilter { All, Completed, Failed, Cancelled }
+    private OutcomeFilter _outcome = OutcomeFilter.All;
+
+    private PipelineStep? FinalStepFilter => _outcome switch
+    {
+        OutcomeFilter.Completed => PipelineStep.Completed,
+        OutcomeFilter.Failed => PipelineStep.Failed,
+        OutcomeFilter.Cancelled => PipelineStep.Cancelled,
+        _ => null
+    };
+
+    private async Task SetOutcome(OutcomeFilter outcome)
+    {
+        if (_outcome == outcome) return;
+        _outcome = outcome;
+        _page = 1;   // a new filter resets to the first page
+        await LoadAsync();
+    }
+
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    // Re-query when the top-bar project scope changes (reset to the first page for the new scope).
+    private async void HandleProjectChanged()
+    {
+        _page = 1;
+        try
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            _result = await RunHistory.GetRunHistoryAsync(
+                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load runs: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    // Quiet tick refresh — reloads the current page + filter, no spinner, no page reset.
+    private async Task RefreshQuietAsync()
+    {
+        try
+        {
+            _result = await RunHistory.GetRunHistoryAsync(
+                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true, finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _error = null;
+        }
+        catch (OperationCanceledException) { }
+        catch { /* keep the current page until the next tick */ }
+    }
+
+    private async Task ToggleFeedbackOnly(ChangeEventArgs e)
+    {
+        _feedbackOnly = e.Value is true;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task PrevPage()
+    {
+        if (_page <= 1) return;
+        _page--;
+        await LoadAsync();
+    }
+
+    private async Task NextPage()
+    {
+        if (_result is null || !_result.HasMore) return;
+        _page++;
+        await LoadAsync();
+    }
+
+    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+
+    private static string Truncate(string? s, int n)
+        => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
+
+    private static string Dur(DateTimeOffset start, DateTimeOffset? end)
+    {
+        if (end is null) return "running";
+        var d = end.Value - start;
+        if (d.TotalHours >= 1) return $"{(int)d.TotalHours}h {d.Minutes}m";
+        if (d.TotalMinutes >= 1) return $"{(int)d.TotalMinutes}m {d.Seconds}s";
+        return $"{Math.Max(0, (int)d.TotalSeconds)}s";
+    }
+
+    private static string Ago(DateTimeOffset t)
+    {
+        var d = DateTimeOffset.UtcNow - t;
+        if (d.TotalMinutes < 1) return "just now";
+        if (d.TotalMinutes < 60) return $"{(int)d.TotalMinutes}m ago";
+        if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
+        return $"{(int)d.TotalDays}d ago";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        State.OnProjectChanged -= HandleProjectChanged;
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

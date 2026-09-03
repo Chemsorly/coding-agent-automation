@@ -38,7 +38,7 @@ public class PipelineConfigurationTests
             {
                 MaxIterations = 5,
                 FixPrompt = "Custom fix prompt",
-                ReviewIsolation = ReviewIsolation.Shared,
+                ReviewIsolation = ReviewIsolation.Isolated,
                 InlineComments = new InlineCommentSettings
                 {
                     Enabled = false,

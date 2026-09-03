@@ -186,6 +186,25 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         Assert.True(result.Success);
         var workItemId = Guid.Parse(result.WorkItemId!);
 
+        // Seed the issue so AssignmentEnricher can fetch context during GetAssignment
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "k8s-fetch-assign-900",
+            Title = "K8s fetch assignment test issue",
+            Description = "## Requirements\nTest\n\n## Acceptance Criteria\n- [ ] Done",
+            Labels = new[] { "agent:next" }
+        });
+
+        // Seed a kiro,dotnet agent profile so AssignmentEnricher can resolve it
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-kiro-dotnet-fetch",
+            DisplayName = "K8s Fetch Test Profile",
+            MatchLabels = new[] { "kiro", "dotnet" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
         // Transition to Dispatched (as DispatchService would do)
         var transitionService = Fixture.ApiServices.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
@@ -874,6 +893,25 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             {
                 [ProviderSettingKeys.AccessToken] = "fake-lifecycle-token-e2e"
             }
+        }, CancellationToken.None);
+
+        // Seed the issue so AssignmentEnricher can fetch context during GetAssignment
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "k8s-lifecycle-e2e-9999",
+            Title = "K8s lifecycle test issue",
+            Description = "## Requirements\nLifecycle test\n\n## Acceptance Criteria\n- [ ] Done",
+            Labels = new[] { "agent:next" }
+        });
+
+        // Seed a kiro,dotnet agent profile so AssignmentEnricher can resolve it
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-kiro-dotnet-lifecycle",
+            DisplayName = "K8s Lifecycle Test Profile",
+            MatchLabels = new[] { "kiro", "dotnet" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
         }, CancellationToken.None);
 
         // ── Step 1: Distribute via KubernetesWorkDistributor ──

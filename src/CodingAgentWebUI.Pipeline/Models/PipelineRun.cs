@@ -28,6 +28,8 @@ public sealed partial class PipelineRun
     public required IssueIdentifier IssueIdentifier { get; init; }
     // NOTE: Semantically set-once (populated after construction from fetched issue title). Cannot be init-only without restructuring call sites.
     public required string IssueTitle { get; set; }
+    /// <summary>Web URL of the issue on the provider, or null if unknown (populated from the fetched issue).</summary>
+    public string? IssueUrl { get; set; }
     public required string IssueProviderConfigId { get; init; }
     public required string RepoProviderConfigId { get; init; }
 
@@ -369,6 +371,8 @@ public sealed partial class PipelineRun
         RunId = RunId,
         IssueIdentifier = IssueIdentifier,
         IssueTitle = IssueTitle,
+        IssueUrl = IssueUrl,
+        QualityGateOutcomes = LatestQualityReport is { } qgReport ? FlattenQualityGates(qgReport) : null,
         FinalStep = finalStepOverride ?? CurrentStep,
         StartedAt = StartedAt,
         CompletedAt = CompletedAt,
@@ -385,6 +389,8 @@ public sealed partial class PipelineRun
         ModelName = ModelName,
         BrainRepoUsed = BrainProviderConfigId != null,
         BrainUpdatesPushed = BrainUpdatesPushed,
+        BrainContextLoaded = BrainContextLoaded,
+        BrainKnowledgeFileCount = BrainKnowledgeFileCount,
         AgentId = AgentId,
         InitiatedBy = InitiatedBy,
         AnalysisRecommendation = AnalysisRecommendation,
@@ -407,4 +413,25 @@ public sealed partial class PipelineRun
         BranchName = BranchName
     };
     #pragma warning restore CS0618
+
+    /// <summary>Flattens a quality-gate report into slim per-gate (name, passed) outcomes for the summary.</summary>
+    private static IReadOnlyList<GateOutcome> FlattenQualityGates(QualityGateReport report)
+    {
+        var outcomes = new List<GateOutcome>();
+        if (report.QgcResults.Count > 0)
+        {
+            // Quality-gate-command mode: each configured command is its own named gate.
+            foreach (var qgc in report.QgcResults)
+                outcomes.Add(new GateOutcome(qgc.DisplayName, qgc.Passed));
+        }
+        else
+        {
+            // Legacy mode: the built-in gates that ran (Compilation + Tests are always present).
+            outcomes.Add(new GateOutcome(report.Compilation.GateName, report.Compilation.Passed));
+            outcomes.Add(new GateOutcome(report.Tests.GateName, report.Tests.Passed));
+            if (report.SecurityScan is { } security) outcomes.Add(new GateOutcome(security.GateName, security.Passed));
+        }
+        if (report.ExternalCi is { } externalCi) outcomes.Add(new GateOutcome(externalCi.GateName, externalCi.Passed));
+        return outcomes;
+    }
 }

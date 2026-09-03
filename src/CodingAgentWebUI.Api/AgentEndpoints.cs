@@ -1,9 +1,14 @@
+using CodingAgentWebUI.Api.Dispatch;
 using CodingAgentWebUI.Hub;
+using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Kubernetes;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace CodingAgentWebUI.Api;
 
@@ -35,7 +40,29 @@ public static class AgentEndpoints
             .RequireAuthorization(ApiAuthPolicies.Operator);
 
         group.MapGet("/", GetAllAgents);
+        group.MapGet("/credential-pool", GetCredentialPool);
         group.MapPost("/{agentId}/chat-prompt", SendChatPrompt);
+    }
+
+    // ── GET /api/agents/credential-pool ──────────────────────────────────────
+
+    /// <summary>
+    /// GET /api/agents/credential-pool
+    /// Returns the Kiro credential (PVC) pool snapshot for the Fleet screen: configured slots,
+    /// how many are free, and how many are claimed by active work. Total 0 = pooling not configured.
+    /// </summary>
+    internal static async Task<Ok<CredentialPoolStatus>> GetCredentialPool(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IConfiguration configuration,
+        CancellationToken ct)
+    {
+        var pool = DispatchServiceOptionsFactory.Create(configuration).KiroPvcPool;
+        if (pool.Count == 0)
+            return TypedResults.Ok(new CredentialPoolStatus(0, 0, 0));   // pooling not configured
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var availability = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pool, ct);
+        return TypedResults.Ok(new CredentialPoolStatus(pool.Count, availability.AvailablePvcs.Count, availability.ClaimedCount));
     }
 
     // ── GET /api/agents ────────────────────────────────────────────────────

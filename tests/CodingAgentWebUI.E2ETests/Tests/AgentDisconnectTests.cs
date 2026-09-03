@@ -13,8 +13,9 @@ using Microsoft.Playwright;
 namespace CodingAgentWebUI.E2ETests.Tests;
 
 /// <summary>
-/// Tests that validate agent disconnect and cancellation scenarios.
-/// Ensures the system handles agent failures gracefully and the UI reflects state changes.
+/// Agent disconnect and run-cancellation coverage. Migrated from the retired /agent-monitoring page:
+/// cancellation now happens from /work (the in-flight table's Cancel button) and agent presence is
+/// asserted on /fleet. The disconnect test asserts registry state directly and is page-independent.
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection(E2ECollection.Name)]
@@ -89,7 +90,7 @@ public sealed class AgentDisconnectTests : E2ETestBase
     }
 
     [Fact]
-    public async Task Cancel_ActiveRun_FromMonitoringPage()
+    public async Task Cancel_ActiveRun_FromWorkPage()
     {
         // Arrange: seed template, issue, profile, and connect an agent
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
@@ -113,7 +114,7 @@ public sealed class AgentDisconnectTests : E2ETestBase
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "61",
-            Title = "Cancel from monitoring test",
+            Title = "Cancel from work test",
             Description = "Test",
             Labels = new[] { "enhancement" }
         });
@@ -138,55 +139,39 @@ public sealed class AgentDisconnectTests : E2ETestBase
         var runService = Fixture.RunService;
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "61" && r.CurrentStep == PipelineStep.GeneratingCode));
 
-        // Act: navigate to monitoring page and click Cancel on the active run
-        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
-        await monitoringPage.NavigateAsync();
+        // Act: cancel the in-flight run from /work. This posts a Cancelled status transition
+        // (RunLifecycleManager.CancelRunAsync), driving the run to a terminal state server-side.
+        var work = new WorkPage(Page, BaseUrl);
+        await work.NavigateAsync();
+        await work.WaitForInFlightAsync("61", timeoutMs: 15_000);
+        await work.CancelInFlightAsync("61");
 
-        // Wait for the active run to appear
-        await Page.WaitForSelectorAsync("button.btn-cancel-small", new() { Timeout = 10_000 });
-
-        // Click the Cancel button
-        await Page.ClickAsync("button.btn-cancel-small");
-
-        // The cancel sends a CancelJob signal to the agent via SignalR (InvokeAsync = synchronous).
-        // The run remains active until the agent acknowledges, so we just verify no error appeared.
-        // Give Blazor one render cycle to potentially show an error.
-        await Page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-
-        // Assert: no error appeared during the cancel flow
-        var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();
-        Assert.Equal(0, errorVisible);
+        // Assert: the run leaves the active set once the cancellation is applied.
+        await WaitUntilAsync(() => !runService.GetActiveRuns().Any(r => r.IssueIdentifier == "61"));
+        Assert.DoesNotContain(runService.GetActiveRuns(), r => r.IssueIdentifier == "61");
     }
 
     [Fact]
-    public async Task Monitoring_ForceDisconnect_DeregistersAgent()
+    public async Task Fleet_ConnectedAgent_ShowsIdle()
     {
         // Arrange: connect an agent
-        await using var fakeAgent = new FakeAgentClient("force-dc-agent", "e2e");
+        await using var fakeAgent = new FakeAgentClient("idle-agent", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        // Verify agent is registered.
-        // Agents connect to the API hub (Spec 044), so their registry entry lives on the API host
-        // — use Fixture.AgentRegistry, not Fixture.Factory.Services (the Blazor host's local registry).
+        // Verify agent is registered on the API host's registry (Spec 044).
         var registry = Fixture.AgentRegistry;
-        var agentBefore = registry.GetByAgentId("force-dc-agent");
+        var agentBefore = registry.GetByAgentId("idle-agent");
         Assert.NotNull(agentBefore);
         Assert.NotEqual(AgentStatus.Disconnected, agentBefore.Status);
 
         // Force the Blazor host's ApiAgentRegistryService to refresh its snapshot so the UI
-        // picks up the connected agent — the AgentRegistrySyncService poller is disabled in E2E harness.
+        // picks up the connected agent — the AgentRegistrySyncService poller is disabled in the E2E harness.
         await Fixture.ForceAgentRegistryRefreshAsync();
 
-        // Act: navigate to monitoring, click on the agent row to open modal
-        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
-        await monitoringPage.NavigateAsync();
-
-        // Verify agent is visible
-        var isVisible = await monitoringPage.IsAgentVisibleAsync("force-dc-agent");
-        Assert.True(isVisible, "Agent should be visible on monitoring page");
-
-        // The agent needs an active run to open the run detail modal via row click.
-        // Instead, verify the agent status is shown correctly.
-        await monitoringPage.WaitForAgentStatusAsync("force-dc-agent", "Idle", timeoutMs: 15_000);
+        // Act + Assert: the idle agent is visible with an Idle status on /fleet.
+        var fleet = new FleetPage(Page, BaseUrl);
+        await fleet.NavigateAsync();
+        Assert.True(await fleet.IsAgentVisibleAsync("idle-agent"), "Agent should be visible on Fleet");
+        await fleet.WaitForAgentStatusAsync("idle-agent", "Idle", timeoutMs: 15_000);
     }
 }

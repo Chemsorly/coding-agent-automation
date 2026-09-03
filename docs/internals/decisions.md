@@ -221,13 +221,15 @@ Leader election continues to handle multi-replica safety. The split was driven b
 **Date:** 2026-07-04
 **Category:** architecture
 
-**Decision:** Review agents ALWAYS run in isolated sessions (fresh context, no access to codegen conversation history). The `Shared` mode (legacy) must be removed entirely — see #1042. Self-attribution bias is a proven phenomenon (arXiv:2603.04582): models evaluate their own output as more correct when they can see their own reasoning chain. Cross-context review (arXiv:2603.12123) demonstrates that fresh-session review catches significantly more errors.
+**Decision:** Review agents ALWAYS run in isolated sessions (fresh context, no access to codegen conversation history). The `Shared` mode (legacy) has been removed — #1042 resolved in #2233. Self-attribution bias is a proven phenomenon (arXiv:2603.04582): models evaluate their own output as more correct when they can see their own reasoning chain. Cross-context review (arXiv:2603.12123) demonstrates that fresh-session review catches significantly more errors.
 
 **Context:** `Isolated` was already the default; `Shared` existed as a legacy backward-compat option. The decision to remove `Shared` reflects that there is no valid use case for it — it actively harms review quality. Isolated mode also enables parallel execution (multiple review agents running concurrently), which is faster.
 
 **Alternatives considered:** Shared with a different model (reduces self-attribution but loses parallelism), configurable per-issue-complexity, keep Shared as escape hatch.
 
 **Reassess when:** Never for the isolation principle. If a future research paper demonstrates that context-aware review outperforms isolated review with appropriate debiasing techniques, reconsider — but current evidence strongly favors isolation.
+
+**Status (2026-09-02):** Resolved. `ReviewIsolation.Shared` removed in #2233. Field retained at Key(4) with `Isolated`-only enum; stored configs containing `"Shared"` map to `Isolated` via `ReviewIsolationJsonConverter` (registered at the enum type level).
 
 ---
 

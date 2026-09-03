@@ -201,7 +201,27 @@ public static class WorkItemEndpoints
         // Old schema: PayloadSchemaVersion == null → serve from frozen snapshot.
         // New schema: PayloadSchemaVersion == 1  → fresh-fetch all mutable config.
         if (request.PayloadSchemaVersion == 1 && assignmentEnricher is not null)
-            request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+        {
+            try
+            {
+                request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // EnrichAsync already logged at Error level; return 503 so the agent retries.
+                // The WorkItem remains in Dispatched state — the reconciler TTL provides the hard timeout.
+                // TODO: [WARNING] For the null-return path (no profile matched), EnrichAsync does NOT log
+                // at Error — it returns null after Warning-level logs in EnrichCoreAsync, and then
+                // EnrichRequestAsync throws InvalidOperationException which propagates here unlogged at
+                // Error level. Add Log.Error(ex, ...) here so all paths producing a 503 have an Error-level
+                // trace, regardless of where in the call chain the exception originates. This makes permanent
+                // config failures (missing profile, deleted provider) distinguishable from transient failures
+                // in alerting dashboards.
+                return TypedResults.Problem(
+                    detail: "Assignment enrichment failed; please retry.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        }
         // TODO: When assignmentEnricher is null and request.PayloadSchemaVersion == 1 (new-schema path),
         // enrichment is silently skipped and an identity-only 200 is returned with no log output.
         // A DI misconfiguration that drops AssignmentEnricher is now undetectable from logs at this site.
@@ -224,21 +244,21 @@ public static class WorkItemEndpoints
     /// Enriches a new-schema request (PayloadSchemaVersion == 1) by fetching mutable config fresh
     /// from the database. Resolves the project for steering + config override context, falling
     /// back to a minimal stub for project-less items.
-    /// If enrichment fails, returns the original request as a best-effort degraded response.
     /// </summary>
+    /// <remarks>
+    /// Any exception from <see cref="AssignmentEnricher.EnrichAsync"/> (other than
+    /// <see cref="OperationCanceledException"/>) propagates to the caller so it can return HTTP 503.
+    /// When <see cref="AssignmentEnricher.EnrichAsync"/> returns <c>null</c> (permanent failure —
+    /// profile not found, provider config removed), this also surfaces as a 503 via
+    /// <see cref="InvalidOperationException"/> so the agent retries rather than proceeding with
+    /// an incomplete job spec.
+    /// </remarks>
     private static async Task<JobDistributionRequest> EnrichRequestAsync(
         JobDistributionRequest request,
         IProjectStore projectStore,
         AssignmentEnricher assignmentEnricher,
         CancellationToken ct)
     {
-        // NOTE: [WARNING] assignmentEnricher is nullable ([FromServices] optional). If the DI
-        // container fails to resolve it at startup (transitive dependency missing), ASP.NET
-        // Core silently injects null and every new-schema work item gets a degraded identity-only
-        // 200 with no configs — no startup error, no warning log at this site.
-        // TODO: This method is only called when assignmentEnricher is not null (see GetAssignment
-        // call site). However, the outer GetAssignment still silently skips enrichment when
-        // assignmentEnricher is null. Restore the Log.Warning at the call site for that path.
         PipelineProject project;
         if (request.ProjectId.HasValue)
         {
@@ -250,10 +270,26 @@ public static class WorkItemEndpoints
             project = BuildMinimalProject(request);
         }
 
+        // EnrichAsync propagates transient failures (DB timeout, etc.) — let them bubble up.
+        // A null return indicates a permanent/configuration failure (no profile matched).
         var enriched = await assignmentEnricher.EnrichAsync(request, project, ct);
-        // If enrichment fails, fall through to serve the identity-only request as a
-        // best-effort degraded response (missing configs, but RunId/IssueIdentifier intact).
-        return enriched ?? request;
+        if (enriched is null)
+        {
+            // Profile resolution failure is permanent but should still be treated as a 503 so
+            // the reconciler TTL can expire the work item rather than the agent silently using
+            // an identity-only payload with no configs.
+            // TODO: [WARNING] This InvalidOperationException propagates to the GetAssignment catch block
+            // which does not log it at Error level (the comment there says "EnrichAsync already logged at
+            // Error level", which is true for the transient-exception path but NOT for the null-return
+            // path — EnrichCoreAsync only logs at Warning for no-profile-matched). Add Error-level logging
+            // here or in the catch block so permanent config failures are visible without querying Warning
+            // logs.
+            throw new InvalidOperationException(
+                $"AssignmentEnricher returned null for IssueIdentifier {request.IssueIdentifier}; " +
+                "no agent profile matched the selector. Cannot serve a valid job spec.");
+        }
+
+        return enriched;
     }
 
     /// <summary>
@@ -546,16 +582,23 @@ public static class WorkItemEndpoints
     internal static async Task<IResult> GetPendingWorkItems(
         IDbContextFactory<PipelineDbContext> dbFactory,
         int maxResults = 50,
+        string? projectId = null,
         CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
         // Phase 1: SQL projection — include Payload and ProjectId alongside the 7 scalar fields.
         // Payload is fetched here so we can extract display fields in-memory (Phase 2).
-        var raw = await db.WorkItems
+        var pending = db.WorkItems
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending
-                     && w.TaskType != WorkItemTaskType.Consolidation)
+                     && w.TaskType != WorkItemTaskType.Consolidation);
+        // Optional project scope. WorkItem.ProjectId is a uuid column while the switcher passes the
+        // project's id as a string (PipelineProject.Id is a Guid-string), so parse before comparing.
+        if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
+            pending = pending.Where(w => w.ProjectId == scopeProjectId);
+
+        var raw = await pending
             .OrderByDescending(w => w.PriorityWeight)
             .ThenBy(w => w.CreatedAt)
             .Take(maxResults)
@@ -850,19 +893,26 @@ public static class WorkItemEndpoints
     internal static async Task<IResult> GetActiveWorkItems(
         int olderThanSeconds,
         IDbContextFactory<PipelineDbContext> dbFactory,
-        CancellationToken ct)
+        string? projectId = null,
+        CancellationToken ct = default)
     {
         var cutoff = DateTimeOffset.UtcNow.AddSeconds(-olderThanSeconds);
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var items = await db.WorkItems
+        var active = db.WorkItems
             .AsNoTracking()
             .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
                      && (w.DispatchedAt < cutoff
                          // Fallback for items where DispatchedAt is null (e.g., claim write failed):
                          // use CreatedAt so they are not permanently invisible to timeout enforcement.
                          // 1C-001: NULL < cutoff evaluates to NULL (falsy) in SQL, excluding these rows.
-                         || (w.DispatchedAt == null && w.CreatedAt < cutoff)))
+                         || (w.DispatchedAt == null && w.CreatedAt < cutoff)));
+        // Optional project scope (not passed by reconciliation). ProjectId is a uuid column; parse the
+        // switcher's Guid-string id before comparing.
+        if (!string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var scopeProjectId))
+            active = active.Where(w => w.ProjectId == scopeProjectId);
+
+        var items = await active
             .Select(w => new ActiveWorkItemDto
             {
                 Id = w.Id,
