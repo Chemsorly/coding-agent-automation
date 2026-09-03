@@ -112,7 +112,7 @@ Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use t
 
 The `pipeline.jobs.*` metrics (Prometheus: `pipeline_jobs_dispatched_total`, `pipeline_jobs_completed_total`, `pipeline_jobs_failed_total`, `pipeline_jobs_duration_seconds`) are emitted by two sources:
 
-1. **Agent pods** (ephemeral K8s Jobs) — via `PipelineRunInstrumentation.Dispose()`, with rich tags: `run_type`, `pipeline.project_id`, `pipeline.project_name`. These carry `service.name=coding-agent` and provide per-project, per-run-type breakdowns.
+1. **Agent pods** (ephemeral K8s Jobs) — via `PipelineRunInstrumentation.Dispose()`, with rich tags: `run_type`, `pipeline.project_id`, `pipeline.project_name`. These carry `service.name=coding-agent-worker-{JobName}` (K8s) or `service.name=coding-agent-worker` (local/non-K8s fallback) and provide per-project, per-run-type breakdowns.
 
 2. **Job Controller** (long-lived deployment) — via `WorkDistributionTelemetry.LogTerminalStatus()`, with minimal tags: `status` (and `failure_reason` for failed jobs, in snake_case). These carry `service.name=coding-agent-jobcontroller` and are **not subject to pod-exit flush races**.
 
@@ -138,7 +138,7 @@ The Job Controller-side recordings are not affected by any of the above.
 |----------|--------------------|
 | Alert: jobs completing / failing (reliability critical) | `workdistribution_workitems_terminated_total` (exact counts) |
 | Dashboard: jobs completed over 24h (non-exact OK) | `increase(pipeline_jobs_completed_total[24h])` (sums both emitters) |
-| Dashboard: per-run-type breakdown | `pipeline_jobs_completed_total{service_name="coding-agent"}` |
+| Dashboard: per-run-type breakdown | `pipeline_jobs_completed_total{service_name=~"coding-agent-worker.*"}` | <!-- TODO: Verify the actual Prometheus label name for the service.name resource attribute in your collector config. Depending on the OTLP receiver / Prometheus exporter mapping, the label may be exported as `service_name`, `otel_scope_name`, or a custom label. If this selector returns zero results, inspect the collector's label mapping and update accordingly. -->
 | Dashboard: job duration percentiles | `pipeline_jobs_duration_seconds` (both emitters contribute) |
 
 ### Work Distribution Metrics
@@ -164,11 +164,13 @@ The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetr
 
 ## Traces
 
-All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans marked with † are emitted from both the orchestrator (`PipelineOrchestrationService`) and the agent worker (`LocalPipelineExecutor`).
+All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. All spans are emitted exclusively from the agent worker (`LocalPipelineExecutor`) — the orchestrator process (`PipelineOrchestrationService`) does not emit any pipeline execution spans.
+
+<!-- TODO: If Option B (orchestrator-side ExecutePipeline span, tracked in #2223) is implemented, update this paragraph: the orchestrator will emit ExecutePipeline wrapping the full dispatch-to-completion lifecycle, and the "exclusively from the agent worker" claim will no longer be accurate. -->
 
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
-| `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution |
+| `ExecutePipeline` | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution |
 | `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace |
 | `CreateBranch` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.branch_name` | Branch creation or checkout |
 | `SyncBrainPreRun` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.brain_sync.skipped` | Brain repository sync (pre-run) |
@@ -183,7 +185,7 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
 | `CodeReview.Iteration` | `pipeline.run_id`, `pipeline.issue`, `code_review.iteration`, `code_review.max_iterations`, `code_review.parallel` | Single code review iteration (child of ReviewCode) |
 | `CodeReview.Agent` | `pipeline.run_id`, `pipeline.issue`, `pipeline.review_agent`, `pipeline.isolated` | Individual review agent execution (child of CodeReview.Iteration) |
-| `CreatePullRequest` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
+| `CreatePullRequest` | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
 | `GeneratePrDescription` | `pipeline.run_id`, `pipeline.issue` | Agent-generated PR description |
 | `FinalizePullRequest` | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR finalization (when existing draft PR is promoted) |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
@@ -261,7 +263,7 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 
 ### Service Names
 
-Agent pods emit telemetry with `service.name` derived from the agent image and labels.
+Each component sets its `service.name` resource attribute via `OTEL_SERVICE_NAME` (agent pods) or `ResourceBuilder.AddService` (long-lived deployments).
 
 | `service.name` | Component | Port |
 |----------------|-----------|------|
@@ -269,6 +271,9 @@ Agent pods emit telemetry with `service.name` derived from the agent image and l
 | `coding-agent-api` | REST/WebSocket API | Port 8080 |
 | `coding-agent-jobcontroller` | Job Controller | Port 8080 |
 | `coding-agent-scheduler` | Scheduler | Port 8080 |
+| `coding-agent-worker-{JobName}` | Agent Worker Pod (K8s) | — |
+
+`{JobName}` is the Kubernetes Job name assigned by `JobSpecBuilder` and is unique per pipeline run (e.g., `coding-agent-worker-caa-agent-abc123`). Non-K8s local runs fall back to `coding-agent-worker` (no suffix). Use the regex `coding-agent-worker.*` to match all agent pod telemetry in Tempo or Prometheus label selectors.
 
 ### Example: Grafana Cloud
 
@@ -307,10 +312,22 @@ Expected output after dispatching a job:
 
 ### Traces
 
-When connected to a backend (Grafana Tempo, Jaeger, etc.), search for traces with:
+When connected to a backend (Grafana Tempo, Jaeger, etc.), search for `ExecutePipeline` traces with:
 
-- Service: `coding-agent-orchestrator` or `coding-agent-worker`
+- Service: `coding-agent-worker-{JobName}` (K8s) or `coding-agent-worker` (local) — **not** `coding-agent-orchestrator`
 - Operation: `ExecutePipeline`
+
+`ExecutePipeline` spans are emitted exclusively from agent worker pods via `PipelineRunInstrumentation.Start()`. The orchestrator process (`coding-agent-orchestrator`) never emits this span. For Grafana Tempo, use a regex label selector:
+
+```
+{rootServiceName=~"coding-agent-worker.*" && name="ExecutePipeline"}
+```
+
+> **Note:** `rootServiceName` in Tempo is the service name of the *root span* of the trace. If a parent context is injected above `ExecutePipeline` (e.g. via W3C traceparent propagation from #2211), the root span's service name may differ from `coding-agent-worker.*` and this selector will return zero results even though the span exists. In that case, use `resource.service.name=~"coding-agent-worker.*"` combined with `name="ExecutePipeline"` for a more reliable selector that targets the span's own service attribute rather than the trace root's.
+
+<!-- TODO: rootServiceName in Tempo is the service name of the root span of the trace. If ExecutePipeline is not itself the trace root (e.g. a parent span from another context exists), this selector will not match even though the span exists under coding-agent-worker.*. In that case, use resource.service.name=~"coding-agent-worker.*" combined with name="ExecutePipeline" for a more reliable selector. -->
+
+> **Grafana Cloud panel**: If the "Recent Pipeline Traces" panel returns zero results, verify that `rootServiceName` uses the regex pattern above. A query targeting `rootServiceName="coding-agent-orchestrator"` will always return zero results for `ExecutePipeline` spans.
 
 Expected span hierarchy for an implementation run:
 
