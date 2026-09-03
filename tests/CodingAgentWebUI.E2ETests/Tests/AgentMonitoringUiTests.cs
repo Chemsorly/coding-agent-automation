@@ -6,8 +6,8 @@ using Microsoft.Playwright;
 namespace CodingAgentWebUI.E2ETests.Tests;
 
 /// <summary>
-/// P6 UI behavioral tests for the Agent Monitoring page.
-/// Validates real-time agent status updates, run progress visibility, and history panel.
+/// UI behavioral tests migrated from the retired /agent-monitoring page to the cockpit pages that
+/// replaced it: agent presence on /fleet, live run progress on /runs/{id}, and run history on /runs.
 /// Uses Playwright to observe DOM updates driven by SignalR state notifications.
 /// </summary>
 [Trait("Category", "E2E")]
@@ -47,40 +47,36 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // E7: Agent appears on monitoring page with correct status
+    // Agent appears on Fleet with correct status
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Monitoring_AgentAppearsAfterConnection()
+    public async Task Fleet_AgentAppearsAfterConnection()
     {
         // Connect a fake agent
         await using var agent = new FakeAgentClient("ui-monitor-agent-1", "ui-test");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // The agent registered on the API's hub; the Blazor host reads a snapshot of that registry
-        // refreshed on a 2s poll. Pull it forward so the page renders the agent on first load
-        // rather than on its own 5s redraw — this is a wait the product genuinely has, and without
-        // forcing it the test is asserting inside the window where the two processes disagree.
+        // refreshed on a poll that is disabled in the harness. Pull it forward so the page renders
+        // the agent on first load.
         await Fixture.ForceAgentRegistryRefreshAsync();
 
-        // Navigate to monitoring page
-        await Page.GotoAsync($"{BaseUrl}/agent-monitoring");
-        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
+        // Navigate to the Fleet page
+        var fleet = new FleetPage(Page, BaseUrl);
+        await fleet.NavigateAsync();
 
-        // Assert: agent ID appears on the page. Waited for rather than sampled after a fixed
-        // delay — the page redraws every 5s, so a 3s sleep landed before the first redraw.
+        // Assert: the agent appears on Fleet.
         await Page.GetByText("ui-monitor-agent-1").First.WaitForAsync(new() { Timeout = 15_000 });
-
-        var agentText = Page.GetByText("ui-monitor-agent-1").First;
-        await Assertions.Expect(agentText).ToBeVisibleAsync();
+        await Assertions.Expect(Page.GetByText("ui-monitor-agent-1").First).ToBeVisibleAsync();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // E8: Run progress — step transitions visible in UI
+    // Run progress — step transitions visible on the run detail page
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Monitoring_RunProgress_StepTransitionsVisible()
+    public async Task RunDetailPage_RunProgress_StepTransitionsVisible()
     {
         // Arrange
         await SeedAndConnectAsync("UI-200", "ui-progress-agent", new[] { "ui-test" });
@@ -111,27 +107,31 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
             // Report step transitions
             await agent.AcceptJobAsync(job.JobId);
             await agent.ReportStepAsync(job.JobId, PipelineStep.CloningRepository);
-            await Page.WaitForTimeoutAsync(1000);
-
             await agent.ReportStepAsync(job.JobId, PipelineStep.GeneratingCode,
                 new Dictionary<string, string> { ["BranchName"] = "feature/ui-test" });
-            await Page.WaitForTimeoutAsync(1000);
 
-            // Assert: page content reflects the run is in progress
-            var bodyText = await Page.TextContentAsync("body");
-            // The run should be visible somewhere on the page (active run display)
+            // Wait for the server to reflect the active run, then open its detail page.
+            var runService = Fixture.RunService;
+            await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "UI-200"));
+            var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "UI-200").RunId;
+
+            var detail = new RunDetailPage(Page, BaseUrl);
+            await detail.NavigateAsync(runId);
+
+            // Assert: run progress is visible on the detail page (issue id or a live step name).
+            var bodyText = await detail.GetPageTextAsync();
             Assert.True(
                 bodyText?.Contains("UI-200") == true || bodyText?.Contains("Generating") == true || bodyText?.Contains("Cloning") == true,
-                "Run progress should be visible on the page during active execution");
+                "Run progress should be visible on the run detail page during active execution");
         }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // E9: History — completed runs appear in sidebar
+    // History — completed runs appear on the Runs page
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Monitoring_CompletedRun_AppearsInHistory()
+    public async Task Runs_CompletedRun_AppearsInHistory()
     {
         // Arrange: seed and dispatch
         await SeedAndConnectAsync("UI-300", "ui-history-agent", new[] { "ui-test" });
@@ -161,21 +161,20 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
                 r => r.IssueIdentifier == "UI-300" && r.FinalStep == PipelineStep.Completed,
                 TimeSpan.FromSeconds(15));
 
-            // Navigate to monitoring to check history is visible
-            await Page.GotoAsync($"{BaseUrl}/agent-monitoring");
-            await Page.WaitForTimeoutAsync(3000);
+            // Navigate to the Runs history page and confirm the completed run is listed.
+            await Page.GotoAsync($"{BaseUrl}/runs");
+            await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
+            await Page.WaitForTimeoutAsync(2000);
 
-            // Assert: the completed run's issue should appear somewhere in the UI
             var bodyText = await Page.TextContentAsync("body");
-            // History entries typically show the issue identifier or PR URL
             Assert.True(
-                bodyText?.Contains("UI-300") == true || bodyText?.Contains("Completed") == true,
-                "Completed run should appear in the monitoring page history");
+                bodyText?.Contains("UI-300") == true,
+                "Completed run should appear on the Runs history page");
         }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // E12: Notification toast — dispatch feedback appears
+    // Notification toast — dispatch feedback appears (coding page — unchanged)
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]

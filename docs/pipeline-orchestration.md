@@ -246,7 +246,7 @@ See [Configuration — Housekeeping](configuration.md#housekeeping) for all sett
 Any step can transition to `Failed` on error. The pipeline catches exceptions at each phase boundary and records the failure reason. Specific behaviors:
 
 - **Clone failure** — immediate fail, no retry
-- **Analysis failure** — retries up to `maxAnalysisRetries` (assessment file missing, malformed JSON, analysis too short)
+- **Analysis failure** — retries up to `maxAnalysisRetries` (assessment file missing, malformed JSON, analysis too short); on exhaustion, labels `agent:needs-refinement`
 - **Agent timeout** — fail with exit code 124
 - **Blacklisted files** — excluded from commits with a warning logged
 - **External CI timeout** — treated as gate failure, enters retry loop

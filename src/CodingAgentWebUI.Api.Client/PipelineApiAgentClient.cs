@@ -30,6 +30,15 @@ internal sealed class PipelineApiAgentClient : IPipelineApiAgentClient
         return agents ?? [];
     }
 
+    public async Task<CredentialPoolStatus> GetCredentialPoolAsync(CancellationToken ct = default)
+    {
+        var status = await _http.GetFromJsonAsync<CredentialPoolStatus>(
+            "/api/agents/credential-pool",
+            PipelineJsonOptions.Default,
+            ct);
+        return status ?? new CredentialPoolStatus(0, 0, 0);
+    }
+
     public async Task AssignChatPromptAsync(string agentId, ChatPromptMessage message, CancellationToken ct = default)
     {
         var response = await _http.PostAsJsonAsync(

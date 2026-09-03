@@ -49,10 +49,14 @@ public sealed class AgentSerilogConfigurationTests : IDisposable
         logger.Information("Test structured message {Value}", 42);
         DisposeLogger(logger); // flush
 
-        // Assert — each non-empty line must parse as valid JSON
+        // Assert — filter to JSON lines only (other active loggers in the test process may emit
+        // plain-text lines to stdout unrelated to the logger under test, consistent with the
+        // filtering approach used in CreateAgentLogger_DoesNotEmitPlainTextBrackets).
         var output = writer.ToString();
-        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        lines.Should().NotBeEmpty("at least one log line must be emitted to stdout");
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => l.StartsWith("{"))
+            .ToList();
+        lines.Should().NotBeEmpty("at least one CLEF JSON line must be emitted to stdout");
 
         foreach (var line in lines)
         {
