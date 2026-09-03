@@ -455,10 +455,6 @@ public sealed class HousekeepingService : IHousekeepingService
     /// will proceed to a swap; terminal labels (<c>agent:done</c>, <c>agent:wont-do</c>,
     /// <c>agent:cancelled</c>) must never be re-queued.
     /// </summary>
-    // TODO: the stale comment above replaced a misleading one ("swaps its label to agent:next if it is
-    // in a terminal state and not already active") that had the intended behaviour backwards — the method
-    // now returns early for terminal states rather than proceeding. Keep this comment accurate if the
-    // guard logic changes. (review-findings WARNING, HousekeepingService.cs:431)
     private async Task TrySwapIssueToNextAsync(
         IIssueProvider issueProvider,
         string issueProviderId,
