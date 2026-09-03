@@ -35,7 +35,7 @@ public sealed class ReconciliationLoopTests
             .ReturnsAsync(new V1JobList { Items = [] });
 
         // Default: no active work items
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
     }
 
@@ -105,7 +105,7 @@ public sealed class ReconciliationLoopTests
 
         // EnforceTimeoutsAsync queries with TimeoutCanaryMinAgeSeconds (60s) as the pre-filter
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == 60), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([timedOutItem]);
 
         var loop = CreateLoop();
@@ -144,7 +144,7 @@ public sealed class ReconciliationLoopTests
             TimeoutSeconds = itemTimeoutSeconds
         };
 
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([timedOutItem]);
 
         var loop = CreateLoop();
@@ -174,7 +174,7 @@ public sealed class ReconciliationLoopTests
             TimeoutSeconds = itemTimeoutSeconds
         };
 
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([notYetTimedOutItem]);
 
         var loop = CreateLoop();
@@ -211,7 +211,7 @@ public sealed class ReconciliationLoopTests
             TimeoutSeconds = 0 // legacy: field not stored
         };
 
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([legacyItem]);
 
         var loop = CreateLoop();
@@ -241,7 +241,7 @@ public sealed class ReconciliationLoopTests
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
         // No K8s Job exists for this work item
@@ -256,6 +256,7 @@ public sealed class ReconciliationLoopTests
         // would never be called, and the test would silently pass as a false green.
         _workItemClient.Verify(c => c.GetActiveAsync(
             It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds),
+            It.IsAny<string?>(),
             It.IsAny<CancellationToken>()), Times.Once);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
@@ -276,7 +277,7 @@ public sealed class ReconciliationLoopTests
             .ReturnsAsync(new V1JobList { Items = [orphanJob] });
 
         // GetActiveAsync returns nothing — no active work items
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
@@ -301,7 +302,7 @@ public sealed class ReconciliationLoopTests
             .ReturnsAsync(new V1JobList { Items = [staleJob] });
 
         // No active work item matching the ID (it's in terminal state, not returned by GetActiveAsync)
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
@@ -504,7 +505,7 @@ public sealed class ReconciliationLoopTests
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [chatJob] });
 
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
@@ -524,7 +525,7 @@ public sealed class ReconciliationLoopTests
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [chatJob, orphanJob] });
 
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         var loop = CreateLoop();
@@ -569,7 +570,7 @@ public sealed class ReconciliationLoopTests
 
         // GetActiveAsync with chatPodConnectTimeoutSeconds returns empty (the item hasn't exceeded the threshold)
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]); // API-side threshold not exceeded — item not returned
 
         var loop = CreateLoop();
@@ -868,7 +869,7 @@ public sealed class ReconciliationLoopErrorTests
     [Fact]
     public async Task EnforceTimeouts_WhenGetActiveThrows_DoesNotPropagate()
     {
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("DB unavailable"));
 
         var loop = CreateLoop();
@@ -907,7 +908,7 @@ public sealed class ReconciliationLoopErrorTests
 
         // EnforceTimeoutsAsync queries with TimeoutCanaryMinAgeSeconds (60s) as pre-filter
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == 60), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item1, item2]);
 
         // First call throws, second should still be attempted
@@ -943,7 +944,7 @@ public sealed class ReconciliationLoopErrorTests
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == 60), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
         var loop = CreateLoop();
@@ -958,7 +959,7 @@ public sealed class ReconciliationLoopErrorTests
     [Fact]
     public async Task EnforceDispatchedTimeout_WhenGetActiveThrows_DoesNotPropagate()
     {
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("DB unavailable"));
 
         var loop = CreateLoop();
@@ -982,7 +983,7 @@ public sealed class ReconciliationLoopErrorTests
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -1011,7 +1012,7 @@ public sealed class ReconciliationLoopErrorTests
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
         // K8s Job exists for this work item
@@ -1058,7 +1059,7 @@ public sealed class ReconciliationLoopErrorTests
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
         // Only the API-format job exists in K8s (controller-format name is absent)
@@ -1093,7 +1094,7 @@ public sealed class ReconciliationLoopErrorTests
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
         // No jobs exist at all
@@ -1125,7 +1126,7 @@ public sealed class ReconciliationLoopErrorTests
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([runningItem]);
 
         var loop = CreateLoop();
@@ -1155,7 +1156,7 @@ public sealed class ReconciliationLoopErrorTests
     {
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [] });
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("DB unavailable"));
 
         var loop = CreateLoop();
@@ -1172,7 +1173,7 @@ public sealed class ReconciliationLoopErrorTests
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1JobList { Items = [orphanJob] });
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
         _k8sClient.Setup(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("k8s error"));
@@ -1195,7 +1196,7 @@ public sealed class ReconciliationLoopErrorTests
             .ReturnsAsync(new V1JobList { Items = [job] });
 
         // Work item is still active
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(
             [
                 new ActiveWorkItemDto
@@ -1315,7 +1316,7 @@ public sealed class ReconciliationLoopErrorTests
             K8sJobName = null // legacy — field not persisted at dispatch time
         };
 
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([runningItem]);
         _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -1350,7 +1351,7 @@ public sealed class ReconciliationLoopErrorTests
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([dispatchedItem]);
 
         // The fallback-computed job name does NOT appear in the live job list,
@@ -1411,7 +1412,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             .ReturnsAsync(new V1JobList { Items = [] });
 
         // Default: no active work items
-        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         // Enable all instruments on both the WorkDistribution and Pipeline meters
@@ -1487,7 +1488,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == 60), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item]);
 
         // Act
@@ -1539,7 +1540,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         };
 
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == 60), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item]);
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
@@ -1604,7 +1605,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         // When DispatchedAt is null, executionAgeSeconds falls back to effectiveTimeoutSeconds,
         // which is >= 60s (canary threshold), so GetActiveAsync is called with 60 as pre-filter.
         _workItemClient.Setup(c => c.GetActiveAsync(
-                It.Is<int>(n => n == 60), It.IsAny<CancellationToken>()))
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item]);
         _workItemClient.Setup(c => c.PostStatusAsync(
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
@@ -1716,7 +1717,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                  && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "timeout"),
             "failure_reason tag must be snake_case 'timeout', not PascalCase 'Timeout'");
 
-        // NOTE: The negative assertion below (completed not emitted for Failed) is weak:
+        // TODO [WARNING]: The negative assertion below (completed not emitted for Failed) is weak:
         // completedCountBefore is captured after the first LogTerminalStatus call has already run,
         // so it avoids contamination from that call, but it is still vulnerable to a race window
         // where stray parallel tests fire between the snapshot and the assertion. The assertion

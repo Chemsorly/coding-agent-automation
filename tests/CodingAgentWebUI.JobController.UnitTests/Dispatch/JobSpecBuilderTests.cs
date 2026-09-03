@@ -58,6 +58,11 @@ public sealed class JobSpecBuilderTests
     public void WhenDerivedKeySecretName_Set_AgentApiKeyEnvVar_FromSecret_NoMasterMount()
     {
         var template = KiroTemplate();
+        // TODO [WARNING]: workItemId: null is load-bearing here. Setting a non-null WorkItemId alongside
+        // DerivedKeySecretName would trigger the double-derivation guard added in Build() and cause this
+        // test to throw instead of asserting the derived-key env-var path. If copying this as a template
+        // for new "DerivedKeySecretName" tests, keep WorkItemId null. See also:
+        // Build_WhenDerivedKeySecretNameSetForWorkItemPod_ShouldThrow for the forbidden combination.
         var ctx = BaseCtx(workItemId: null) with
         {
             DerivedKeySecretName = "caa-derived-abc123"
