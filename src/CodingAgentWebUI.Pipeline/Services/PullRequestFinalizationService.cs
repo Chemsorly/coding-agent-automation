@@ -130,7 +130,7 @@ public sealed class PullRequestFinalizationService
         // not rethrow, so a non-OCE escape is considered impossible by contract. If that assumption
         // ever changes, the fix should add a catch block to set FailureReason/Failed for genuine
         // non-OCE failures and restore error logging + activity.SetStatus(Error) that existed in
-        // the pre-refactor in-try placement (see the removed TODO at commit origin of this block).
+        // the pre-refactor in-try placement (see the removed action-item comment at commit origin of this block).
         try
         {
             await RunPostPrSequenceAsync(
