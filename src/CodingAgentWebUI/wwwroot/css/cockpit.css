@@ -275,6 +275,22 @@
 
 .cockpit-body { flex: 1; overflow: auto; }
 
+/* ---- First-run setup banner (legacy component, restyled for the cockpit) --- */
+.cockpit .first-run-banner {
+    display: flex; align-items: center; gap: 14px;
+    margin: 16px 28px 0; padding: 11px 16px;
+    background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: 12px;
+    font-size: 13px;
+}
+.cockpit .first-run-banner-message { flex: 1; color: var(--text); line-height: 1.5; }
+.cockpit .first-run-banner-message a { color: var(--warning); font-weight: 700; text-decoration: none; }
+.cockpit .first-run-banner-message a:hover { text-decoration: underline; }
+.cockpit .first-run-banner-dismiss {
+    flex-shrink: 0; height: 30px; padding: 0 13px; border: 1px solid var(--ctl-border); border-radius: 8px;
+    background: var(--surface); color: var(--text-muted); font: 600 12px 'Manrope', ui-sans-serif, sans-serif; cursor: pointer;
+}
+.cockpit .first-run-banner-dismiss:hover { color: var(--text); border-color: var(--accent); background: var(--bg-hover); }
+
 /* ---- shared page chrome ---------------------------------------------------- */
 .cockpit-page { padding: 22px 28px 40px; display: flex; flex-direction: column; gap: 16px; }
 .cockpit-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
