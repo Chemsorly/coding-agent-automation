@@ -85,7 +85,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
         mockRunHistoryClient.Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((PipelineRunSummary?)null);
         var runHistoryItems = history ?? Array.Empty<PipelineRunSummary>();
-        mockRunHistoryClient.Setup(c => c.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        mockRunHistoryClient.Setup(c => c.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runHistoryItems, Page = 1, PageSize = 1000, HasMore = false });
         Services.AddSingleton<IPipelineApiRunHistoryClient>(mockRunHistoryClient.Object);
         Services.AddSingleton<IPipelineApiWorkItemClient>(new Mock<IPipelineApiWorkItemClient>().Object);

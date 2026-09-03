@@ -76,7 +76,14 @@
                                 }
                             </td>
                             <td>
-                                @* TODO: Out-of-range values (< 0 or > 1000) are silently discarded — the callback is not
+                                @* TODO [WARNING]: On a failed server update, the displayed value does not reliably revert.
+                                   The input uses one-way binding (value="@job.PriorityWeight"), not @bind. When
+                                   SetPriorityAsync fails, RefreshDataAsync rebuilds QueuedJobs but PriorityWeight still
+                                   equals the old server value. Blazor's diff skips patching an unchanged attribute, so
+                                   the DOM input keeps showing the user-typed (rejected) value while only the error banner
+                                   updates. Consider forcing a re-render (e.g. keyed element or @bind with explicit reset)
+                                   so the DOM value is re-applied even when the model value is unchanged. *@
+                                @* TODO [WARNING]: Out-of-range values (< 0 or > 1000) are silently discarded — the callback is not
                                    fired and no feedback is given to the user. The browser's min/max attributes only
                                    enforce on form submit, not on inline @onchange. Consider showing a validation message
                                    or reverting the input to the previous value when the entered value is out of range. *@

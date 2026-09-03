@@ -29,6 +29,13 @@ public sealed class PipelineApiWorkItemClientSetPriorityTests
 
         var act = () => sut.SetPriorityAsync(workItemId, 500);
 
+        // TODO [WARNING]: This test does not capture or inspect the outgoing HttpRequestMessage.
+        // The body serialisation path (new { priorityWeight } via PipelineJsonOptions.Default) is
+        // never verified. If camelCase serialisation is disabled in PipelineJsonOptions.Default, the
+        // backend would receive {"PriorityWeight": 500} instead of {"priorityWeight": 500} and the
+        // API would return 400, but this test would still pass against the fake handler.
+        // Add a capturing handler that records the request and assert the JSON body contains
+        // {"priorityWeight": 500} to lock in payload serialization.
         await act.Should().NotThrowAsync();
     }
 

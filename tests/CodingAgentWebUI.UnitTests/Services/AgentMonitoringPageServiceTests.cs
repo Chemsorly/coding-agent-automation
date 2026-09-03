@@ -54,7 +54,7 @@ public sealed class AgentMonitoringPageServiceTests
             .ReturnsAsync(Array.Empty<PendingJob>());
         _mockConsolidationService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ConsolidationRun>());
-        _mockRunHistoryClient.Setup(h => h.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockRunHistoryClient.Setup(h => h.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = Array.Empty<PipelineRunSummary>(), Page = 1, PageSize = 1000, HasMore = false });
 
         _sut = new AgentMonitoringPageService(new AgentMonitoringPageServiceDependencies(
@@ -108,7 +108,7 @@ public sealed class AgentMonitoringPageServiceTests
     {
         await _sut.InitializeAsync();
 
-        _mockRunHistoryClient.Verify(s => s.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockRunHistoryClient.Verify(s => s.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
         _mockPendingWorkQuery.Verify(s => s.GetPendingJobsAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -465,6 +465,11 @@ public sealed class AgentMonitoringPageServiceTests
         _mockPendingWorkQuery.Verify(
             q => q.GetPendingJobsAsync(It.IsAny<CancellationToken>()),
             Times.Once);
+        // TODO [WARNING]: This test only verifies that GetPendingJobsAsync is called (Times.Once).
+        // It does not assert that QueuedJobs is actually updated with the result — a service
+        // implementation that calls the query but discards its return value would still pass.
+        // Strengthen by seeding the mock with a return value containing a known PriorityWeight and
+        // asserting _sut.QueuedJobs reflects it after SetPriorityAsync completes.
     }
 
     [Fact]
@@ -476,6 +481,12 @@ public sealed class AgentMonitoringPageServiceTests
         _mockWorkItemClient
             .Setup(c => c.SetPriorityAsync(workItemId, 9999, It.IsAny<CancellationToken>()))
             .ThrowsAsync(serverError);
+        // TODO [WARNING]: The mock is keyed to the exact value 9999. If the service forwarded a
+        // different value (e.g. silently clamped it), the mock would not throw and the test would
+        // see (true, null) instead of (false, error), masking a wrong-argument bug. Consider using
+        // It.IsAny<int>() or a sentinel value that is clearly invalid (e.g. -1 or int.MaxValue) and
+        // verify the exact argument passed to SetPriorityAsync via _mockWorkItemClient.Verify to
+        // confirm no silent mutation occurs.
 
         // Act
         var (success, error) = await _sut.SetPriorityAsync(workItemId, 9999);
