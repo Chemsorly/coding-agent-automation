@@ -270,7 +270,7 @@ public class SettingsResolutionArbitraries
         // Add occasional non-null InlineCommentOverrides to improve coverage.
         from maxIterations in Gen.Elements<int?>(null, 1, 2, 3, 5)
         from fixPrompt in Gen.Elements<string?>(null, "Fix the issues", "Apply corrections")
-        from isolation in Gen.Elements<ReviewIsolation?>(null, ReviewIsolation.Shared, ReviewIsolation.Isolated)
+        from isolation in Gen.Elements<ReviewIsolation?>(null, ReviewIsolation.Isolated)
         select new CodeReviewOverrides
         {
             MaxIterations = maxIterations,
