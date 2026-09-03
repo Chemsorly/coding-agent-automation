@@ -254,6 +254,11 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
 
         result.Should().BeFalse();
         _run.FailureReason.Should().Contain("Analysis failed");
+        // TODO [WARNING]: Missing Times.Exactly(2) verification on ExecuteAsync. MaxAnalysisRetries=1 means the loop
+        // runs for attempt 0 and attempt 1 (two calls). Without asserting the call count, a premature exit on attempt 0
+        // that still reaches FailPhaseAsync (e.g. via a different early-exit code path) would pass all assertions below
+        // without actually exhausting both retries. Add:
+        //   _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
         // Retry exhaustion is a semantic failure (agent did not produce required outputs), not an
         // infrastructure crash. Must label agent:needs-refinement, not agent:error.
         _mockIssueOps.Verify(o => o.SwapLabelAsync("42", AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Once);
