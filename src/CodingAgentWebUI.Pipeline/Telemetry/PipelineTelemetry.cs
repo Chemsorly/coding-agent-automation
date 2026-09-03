@@ -52,6 +52,9 @@ public static class PipelineTelemetry
         "quality_gate.duration", "s", "Total time in quality gate phase");
     public static readonly Counter<long> QualityGateEvaluations = Meter.CreateCounter<long>(
         "quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
+    public static readonly Counter<long> ReviewSkipped = Meter.CreateCounter<long>(
+        "pipeline.review.skipped", "{skip}",
+        "Code review phase skipped due to empty resolved reviewer configs (all deleted or disabled)");
     // TODO: ExternalCiDuration has no InstrumentAdvice/HistogramBucketBoundaries. The sibling histogram
     // PostPrCiDuration received explicit boundaries in this change; ExternalCiDuration did not (out of scope
     // per issue requirements). Without explicit boundaries the OTel SDK may emit an exponential histogram,
