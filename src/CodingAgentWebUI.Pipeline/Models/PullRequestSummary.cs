@@ -21,4 +21,12 @@ public sealed class PullRequestSummary : IHasCreatedAt
 
     /// <summary>PR creation date, used for FIFO ordering in the pipeline loop.</summary>
     public DateTime? CreatedAt { get; init; }
+
+    /// <summary>
+    /// Whether auto-merge is enabled on this PR/MR. When true, the provider will
+    /// merge automatically once all required checks pass. Housekeeping prioritises
+    /// keeping these branches up-to-date so they can merge without manual intervention.
+    /// GitHub: non-null <c>auto_merge</c> field. GitLab: <c>merge_when_pipeline_succeeds</c>.
+    /// </summary>
+    public bool HasAutoMerge { get; init; }
 }
