@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Verifies that ConsolidationService fires OnChange at the correct times.
-/// The Blazor UI (AgentMonitoring, Consolidation pages) depends on OnChange to refresh.
+/// The Blazor UI (the Consolidation page) depends on OnChange to refresh.
 /// If OnChange doesn't fire, the frontend shows stale data.
 /// </summary>
 public sealed class ConsolidationServiceOnChangeTests : IDisposable

@@ -24,10 +24,10 @@ public class ChatJobDispatcherTests
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
-    private static JobTemplateStore CreateTemplateStore(string providerType = "kiro")
+    private static JobTemplateStore CreateTemplateStore(string providerType = "kiro", string labels = "dotnet,kiro")
     {
         var yaml = $"""
-            - labels: "dotnet,kiro"
+            - labels: "{labels}"
               image: "chemsorly/coding-agent:kiro-dotnet10"
               providerType: "{providerType}"
               maxConcurrent: 2
@@ -1385,7 +1385,8 @@ public class ChatJobDispatcherTests
     private static (ChatJobDispatcher dispatcher, Mock<IKubernetesJobClient> jobClientMock, string agentId)
         CreateFaultingDispatcher(
             Serilog.ILogger? logger = null,
-            DispatchServiceOptions? options = null)
+            DispatchServiceOptions? options = null,
+            string agentSelector = TestSelector)
     {
         var jobClientMock = CreateJobClientMock();
         // ReadJobAsync always returns non-terminal so the watcher doesn't exit before the idle-kill fires
@@ -1434,7 +1435,7 @@ public class ChatJobDispatcherTests
         var dispatcher = new ChatJobDispatcher(
             jobClientMock.Object,
             CreateHubContextMock().Object,
-            CreateTemplateStore(),
+            CreateTemplateStore(labels: agentSelector),
             registryMock.Object,
             options ?? CreateFaultTestOptions(),
             logger ?? Mock.Of<ILogger>());
@@ -1484,6 +1485,14 @@ public class ChatJobDispatcherTests
     {
         long decrementCount = 0;
 
+        // Unique selector so this test's SessionsActive -1 measurement carries an agent_selector tag
+        // no other concurrently-running test emits. The listener below counts ONLY decrements with this
+        // tag, making the assertion immune to cross-test metric noise — sibling classes dispatch with
+        // the shared "kiro,dotnet" selector in parallel, and the previous untagged callback intermittently
+        // captured their -1 measurements and over-counted (found 2 instead of 1).
+        var uniqueSelector = $"kiro,dotnet,iso{Guid.NewGuid():N}";
+        var uniqueSelectorTag = JobTemplateStore.NormalizeLabels(uniqueSelector).Replace(',', '_');
+
         // Use a string literal instead of ChatTelemetry.SessionsActive.Name to avoid triggering
         // the ChatTelemetry static initializer inside the InstrumentPublished callback.
         // listener.Start() iterates over all published instruments and fires InstrumentPublished
@@ -1496,7 +1505,7 @@ public class ChatJobDispatcherTests
         // This also ensures EnableMeasurementEvents is called before any Add() calls.
         _ = ChatTelemetry.SessionsActive;
 
-        var (dispatcher, _, _) = CreateFaultingDispatcher();
+        var (dispatcher, _, _) = CreateFaultingDispatcher(agentSelector: uniqueSelector);
 
         // Create the listener after the dispatcher so any pre-existing concurrent test cleanups
         // completing before this point are not captured. The listener is disposed immediately
@@ -1508,22 +1517,25 @@ public class ChatJobDispatcherTests
             if (instrument.Name == sessionsActiveName)
                 l.EnableMeasurementEvents(instrument);
         };
-        // TODO [WARNING]: The callback has no tag guard (agent_selector filter was removed). If another
-        // concurrently running test's watcher faults between listener.Start() and listener.Dispose(),
-        // its -1 measurement will be captured here, inflating decrementCount and causing a spurious
-        // failure or masking a missing decrement from the test under test. The previous unique-selector
-        // approach was strictly more robust. Consider re-adding an agent_selector tag filter scoped to
-        // TestSelector to make this assertion immune to concurrent test noise.
-        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        // Count only THIS test's decrement: a negative SessionsActive measurement tagged with our
+        // unique agent_selector. This scopes the assertion to the watcher under test and ignores any
+        // concurrently-running test's -1 (which carries a different selector tag).
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
         {
-            // Track only decrements — this is the acceptance criterion: CleanupSession must
-            // fire SessionsActive.Add(-1) after the watcher faults.
-            if (instrument.Name == sessionsActiveName && measurement < 0)
-                Interlocked.Increment(ref decrementCount);
+            if (instrument.Name != sessionsActiveName || measurement >= 0)
+                return;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "agent_selector" && (tag.Value as string) == uniqueSelectorTag)
+                {
+                    Interlocked.Increment(ref decrementCount);
+                    return;
+                }
+            }
         });
         listener.Start();
 
-        var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        var agentId = await dispatcher.DispatchChatPodAsync(uniqueSelector, null, null, CancellationToken.None);
         var watcherTask = dispatcher.TryGetWatcherTask(agentId);
 
         // Wait for the fault to fire and CleanupSession to run

@@ -457,10 +457,13 @@ public sealed class ConsolidationDispatchLoopTests
     }
 
     // ── Metric / telemetry tests ───────────────────────────────────────────────
-    // These tests use MeterListener directly (IDisposable, no [Collection] fixture)
-    // because the JobController test project has no Metrics collection definition.
-    // Assertions use Contain-style checks to remain robust against process-wide meter
-    // pollution from parallel tests.
+    // These tests create a local MeterListener per test method (not a class-level field),
+    // so each listener is active only for the duration of its owning test method.
+    // Assertions use Contain-style checks, which tolerate stray cross-test recordings
+    // that may land in the bag from parallel tests on the same process-wide meter.
+    // A MetricsTestCollection ("Metrics") now exists in this assembly; if snapshot-delta
+    // assertions are ever needed here, extract these methods into a dedicated class and
+    // add [Collection("Metrics")] to that class.
 
     [Fact]
     public async Task WhenAllPvcsClaimed_ShouldIncrementPvcPoolExhaustionsCounter()

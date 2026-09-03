@@ -133,6 +133,13 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             leaderMock.SetupGet(l => l.IsLeader).Returns(true);
             leaderMock.SetupGet(l => l.LeaderToken).Returns(CancellationToken.None);
             services.AddSingleton(leaderMock.Object);
+
+            // Replace AssignmentEnricher with a passthrough stub so integration tests that
+            // exercise the /assignment endpoint (which now propagates enrichment failures as 503)
+            // don't fail due to missing real dependencies (IProviderFactory, IAgentProfileStore, etc.).
+            // The passthrough stub returns the identity request as-is — sufficient for endpoint routing tests.
+            services.RemoveAll<AssignmentEnricher>();
+            services.AddSingleton<AssignmentEnricher>(new PassthroughAssignmentEnricher());
         });
     }
 
@@ -221,5 +228,19 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>
             string w, AgentId a, CancellationToken ct)
             => Task.FromResult(false);
         public Task NotifyRunCancelledAsync(RunId r, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Passthrough AssignmentEnricher for integration tests. Returns the identity request as-is.
+    /// Replaces the real <see cref="AssignmentEnricher"/> which depends on DispatchInfrastructure,
+    /// IProviderFactory, and IAgentProfileStore — none of which are available in the test environment.
+    /// </summary>
+    private sealed class PassthroughAssignmentEnricher : AssignmentEnricher
+    {
+        public PassthroughAssignmentEnricher() : base(Serilog.Log.Logger) { }
+
+        public override Task<JobDistributionRequest?> EnrichAsync(
+            JobDistributionRequest identity, PipelineProject project, CancellationToken ct)
+            => Task.FromResult<JobDistributionRequest?>(identity);
     }
 }
