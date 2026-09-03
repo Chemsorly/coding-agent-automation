@@ -29,4 +29,12 @@ public interface IWorkItemLifecycleClient
     /// <returns>True if the transition was accepted (200); false if rejected (400) or not found (404).</returns>
     /// <exception cref="WorkItemStatusPostException">Thrown when all retries are exhausted.</exception>
     Task<bool> PostStatusAsync(string workItemId, WorkItemStatusUpdate update, CancellationToken ct);
+
+    /// <summary>
+    /// Posts a label-swap request to the orchestrator for the given work item.
+    /// The API uses the label field for wire compatibility but always swaps to agent:in-progress.
+    /// Returns true if accepted (200); false if the work item was not found (404).
+    /// </summary>
+    /// <exception cref="WorkItemLabelSwapException">Thrown when all retries are exhausted.</exception>
+    Task<bool> PostLabelSwapAsync(string workItemId, string label, CancellationToken ct);
 }
