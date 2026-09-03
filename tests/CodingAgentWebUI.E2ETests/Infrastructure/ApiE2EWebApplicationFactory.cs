@@ -169,14 +169,6 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
             // Spec 043 moved JobTemplateStore into the API too.
             E2ETestDefaults.InstallJobTemplates(services);
 
-            // Replace AssignmentEnricher with a passthrough stub so E2E tests that exercise the
-            // /assignment endpoint don't fail due to missing real dependencies (IProviderFactory,
-            // IAgentProfileStore resolved with no seeded profiles, etc.).
-            // Enrichment correctness is covered by CodingAgentWebUI.Api.IntegrationTests.
-            // The passthrough returns the identity request as-is — sufficient for E2E workflow tests.
-            services.RemoveAll<AssignmentEnricher>();
-            services.AddSingleton<AssignmentEnricher>(new PassthroughAssignmentEnricher());
-
             // ── Multi-replica: inject distributed services backed by FakeRedisStore ──
             // When a shared FakeRedisStore is provided (by MultiReplicaE2EFixture), replace the
             // in-memory service registrations with their distributed Redis-backed equivalents.
@@ -222,20 +214,5 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
     private sealed class NoOpDatabaseProbe : IDatabaseProbe
     {
         public Task ProbeAsync(CancellationToken ct) => Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// Passthrough AssignmentEnricher for E2E tests. Returns the identity request as-is.
-    /// Replaces the real <see cref="AssignmentEnricher"/> whose <see cref="DispatchInfrastructure"/>
-    /// dependency needs a seeded agent profile — which E2E K8s tests don't provide because they
-    /// test workflow behaviour, not enrichment correctness.
-    /// </summary>
-    private sealed class PassthroughAssignmentEnricher : AssignmentEnricher
-    {
-        public PassthroughAssignmentEnricher() : base(Serilog.Log.Logger) { }
-
-        public override Task<JobDistributionRequest?> EnrichAsync(
-            JobDistributionRequest identity, PipelineProject project, CancellationToken ct)
-            => Task.FromResult<JobDistributionRequest?>(identity);
     }
 }
