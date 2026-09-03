@@ -103,7 +103,9 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         await runRow.First.ClickAsync();
 
         // Assert: we land on the run detail page and it shows the issue.
-        await Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 10_000 });
+        // Use WaitUntilState.Commit (not the default Load) because Blazor's Nav.NavigateTo fires a
+        // history.pushState — a SPA URL change — that never raises a network-level "load" event.
+        await Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 15_000, WaitUntil = WaitUntilState.Commit });
         var pageText = await Page.TextContentAsync("body");
         Assert.Contains("#71", pageText);
     }
