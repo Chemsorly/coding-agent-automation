@@ -67,7 +67,7 @@ public class DatabaseMaintenanceService
         var staleConsolidation = await RunSweepAsync(CleanupStaleConsolidationRunsAsync, "CleanupStaleConsolidationRuns", ct);
         var retentionRuns = await RunSweepAsync(SweepPipelineRunRetentionAsync, "SweepPipelineRunRetention", ct);
         var retentionWi = await RunSweepAsync(SweepWorkItemRetentionAsync, "SweepWorkItemRetention", ct);
-        // TODO: The reconciliation count is discarded here and not included in RetentionSweepResult.
+        // NOTE: The reconciliation count is discarded here and not included in RetentionSweepResult.
         // Callers (e.g. the Scheduler API endpoint and its metrics) cannot observe how many ghost rows
         // were backfilled. Consider adding an OrphanedPipelineRunsReconciled field to RetentionSweepResult
         // and capturing the return value: var reconciled = await RunSweepAsync(...).
@@ -367,7 +367,7 @@ public class DatabaseMaintenanceService
 
             // FinalStep integer values: Completed=16, Failed=17, Cancelled=18
             // (PipelineStep enum — stored as int in Postgres).
-            // TODO: These integer literals are hardcoded rather than derived from the PipelineStep enum
+            // NOTE: These integer literals are hardcoded rather than derived from the PipelineStep enum
             // (e.g. (int)PipelineStep.Completed). If a future terminal state is added to the enum, this
             // SQL and both test overrides (RetentionSweepIntegrationTests, DatabaseMaintenanceServiceAdditionalTests)
             // must be updated manually — there is no compile-time link. Consider deriving the values from

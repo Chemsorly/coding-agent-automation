@@ -124,7 +124,7 @@ public sealed class PullRequestFinalizationService
         // (e.g. from SyncingBrainRepoPostRun or any other post-PR housekeeping step). The run
         // created a PR successfully and must always exit with CompletedAt set. The OCE is NOT
         // swallowed — it continues propagating after the finally block executes.
-        // TODO: The finally block unconditionally marks the run as Completed/Done even when
+        // NOTE: The finally block unconditionally marks the run as Completed/Done even when
         // RunPostPrSequenceAsync throws a non-OCE exception. In practice this is safe today because
         // every sub-step inside RunPostPrSequenceAsync catches its own non-OCE exceptions and does
         // not rethrow, so a non-OCE escape is considered impossible by contract. If that assumption
