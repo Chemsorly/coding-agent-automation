@@ -1,15 +1,17 @@
+#pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using Moq;
+#pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 using Serilog;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Verifies that ConsolidationService fires OnChange at the correct times.
-/// The Blazor UI (AgentMonitoring, Consolidation pages) depends on OnChange to refresh.
+/// The Blazor UI (the Consolidation page) depends on OnChange to refresh.
 /// If OnChange doesn't fire, the frontend shows stale data.
 /// </summary>
 public sealed class ConsolidationServiceOnChangeTests : IDisposable

@@ -118,6 +118,9 @@ public class PipelineConfigurationTests
             WorkItemRetentionCount = 200,
             DbRetentionSweepInterval = TimeSpan.FromHours(12),
             TransientRetryDelay = TimeSpan.FromSeconds(45),
+            QueueSweepEnabled = true,
+            CiCancelledMoveMaxRetries = 7,
+            FeedbackTimeoutSeconds = 90,
         };
 
         // Act
@@ -137,7 +140,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(72,
+        keyPropertyCount.Should().Be(75,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -162,7 +165,7 @@ public class PipelineConfigurationTests
         config.CiNotStartedTimeout.Should().Be(PipelineConstants.DefaultCiNotStartedTimeout);
         config.CiNotStartedMaxRetries.Should().Be(PipelineConstants.DefaultCiNotStartedMaxRetries);
         config.MaxInfrastructureRetries.Should().Be(5);
-
+        config.CiCancelledMoveMaxRetries.Should().Be(PipelineConstants.DefaultCiCancelledMoveMaxRetries);
         // ClosedLoop sub-config defaults
         config.ClosedLoopAutoStart.Should().BeFalse();
         config.ClosedLoopPollInterval.Should().Be(PipelineConstants.DefaultClosedLoopPollInterval);
@@ -234,6 +237,7 @@ public class PipelineConfigurationTests
 
         // Transient retry delay default
         config.TransientRetryDelay.Should().Be(TimeSpan.FromSeconds(30));
+        config.FeedbackTimeoutSeconds.Should().Be(60);
     }
 
     // ── ApplyProjectOverrides — Scalars ────────────────────────────────────────
@@ -467,6 +471,32 @@ public class PipelineConfigurationTests
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.AnalysisCommitThreshold.Should().Be(50);
+    }
+
+    // TODO: The two FeedbackTimeoutSeconds override tests below duplicate the identical scenarios already covered by
+    // ApplyProjectOverridesTests.FeedbackTimeoutSeconds_NonNull_OverridesGlobal and
+    // ApplyProjectOverridesTests.FeedbackTimeoutSeconds_NullOverride_InheritsFromGlobal. No additional coverage is added.
+    // Consider removing these duplicates to reduce noise on failures. (Warning from review #2225)
+    [Fact]
+    public void ApplyProjectOverrides_FeedbackTimeoutSeconds_OverridesCorrectly()
+    {
+        var config = TestPipelineConfig.Default() with { FeedbackTimeoutSeconds = 60 };
+        var project = TestPipelineConfig.WithProject() with { FeedbackTimeoutSeconds = 120 };
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.FeedbackTimeoutSeconds.Should().Be(120);
+    }
+
+    [Fact]
+    public void ApplyProjectOverrides_FeedbackTimeoutSeconds_NullOverride_InheritsFromGlobal()
+    {
+        var config = TestPipelineConfig.Default() with { FeedbackTimeoutSeconds = 90 };
+        var project = TestPipelineConfig.WithProject(); // FeedbackTimeoutSeconds is null
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.FeedbackTimeoutSeconds.Should().Be(90);
     }
 
     // ── MaxDecompositionSubIssueFiles validation ───────────────────────────────

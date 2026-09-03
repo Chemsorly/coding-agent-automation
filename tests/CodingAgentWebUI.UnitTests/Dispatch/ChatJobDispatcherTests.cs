@@ -4,6 +4,7 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
@@ -45,7 +46,7 @@ public class ChatJobDispatcherTests
         AgentApiKeySecretName = "caa-secret",
         AgentServiceAccountName = "caa-agent",
         ChatPodConnectTimeoutSeconds = connectTimeoutSeconds,
-        AgentJobTimeoutSeconds = chatSessionMaxDuration,
+        ChatJobMaxDurationSeconds = chatSessionMaxDuration,
         ChatTerminationGracePeriodSeconds = gracePeriod
     };
 
@@ -813,7 +814,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            AgentJobTimeoutSeconds = 7200,
+            ChatJobMaxDurationSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1   // 1 second grace → force-delete triggers fast
         };
 
@@ -875,7 +876,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            AgentJobTimeoutSeconds = 7200,
+            ChatJobMaxDurationSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1,  // triggers grace-period expiry quickly
             ChatIdleTimeoutSeconds = 3600            // far above idle threshold — no idle-kill race
         };
@@ -1067,7 +1068,7 @@ public class ChatJobDispatcherTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             ChatPodConnectTimeoutSeconds = 5,
-            AgentJobTimeoutSeconds = 7200,
+            ChatJobMaxDurationSeconds = 7200,
             ChatTerminationGracePeriodSeconds = 1
         };
 
@@ -1337,5 +1338,332 @@ public class ChatJobDispatcherTests
             It.IsAny<CancellationToken>()),
             Times.Once,
             "pod must be force-deleted when cross-replica heartbeats stop");
+    }
+
+    // TODO: [WARNING] Four regression tests for Redis idle-kill scenarios were removed in the PR-body
+    // cleanup change (issue #2248) without justification or tombstone comments. The guarded production
+    // paths remain live in ChatJobDispatcher.cs:
+    //   - TryGetRedisHeartbeatAsync (reads Redis heartbeat key)
+    //   - The `redisAvailable` skip guard (does not idle-kill when Redis is available but returns recent heartbeat)
+    //   - Key-not-found fallback to local ticks (Redis available but key absent → use local LastClientHeartbeatTicks)
+    //   - redis=null single-replica path (Redis not configured → always use local ticks)
+    // These paths were added by issue #2207 (commit ead0f1b6) to fix a multi-replica idle-kill bug.
+    // Restore: WatcherIdleKill_WhenRedisReturnsRecentHeartbeat_DoesNotIdleKillSession,
+    //          WatcherIdleKill_WhenRedisThrows_DoesNotIdleKillSession,
+    //          WatcherIdleKill_WhenRedisKeyNotFound_FallsBackToLocalTicksAndIdleKills,
+    //          WatcherIdleKill_WhenRedisIsNull_LocalTicksAreAuthoritative_IdleKillFires
+    // or document why the #2207 regression protection is intentionally removed.
+
+    // ─── 26. WatchJobUntilTerminalAsync — fault guard ─────────────────────────
+
+    /// <summary>
+    /// Creates options with a very short idle timeout so the watcher fires the idle-kill path
+    /// quickly in fault-guard tests. ChatIdleTimeoutSeconds=1 is below the production minimum
+    /// of 10, but ValidateAndClamp is not called in unit tests, so the raw value is used.
+    /// This gives pollInterval = Math.Min(10, Math.Max(1, 1/3)) = 1s.
+    /// </summary>
+    private static DispatchServiceOptions CreateFaultTestOptions() => new()
+    {
+        Namespace = TestNamespace,
+        KiroPvcPool = ["pvc-0"],
+        OrchestratorUrl = "http://orchestrator:8080",
+        AgentApiKeySecretName = "caa-secret",
+        AgentServiceAccountName = "caa-agent",
+        ChatPodConnectTimeoutSeconds = 5,
+        ChatJobMaxDurationSeconds = 7200,
+        ChatTerminationGracePeriodSeconds = 1,
+        ChatIdleTimeoutSeconds = 1   // triggers idle-kill quickly; below prod minimum but valid for tests
+    };
+
+    /// <summary>
+    /// Sets up a dispatcher whose idle-kill path will throw an unhandled exception:
+    /// <c>IAgentRegistryService.GetByAgentId</c> is not wrapped in a try/catch inside
+    /// <c>TrySendCancelChatAsync</c>, so a throw from it propagates through
+    /// <c>TerminateChatSessionAsync</c> and into <c>WatchJobUntilTerminalAsync</c>'s
+    /// outer <c>catch (Exception)</c> guard.
+    /// </summary>
+    private static (ChatJobDispatcher dispatcher, Mock<IKubernetesJobClient> jobClientMock, string agentId)
+        CreateFaultingDispatcher(
+            Serilog.ILogger? logger = null,
+            DispatchServiceOptions? options = null)
+    {
+        var jobClientMock = CreateJobClientMock();
+        // ReadJobAsync always returns non-terminal so the watcher doesn't exit before the idle-kill fires
+        jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
+
+        // Registry mock whose GetByAgentId throws — propagates through TrySendCancelChatAsync →
+        // TerminateChatSessionAsync → WatchJobUntilTerminalAsync outer catch
+        var registryMock = new Mock<IAgentRegistryService>();
+        string capturedAgentId = "";
+        string capturedDispatchId = "";
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                capturedAgentId = j.Metadata.Name;
+                capturedDispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                var agentEntry = new AgentEntry
+                {
+                    AgentId = capturedAgentId,
+                    ConnectionId = "conn-fault",
+                    Hostname = "test-host",
+                    Labels = [$"chat=true", $"chat-session-id={capturedDispatchId}"],
+                    Status = AgentStatus.Idle,
+                    RegisteredAt = DateTimeOffset.UtcNow
+                };
+                // GetAgentsByLabel returns a real entry so PollForAgentConnection succeeds
+                registryMock.Setup(r => r.GetAgentsByLabel("chat-session-id", capturedDispatchId))
+                    .Returns(new List<AgentEntry> { agentEntry });
+                // GetByAgentId throws — this is NOT wrapped in TrySendCancelChatAsync, so the exception
+                // propagates through TerminateChatSessionAsync into WatchJobUntilTerminalAsync's outer catch
+                // TODO [WARNING]: This fault injection assumes GetByAgentId throws rather than returns null.
+                // The production code has a null-check guard (if agentEntry is null return;) so if the
+                // interface contract changes to return null on missing entries, this mock ceases to inject
+                // a fault and all four fault tests silently become vacuous — they pass without ever reaching
+                // catch (Exception) in WatchJobUntilTerminalAsync. Consider asserting the "faulted" outcome
+                // tag or checking entry.Cleaned==1 to confirm the fault path was actually exercised.
+                // See review finding: TestQualityReviewer WARNING @ line 1371.
+                registryMock.Setup(r => r.GetByAgentId(capturedAgentId))
+                    .Throws(new InvalidOperationException("simulated registry fault for watcher fault test"));
+                // Deregister is a no-op (never reached because GetByAgentId throws first)
+                registryMock.Setup(r => r.Deregister(It.IsAny<AgentId>())).Returns(false);
+            })
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            CreateHubContextMock().Object,
+            CreateTemplateStore(),
+            registryMock.Object,
+            options ?? CreateFaultTestOptions(),
+            logger ?? Mock.Of<ILogger>());
+
+        return (dispatcher, jobClientMock, capturedAgentId);
+    }
+
+    /// <summary>
+    /// When <c>WatchJobUntilTerminalAsync</c> throws an unhandled exception,
+    /// <c>CleanupSession</c> must execute within the same task, removing the entry
+    /// from <c>_activeWatchers</c> and decrementing <c>SessionsActive</c>.
+    /// Acceptance criteria: AC1 (CleanupSession executes), AC3 (watcher entry removed).
+    /// </summary>
+    [Fact]
+    public async Task WatchJobUntilTerminalAsync_WhenExceptionThrown_CleanupSessionExecutes()
+    {
+        var (dispatcher, _, _) = CreateFaultingDispatcher();
+        string? agentId = null;
+
+        // Capture the WatcherTask before the entry is removed from _activeWatchers by CleanupSession.
+        // After dispatch, the watcher is running; we must grab the task before the fault fires.
+        // We poll briefly to ensure the entry is registered before capturing.
+        agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        var watcherTask = dispatcher.TryGetWatcherTask(agentId);
+        // TODO [WARNING]: Race condition — with ChatIdleTimeoutSeconds=1 and pollInterval=1s, the idle-kill
+        // could fire and complete CleanupSession before TryGetWatcherTask is called on a slow CI machine,
+        // causing watcherTask to be null and the test to fail with a misleading null-guard assertion rather
+        // than a test-logic failure. Consider using a longer idle timeout or synchronising on watcher
+        // registration rather than relying on polling order. See review finding: TestQualityReviewer WARNING @ line 1430.
+        watcherTask.Should().NotBeNull("watcher task must exist immediately after dispatch");
+
+        // Wait for the watcher to complete (fault fires via idle-kill → TerminateChatSessionAsync → registry throws)
+        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // AC3: entry must be removed from _activeWatchers
+        dispatcher.HasActiveSession(agentId).Should().BeFalse(
+            "watcher entry must be removed from _activeWatchers after a fault");
+    }
+
+    /// <summary>
+    /// When <c>WatchJobUntilTerminalAsync</c> faults, <c>workdistribution_chat_sessions_active</c>
+    /// must be decremented (SessionsActive -1).
+    /// Acceptance criteria: AC2.
+    /// </summary>
+    [Fact]
+    public async Task WatchJobUntilTerminalAsync_WhenExceptionThrown_SessionsActiveDecremented()
+    {
+        long decrementCount = 0;
+
+        // Use a string literal instead of ChatTelemetry.SessionsActive.Name to avoid triggering
+        // the ChatTelemetry static initializer inside the InstrumentPublished callback.
+        // listener.Start() iterates over all published instruments and fires InstrumentPublished
+        // for each; accessing a static field there triggers the type's cctor, which in turn calls
+        // Meter.CreateHistogram — re-entering InstrumentPublished and causing a TypeInitializationException.
+        const string sessionsActiveName = "workdistribution.chat.sessions_active";
+
+        // Pre-initialize ChatTelemetry before wiring the listener so that InstrumentPublished
+        // fires for an already-published instrument, not recursively during cctor execution.
+        // This also ensures EnableMeasurementEvents is called before any Add() calls.
+        _ = ChatTelemetry.SessionsActive;
+
+        var (dispatcher, _, _) = CreateFaultingDispatcher();
+
+        // Create the listener after the dispatcher so any pre-existing concurrent test cleanups
+        // completing before this point are not captured. The listener is disposed immediately
+        // after the watcher finishes so that concurrent test cleanups that happen to run after
+        // our watcher completes cannot inflate the count before the assertion.
+        var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Name == sessionsActiveName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        // TODO [WARNING]: The callback has no tag guard (agent_selector filter was removed). If another
+        // concurrently running test's watcher faults between listener.Start() and listener.Dispose(),
+        // its -1 measurement will be captured here, inflating decrementCount and causing a spurious
+        // failure or masking a missing decrement from the test under test. The previous unique-selector
+        // approach was strictly more robust. Consider re-adding an agent_selector tag filter scoped to
+        // TestSelector to make this assertion immune to concurrent test noise.
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
+        {
+            // Track only decrements — this is the acceptance criterion: CleanupSession must
+            // fire SessionsActive.Add(-1) after the watcher faults.
+            if (instrument.Name == sessionsActiveName && measurement < 0)
+                Interlocked.Increment(ref decrementCount);
+        });
+        listener.Start();
+
+        var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        var watcherTask = dispatcher.TryGetWatcherTask(agentId);
+
+        // Wait for the fault to fire and CleanupSession to run
+        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Dispose the listener immediately after the watcher completes so that concurrent
+        // test cleanups running after this point cannot inflate decrementCount.
+        listener.Dispose();
+
+        // Assert the decrement happened exactly once: -1 must be emitted by CleanupSession
+        // after the watcher faults. Tracking only the decrement avoids sensitivity to whether
+        // the +1 (from RegisterWatcher) was captured — both measurements fire synchronously,
+        // but the +1 can be missed if it fires before listener.Start() in some orderings.
+        Interlocked.Read(ref decrementCount).Should().Be(1,
+            "workdistribution_chat_sessions_active must be decremented exactly once (-1) " +
+            "by CleanupSession after a faulted watcher");
+    }
+
+    /// <summary>
+    /// When <c>WatchJobUntilTerminalAsync</c> faults, an Error-level log entry must be emitted
+    /// containing the exception details.
+    /// Acceptance criteria: AC4.
+    /// </summary>
+    [Fact]
+    public async Task WatchJobUntilTerminalAsync_WhenExceptionThrown_LogsErrorWithException()
+    {
+        // Use a real Serilog ILogger backed by a capturing sink — same pattern as
+        // ChatDispatcherObservabilityTests.LoggingTests.CreateCapturingLogger().
+        var capturedEvents = new List<Serilog.Events.LogEvent>();
+        var capturingSink = new CapturingLogSink(capturedEvents);
+        var logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(capturingSink)
+            .CreateLogger();
+
+        var (dispatcher, _, _) = CreateFaultingDispatcher(logger: logger);
+        var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        var watcherTask = dispatcher.TryGetWatcherTask(agentId);
+
+        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var errorEvents = capturedEvents
+            .Where(e => e.Level == Serilog.Events.LogEventLevel.Error)
+            .ToList();
+
+        errorEvents.Should().NotBeEmpty(
+            "an Error-level log must be emitted when the watcher faults unexpectedly");
+
+        var hasException = errorEvents.Any(e => e.Exception is not null);
+        hasException.Should().BeTrue("the Error log must include the exception instance");
+
+        // TODO [WARNING]: The assertion below only checks the message template text and that an exception
+        // is present, but does not verify that the exception is the injected InvalidOperationException
+        // ("simulated registry fault for watcher fault test"). An unrelated Error log from a different
+        // code path (e.g., TrySendCancelChatAsync or TerminateChatSessionAsync) could cause this test to
+        // pass even if the new catch (Exception) guard was never reached. Tighten the assertion to check
+        // e.Exception is InvalidOperationException with the expected message to confirm the right path
+        // was exercised. See review finding: TestQualityReviewer WARNING @ line 1494.
+        var messageTemplateText = errorEvents
+            .Select(e => e.MessageTemplate.Text)
+            .FirstOrDefault() ?? "";
+        messageTemplateText.Should().Contain("faulted unexpectedly",
+            "the Error log message must reference the watcher faulting job");
+    }
+
+    /// <summary>
+    /// Normal cancellation (watcher CTS cancelled by StopAsync or TerminateChatSessionAsync)
+    /// must NOT produce an Error-level log — only a clean shutdown.
+    /// Acceptance criteria: AC5.
+    /// </summary>
+    [Fact]
+    public async Task WatchJobUntilTerminalAsync_WhenCancelled_DoesNotLogError()
+    {
+        var capturedEvents = new List<Serilog.Events.LogEvent>();
+        var capturingSink = new CapturingLogSink(capturedEvents);
+        var logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(capturingSink)
+            .CreateLogger();
+
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? capturedJobName = null;
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                capturedJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, capturedJobName!, dispatchId);
+            })
+            .Returns(Task.CompletedTask);
+
+        // ReadJobAsync always returns non-terminal — watcher stays alive until cancellation
+        jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
+
+        var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            CreateHubContextMock().Object,
+            CreateTemplateStore(),
+            registry,
+            new DispatchServiceOptions
+            {
+                Namespace = TestNamespace,
+                KiroPvcPool = ["pvc-0"],
+                OrchestratorUrl = "http://orchestrator:8080",
+                AgentApiKeySecretName = "caa-secret",
+                AgentServiceAccountName = "caa-agent",
+                ChatPodConnectTimeoutSeconds = 5,
+                ChatJobMaxDurationSeconds = 7200,
+                ChatTerminationGracePeriodSeconds = 120,
+                ChatIdleTimeoutSeconds = 3600   // very large — idle-kill must NOT fire during test
+            },
+            logger);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        var watcherTask = dispatcher.TryGetWatcherTask(capturedJobName!);
+        watcherTask.Should().NotBeNull();
+
+        // Cancel via StopAsync — normal shutdown path
+        await dispatcher.StopAsync(CancellationToken.None);
+        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var errorEvents = capturedEvents
+            .Where(e => e.Level == Serilog.Events.LogEventLevel.Error)
+            .ToList();
+
+        errorEvents.Should().BeEmpty(
+            "normal cancellation must NOT produce an Error-level log");
+        dispatcher.HasActiveSession(capturedJobName!).Should().BeFalse(
+            "session must be cleaned up after cancellation");
+    }
+
+    /// <summary>
+    /// Minimal Serilog sink that records log events for assertions.
+    /// </summary>
+    private sealed class CapturingLogSink(List<Serilog.Events.LogEvent> events)
+        : Serilog.Core.ILogEventSink
+    {
+        public void Emit(Serilog.Events.LogEvent logEvent) => events.Add(logEvent);
     }
 }

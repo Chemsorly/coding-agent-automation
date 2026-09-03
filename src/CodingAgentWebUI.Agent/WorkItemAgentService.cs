@@ -82,7 +82,20 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var activity = PipelineTelemetry.ActivitySource.StartActivity("WorkItemAgent.Execute");
+        // Restore the W3C trace context propagated from the API via the TRACEPARENT env var.
+        // JobSpecBuilder injects TRACEPARENT when the K8s Job is created so the worker's root
+        // span becomes a child of the API request span rather than starting a new disconnected trace.
+        // PipelineTelemetry.ExtractTraceContext handles missing/invalid values by returning default.
+        var traceParentEnv = Environment.GetEnvironmentVariable("TRACEPARENT");
+        var parentContext = default(ActivityContext);
+        if (!string.IsNullOrEmpty(traceParentEnv))
+            parentContext = PipelineTelemetry.ExtractTraceContext(
+                new Dictionary<string, string> { ["traceparent"] = traceParentEnv });
+
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity(
+            "WorkItemAgent.Execute",
+            ActivityKind.Consumer,
+            parentContext);
         activity?.SetTag("work_item_id", _workItemId);
         activity?.SetTag("agent_id", _agentId.Value);
 

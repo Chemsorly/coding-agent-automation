@@ -147,6 +147,12 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             var workItemClientMock = new Mock<IPipelineApiWorkItemClient>();
             workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((IReadOnlyList<PendingWorkItemDto>)Array.Empty<PendingWorkItemDto>());
+            // 2-arg sweep overload (ApiBackedPendingWorkQuery / IWorkItemSweepClient path).
+            workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<PendingWorkItemDto>)Array.Empty<PendingWorkItemDto>());
+            // Active (in-flight) work items — the Work page queries these directly.
+            workItemClientMock.Setup(s => s.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<ActiveWorkItemDto>)Array.Empty<ActiveWorkItemDto>());
             services.RemoveAll<IPipelineApiWorkItemClient>();
             services.AddSingleton(workItemClientMock.Object);
 

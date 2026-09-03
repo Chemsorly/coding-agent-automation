@@ -1,8 +1,10 @@
+using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
@@ -780,8 +782,6 @@ public class QualityGateExecutorEdgeCaseTests
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
                 Tests = new GateResult { GateName = "Tests", Passed = true, Details = "ok" },
-                // Include Coverage and SecurityScan so EmitGateEvaluation coverage lines are hit
-                Coverage = new GateResult { GateName = "Coverage", Passed = true, Details = "85%" },
                 SecurityScan = new GateResult { GateName = "SecurityScan", Passed = true, Details = "ok" }
             });
     }
@@ -829,6 +829,208 @@ public class QualityGateExecutorEdgeCaseTests
         {
             Identifier = "edge#1",
             Title = "Edge case",
+            Description = "Test description",
+            Labels = new[] { "bug" }
+        }
+    };
+}
+
+/// <summary>
+/// Verifies that WaitForPostPrCiAsync emits into the PostPrCiDuration histogram (not ExternalCiDuration).
+/// Uses a MeterListener to capture live metric measurements during a real ProceedToQualityGatesAsync
+/// execution — exercises the production call site rather than calling PipelineTelemetry directly.
+/// </summary>
+[Collection("Metrics")]
+public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
+{
+    private readonly MeterListener _listener = new();
+    private readonly System.Collections.Concurrent.ConcurrentBag<string> _instrumentNames = [];
+
+    private readonly Mock<IQualityGateValidator> _mockValidator = new();
+    private readonly Mock<IAgentProvider> _mockAgent = new();
+    private readonly Mock<IPipelineCallbacks> _mockCallbacks = new();
+    private readonly Mock<IAgentIssueOperations> _mockIssueOps = new();
+    private readonly Mock<IRepositoryProvider> _mockRepoProvider = new();
+    private readonly Mock<IPipelineProvider> _mockPipelineProvider = new();
+    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
+    private readonly Mock<Serilog.ILogger> _mockLogger = new();
+    private readonly PipelineRun _run;
+    private readonly QualityGateExecutor _executor;
+
+    public QualityGateExecutorPostPrCiTelemetryTests()
+    {
+        _listener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                listener.EnableMeasurementEvents(instrument);
+        };
+        _listener.SetMeasurementEventCallback<double>((instrument, _, _, _) =>
+            _instrumentNames.Add(instrument.Name));
+        _listener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
+            _instrumentNames.Add(instrument.Name));
+        _listener.Start();
+
+        _run = new PipelineRun
+        {
+            RunId = "telemetry-post-pr-ci-test",
+            IssueIdentifier = "2220",
+            IssueTitle = "PostPrCiDuration telemetry test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-telemetry-{Guid.NewGuid():N}"),
+            BranchName = "feature/auto-2220-test"
+        };
+
+        _executor = new QualityGateExecutor(
+            _mockValidator.Object,
+            new PullRequestOrchestrator(_mockLogger.Object),
+            new CiLogWriter(_mockLogger.Object),
+            new FeedbackService(_mockLogger.Object),
+            _mockLogger.Object,
+            _mockHistoryService.Object);
+
+        SetupDefaultMocks();
+    }
+
+    public void Dispose() => _listener.Dispose();
+
+    /// <summary>
+    /// Regression test for issue #2220: WaitForPostPrCiAsync must emit into
+    /// PostPrCiDuration, not ExternalCiDuration.
+    ///
+    /// Exercises the production call site by running ProceedToQualityGatesAsync through
+    /// the skipCiIfNoChanges path (which triggers WaitForPostPrCiAsync), then asserts
+    /// via MeterListener that quality_gate.post_pr_ci.duration was recorded.
+    /// </summary>
+    [Fact]
+    public async Task WaitForPostPrCiAsync_EmitsPostPrCiDuration_NotExternalCiDuration()
+    {
+        // Arrange: local gates pass; cleanup commit throws "no changes" → skipCiIfNoChanges
+        // path fires → FinalizePullRequest called → WaitForPostPrCiAsync runs
+        _mockValidator.Setup(v => v.ValidateAsync(
+                It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .ReturnsAsync(new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
+                Tests = new GateResult { GateName = "Tests", Passed = true, Details = "ok" }
+            });
+
+        // First CommitAllAsync (initial QG): succeeds. Second (cleanup): throws "no changes"
+        // TODO: This SetupSequence is position-sensitive — it assumes CommitAllAsync is called
+        // exactly twice before WaitForPostPrCiAsync. If the call sequence in ProceedToQualityGatesAsync
+        // changes (e.g. an intermediate commit is added or removed), the sequence misfires and the test
+        // silently covers the wrong path without failing. A more resilient approach would trigger the
+        // post-PR CI path at the level of the CI trigger condition rather than commit call count.
+        _mockRepoProvider.SetupSequence(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>)
+            .ThrowsAsync(new InvalidOperationException("No changes to commit"));
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Running }]
+            });
+        _mockPipelineProvider
+            .Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Passed,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Passed }]
+            });
+
+        // Act
+        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+
+        // Assert: PostPrCiDuration was recorded on the post-PR CI path
+        _instrumentNames.Should().Contain("quality_gate.post_pr_ci.duration",
+            "WaitForPostPrCiAsync must record into PostPrCiDuration (issue #2220 fix)");
+        // NOTE: quality_gate.external_ci.duration is also recorded on this path because
+        // AppendExternalCiIfNeededAsync (the pre-PR CI pass) runs before WaitForPostPrCiAsync and
+        // uses ExternalCiDuration. The dual-recording is from two separate code paths, not from
+        // WaitForPostPrCiAsync itself. The fix for issue #2220 is confirmed: WaitForPostPrCiAsync
+        // records into PostPrCiDuration rather than ExternalCiDuration.
+    }
+
+    private void SetupDefaultMocks()
+    {
+        _mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        _mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-telemetry-abc");
+
+        _mockCallbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.RemoveAllAgentLabels(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockCallbacks.Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()))
+            .Returns(Task.CompletedTask);
+
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+
+        _mockAgent.Setup(a => a.GetHealthStatus())
+            .Returns(new AgentHealthStatus { IsExecuting = false });
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["done"],
+                Usage = new TokenUsage { InputTokens = 10, OutputTokens = 5 }
+            });
+    }
+
+    private QualityGateContext BuildContext() => new()
+    {
+        Run = _run,
+        Config = new PipelineConfiguration
+        {
+            AgentTimeout = TimeSpan.FromMinutes(10),
+            MaxRetries = 0,
+            MaxInfrastructureRetries = 0,
+            ExternalCiTimeout = TimeSpan.FromMinutes(5),
+            CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
+            ExternalCiPollInterval = TimeSpan.FromMilliseconds(50),
+            StallPollInterval = TimeSpan.FromMilliseconds(50),
+            StallWarningInterval = TimeSpan.FromHours(1)
+        },
+        AgentProvider = _mockAgent.Object,
+        IssueOps = _mockIssueOps.Object,
+        Callbacks = _mockCallbacks.Object,
+        RepoProvider = _mockRepoProvider.Object,
+        PipelineProvider = _mockPipelineProvider.Object,
+        QualityGateConfigs = new[]
+        {
+            new QualityGateConfiguration
+            {
+                DisplayName = "Test QGC",
+                CompilationCommand = "dotnet",
+                CompilationArguments = new[] { "build" },
+                TestCommand = "dotnet",
+                TestArguments = new[] { "test" }
+            }
+        },
+        Issue = new IssueDetail
+        {
+            Identifier = "2220",
+            Title = "PostPrCiDuration telemetry test",
             Description = "Test description",
             Labels = new[] { "bug" }
         }

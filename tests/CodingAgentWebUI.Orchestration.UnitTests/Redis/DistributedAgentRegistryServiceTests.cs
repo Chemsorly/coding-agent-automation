@@ -1,8 +1,12 @@
+using System.Collections.Concurrent;
 using AwesomeAssertions;
+using CodingAgentWebUI.Orchestration.Redis;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.TestUtilities;
 using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace CodingAgentWebUI.Orchestration.UnitTests.Redis;
 
@@ -139,20 +143,166 @@ public sealed class DistributedAgentRegistryServiceTests
         _store.GetSet("agents:all").Should().NotContain("agent-ghost");
     }
 
-    // ── GetIdleAgents ─────────────────────────────────────────────────────────
+    // ── GetIdleAgents / GetIdleAgentsAsync ────────────────────────────────────
 
     [Fact]
-    public void GetIdleAgents_SkipsMembersWhoseHashExpired()
+    public void GetIdleAgents_ReturnsFromCache_AfterRegister()
     {
         _sut.Register(Msg("agent-1"), "conn-1");
         _sut.Register(Msg("agent-2"), "conn-2");
 
-        // Simulate agent-1 hash expiry
+        // Sync overload reads from the in-process cache populated by Register.
+        var idle = _sut.GetIdleAgents();
+        idle.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_SkipsMembersWhoseHashExpired()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+
+        // Simulate agent-1 hash expiry in Redis
         _store.ForceExpire("agent:agent-1");
 
+        // Async method reads fresh from Redis and skips the expired hash.
+        var idle = await _sut.GetIdleAgentsAsync();
+        idle.Should().HaveCount(1);
+        idle[0].AgentId.Value.Should().Be("agent-2");
+    }
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_ReturnsEmpty_WhenNoIdleAgents()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+
+        var idle = await _sut.GetIdleAgentsAsync();
+        idle.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetIdleAgentsAsync_ReturnsAllIdleAgents_PipelinedBatch()
+    {
+        // Register 3 idle agents — all HGETALL calls are issued in a single pipelined batch
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.Register(Msg("agent-3"), "conn-3");
+
+        var idle = await _sut.GetIdleAgentsAsync();
+
+        idle.Should().HaveCount(3);
+        idle.Select(a => a.AgentId.Value).Should().BeEquivalentTo(["agent-1", "agent-2", "agent-3"]);
+    }
+
+    // ── GetAllAgents / GetAllAgentsAsync ──────────────────────────────────────
+
+    [Fact]
+    public async Task GetAllAgentsAsync_ReturnsAllAgentsRegardlessOfStatus()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+
+        var all = await _sut.GetAllAgentsAsync();
+
+        all.Should().HaveCount(2);
+        all.Select(a => a.AgentId.Value).Should().BeEquivalentTo(["agent-1", "agent-2"]);
+    }
+
+    [Fact]
+    public async Task GetAllAgentsAsync_UpdatesCache_ForSubsequentSyncReads()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+
+        // Call async to populate / refresh cache
+        await _sut.GetAllAgentsAsync();
+
+        // Sync read should now return same data from cache without hitting Redis
+        var all = _sut.GetAllAgents();
+        all.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task GetAllAgentsAsync_ReturnsEmpty_WhenNoAgents()
+    {
+        var all = await _sut.GetAllAgentsAsync();
+        all.Should().BeEmpty();
+    }
+
+    // ── GetByAgentIdAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsNull_WhenAgentNotInRedis()
+    {
+        var result = await _sut.GetByAgentIdAsync(new AgentId("agent-unknown"));
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsEntry_WhenAgentExists()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        var result = await _sut.GetByAgentIdAsync(new AgentId("agent-1"));
+
+        result.Should().NotBeNull();
+        result!.AgentId.Value.Should().Be("agent-1");
+        result.ConnectionId.Should().Be("conn-1");
+        result.Status.Should().Be(AgentStatus.Idle);
+    }
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsNull_WhenHashExpired()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _store.ForceExpire("agent:agent-1");
+
+        var result = await _sut.GetByAgentIdAsync(new AgentId("agent-1"));
+
+        result.Should().BeNull("GetByAgentIdAsync must return null when the Redis hash has expired");
+    }
+
+    [Fact]
+    public async Task GetByAgentIdAsync_ReturnsFreshStatus_AfterTransition()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+
+        var result = await _sut.GetByAgentIdAsync(new AgentId("agent-1"));
+
+        result.Should().NotBeNull();
+        result!.Status.Should().Be(AgentStatus.Busy);
+    }
+
+    // ── GetIdleAgents sync — cache reflects write paths ────────────────────────
+
+    [Fact]
+    public void GetIdleAgents_ExcludesBusyAgents_AfterTransitionStatus()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+
+        // Sync overload reads from cache; TransitionStatusAsync updates the cache.
         var idle = _sut.GetIdleAgents();
         idle.Should().HaveCount(1);
         idle[0].AgentId.Value.Should().Be("agent-2");
+    }
+
+    [Fact]
+    public void GetAllAgents_ExcludesDeregisteredAgents_AfterDeregister()
+    {
+        _sut.Register(Msg("agent-1"), "conn-1");
+        _sut.Register(Msg("agent-2"), "conn-2");
+        _sut.Deregister(new AgentId("agent-1"));
+
+        // DeregisterAsync updates the cache synchronously before the Redis await.
+        // The sync read sees the agent removed immediately.
+        var all = _sut.GetAllAgents();
+        all.Should().HaveCount(1);
+        all[0].AgentId.Value.Should().Be("agent-2");
     }
 
     // ── GetByConnectionId ─────────────────────────────────────────────────────
@@ -326,4 +476,109 @@ public sealed class DistributedAgentRegistryServiceTests
         expiry!.Value.Should().BeAfter(DateTimeOffset.UtcNow,
             "the new TTL must be in the future");
     }
+
+    // ── UpdateAgentFieldAsync — fault path ────────────────────────────────────
+    // TODO (WARNING): Three tests that covered the GetByAgentId _localSnapshot fallback (issue #2144) were
+    // removed as part of this change: GetByAgentId_ReturnsEntry_FromLocalSnapshot_WhenRedisReturnsEmpty,
+    // GetByAgentId_ReturnsNull_AfterDeregister_EvenWithRedisPending, and
+    // GetByAgentId_ReturnsNull_AfterDeregister_SnapshotFallbackDoesNotResurrect. Their removal reduces
+    // coverage of the snapshot-fallback branch in GetAgentRaw (unrelated to the fault-handling fix here).
+    // A regression in the snapshot-fallback path will now go undetected. Restore or replace these tests
+    // to restore coverage for the issue #2144 correctness guarantee.
+    // (CorrectnessReviewer WARNING / TestQualityReviewer WARNING)
+
+    [Fact]
+    public async Task UpdateAgentFieldAsync_WhenRedisFaults_LogsWarningAndDoesNotThrow()
+    {
+        // Arrange: a dedicated logger backed by a CaptureSink so we can assert on logged events.
+        // The class-level _sut uses Log.Logger (global static); this test constructs its own SUT
+        // with a capture logger to avoid mutating the static logger (which would require
+        // [Collection("StaticLogger")] and serialise with other tests).
+        var sink = new CaptureSink();
+        var logger = new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Sink(sink)
+            .CreateLogger();
+        var store = new FaultingRedisStore(new InvalidOperationException("Redis connection lost"));
+        var sut = new DistributedAgentRegistryService(store, logger);
+
+        // Act — must not throw, even though the store throws on ExistsAsync
+        var exception = await Record.ExceptionAsync(() =>
+            sut.UpdateAgentFieldAsync(new AgentId("agent-1"), "activeJobId", null));
+
+        // Assert: no exception propagated to the caller
+        exception.Should().BeNull("Redis faults must not propagate — callers rely on fire-and-forget safety");
+
+        // TODO (WARNING): agent-1 is never registered before this call, so _localSnapshot has no entry
+        // and the snapshot-update branch inside the try is never reached. A regression that moved the
+        // _localSnapshot update outside the try (breaking the "snapshot must only update on Redis success"
+        // invariant documented in the production comment) would not be detected by this test. Add a separate
+        // test that faults on HashSetFieldAsync (after a successful ExistsAsync) and then asserts the snapshot
+        // is NOT updated for a pre-registered agent to pin this invariant. (TestQualityReviewer WARNING line 508)
+
+        // Assert: a single Warning was logged including both field name and agentId
+        var warnings = sink.Events.Where(e => e.Level == LogEventLevel.Warning).ToList();
+        warnings.Should().HaveCount(1);
+        var rendered = warnings[0].RenderMessage();
+        // TODO (WARNING): Asserting on the rendered message string is fragile — it depends on Serilog's
+        // output template. A misspelled structured property name (e.g. {agentID} vs {AgentId}) would still
+        // pass because the literal value is still rendered. Consider replacing with:
+        //   warnings[0].Properties["Field"].ToString().Should().Contain("activeJobId");
+        //   warnings[0].Properties["AgentId"].ToString().Should().Contain("agent-1");
+        // to assert on structured property keys directly. (TestQualityReviewer WARNING, line 516)
+        rendered.Should().Contain("activeJobId", "Warning must include the field name for diagnostics");
+        rendered.Should().Contain("agent-1", "Warning must include the agentId for diagnostics");
+    }
+}
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+/// <summary>
+/// In-memory Serilog sink that captures all emitted log events for assertion in tests.
+/// Thread-safe via <see cref="ConcurrentQueue{T}"/>. Defined locally to avoid a cross-project
+/// dependency on Agent.UnitTests CaptureSink or Pipeline.UnitTests LifecycleCaptureSink.
+/// </summary>
+internal sealed class CaptureSink : ILogEventSink
+{
+    private readonly ConcurrentQueue<LogEvent> _events = new();
+    public IReadOnlyCollection<LogEvent> Events => _events;
+    public void Emit(LogEvent logEvent) => _events.Enqueue(logEvent);
+}
+
+/// <summary>
+/// <see cref="IRedisStore"/> implementation that throws a configurable exception from
+/// <see cref="ExistsAsync"/> to simulate Redis faults in unit tests.
+/// All other members return no-op defaults — only <see cref="ExistsAsync"/> is reached
+/// in the fault path of <c>UpdateAgentFieldAsync</c>.
+/// </summary>
+// TODO (WARNING): FaultingRedisStore only injects a fault at ExistsAsync. The try block in
+// UpdateAgentFieldAsync also covers HashSetFieldAsync and ExpireAsync, but those write-path faults
+// are never exercised. Add a second store variant (or a constructor parameter to select the faulting
+// method) to cover faults that occur after a successful ExistsAsync — e.g. when the Redis connection
+// drops between the existence check and the actual field write.
+// (DotNetSpecialist WARNING line 536 / TestQualityReviewer WARNING line 499)
+internal sealed class FaultingRedisStore(Exception fault) : IRedisStore
+{
+    public Task<bool> ExistsAsync(string key) => Task.FromException<bool>(fault);
+
+    // No-op stubs — not reached in the UpdateAgentFieldAsync fault path.
+    public Task<bool> SetAsync(string key, string value, TimeSpan? expiry = null, StackExchange.Redis.When when = StackExchange.Redis.When.Always) => Task.FromResult(true);
+    public Task<string?> GetAsync(string key) => Task.FromResult<string?>(null);
+    public Task<bool> SetIfNotExistsAsync(string key, string value, TimeSpan expiry) => Task.FromResult(false);
+    public Task<bool> DeleteAsync(string key) => Task.FromResult(false);
+    public Task<bool> ExpireAsync(string key, TimeSpan expiry) => Task.FromResult(true);
+    public Task<bool> ExpireAtAsync(string key, DateTimeOffset expiry) => Task.FromResult(true);
+    public Task<StackExchange.Redis.HashEntry[]> HashGetAllAsync(string key) => Task.FromResult(Array.Empty<StackExchange.Redis.HashEntry>());
+    public Task HashSetAsync(string key, StackExchange.Redis.HashEntry[] fields) => Task.CompletedTask;
+    public Task<bool> HashSetFieldAsync(string key, string field, string value) => Task.FromResult(false);
+    public Task<long> SetAddAsync(string key, string value) => Task.FromResult(0L);
+    public Task<long> SetRemoveAsync(string key, string value) => Task.FromResult(0L);
+    public Task<string[]> SetMembersAsync(string key) => Task.FromResult(Array.Empty<string>());
+    public Task<long> SetCardinalityAsync(string key) => Task.FromResult(0L);
+    public Task<long> ListRightPushAsync(string key, string[] values) => Task.FromResult(0L);
+    public Task ListTrimAsync(string key, long start, long stop) => Task.CompletedTask;
+    public Task<string[]> ListRangeAsync(string key, long start, long stop) => Task.FromResult(Array.Empty<string>());
+    public Task<bool> PingAsync() => Task.FromResult(true);
+    public Task<StackExchange.Redis.RedisResult> ScriptEvaluateAsync(string script, StackExchange.Redis.RedisKey[] keys, StackExchange.Redis.RedisValue[] values)
+        => Task.FromResult(StackExchange.Redis.RedisResult.Create(StackExchange.Redis.RedisValue.Null));
 }

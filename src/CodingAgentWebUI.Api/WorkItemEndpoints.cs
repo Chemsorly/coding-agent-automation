@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Claims;
 using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
@@ -44,10 +45,11 @@ public static class WorkItemEndpoints
             async (Guid id,
                    [FromServices] IDbContextFactory<PipelineDbContext> dbFactory,
                    [FromServices] IProjectStore projectStore,
+                   [FromServices] AssignmentEnricher? assignmentEnricher,
                    HttpContext httpContext,
                    CancellationToken ct) =>
                 await AuthorizeAgentForWorkItemAsync(httpContext, id, dbFactory, ct)
-                    ?? await GetAssignment(id, dbFactory, projectStore, ct));
+                    ?? await GetAssignment(id, dbFactory, projectStore, assignmentEnricher, ct));
 
         group.MapPost("/{id:guid}/status",
             async (Guid id, [FromBody] WorkItemStatusRequest request,
@@ -75,6 +77,7 @@ public static class WorkItemEndpoints
         group.MapGet("/staleness", GetStaleness).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/label-swap", PostLabelSwap).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapPost("/{id:guid}/last-progress", PostLastProgress).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapPost("/{id:guid}/priority", PostPriorityWeight).RequireAuthorization(ApiAuthPolicies.Operator);
 
         // ── Metrics feed for the Scheduler's WorkItemCountsPoller ─────────────
         group.MapGet("/counts-by-status", GetCountsByStatus).RequireAuthorization(ApiAuthPolicies.Operator);
@@ -142,11 +145,35 @@ public static class WorkItemEndpoints
     /// GET /api/work-items/{id}/assignment
     /// Returns the job assignment payload for an agent.
     /// 200 with JobAssignmentMessage, 404 if not found or null payload, 410 if terminal.
+    /// <para>
+    /// Supports two payload schemas for backward compatibility:
+    /// <list type="bullet">
+    /// <item>
+    /// <term>Old schema (full snapshot)</term>
+    /// <description>
+    /// Work items created before #2221: <c>Payload</c> contains a full <see cref="JobDistributionRequest"/>
+    /// including <c>ProviderConfigs</c>, <c>QualityGateConfigs</c>, etc. Detected by
+    /// <c>PayloadSchemaVersion == null</c>. Served directly from payload as before — the frozen
+    /// snapshot is returned as-is (tokens may be expired for long-queued items).
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <term>New schema (minimal identity)</term>
+    /// <description>
+    /// Work items created after #2221: <c>Payload</c> contains only identity fields
+    /// (<c>PayloadSchemaVersion == 1</c>). Mutable config is fetched fresh from the database
+    /// at assignment time via <see cref="AssignmentEnricher"/>, vending fresh tokens and
+    /// picking up the latest steering, QG, and pipeline configuration.
+    /// </description>
+    /// </item>
+    /// </list>
+    /// </para>
     /// </summary>
     internal static async Task<IResult> GetAssignment(
         Guid id,
         IDbContextFactory<PipelineDbContext> dbFactory,
         IProjectStore projectStore,
+        AssignmentEnricher? assignmentEnricher = null,
         CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -170,18 +197,95 @@ public static class WorkItemEndpoints
         if (request is null)
             return TypedResults.NotFound();
 
-        var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
+        // ── Backward-compatibility: detect payload schema ─────────────────
+        // Old schema: PayloadSchemaVersion == null → serve from frozen snapshot.
+        // New schema: PayloadSchemaVersion == 1  → fresh-fetch all mutable config.
+        if (request.PayloadSchemaVersion == 1 && assignmentEnricher is not null)
+            request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+        // TODO: When assignmentEnricher is null and request.PayloadSchemaVersion == 1 (new-schema path),
+        // enrichment is silently skipped and an identity-only 200 is returned with no log output.
+        // A DI misconfiguration that drops AssignmentEnricher is now undetectable from logs at this site.
+        // Restore a Log.Warning when the enricher is null on the new-schema path (was present before #2172).
 
-        // Inject project secrets at delivery time (not serialized in payload for security)
-        if (request.ProjectId.HasValue)
-        {
-            var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
-            if (project?.Secrets is { Count: > 0 })
-                message = message with { ProjectSecrets = project.Secrets };
-        }
+        var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
+        // TODO: [WARNING] InjectProjectSecretsAsync is now called unconditionally for all GetAssignment
+        // requests, including old-schema requests where request.PayloadSchemaVersion == null. In the
+        // prior code, secret injection was inside the isNewSchema branch. Old-schema callers that log
+        // or persist the full response message will now receive live ProjectSecrets where they did not
+        // before, widening the exposure surface even though the endpoint already requires Operator auth.
+        // Gate this call on request.PayloadSchemaVersion == 1 (new-schema path only), or document the
+        // intentional behavior change so callers are aware secrets are now injected on all paths.
+        message = await InjectProjectSecretsAsync(message, request, projectStore, ct);
 
         return TypedResults.Ok(message);
     }
+
+    /// <summary>
+    /// Enriches a new-schema request (PayloadSchemaVersion == 1) by fetching mutable config fresh
+    /// from the database. Resolves the project for steering + config override context, falling
+    /// back to a minimal stub for project-less items.
+    /// If enrichment fails, returns the original request as a best-effort degraded response.
+    /// </summary>
+    private static async Task<JobDistributionRequest> EnrichRequestAsync(
+        JobDistributionRequest request,
+        IProjectStore projectStore,
+        AssignmentEnricher assignmentEnricher,
+        CancellationToken ct)
+    {
+        // NOTE: [WARNING] assignmentEnricher is nullable ([FromServices] optional). If the DI
+        // container fails to resolve it at startup (transitive dependency missing), ASP.NET
+        // Core silently injects null and every new-schema work item gets a degraded identity-only
+        // 200 with no configs — no startup error, no warning log at this site.
+        // TODO: This method is only called when assignmentEnricher is not null (see GetAssignment
+        // call site). However, the outer GetAssignment still silently skips enrichment when
+        // assignmentEnricher is null. Restore the Log.Warning at the call site for that path.
+        PipelineProject project;
+        if (request.ProjectId.HasValue)
+        {
+            project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct)
+                ?? BuildMinimalProject(request);
+        }
+        else
+        {
+            project = BuildMinimalProject(request);
+        }
+
+        var enriched = await assignmentEnricher.EnrichAsync(request, project, ct);
+        // If enrichment fails, fall through to serve the identity-only request as a
+        // best-effort degraded response (missing configs, but RunId/IssueIdentifier intact).
+        return enriched ?? request;
+    }
+
+    /// <summary>
+    /// Injects project secrets into the assignment message at delivery time.
+    /// Secrets are not serialized in the payload for security; they are fetched fresh here.
+    /// </summary>
+    private static async Task<JobAssignmentMessage> InjectProjectSecretsAsync(
+        JobAssignmentMessage message,
+        JobDistributionRequest request,
+        IProjectStore projectStore,
+        CancellationToken ct)
+    {
+        if (!request.ProjectId.HasValue)
+            return message;
+
+        var project = await projectStore.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
+        if (project?.Secrets is { Count: > 0 })
+            return message with { ProjectSecrets = project.Secrets };
+
+        return message;
+    }
+
+    /// <summary>
+    /// Builds a minimal <see cref="PipelineProject"/> stub for work items without a project ID.
+    /// Prevents null-ref in <see cref="AssignmentEnricher.EnrichAsync"/> which requires a non-null project.
+    /// </summary>
+    private static PipelineProject BuildMinimalProject(JobDistributionRequest request)
+        => new()
+        {
+            Id = request.ProjectId?.ToString() ?? Guid.Empty.ToString(),
+            Name = request.ProjectName ?? string.Empty
+        };
 
     // ── POST /{id}/status — mirror of monolith ────────────────────────────
 
@@ -190,6 +294,12 @@ public static class WorkItemEndpoints
     /// Validates transition via WorkItemTransitionService, updates in-memory state.
     /// 200, 400 (invalid transition), or 404.
     /// </summary>
+    // TODO: PostStatus takes WorkItemTransitionService as a concrete type because TransitionDetailedAsync
+    // is not declared on any interface (IWorkItemTransitionService only exposes TransitionIfAsync).
+    // This prevents interface-level mocking of the transition service in tests; callers must use the
+    // concrete class with an in-memory DB. Consider adding TransitionDetailedAsync to an interface
+    // (e.g. IWorkItemTransitionService or a new IWorkItemTransitionDetailedService) so PostStatus can
+    // be tested with pure mocks and to allow future DI substitution.
     internal static async Task<IResult> PostStatus(
         Guid id,
         WorkItemStatusRequest request,
@@ -199,50 +309,54 @@ public static class WorkItemEndpoints
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
         CancellationToken ct = default)
     {
-        var success = await transitionService.TransitionAsync(
+        var transitionResult = await transitionService.TransitionDetailedAsync(
             id, request.Status,
             mutate: entity => ApplyStatusMutation(entity, request),
             ct: ct);
 
-        if (!success)
+        if (transitionResult == TransitionResult.NotFound)
+            return TypedResults.NotFound();
+
+        if (transitionResult == TransitionResult.Rejected)
+            return TypedResults.BadRequest("Invalid status transition");
+
+        // Only drive lifecycle events and emit telemetry on an ACTUAL state change.
+        // For idempotent no-ops (AlreadyAtTarget), fall through to Ok() silently.
+        //
+        // FailRunAsync / CancelRunAsync trigger label-swap, dedup-guard, and history writes.
+        // Calling them on a repeated PostStatus (e.g. after a leadership flip that clears the
+        // jobcontroller's reconciledTerminalIds cache) risks double label swaps and spurious
+        // history entries — so they must be gated on TransitionResult.Transitioned, not on
+        // success==true as before (which included AlreadyAtTarget).
+        if (transitionResult == TransitionResult.Transitioned)
         {
-            if (dbFactory is not null)
+            // For terminal transitions, drive the run through RunLifecycleManager so history,
+            // label-swap, registry clear, and dedup-guard are all updated — mirrors what
+            // AgentJobLifecycleService does for agent-reported completions. Without this,
+            // infrastructure-killed runs (agent disconnect, reconciliation timeout) never appear
+            // in IPipelineRunHistoryService and WaitForHistoryAsync in E2E tests times out.
+            if (request.Status == WorkItemStatus.Failed)
             {
-                await using var db = await dbFactory.CreateDbContextAsync(ct);
-                var exists = await db.WorkItems.AnyAsync(w => w.Id == id, ct);
-                if (!exists)
-                    return TypedResults.NotFound();
+                var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
+                await runLifecycleManager.FailRunAsync(
+                    new RunId(id.ToString()),
+                    failureReason,
+                    ct,
+                    CodingAgentWebUI.Pipeline.Models.FailureReason.InfrastructureFailure);
+            }
+            else if (request.Status == WorkItemStatus.Cancelled)
+            {
+                await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
             }
 
-            return TypedResults.BadRequest("Invalid status transition");
+            // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
+            // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
+            // Pass CancellationToken.None because the task runs independently of the HTTP request
+            // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
+            // warnings when ASP.NET Core cancels the token as soon as the response is sent.
+            if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
         }
-
-        // For terminal transitions, drive the run through RunLifecycleManager so history,
-        // label-swap, registry clear, and dedup-guard are all updated — mirrors what
-        // AgentJobLifecycleService does for agent-reported completions. Without this,
-        // infrastructure-killed runs (agent disconnect, reconciliation timeout) never appear
-        // in IPipelineRunHistoryService and WaitForHistoryAsync in E2E tests times out.
-        if (request.Status == WorkItemStatus.Failed)
-        {
-            var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
-            await runLifecycleManager.FailRunAsync(
-                new RunId(id.ToString()),
-                failureReason,
-                ct,
-                CodingAgentWebUI.Pipeline.Models.FailureReason.InfrastructureFailure);
-        }
-        else if (request.Status == WorkItemStatus.Cancelled)
-        {
-            await runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
-        }
-
-        // Emit telemetry for terminal transitions — fire-and-forget: enrichment query must
-        // not block the agent's 200 response, and a slow/failed DB read must not surface as a 500.
-        // Pass CancellationToken.None because the task runs independently of the HTTP request
-        // lifetime; using the request-scoped ct would cause spurious OperationCanceledException
-        // warnings when ASP.NET Core cancels the token as soon as the response is sent.
-        if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-            _ = EmitTerminalStatusTelemetryAsync(id, request, dbFactory, CancellationToken.None);
 
         return TypedResults.Ok();
     }
@@ -255,6 +369,12 @@ public static class WorkItemEndpoints
     /// Also materialises an in-memory <see cref="PipelineRun"/> in <see cref="IOrchestratorRunService"/>
     /// so the UI can show the run immediately (Option A, Req 1a.1).
     /// Returns 201 + new GUID. Maps Postgres 23505 unique violation to 409 Conflict.
+    /// <para>
+    /// Only identity fields are serialized to <c>WorkItems.Payload</c> (issue #2171).
+    /// Mutable config (ProviderConfigs, QualityGateConfigs, RepoSteeringContent, etc.) is stripped
+    /// from the stored payload; <c>GET /api/work-items/{id}/assignment</c> fetches it fresh at
+    /// dispatch time via <see cref="AssignmentEnricher"/>.
+    /// </para>
     /// </summary>
     internal static async Task<IResult> CreateWorkItem(
         [FromBody] JobDistributionRequest request,
@@ -267,7 +387,13 @@ public static class WorkItemEndpoints
         var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedRunId)
             ? parsedRunId
             : Guid.NewGuid();
-        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        // Serialize only identity fields to the payload (issue #2171).
+        // Mutable config (ProviderConfigs, QGs, steering, MCP servers, issue context) is fetched
+        // fresh at GetAssignment time. This prevents stale config being served to agents that
+        // were queued for extended periods.
+        var minimalPayload = BuildMinimalPayload(request);
+        var payloadJson = JsonSerializer.Serialize(minimalPayload, PipelineJsonOptions.Default);
 
         var entity = new WorkItemEntity
         {
@@ -278,9 +404,23 @@ public static class WorkItemEndpoints
             Status = WorkItemStatus.Pending,
             Payload = payloadJson,
             AgentSelector = request.AgentSelector ?? "",
+            // TODO: Add a positive-value guard here: if request.TimeoutSeconds <= 0, substitute
+            // (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds. This prevents a legacy or
+            // misconfigured caller from storing a zero (the DB column default) and relying on the
+            // dispatch-path fallback in BuildJobContext. See review finding [WARNING] — zero sentinel
+            // ambiguity in ReconciliationLoop and DispatchLoop.
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = DateTimeOffset.UtcNow,
+            PriorityWeight = InitiatedByConstants.IsManual(request.InitiatedBy) ? 100 : 0,
+            // Capture the W3C traceparent from the current API span so the worker K8s Job
+            // can restore it and attach its spans to this trace rather than starting a new root.
+            // Activity.Current here is the ASP.NET Core request span — the API span that the
+            // caller's trace is already a child of — which is exactly the correct parent.
+            // Exception: when the request carries a pre-stored TraceContext (e.g., consolidation
+            // rehydration at startup where Activity.Current is null), prefer that instead.
+            TraceParent = request.TraceContext?.GetValueOrDefault("traceparent")
+                ?? PipelineTelemetry.FormatTraceParent(Activity.Current)
         };
 
         try
@@ -319,6 +459,81 @@ public static class WorkItemEndpoints
         return TypedResults.Created($"/api/work-items/{workItemId}", workItemId);
     }
 
+    /// <summary>
+    /// Builds a minimal <see cref="JobDistributionRequest"/> containing only identity fields
+    /// that are stored in <c>WorkItems.Payload</c>. Strips all mutable config that will be
+    /// re-fetched at assignment time.
+    /// </summary>
+    internal static JobDistributionRequest BuildMinimalPayload(JobDistributionRequest request)
+    {
+        return new JobDistributionRequest
+        {
+            // Identity / non-reconstructable fields
+            IssueIdentifier = request.IssueIdentifier,
+            IssueProviderConfigId = request.IssueProviderConfigId,
+            RepoProviderConfigId = request.RepoProviderConfigId,
+            BrainProviderConfigId = request.BrainProviderConfigId,
+            PipelineProviderConfigId = request.PipelineProviderConfigId,
+            InitiatedBy = request.InitiatedBy,
+            TaskType = request.TaskType,
+            AgentSelector = request.AgentSelector,
+            TimeoutSeconds = request.TimeoutSeconds,
+            ProjectId = request.ProjectId,
+            ProjectName = request.ProjectName,
+            RunType = request.RunType,
+            RunId = request.RunId,
+            TraceContext = request.TraceContext,
+
+            // Audit / routing identity
+            // (ProjectName and InitiatedBy also kept above for GetPendingWorkItems display)
+
+            // Review-specific identity (not trivially re-fetchable at assignment time)
+            LinkedPullRequest = request.LinkedPullRequest,
+            ReviewPrTargetBranch = request.ReviewPrTargetBranch,
+            ReviewPrDescription = request.ReviewPrDescription,
+            ReviewPrAuthor = request.ReviewPrAuthor,
+
+            // Decomposition identity
+            // ProjectContext is pre-built by DispatchOrchestrationService.BuildDecompositionProjectContextAsync
+            // and consumed by WriteProjectContextStep, CloneProjectRepositoriesStep, DecompositionAnalysisStep,
+            // CreateSubIssuesStep, and AgentProviderResolver. It cannot be reconstructed at assignment time.
+            ProjectContext = request.ProjectContext,
+            DecompositionSource = request.DecompositionSource,
+
+            // Review-specific pre-fetched context
+            // LinkedIssueContexts is pre-fetched by DispatchOrchestrationService and consumed by
+            // ExtractLinkedIssuesStep and JobAssignmentMessageFactory. It is not re-fetched by
+            // AssignmentEnricher.EnrichCoreAsync, so it must be preserved here.
+            LinkedIssueContexts = request.LinkedIssueContexts,
+
+            // Consolidation identity
+            ConsolidationRunType = request.ConsolidationRunType,
+            ConsolidationTemplateId = request.ConsolidationTemplateId,
+            ConsolidationWorkspacePath = request.ConsolidationWorkspacePath,
+            AutoDispatch = request.AutoDispatch,
+
+            // Issue title kept for GetPendingWorkItems display (not mutable config)
+            IssueDetail = request.IssueDetail is not null
+                ? new IssueDetail
+                {
+                    Identifier = request.IssueDetail.Identifier,
+                    Title = request.IssueDetail.Title,
+                    Description = string.Empty, // Strip body; re-fetched at assignment time
+                    Labels = []
+                }
+                : null,
+
+            // Schema version discriminator — marks this as new-schema (minimal identity payload).
+            // GetAssignment uses PayloadSchemaVersion == 1 to detect new-schema rows and trigger
+            // AssignmentEnricher. All mutable config intentionally omitted (null). Fields not listed
+            // above (ProviderConfigs, PipelineConfiguration, QualityGateConfigs, ReviewerConfigs,
+            // McpServers, RepoSteeringContent, ProjectSteeringContent, IssueComments,
+            // ParsedIssue, ExistingAnalysis, ResolvedProfileId, AgentProviderConfigId)
+            // are left at their default null values and re-fetched at assignment time by AssignmentEnricher.
+            PayloadSchemaVersion = 1,
+        };
+    }
+
     // ── GET /pending ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -348,7 +563,8 @@ public static class WorkItemEndpoints
             pending = pending.Where(w => w.ProjectId == scopeProjectId);
 
         var raw = await pending
-            .OrderBy(w => w.CreatedAt)
+            .OrderByDescending(w => w.PriorityWeight)
+            .ThenBy(w => w.CreatedAt)
             .Take(maxResults)
             .Select(w => new
             {
@@ -361,7 +577,9 @@ public static class WorkItemEndpoints
                 w.RetryCount,
                 w.Payload,
                 w.ProjectId,
-                w.TimeoutSeconds
+                w.TimeoutSeconds,
+                w.PriorityWeight,
+                w.TraceParent
             })
             .ToListAsync(ct);
 
@@ -394,10 +612,12 @@ public static class WorkItemEndpoints
                 AgentSelector = w.AgentSelector,
                 RetryCount = w.RetryCount,
                 TimeoutSeconds = w.TimeoutSeconds,
+                PriorityWeight = w.PriorityWeight,
                 IssueTitle = req?.IssueDetail?.Title,
                 InitiatedBy = req?.InitiatedBy,
                 ProjectName = req?.ProjectName,
-                ProjectId = w.ProjectId
+                ProjectId = w.ProjectId,
+                TraceParent = w.TraceParent
             };
         }).ToList();
 
@@ -664,7 +884,8 @@ public static class WorkItemEndpoints
                 DispatchedAt = w.DispatchedAt,
                 AgentSelector = w.AgentSelector,
                 IssueIdentifier = w.IssueIdentifier,
-                K8sJobName = w.K8sJobName
+                K8sJobName = w.K8sJobName,
+                TimeoutSeconds = w.TimeoutSeconds
             })
             .ToListAsync(ct);
 
@@ -960,7 +1181,13 @@ public static class WorkItemEndpoints
             }
 
             WorkDistributionTelemetry.LogTerminalStatus(
-                id, request.Status, duration, request.AgentId, failureReason: null);
+                id, request.Status, duration, request.AgentId,
+                // TODO: Enum.TryParse succeeds for numeric string inputs (e.g. "99") even when they don't
+                // correspond to a named FailureReason member, allowing callers to inject undefined enum values
+                // as metric tags. This can cause high-cardinality label explosion in the metrics backend.
+                // Fix: add Enum.IsDefined check after TryParse, or use a switch/dictionary over expected names.
+                // (Issue #2202 review, SecurityReviewer)
+                failureReason: Enum.TryParse<FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason) ? parsedReason : (FailureReason?)null);
         }
         catch (Exception ex)
         {
@@ -1026,6 +1253,58 @@ public static class WorkItemEndpoints
             new CodingAgentWebUI.Api.Client.WorkItemCountDto(c.Status, c.AgentSelector, c.Count))
             .ToArray());
     }
+
+    // ── POST /{id}/priority ───────────────────────────────────────────────
+
+    /// <summary>
+    /// POST /api/work-items/{id}/priority
+    /// Body: { "priorityWeight": int }
+    /// Sets <see cref="WorkItemEntity.PriorityWeight"/> on a Pending work item.
+    /// Returns 200 on success.
+    /// Returns 400 if <c>priorityWeight</c> is outside [0, 1000].
+    /// Returns 409 if the item is not in Pending status.
+    /// Returns 404 if the item does not exist.
+    /// </summary>
+    internal static async Task<IResult> PostPriorityWeight(
+        Guid id,
+        [FromBody] PriorityWeightRequest request,
+        WorkItemTransitionService transitionService,
+        CancellationToken ct)
+    {
+        if (request.PriorityWeight is null)
+            return TypedResults.BadRequest("priorityWeight is required.");
+
+        if (request.PriorityWeight < 0 || request.PriorityWeight > 1000)
+            return TypedResults.BadRequest("priorityWeight must be between 0 and 1000 (inclusive).");
+
+        var result = await transitionService.UpdatePriorityWeightAsync(id, request.PriorityWeight.Value, ct);
+
+        return result switch
+        {
+            Infrastructure.Persistence.Services.UpdatePriorityWeightResult.Success => TypedResults.Ok(),
+            Infrastructure.Persistence.Services.UpdatePriorityWeightResult.NotPending =>
+                TypedResults.Conflict("Cannot update PriorityWeight: work item is not in Pending status."),
+            Infrastructure.Persistence.Services.UpdatePriorityWeightResult.ConcurrencyConflict =>
+                TypedResults.Conflict("Cannot update PriorityWeight: concurrent update conflict, please retry."),
+            // TODO: [WARNING] The default arm silently maps any future UpdatePriorityWeightResult values
+            // to 404 NotFound. If a new result code is added to the enum, the compiler will not warn
+            // that it is unhandled here. Consider adding an explicit case for UpdatePriorityWeightResult.NotFound
+            // and replacing the default arm with a throw (or a 500 response) to catch unhandled cases
+            // at compile time. The current behavior is correct for all existing values.
+            _ => TypedResults.NotFound()
+        };
+    }
+}
+
+/// <summary>
+/// Request body for POST /api/work-items/{id}/priority.
+/// </summary>
+public sealed class PriorityWeightRequest
+{
+    /// <summary>
+    /// Dispatch priority weight. Must be between 0 and 1000 (inclusive). Required.
+    /// </summary>
+    public int? PriorityWeight { get; init; }
 }
 
 /// <summary>

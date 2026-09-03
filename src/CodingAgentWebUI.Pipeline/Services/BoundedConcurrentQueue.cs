@@ -39,6 +39,13 @@ public sealed class BoundedConcurrentQueue<T> : IEnumerable<T>
             _queue.TryDequeue(out _);
     }
 
+    /// <summary>
+    /// Attempts to remove and return the item at the beginning of the queue.
+    /// Returns <c>true</c> if an item was successfully dequeued; <c>false</c> if the queue was empty.
+    /// Thread-safe: delegates directly to the underlying <see cref="System.Collections.Concurrent.ConcurrentQueue{T}"/>.
+    /// </summary>
+    public bool TryDequeue(out T? item) => _queue.TryDequeue(out item);
+
     public IEnumerator<T> GetEnumerator() => _queue.GetEnumerator();
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();

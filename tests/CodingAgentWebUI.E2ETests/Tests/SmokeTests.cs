@@ -48,14 +48,14 @@ public sealed class SmokeTests : E2ETestBase
     }
 
     [Fact]
-    public async Task AgentMonitoring_Page_Loads()
+    public async Task Fleet_Page_Loads()
     {
-        await Page.GotoAsync($"{BaseUrl}/agent-monitoring");
+        await Page.GotoAsync($"{BaseUrl}/fleet");
 
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
 
         var heading = await Page.TextContentAsync("h1");
-        Assert.Contains("Agent", heading);
+        Assert.Contains("Fleet", heading);
     }
 
     [Fact]

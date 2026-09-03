@@ -294,7 +294,11 @@ public sealed record JobCompletionPayload
     public AnalysisGateResult? AnalysisRecommendation { get; init; }
 
     [Key(12)]
-    public bool IsRework { get; init; }
+    // Wire-compat note: previously bool IsRework (Key 12 = fixbool 0xc2/0xc3).
+    // bool false (0xc2) → RunMode 0 (New) ✓; bool true (0xc3) → RunMode 1 (Retry) ✗ should be Rework.
+    // RunMode.New (0) → bool false ✓; RunMode.Retry (1) → bool true ✓ (accidental); RunMode.Rework (2) → bool true ✓ (accidental).
+    // Deployment must be atomic to avoid the bool-true → Retry mismap window.
+    public RunMode RunMode { get; init; } = RunMode.New;
 
     [Key(13)]
     public IReadOnlyList<string> AnalysisConcerns { get; init; } = [];

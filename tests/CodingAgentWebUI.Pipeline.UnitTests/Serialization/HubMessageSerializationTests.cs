@@ -77,7 +77,7 @@ public class HubMessageSerializationTests
             LinesRemoved = 120,
             BrainUpdatesPushed = true,
             AnalysisRecommendation = AnalysisGateResult.Ready,
-            IsRework = true,
+            RunMode = RunMode.Rework,
             AnalysisConcerns = new[] { "Thread safety concern", "Missing null check" },
             AnalysisBlockingIssues = new[] { "Dependency #99 not merged" },
             BlacklistedFilesDetected = new[] { ".env.production", "secrets/keys.json" },
@@ -126,7 +126,7 @@ public class HubMessageSerializationTests
         deserialized.LinesRemoved.Should().Be(120);
         deserialized.BrainUpdatesPushed.Should().BeTrue();
         deserialized.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
-        deserialized.IsRework.Should().BeTrue();
+        deserialized.RunMode.Should().Be(RunMode.Rework);
         deserialized.TotalTokens.Should().Be(125000);
         deserialized.TotalCost.Should().Be(2.47m);
         deserialized.FinalLabel.Should().Be("agent:done");
@@ -180,8 +180,7 @@ public class HubMessageSerializationTests
                 Details = "Build succeeded in 45s",
                 TestsPassed = null,
                 TestsFailed = null,
-                TestsSkipped = null,
-                CoveragePercent = null
+                TestsSkipped = null
             },
             Tests = new GateResult
             {
@@ -190,15 +189,7 @@ public class HubMessageSerializationTests
                 Details = "142 tests passed",
                 TestsPassed = 142,
                 TestsFailed = 0,
-                TestsSkipped = 3,
-                CoveragePercent = 87.5
-            },
-            Coverage = new GateResult
-            {
-                GateName = "Coverage",
-                Passed = true,
-                Details = "87.5% coverage (threshold: 80%)",
-                CoveragePercent = 87.5
+                TestsSkipped = 3
             },
             SecurityScan = new GateResult
             {
@@ -227,8 +218,7 @@ public class HubMessageSerializationTests
                         TestsPassed = 100,
                         TestsFailed = 0,
                         TestsSkipped = 1
-                    },
-                    Coverage = new GateResult { GateName = "Coverage", Passed = true, CoveragePercent = 92.0 }
+                    }
                 },
                 new()
                 {
@@ -236,7 +226,6 @@ public class HubMessageSerializationTests
                     DisplayName = "Security Scan",
                     Compilation = null,
                     Tests = null,
-                    Coverage = null,
                     SecurityScan = new GateResult { GateName = "SecurityScan", Passed = false, Details = "CVE-2026-1234" }
                 }
             },
@@ -257,13 +246,6 @@ public class HubMessageSerializationTests
         deserialized.Tests.TestsPassed.Should().Be(142);
         deserialized.Tests.TestsFailed.Should().Be(0);
         deserialized.Tests.TestsSkipped.Should().Be(3);
-        deserialized.Tests.CoveragePercent.Should().Be(87.5);
-
-        // Coverage (optional, populated)
-        deserialized.Coverage.Should().NotBeNull();
-        deserialized.Coverage!.GateName.Should().Be("Coverage");
-        deserialized.Coverage.Passed.Should().BeTrue();
-        deserialized.Coverage.CoveragePercent.Should().Be(87.5);
 
         // SecurityScan (optional, populated)
         deserialized.SecurityScan.Should().NotBeNull();
@@ -285,15 +267,12 @@ public class HubMessageSerializationTests
         qgc1.Compilation!.Passed.Should().BeTrue();
         qgc1.Tests.Should().NotBeNull();
         qgc1.Tests!.TestsPassed.Should().Be(100);
-        qgc1.Coverage.Should().NotBeNull();
-        qgc1.Coverage!.CoveragePercent.Should().Be(92.0);
 
         var qgc2 = deserialized.QgcResults[1];
         qgc2.QgcId.Should().Be("qgc-security");
         qgc2.DisplayName.Should().Be("Security Scan");
         qgc2.Compilation.Should().BeNull();
         qgc2.Tests.Should().BeNull();
-        qgc2.Coverage.Should().BeNull();
         qgc2.SecurityScan.Should().NotBeNull();
         qgc2.SecurityScan!.Passed.Should().BeFalse();
         qgc2.SecurityScan.Details.Should().Be("CVE-2026-1234");
@@ -436,11 +415,8 @@ public class HubMessageSerializationTests
                     CompilationArguments = new[] { "build", "--no-restore" },
                     TestCommand = "dotnet",
                     TestArguments = new[] { "test", "--no-build" },
-                    CoverageThreshold = 80.0,
                     Enabled = true,
-                    ExecutionOrder = 1,
-                    CoverageReportFormat = "cobertura",
-                    CoverageReportPaths = new[] { "TestResults/**/coverage.cobertura.xml" }
+                    ExecutionOrder = 1
                 }
             },
             McpServers = new List<McpServerConfig>
@@ -606,11 +582,8 @@ public class HubMessageSerializationTests
         qg.CompilationArguments.Should().BeEquivalentTo(new[] { "build", "--no-restore" });
         qg.TestCommand.Should().Be("dotnet");
         qg.TestArguments.Should().BeEquivalentTo(new[] { "test", "--no-build" });
-        qg.CoverageThreshold.Should().Be(80.0);
         qg.Enabled.Should().BeTrue();
         qg.ExecutionOrder.Should().Be(1);
-        qg.CoverageReportFormat.Should().Be("cobertura");
-        qg.CoverageReportPaths.Should().BeEquivalentTo(new[] { "TestResults/**/coverage.cobertura.xml" });
 
         // McpServers
         deserialized.McpServers.Should().HaveCount(1);

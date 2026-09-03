@@ -17,7 +17,10 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         _http = http;
     }
 
-    public async Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults = 50, string? projectId = null, CancellationToken ct = default)
+    public Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults = 50, CancellationToken ct = default)
+        => GetPendingAsync(maxResults, null, ct);
+
+    public async Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults, string? projectId, CancellationToken ct = default)
     {
         var url = $"/api/work-items/pending?maxResults={maxResults}";
         if (!string.IsNullOrEmpty(projectId))

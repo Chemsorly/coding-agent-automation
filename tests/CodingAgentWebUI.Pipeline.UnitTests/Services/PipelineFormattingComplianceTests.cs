@@ -23,11 +23,6 @@ public class PipelineFormattingComplianceTests
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
                 IssueReference = "#42",
-                TestsPassed = 10,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                CoveragePercent = 95.0,
-                FileChanges = [],
                 IssueTitle = "Test Issue",
                 ComplianceReport = report,
             });
@@ -45,11 +40,6 @@ public class PipelineFormattingComplianceTests
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
                 IssueReference = "#42",
-                TestsPassed = 10,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                CoveragePercent = 95.0,
-                FileChanges = [],
                 IssueTitle = "Test Issue",
             });
 
@@ -68,11 +58,6 @@ public class PipelineFormattingComplianceTests
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
                 IssueReference = "#42",
-                TestsPassed = 10,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                CoveragePercent = 95.0,
-                FileChanges = [],
                 IssueTitle = "Test Issue",
                 ComplianceReport = report,
             });

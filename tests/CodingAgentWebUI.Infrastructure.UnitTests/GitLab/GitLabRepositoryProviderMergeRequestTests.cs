@@ -129,10 +129,45 @@ public class GitLabRepositoryProviderMergeRequestTests
         var mrClient = client.GetMergeRequest(projectId);
         var mr = mrClient.Get(new MergeRequestQuery { State = MergeRequestState.opened }).First();
 
-        await provider.UpdatePullRequestAsync((int)mr.Iid, "new description", markReady: false, CancellationToken.None);
+        await provider.UpdatePullRequestAsync((int)mr.Iid, "new description", markReady: null, CancellationToken.None);
 
         var updated = mrClient[(int)mr.Iid];
         updated.Description.Should().Be("new description");
+        updated.Title.Should().Be("Test MR", "markReady=null is a body-only update and must not add a Draft: prefix");
+    }
+
+    [Fact]
+    public async Task UpdatePullRequestAsync_MarkReadyFalse_PrIsReadyForReview_AddsDraftPrefix()
+    {
+        var (client, projectId) = CreateServerWithMergeRequest(
+            "My MR", "description", "branch", "main");
+        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+
+        var mrClient = client.GetMergeRequest(projectId);
+        var mr = mrClient.Get(new MergeRequestQuery { State = MergeRequestState.opened }).First();
+
+        await provider.UpdatePullRequestAsync((int)mr.Iid, "body", markReady: false, CancellationToken.None);
+
+        var updated = mrClient[(int)mr.Iid];
+        updated.Title.Should().Be("Draft: My MR");
+        updated.Description.Should().Be("body");
+    }
+
+    [Fact]
+    public async Task UpdatePullRequestAsync_MarkReadyFalse_PrIsAlreadyDraft_NoDoubleDraftPrefix()
+    {
+        var (client, projectId) = CreateServerWithMergeRequest(
+            "Draft: My MR", "description", "branch", "main");
+        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+
+        var mrClient = client.GetMergeRequest(projectId);
+        var mr = mrClient.Get(new MergeRequestQuery { State = MergeRequestState.opened }).First();
+
+        await provider.UpdatePullRequestAsync((int)mr.Iid, "body", markReady: false, CancellationToken.None);
+
+        var updated = mrClient[(int)mr.Iid];
+        updated.Title.Should().Be("Draft: My MR", "title must not double-prefix with 'Draft: Draft: '");
+        updated.Description.Should().Be("body");
     }
 
     [Fact]

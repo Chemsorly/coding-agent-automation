@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.TestUtilities;
 using Moq;
@@ -69,8 +70,9 @@ public class IPipelineOrchestrationServiceContractTests
     {
         var service = TestOrchestrationFactory.CreateMinimalInterface();
 
-        // No-op must complete silently
-        await service.CancelPipelineAsync();
+        // No-op must complete silently — explicit assertion makes this visible in test reports
+        var ex = await Record.ExceptionAsync(() => service.CancelPipelineAsync());
+        ex.Should().BeNull("no-op CancelPipelineAsync must not throw");
     }
 
     [Fact]

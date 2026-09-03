@@ -6,7 +6,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.Api.Client.Stores;
-using ApiBackedPipelineRunHistoryService = CodingAgentWebUI.Services.ApiBackedPipelineRunHistoryService;
+using ApiBackedPipelineRunHistoryService = CodingAgentWebUI.Api.Client.Stores.ApiBackedPipelineRunHistoryService;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -582,7 +582,7 @@ public sealed class ApiBackedServicesTests
     public async Task PendingWorkQuery_GetPendingJobsAsync_MapsDtosToPendingJobs()
     {
         var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>();
-        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto> { MakePendingDto("GH-42") } as IReadOnlyList<PendingWorkItemDto>);
 
         var query = new ApiBackedPendingWorkQuery(mockClient.Object);
@@ -597,7 +597,7 @@ public sealed class ApiBackedServicesTests
     public async Task PendingWorkQuery_GetPendingJobsAsync_UpdatesPendingCount()
     {
         var mockClient = new Mock<CodingAgentWebUI.Api.Client.IPipelineApiWorkItemClient>();
-        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto> { MakePendingDto(), MakePendingDto() } as IReadOnlyList<PendingWorkItemDto>);
 
         var query = new ApiBackedPendingWorkQuery(mockClient.Object);
@@ -621,7 +621,7 @@ public sealed class ApiBackedServicesTests
             RetryCount = 0,
             TimeoutSeconds = 0
         };
-        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
 
         var query = new ApiBackedPendingWorkQuery(mockClient.Object);
@@ -645,7 +645,7 @@ public sealed class ApiBackedServicesTests
             RetryCount = 0,
             TimeoutSeconds = 0
         };
-        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
 
         var query = new ApiBackedPendingWorkQuery(mockClient.Object);
@@ -669,7 +669,7 @@ public sealed class ApiBackedServicesTests
             RetryCount = 0,
             TimeoutSeconds = 0
         };
-        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
 
         var query = new ApiBackedPendingWorkQuery(mockClient.Object);
@@ -695,7 +695,7 @@ public sealed class ApiBackedServicesTests
             RetryCount = 0,
             TimeoutSeconds = 0
         };
-        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        mockClient.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto> { dto } as IReadOnlyList<PendingWorkItemDto>);
 
         var query = new ApiBackedPendingWorkQuery(mockClient.Object);

@@ -2,6 +2,7 @@ using Octokit;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using Serilog;
 
 namespace CodingAgentWebUI.Infrastructure.GitHub;
@@ -216,7 +217,7 @@ public partial class GitHubRepositoryProvider
         return results.ToList();
     }
 
-    public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct)
+    public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool? markReady, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(body);
 
@@ -227,9 +228,10 @@ public partial class GitHubRepositoryProvider
                     new PullRequestUpdate { Body = body }),
                 "UpdatePullRequest", ct);
 
-            // Mark as ready for review if requested.
+            // Change draft status only when markReady has an explicit value.
+            // null = body-only update; leave draft state untouched.
             // GitHub REST API doesn't support changing draft status — requires GraphQL mutation.
-            if (markReady)
+            if (markReady == true)
             {
                 try
                 {
@@ -248,6 +250,40 @@ public partial class GitHubRepositoryProvider
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     Log.Warning(ex, "Failed to mark PR #{PrNumber} as ready for review (non-fatal)", pullRequestNumber);
+                }
+            }
+            else if (markReady == false)
+            {
+                // Convert to draft if currently ready-for-review.
+                // GitHub REST API does not support changing draft status — requires GraphQL mutation.
+                try
+                {
+                    // TODO: The GET below is always issued for every markReady=false call, even when the PR is already
+                    // draft. A GET failure is silently swallowed by the catch below, collapsing "already-draft" and
+                    // "GET failed" into the same no-op outcome with no way to distinguish them from the caller.
+                    // Consider returning the PR object from the preceding PATCH (if the Octokit client exposes it)
+                    // to avoid the extra round-trip and make the two failure modes distinguishable.
+                    var pr = await ExecuteWithResilienceAsync(
+                        client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+                        "GetPullRequestForDraftConversion", ct);
+
+                    if (!pr.Draft)
+                    {
+                        var client = await GetClientAsync(ct);
+                        // TODO: pr.NodeId is embedded via string interpolation without JSON escaping. GitHub-issued
+                        // node IDs are safe in practice, but a proper JSON serializer or GraphQL variable binding
+                        // should be used here (and in the markPullRequestReadyForReview branch above) to eliminate
+                        // the theoretical risk of a malformed mutation if NodeId ever contains '"' or '\'.
+                        var graphqlBody = $"{{\"query\":\"mutation {{ convertPullRequestToDraft(input: {{pullRequestId: \\\"{pr.NodeId}\\\"}}) {{ pullRequest {{ isDraft }} }} }}\"}}";
+                        // TODO: CancellationToken is not propagated to IConnection.Post — the Octokit overload used
+                        // here has no CT parameter. Track for a future Octokit upgrade that adds CT support.
+                        await client.Connection.Post<object>(DeriveGraphQlUri(), graphqlBody, "application/json", "application/json"); // NOSONAR S8949 — Octokit IConnection.Post has no CancellationToken overload
+                        Log.Information("Converted PR #{PrNumber} to draft", pullRequestNumber);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Log.Warning(ex, "Failed to convert PR #{PrNumber} to draft (non-fatal)", pullRequestNumber);
                 }
             }
         }
@@ -427,8 +463,13 @@ public partial class GitHubRepositoryProvider
 
             foreach (var evt in events)
             {
-                // Look for cross-referenced events that indicate closing references
-                if (evt.Event == EventInfoState.Crossreferenced && evt.Source?.Issue != null)
+                // Look for cross-referenced events that indicate closing references.
+                // Filter out events where the source is a PR (evt.Source.Issue.PullRequest != null):
+                // GitHub fires these when another PR mentions this one, but we only want linked
+                // *issues*, not back-references from other PRs (which can include the PR's own number).
+                if (evt.Event == EventInfoState.Crossreferenced
+                    && evt.Source?.Issue != null
+                    && evt.Source.Issue.PullRequest == null)
                 {
                     issueNumbers.Add(evt.Source.Issue.Number.ToString());
                 }
@@ -446,14 +487,19 @@ public partial class GitHubRepositoryProvider
             Log.Warning(ex, "Failed to extract linked issues via timeline API for PR #{PrNumber}, falling back to parsing", prNumber);
         }
 
-        // Priority (b) and (c): Parse PR title and body for issue references
+        // Priority (b) and (c): Parse PR title and body for issue references.
+        // Title uses full ParseIssueReferences (short, unambiguous, always contains (#N)).
+        // Body uses ParseClosingKeywords only (Closes/Fixes/Resolves #N) — the broad SimpleHashPattern
+        // picks up any bare #N in the body prose (e.g., "PR #2194" in AI review text), which can
+        // return spurious numbers including the PR's own number.
         var pr = await ExecuteWithResilienceAsync(
             client => client.PullRequest.Get(Owner, Repo, prNumber),
             "ExtractLinkedIssues.GetPr", ct);
 
-        // Parse title first (priority b), then body (priority c)
+        // Title first (priority b) — full patterns including (#N) parenthetical convention
         ParseIssueReferences(pr.Title, issueNumbers);
-        ParseIssueReferences(pr.Body, issueNumbers);
+        // Body (priority c) — closing keywords only to avoid false positives from prose mentions
+        IssueReferenceParser.ParseClosingKeywords(pr.Body, issueNumbers);
 
         return issueNumbers.ToList().AsReadOnly();
     }

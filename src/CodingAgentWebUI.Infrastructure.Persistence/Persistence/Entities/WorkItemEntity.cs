@@ -54,6 +54,20 @@ public class WorkItemEntity
     /// <summary>PVC name claimed from the pool for kiro agents, null for other agent types.</summary>
     public string? ClaimedPvcName { get; set; }
 
+    /// <summary>
+    /// W3C traceparent captured from the API span that created this WorkItem.
+    /// Propagated to the worker K8s Job via the TRACEPARENT env var so the
+    /// worker's spans attach to the originating API trace.
+    /// </summary>
+    public string? TraceParent { get; set; }
+
     /// <summary>Concurrency token mapped to PostgreSQL xmin system column.</summary>
     public uint RowVersion { get; set; }
+
+    /// <summary>
+    /// Intra-queue dispatch priority. Higher values are dispatched first (ORDER BY PriorityWeight DESC, CreatedAt ASC).
+    /// Manual dispatches receive 100; closed-loop dispatches receive 0 (the default).
+    /// Allowed range: 0–1000.
+    /// </summary>
+    public int PriorityWeight { get; set; }
 }

@@ -251,6 +251,13 @@ public sealed partial class PipelineRun
     /// <summary>How this run was initiated: "manual" or "loop".</summary>
     public string InitiatedBy { get; init; } = "manual";
 
+    /// <summary>
+    /// What the pipeline did with the branch when this run started.
+    /// Set by <c>DetectReworkStep</c> after querying for existing agent PRs.
+    /// Defaults to <see cref="RunMode.New"/> until DetectReworkStep runs.
+    /// </summary>
+    public RunMode RunMode { get; set; } = RunMode.New;
+
     /// <summary>Discriminates implementation vs review runs.</summary>
     public PipelineRunType RunType { get; init; } = PipelineRunType.Implementation;
 
@@ -387,7 +394,7 @@ public sealed partial class PipelineRun
         AgentId = AgentId,
         InitiatedBy = InitiatedBy,
         AnalysisRecommendation = AnalysisRecommendation,
-        IsRework = LinkedPullRequest != null,
+        RunMode = RunMode,
         FailureReason = FailureReason,
         Feedback = Feedback,
         TotalTokens = TotalTokens,
@@ -402,7 +409,8 @@ public sealed partial class PipelineRun
         ProjectId = ProjectId,
         ProjectName = ProjectName,
         DecompositionSource = DecompositionSource,
-        AgentProviderConfigId = AgentProviderConfigId
+        AgentProviderConfigId = AgentProviderConfigId,
+        BranchName = BranchName
     };
     #pragma warning restore CS0618
 
@@ -421,7 +429,6 @@ public sealed partial class PipelineRun
             // Legacy mode: the built-in gates that ran (Compilation + Tests are always present).
             outcomes.Add(new GateOutcome(report.Compilation.GateName, report.Compilation.Passed));
             outcomes.Add(new GateOutcome(report.Tests.GateName, report.Tests.Passed));
-            if (report.Coverage is { } coverage) outcomes.Add(new GateOutcome(coverage.GateName, coverage.Passed));
             if (report.SecurityScan is { } security) outcomes.Add(new GateOutcome(security.GateName, security.Passed));
         }
         if (report.ExternalCi is { } externalCi) outcomes.Add(new GateOutcome(externalCi.GateName, externalCi.Passed));

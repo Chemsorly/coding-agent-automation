@@ -1,6 +1,8 @@
 using CodingAgentWebUI.Api.Client;
-using CodingAgentWebUI.JobController.Reconciliation;
+using CodingAgentWebUI.Api.Client.Stores;
+using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.LeaderElection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,7 +16,7 @@ namespace CodingAgentWebUI.JobController.Dispatch;
 public static class DispatchServiceRegistration
 {
     /// <summary>
-    /// Registers <see cref="DispatchService"/>, <see cref="DispatchLoop"/>, <see cref="PvcPool"/>,
+    /// Registers <see cref="DispatchService"/>, <see cref="DispatchLoop"/>,
     /// <see cref="ConsolidationDispatchService"/>, and <see cref="ConsolidationDispatchLoop"/>
     /// using options from configuration.
     /// </summary>
@@ -25,15 +27,24 @@ public static class DispatchServiceRegistration
         var options = DispatchServiceOptionsFactory.Create(configuration);
         services.AddSingleton(options);
 
-        services.AddSingleton<PvcPool>(sp =>
-        {
-            // PvcPool starts populated with all configured PVC names (all unclaimed).
-            // The claimed-set is rebuilt from live K8s Jobs on each leadership acquisition
-            // (DispatchService.RunLeadershipTermAsync → PvcPool.RebuildFromLiveJobsAsync),
-            // preventing re-claim of PVCs already assigned to running agent pods after a restart.
-            var opts = sp.GetRequiredService<DispatchServiceOptions>();
-            return new PvcPool(opts.KiroPvcPool);
-        });
+        // Single process-wide PVC selection lock shared by DispatchLoop and ConsolidationDispatchLoop.
+        // This prevents the two loops from racing each other and selecting the same free PVC
+        // concurrently (cross-loop TOCTOU). See PvcSelectLock for details.
+        services.AddSingleton<PvcSelectLock>();
+
+        // ── Provider factory for issue-eligibility checks ─────────────────────
+        // ProviderFactory requires IPipelineConfigStore for CreatePipelineProviderAsync, but
+        // the eligibility path only calls CreateIssueProvider (which doesn't touch the config
+        // store). ApiPipelineConfigStore is the pragmatic safe choice matching the Scheduler pattern.
+        // Registration order: concrete first, interface forwarded second (Scheduler convention).
+        // TODO: The forwarding-singleton pattern is fragile if a future caller also registers
+        // IPipelineConfigStore — DI will silently resolve the last-registered one.
+        services.AddSingleton<ApiPipelineConfigStore>(sp =>
+            new ApiPipelineConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>()));
+        services.AddSingleton<IPipelineConfigStore>(sp =>
+            sp.GetRequiredService<ApiPipelineConfigStore>());
+        services.AddSingleton<IProviderFactory>(sp =>
+            new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
 
         // ── Regular work item dispatch ────────────────────────────────────────
         services.AddSingleton<DispatchLoop>(sp => new DispatchLoop(
@@ -41,16 +52,14 @@ public static class DispatchServiceRegistration
             sp.GetRequiredService<IPipelineApiConfigClient>(),
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<JobTemplateStore>(),
-            sp.GetRequiredService<PvcPool>(),
             sp.GetRequiredService<DispatchServiceOptions>(),
-            sp.GetRequiredService<IReconciliationTrigger>()));
+            sp.GetRequiredService<PvcSelectLock>(),
+            sp.GetRequiredService<IProviderFactory>()));
 
         services.AddSingleton<DispatchService>(sp => new DispatchService(
             sp.GetRequiredService<ILeaderElectionService>(),
             sp.GetRequiredService<DispatchLoop>(),
-            sp.GetRequiredService<DispatchServiceOptions>(),
-            sp.GetRequiredService<PvcPool>(),
-            sp.GetRequiredService<IKubernetesJobClient>()));
+            sp.GetRequiredService<DispatchServiceOptions>()));
 
         services.AddHostedService(sp => sp.GetRequiredService<DispatchService>());
 
@@ -62,9 +71,8 @@ public static class DispatchServiceRegistration
             sp.GetRequiredService<IPipelineApiConsolidationWorkItemClient>(),
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<JobTemplateStore>(),
-            sp.GetRequiredService<PvcPool>(),
             sp.GetRequiredService<DispatchServiceOptions>(),
-            sp.GetRequiredService<IReconciliationTrigger>()));
+            sp.GetRequiredService<PvcSelectLock>()));
 
         services.AddSingleton<ConsolidationDispatchService>(sp => new ConsolidationDispatchService(
             sp.GetRequiredService<ILeaderElectionService>(),

@@ -100,7 +100,7 @@ Configuration: `HarnessSuggestionsReviewEnabled` (default: `true`) controls the 
 
 ### Consolidation Dispatch
 
-Consolidation jobs are dispatched via `IConsolidationDispatchService`. In K8s mode, `ConsolidationWorkItemDispatchService` (a `BackgroundService` in the Pipeline API) polls for `WorkItem` rows with `TaskType=Consolidation` and dispatches them as K8s Jobs under leader election. In both modes the service enforces:
+Consolidation jobs are dispatched via `IConsolidationDispatchService`. In K8s mode, `ConsolidationDispatchService` (a leader-elected `BackgroundService` in the **Job Controller**, sharing the `caa-{release}-dispatch-lock` lease with `DispatchService`) polls for `WorkItem` rows with `TaskType=Consolidation` and dispatches them as K8s Jobs. The service enforces:
 
 - **Deduplication:** The same `RunId` cannot be enqueued twice
 - **Dispatch retries:** Up to `maxConsolidationDispatchRetries` retry attempts (default: 5) before permanent failure. See [Configuration — Consolidation Dispatch](configuration.md#consolidation-dispatch).

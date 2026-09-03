@@ -6,9 +6,7 @@ modifying concurrency-related code in these services, read this document first.
 
 ## Overview
 
-After Spec 045 the system runs as **four distinct processes**, each with its own in-memory
-state. The locking invariants below apply within a single process — they do not span process
-boundaries.
+After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pipeline API, Job Controller, Scheduler, Agent — the Scheduler was split out as a fifth process in Spec 047), each with its own in-memory state. The locking invariants below apply within a single process — they do not span process boundaries.
 
 ### Process Map
 
@@ -47,7 +45,7 @@ boundaries.
 │   JobController)     │     │  Ephemeral K8s Job                          │
 │  ─────────────────── │     │  caa-agent-{11 hex} (impl/review/decomp)   │
 │  K8s Job dispatch    │     │  caa-cons-{12 hex}  (consolidation)         │
-│  ConsolidationDispatchService                  │  Connects to API hub                        │
+│  Lease: caa-{rel}-   │     │  Connects to API hub                        │
 │  Lease: caa-{rel}-   │     │  GET /api/work-items/{id}/assignment         │
 │    dispatch-lock     │     │  POST /api/work-items/{id}/status           │
 └──────────────────────┘     └─────────────────────────────────────────────┘
@@ -84,7 +82,7 @@ coordination (e.g., Postgres advisory locks, Redis `SETNX`) would be required.
 **File:** `src/CodingAgentWebUI.Orchestration/Dispatch/AgentReservationService.cs`
 **Authoritative instance hosted in:** `CodingAgentWebUI.Api` (Pipeline API) — all actual dispatch decisions go through this process. The Orchestrator also registers a local `AgentReservationService` instance for its own routing lookups, but it does not participate in the authoritative agent-reservation path.
 
-> **Rename note (Spec 046):** `JobDeduplicationGuardService` was renamed to `AgentReservationService` (Spec 046). Both classes are defined in `AgentReservationService.cs`. All new code should reference `AgentReservationService` directly; `JobDeduplicationGuardService` is the legacy name but is not marked `[Obsolete]`.
+> **Rename note (Spec 046):** `JobDeduplicationGuardService` was renamed to `AgentReservationService` (Spec 046). Both classes are defined in `AgentReservationService.cs`. All new code should reference `AgentReservationService` directly; `JobDeduplicationGuardService` is the legacy wrapper and IS marked `[Obsolete("Use AgentReservationService instead. Renamed in Spec 046.")]`.
 
 > **T18 note (arch-audit 2026-08-22):** All in-memory queue methods (`EnqueueJob`, `DequeueForAgent`,
 > `GetJobPriority`, `IsIssueQueued`, `GetQueuedJobs`, `ReEnqueue`, `RemoveFromQueue`, `RemoveJob`,

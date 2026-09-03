@@ -251,7 +251,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
             var batch = entities
                 .Select(DeserializeSummary)
-                .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+                .Where(s => s is not null && s.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) != true)
                 .Where(s => include is null || include(s!))
                 .Select(s => s!)
                 .ToList();
@@ -320,7 +320,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         // even when SummaryJson is null or corrupt — consolidation ghost entries are excluded in both paths.
         return entities
             .Select(DeserializeSummary)
-            .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+            .Where(s => s is not null && s.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) != true)
             .Select(s => s!)
             .ToList();
     }
@@ -443,7 +443,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             // when SummaryJson is null or corrupt. Note: this mapping relies on InitiatedBy being
             // set correctly before AddRunToHistoryAsync is called; there is no validation at the
             // API boundary.
-            IssueProviderConfigId = summary.InitiatedBy == ConsolidationConstants.InitiatedBy
+            IssueProviderConfigId = summary.InitiatedBy.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal)
                 ? ConsolidationConstants.ProviderConfigId
                 : null,
             SummaryJson = JsonSerializer.Serialize(summary, JsonOptions)
@@ -483,16 +483,16 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             ModelName = entity.ModelName,
             AgentId = entity.AgentId,
             // Reconstruct InitiatedBy from IssueProviderConfigId column:
-            // - consolidation sentinel → "consolidation" (excluded by read-time filter)
+            // - consolidation sentinel → "consolidation:manual" (excluded by read-time filter)
             // - null (legacy rows or normal runs) → "manual" (default, passes read-time filter)
             // Note: hard-coding "manual" for non-consolidation rows is a lossy approximation.
-            // Any run with a different original InitiatedBy value (e.g. "loop") that loses its
-            // SummaryJson will surface as InitiatedBy="manual". For filtering purposes this is
+            // Any run with a different original InitiatedBy value (e.g. "loop:issue") that loses
+            // its SummaryJson will surface as InitiatedBy="manual". For filtering purposes this is
             // correct (non-consolidation rows must not be excluded), but the fallback path cannot
             // reconstruct the original value without a dedicated column.
             InitiatedBy = entity.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId
                 ? ConsolidationConstants.InitiatedBy
-                : "manual",
+                : InitiatedByConstants.Manual,
             // Note: ProjectId is not recovered in this fallback path — it is lost when SummaryJson
             // is null or corrupt. A dedicated column would be needed to preserve it for legacy rows.
             ProjectName = entity.ProjectName,

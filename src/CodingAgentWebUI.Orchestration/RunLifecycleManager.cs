@@ -96,8 +96,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 
         _logger.Information(
-            "RunLifecycleManager.FailRunAsync: run {RunId} terminal (status=Failed, step={Step}, highWater={HighWater}, reason={Reason}, agent={AgentId})",
-            runId, run.CurrentStep, run.HighWaterMark, failureReason, run.AgentId ?? "none");
+            "RunLifecycleManager.FailRunAsync: run {RunId} terminal (status=Failed, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, reason={Reason}, agent={AgentId})",
+            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, failureReason, run.AgentId ?? "none");
 
         return run;
     }
@@ -145,10 +145,29 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Error(ex, "CompleteRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
         }
 
+        // 3. Best-effort label swap (fallback for hub crash scenario — PostCompletionBookkeepingAsync
+        //    is the authoritative path but may not execute if the hub pod is killed between DB write
+        //    and the hub method returning). AgentLabelOperations.SwapAsync is idempotent, so calling
+        //    this here and in PostCompletionBookkeepingAsync in the happy path is safe.
+        if (run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
+        {
+            var label = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
+                ? run.FinalLabel
+                : terminalStatus switch
+                {
+                    WorkItemStatus.Succeeded => AgentLabels.Done,
+                    WorkItemStatus.Failed    => AgentLabels.Error,
+                    WorkItemStatus.Cancelled => AgentLabels.Cancelled,
+                    _                        => null
+                };
+
+            if (label is not null)
+                await _labelService.TrySwapLabelAsync(run, label, _logger, "RunLifecycleManager", ct);
+        }
 
         _logger.Information(
-            "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, step={Step}, highWater={HighWater}, agent={AgentId})",
-            runId, terminalStatus, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none");
+            "RunLifecycleManager.CompleteRunAsync: run {RunId} terminal (status={Status}, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId})",
+            runId, terminalStatus, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none");
 
         return run;
     }
@@ -194,15 +213,13 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 6. Swap label
         await _labelService.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "RunLifecycleManager", ct);
 
-        // 7. Delete K8s Job to prevent pod retries (backoffLimit)
-        // TODO: Consider making _jobCleanup non-nullable and using GetRequiredService in all DI registrations
-        // to resolve mode differences entirely at DI registration time (per design goal).
+        // 7. Delete K8s Job to prevent pod retries consuming backoffLimit (mirrors CancelRunAsync step 7).
         if (_jobCleanup is not null)
             await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 
         _logger.Information(
-            "RunLifecycleManager.CancelRunAsync: run {RunId} terminal (status=Cancelled, step={Step}, highWater={HighWater}, agent={AgentId}, reason={Reason})",
-            runId, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none", failureReason ?? "none");
+            "RunLifecycleManager.CancelRunAsync: run {RunId} terminal (status=Cancelled, issue={IssueIdentifier}, step={Step}, highWater={HighWater}, agent={AgentId}, reason={Reason})",
+            runId, run.IssueIdentifier, run.CurrentStep, run.HighWaterMark, run.AgentId ?? "none", failureReason ?? "none");
 
         return run;
     }

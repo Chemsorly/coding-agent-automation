@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Api.Client;
 using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.Kubernetes;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
@@ -35,22 +36,41 @@ public sealed class ReconciliationLoop
 
     private readonly IPipelineApiWorkItemClient _workItemClient;
     private readonly IKubernetesJobClient _k8sClient;
-    private readonly PvcPool _pvcPool;
     private readonly DispatchServiceOptions _options;
+
+    /// <summary>
+    /// Tracks WorkItem IDs that have been successfully transitioned to a terminal state in the
+    /// current leadership term. Prevents <see cref="HandleJobCompletedAsync"/> from re-posting
+    /// status for jobs still present within the K8s retention window (default 600s).
+    /// Cleared on leadership acquisition via <see cref="OnLeadershipAcquired"/>.
+    /// </summary>
+    // TODO: _reconciledTerminalIds is a plain HashSet<Guid> with no thread-safety guarantees.
+    // In the current design ReconcileOnceAsync is only invoked once per OnPollCycleAsync (via
+    // Task.WhenAll with no parallel ReconcileOnceAsync calls), and OnLeadershipAcquired is called
+    // between leadership terms — so no concurrent access occurs in production. However,
+    // OnLeadershipAcquired is public and tests call ReconcileOnceAsync directly; any external
+    // caller that invokes these concurrently would cause undefined behaviour on HashSet.
+    // Consider replacing with a ConcurrentDictionary<Guid, byte> or adding a lock if the public
+    // surface of OnLeadershipAcquired is ever called from a different thread than ReconcileOnceAsync.
+    private readonly HashSet<Guid> _reconciledTerminalIds = new();
+
+    /// <summary>
+    /// Called by <see cref="ReconciliationService"/> when this instance becomes the leader.
+    /// Clears the in-process deduplication cache so that any completed K8s Jobs still present
+    /// in the retention window are reconciled at least once by the new leadership term.
+    /// </summary>
+    public void OnLeadershipAcquired() => _reconciledTerminalIds.Clear();
 
     public ReconciliationLoop(
         IPipelineApiWorkItemClient workItemClient,
         IKubernetesJobClient k8sClient,
-        PvcPool pvcPool,
         DispatchServiceOptions options)
     {
         ArgumentNullException.ThrowIfNull(workItemClient);
         ArgumentNullException.ThrowIfNull(k8sClient);
-        ArgumentNullException.ThrowIfNull(pvcPool);
         ArgumentNullException.ThrowIfNull(options);
         _workItemClient = workItemClient;
         _k8sClient = k8sClient;
-        _pvcPool = pvcPool;
         _options = options;
     }
 
@@ -83,21 +103,33 @@ public sealed class ReconciliationLoop
     }
 
     /// <summary>
-    /// Enforces the session timeout: marks Running items older than
-    /// <see cref="DispatchServiceOptions.AgentJobTimeoutSeconds"/> as Failed.
+    /// Enforces the session timeout: marks Running items that have exceeded their per-item
+    /// <see cref="ActiveWorkItemDto.TimeoutSeconds"/> as Failed.
+    /// Items without a stored timeout (zero) fall back to the global default
+    /// (<see cref="PipelineConstants.DefaultAgentTimeout"/>).
     /// </summary>
     public async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
+        // Use the canary minimum as the query threshold so that items with short per-project
+        // timeouts (potentially less than the global default) are still evaluated.
+        // Per-item timeout enforcement happens in the loop body below.
+        // TODO: PipelineConfiguration.AgentTimeout has no minimum-value enforcement at the DB layer.
+        // A project configured with AgentTimeout < TimeoutCanaryMinAgeSeconds (60s) will never be
+        // enforced: every cycle the canary guard fires, emitting a TimeoutCanaryViolations metric
+        // but skipping the item. Consider adding a lower-bound clamp on AgentTimeout at the
+        // configuration-save endpoint (similar to DispatchServiceOptions.ValidateAndClamp).
         IReadOnlyList<ActiveWorkItemDto> timedOut;
         try
         {
-            timedOut = await _workItemClient.GetActiveAsync(_options.AgentJobTimeoutSeconds, ct: ct);
+            timedOut = await _workItemClient.GetActiveAsync(TimeoutCanaryMinAgeSeconds, ct: ct);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to query active work items for timeout enforcement");
             return;
         }
+
+        var globalDefaultSeconds = (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds;
 
         foreach (var item in timedOut)
         {
@@ -106,11 +138,31 @@ public sealed class ReconciliationLoop
             // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
             if (item.Status != WorkItemStatus.Running) continue;
 
+            // Resolve the effective timeout for this item.
+            // TimeoutSeconds == 0 means the value was not stored (pre-dates this field) — fall back
+            // to the global PipelineConfiguration.AgentTimeout default for backward compatibility.
+            // TODO: The zero sentinel is not enforced at the entity/DTO layer — it is indistinguishable
+            // from an explicitly set value of 0. Consider adding a DB constraint or a positive-value
+            // check at the enqueue endpoint (WorkItemEndpoints) so that TimeoutSeconds > 0 is always
+            // guaranteed for new rows, narrowing this fallback to truly legacy data only.
+            var effectiveTimeoutSeconds = item.TimeoutSeconds > 0
+                ? item.TimeoutSeconds
+                : globalDefaultSeconds;
+
             // Compute execution age from DispatchedAt. If DispatchedAt is null (items dispatched before
-            // the field was added), fall back to AgentJobTimeoutSeconds — safe to enforce.
+            // the field was added), fall back to effectiveTimeoutSeconds — safe to enforce.
+            // TODO: DispatchedAt == null with effectiveTimeoutSeconds >= TimeoutCanaryMinAgeSeconds means
+            // executionAgeSeconds == effectiveTimeoutSeconds, so the subsequent guard
+            // (executionAgeSeconds < effectiveTimeoutSeconds) evaluates to false and the item is
+            // immediately timed out on the first reconciliation cycle after dispatch. If DispatchedAt
+            // can remain null for a legitimately running item (e.g., a write failure on the claim
+            // path), this creates a false-positive timeout for a healthy item. Consider returning
+            // early (skip enforcement) when DispatchedAt is null and the item has been running less
+            // than effectiveTimeoutSeconds according to CreatedAt, or storing DispatchedAt
+            // atomically with the claim to eliminate the null window. (DotNetSpecialist review [WARNING])
             var executionAgeSeconds = item.DispatchedAt.HasValue
                 ? (DateTimeOffset.UtcNow - item.DispatchedAt.Value).TotalSeconds
-                : _options.AgentJobTimeoutSeconds;
+                : effectiveTimeoutSeconds;
 
             WorkDistributionTelemetry.TimeoutExecutionAge.Record(executionAgeSeconds,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
@@ -126,15 +178,26 @@ public sealed class ReconciliationLoop
                 continue;
             }
 
-            Log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}) after {Seconds}s — marking Failed",
-                item.Id, item.Status, item.K8sJobName ?? "none", _options.AgentJobTimeoutSeconds);
+            // Not timed out yet — skip.
+            // TODO: The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
+            // is considered timed out (not skipped). At TimeoutSeconds == 60 (the canary minimum),
+            // the canary guard (executionAgeSeconds < 60) and this guard (executionAgeSeconds < 60)
+            // use the same threshold, so the canary invariant provides no protection for items at
+            // exactly that boundary — the item is immediately enforced on the first cycle it is
+            // returned by the query. This is a gap in the canary design that was not present when
+            // the global timeout was always >> 60s. (DotNetSpecialist review [WARNING])
+            if (executionAgeSeconds < effectiveTimeoutSeconds)
+                continue;
+
+            Log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
+                item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", effectiveTimeoutSeconds);
 
             try
             {
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
                     Status = nameof(WorkItemStatus.Failed),
-                    ErrorMessage = $"Agent timeout after {_options.AgentJobTimeoutSeconds}s",
+                    ErrorMessage = $"Agent timeout after {effectiveTimeoutSeconds}s",
                     FailureReason = "Timeout"
                 }, ct);
 
@@ -142,7 +205,14 @@ public sealed class ReconciliationLoop
                 // a different naming format ("caa-{first8hex}") than the job controller's DispatchLoop
                 // ("caa-agent-{first11hex}"). Recomputing via DispatchLoop.GenerateJobName would miss
                 // jobs created by the API path (consolidation/brain runs) and leave live pods running.
-                var jobName = item.K8sJobName ?? DispatchLoop.GenerateJobName(item.Id);
+                //
+                // Null-fallback: K8sJobName may be null for legacy WorkItems dispatched before the field
+                // was persisted. Falling back to JobNameFactory.ForWorkItem (caa-agent-{first11hex}) is
+                // intentional for the job-controller dispatch path only. If K8sJobName is null AND the
+                // item was dispatched by the API path (brain/consolidation), this fallback will produce
+                // the wrong name and the K8s Job will not be found or deleted — a known limitation
+                // documented here rather than silently inherited from DispatchLoop.GenerateJobName.
+                var jobName = item.K8sJobName ?? JobNameFactory.ForWorkItem(item.Id);
 
                 WorkDistributionTelemetry.LogTerminalStatus(
                     item.Id, WorkItemStatus.Failed,
@@ -208,11 +278,19 @@ public sealed class ReconciliationLoop
             // a different naming format ("caa-{first8hex}") than the job controller's DispatchLoop
             // ("caa-agent-{first11hex}"). Recomputing via DispatchLoop.GenerateJobName would miss
             // jobs created by the API path (consolidation/brain runs) and kill live pods.
-            var expectedJobName = item.K8sJobName ?? DispatchLoop.GenerateJobName(item.Id);
+            //
+            // Null-fallback: K8sJobName may be null for legacy WorkItems dispatched before the field
+            // was persisted. Falling back to JobNameFactory.ForWorkItem (caa-agent-{first11hex}) is
+            // intentional for the job-controller dispatch path only. If K8sJobName is null AND the
+            // item was dispatched by the API path (brain/consolidation), this fallback will produce
+            // the wrong name; the item will be treated as having no live Job and incorrectly marked
+            // Failed — a known limitation documented here rather than silently inherited from
+            // DispatchLoop.GenerateJobName.
+            var expectedJobName = item.K8sJobName ?? JobNameFactory.ForWorkItem(item.Id);
             if (liveJobNames.Contains(expectedJobName)) continue; // job exists, not orphaned
 
-            Log.Warning("WorkItem {Id} stuck in Dispatched for >{Seconds}s with no K8s Job — marking Failed",
-                item.Id, _options.ChatPodConnectTimeoutSeconds);
+            Log.Warning("WorkItem {Id} stuck in Dispatched for >{Seconds}s with no K8s Job (issue={IssueIdentifier}) — marking Failed",
+                item.Id, _options.ChatPodConnectTimeoutSeconds, item.IssueIdentifier ?? "unknown");
 
             try
             {
@@ -315,22 +393,40 @@ public sealed class ReconciliationLoop
         var workItemId = ParseWorkItemId(job);
         if (!workItemId.HasValue) return;
 
+        // Skip WorkItems already reconciled in this leadership term to avoid redundant
+        // PostStatusAsync calls and misleading log lines during the K8s job retention window.
+        if (_reconciledTerminalIds.Contains(workItemId.Value)) return;
+
         var phase = GetJobPhase(job);
 
         switch (phase)
         {
             case JobPhaseSucceeded:
-                await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseSucceeded, null, null, ct);
+                if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseSucceeded, null, null, ct))
+                    _reconciledTerminalIds.Add(workItemId.Value);
                 break;
             case JobPhaseFailed:
                 var errorMsg = GetFailureMessage(job);
-                await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, "AgentError", errorMsg, ct);
+                if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, "AgentError", errorMsg, ct))
+                    _reconciledTerminalIds.Add(workItemId.Value);
                 break;
-            // Active/Unknown/Pending — no action needed
+                // Active/Unknown/Pending — no action needed
+                // TODO: If a JobPhaseCancelled case is ever added, remember to also add the workItemId
+                // to _reconciledTerminalIds on success — the guard comment says "Succeeded, Failed,
+                // Cancelled" but the current switch only covers Succeeded and Failed. Omitting it for
+                // a future Cancelled case would allow duplicate PostStatusAsync calls within the K8s
+                // job retention window.
         }
     }
 
-    private async Task HandleJobCompletedAsync(
+    /// <summary>
+    /// Posts a terminal status update for a completed K8s Job and records telemetry.
+    /// Returns <c>true</c> if <see cref="IPipelineApiWorkItemClient.PostStatusAsync"/>
+    /// succeeded (the caller should then cache the WorkItem ID to suppress duplicate posts on
+    /// subsequent reconciliation cycles), or <c>false</c> if it threw (the caller must NOT cache
+    /// the ID so that the next cycle retries the post).
+    /// </summary>
+    private async Task<bool> HandleJobCompletedAsync(
         Guid workItemId,
         V1Job job,
         string status,
@@ -338,9 +434,7 @@ public sealed class ReconciliationLoop
         string? errorMessage,
         CancellationToken ct)
     {
-        // Release the PVC outside the try block so a transient PostStatusAsync failure
-        // does not leak the claim until the next leadership acquisition rebuilds the pool.
-        var pvcName = GetPvcFromJob(job);
+        var succeeded = false;
         try
         {
             await _workItemClient.PostStatusAsync(workItemId, new WorkItemStatusUpdate
@@ -364,18 +458,14 @@ public sealed class ReconciliationLoop
             WorkDistributionTelemetry.LogTerminalStatus(workItemId, workItemStatus, duration, agentId, failureReasonEnum);
 
             Log.Information("WorkItem {Id} marked {Status} from K8s Job {Job}", workItemId, status, job.Metadata?.Name);
+            succeeded = true;
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to post status {Status} for WorkItem {Id}", status, workItemId);
         }
-        finally
-        {
-            // Release PVC unconditionally — idempotent on unknown names, ensures the pool slot
-            // is freed even when PostStatusAsync throws a transient error.
-            if (pvcName is not null)
-                _pvcPool.Release(pvcName);
-        }
+
+        return succeeded;
     }
 
     private async Task SafeDeleteJobAsync(string jobName, CancellationToken ct)
@@ -412,15 +502,19 @@ public sealed class ReconciliationLoop
 
         // Fall back to counters
         if (job.Status?.Succeeded > 0) return JobPhaseSucceeded;
+        // TODO [WARNING]: This fallback returns JobPhaseFailed when Failed > 0 without checking
+        // Active == 0, which is incorrect for a retrying job. When a job's first pod attempt fails
+        // (Status.Failed=1, Status.Active=1), Kubernetes creates a retry pod and only sets the
+        // "Failed" condition type once all retries are exhausted. Until then, this path returns
+        // JobPhaseFailed prematurely, potentially causing ReconciliationLoop to mark a still-running
+        // work item as failed and cancel the K8s Job while a retry pod is executing (data-corruption
+        // risk under default backoffLimit ≥ 1). Fix: guard with Active == 0:
+        //   if (job.Status?.Failed > 0 && (job.Status?.Active ?? 0) == 0) return JobPhaseFailed;
+        // Note: IsJobTerminal in DispatchLoopHelpers already applies this guard correctly — the two
+        // subsystems are inconsistent in this fallback path. Tracked as pre-existing defect surfaced
+        // during issue #2176 investigation. See also issue #2177.
         if (job.Status?.Failed > 0) return JobPhaseFailed;
         return "Active";
-    }
-
-    private static string? GetPvcFromJob(V1Job job)
-    {
-        return job.Spec?.Template?.Spec?.Volumes?
-            .FirstOrDefault(v => v.PersistentVolumeClaim?.ClaimName is not null)
-            ?.PersistentVolumeClaim?.ClaimName;
     }
 
     private static string? GetFailureMessage(V1Job job)

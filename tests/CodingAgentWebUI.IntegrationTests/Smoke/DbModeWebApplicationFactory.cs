@@ -174,6 +174,12 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
                 .ReturnsAsync(Array.Empty<(string IssueIdentifier, string IssueProviderConfigId)>());
             workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+            // 2-arg sweep overload (ApiBackedPendingWorkQuery / IWorkItemSweepClient path).
+            workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+            // Active (in-flight) work items — the Work page queries these directly.
+            workItemClientMock.Setup(s => s.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ActiveWorkItemDto>());
             services.RemoveAll<IPipelineApiWorkItemClient>();
             services.AddSingleton(workItemClientMock.Object);
 

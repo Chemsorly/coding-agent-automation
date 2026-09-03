@@ -145,6 +145,7 @@ public class PipelineConfigArbitraries
             from blacklistedPaths in Gen.ArrayOf(Gen.Elements(PathPool)).Resize(blacklistCount)
             from brainReadOnly in Gen.Elements(true, false)
             from workspaceDir in Gen.Elements(WorkspaceDirPool)
+            from ciCancelledMoveMaxRetries in Gen.Choose(0, 10)
             select new PipelineConfiguration
             {
                 MaxRetries = maxRetries,
@@ -176,6 +177,8 @@ public class PipelineConfigArbitraries
                 BlacklistedPaths = blacklistedPaths.Distinct().ToList(),
                 BrainReadOnly = brainReadOnly,
                 WorkspaceBaseDirectory = workspaceDir,
+                CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,
+                FeedbackTimeoutSeconds = 60,
             };
 
         return gen.ToArbitrary();

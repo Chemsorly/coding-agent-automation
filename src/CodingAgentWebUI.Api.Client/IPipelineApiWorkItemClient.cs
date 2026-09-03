@@ -1,16 +1,23 @@
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Api.Client;
 
 /// <summary>
 /// Typed HTTP client for the /api/work-items endpoint group.
+/// Also implements <see cref="IWorkItemSweepClient"/> so the Scheduler can pass it to
+/// <see cref="CodingAgentWebUI.Pipeline.Models.PipelineLoopServiceDependencies.WorkItemClient"/>.
 /// </summary>
-public interface IPipelineApiWorkItemClient
+public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
 {
-    Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults = 50, string? projectId = null, CancellationToken ct = default);
+    new Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults = 50, CancellationToken ct = default);
+
+    /// <summary>Project-scoped pending query for the Work / Overview screens. projectId is required so this
+    /// overload never collides with the sweep's <see cref="IWorkItemSweepClient.GetPendingAsync"/>.</summary>
+    Task<IReadOnlyList<PendingWorkItemDto>> GetPendingAsync(int maxResults, string? projectId, CancellationToken ct = default);
     Task<WorkItemClaimResponse?> ClaimAsync(Guid workItemId, ClaimWorkItemRequest request, CancellationToken ct = default);
     Task<JobAssignmentMessage?> GetAssignmentAsync(Guid workItemId, CancellationToken ct = default);
-    Task PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default);
+    new Task PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default);
     Task RequeueAsync(Guid workItemId, CancellationToken ct = default);
     Task<int> GetRetryCountAsync(Guid workItemId, CancellationToken ct = default);
     Task<WorkItemStalenessResult?> GetStalenessAsync(string issueIdentifier, string issueProviderConfigId, DateTimeOffset since, CancellationToken ct = default);

@@ -52,8 +52,17 @@ public static class PipelineTelemetry
         "quality_gate.duration", "s", "Total time in quality gate phase");
     public static readonly Counter<long> QualityGateEvaluations = Meter.CreateCounter<long>(
         "quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
+    public static readonly Counter<long> ReviewSkipped = Meter.CreateCounter<long>(
+        "pipeline.review.skipped", "{skip}",
+        "Code review phase skipped due to empty resolved reviewer configs (all deleted or disabled)");
+    // TODO: Verify that ExternalCiDuration bucket boundaries are not configured via an AddView/ExplicitBucketHistogramConfiguration
+    // in the SDK host (Program.cs). If custom 30s–6h buckets are applied to ExternalCiDuration via a view, PostPrCiDuration must
+    // be covered by the same view. Both histograms currently have no InstrumentAdvice — if explicit buckets are required per the
+    // telemetry philosophy decision, add matching InstrumentAdvice<double> { HistogramBucketBoundaries = [...] } to both.
     public static readonly Histogram<double> ExternalCiDuration = Meter.CreateHistogram<double>(
         "quality_gate.external_ci.duration", "s", "Time waiting for external CI");
+    public static readonly Histogram<double> PostPrCiDuration = Meter.CreateHistogram<double>(
+        "quality_gate.post_pr_ci.duration", "s", "Time waiting for post-PR CI (pull_request event workflows)");
 
     public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
         "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue",
@@ -76,6 +85,17 @@ public static class PipelineTelemetry
         "brain.files.written", "{file}", "Total brain files committed across all runs");
     public static readonly Histogram<double> BrainSyncDuration = Meter.CreateHistogram<double>(
         "brain.sync.duration", "s", "Duration of brain sync operations");
+    /// <summary>
+    /// Incremented whenever the post-run brain sync gate is skipped in
+    /// <c>RunPostPrSequenceAsync</c>. Tags: <c>reason</c> — one of
+    /// <c>is_draft</c>, <c>no_provider</c>, <c>no_sync_service</c>, <c>read_only</c>.
+    /// Use this metric to diagnose why <c>brain.updates.committed</c> and
+    /// <c>brain.updates.empty</c> are absent: at least one post-run brain metric
+    /// will now be populated on every run that reaches finalization, making the
+    /// skip reason visible in Prometheus even when the sync itself is skipped.
+    /// </summary>
+    public static readonly Counter<long> BrainSyncSkipped = Meter.CreateCounter<long>(
+        "brain.sync.skipped", "{skip}", "Post-run brain sync gate skipped (not an error; tagged with reason)");
 
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(
@@ -113,6 +133,14 @@ public static class PipelineTelemetry
         "pipeline.housekeeping.branch_deleted", "{branch}",
         "Stale agent branches deleted (no open PR, inactive issue label)");
 
+    // Queue sweep metrics
+    public static readonly Counter<long> QueueSweepCancelled = Meter.CreateCounter<long>(
+        "pipeline.queue_sweep.cancelled", "{item}", "WorkItems cancelled as stale by the queue sweep");
+    public static readonly Counter<long> QueueSweepSkipped = Meter.CreateCounter<long>(
+        "pipeline.queue_sweep.skipped", "{item}", "WorkItems skipped by the queue sweep (fail-open: provider not polled, rate-limited, wrong TaskType)");
+    public static readonly Counter<long> QueueSweepFailed = Meter.CreateCounter<long>(
+        "pipeline.queue_sweep.failed", "{item}", "PostStatusAsync unexpected failures during queue sweep (expected races like already-terminal are not counted)");
+
     // Agent worker metrics
     public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(
         "agent.jobs.received", "{job}", "Jobs received by agent workers");
@@ -146,7 +174,6 @@ public static class PipelineTelemetry
     {
         public const string Compilation = "compilation";
         public const string Tests = "tests";
-        public const string Coverage = "coverage";
         public const string Security = "security";
         public const string ExternalCi = "external_ci";
     }
@@ -300,19 +327,46 @@ public static class PipelineTelemetry
     /// <summary>
     /// Creates a short-lived <see cref="ActivityKind.Producer"/> span and captures its
     /// W3C trace context (traceparent + tracestate) into a dictionary suitable for serialization.
-    /// This guarantees a traceparent is always produced regardless of ambient Activity.Current.
+    /// When an ambient <see cref="Activity.Current"/> already exists, its context is used directly
+    /// rather than spawning an intermediate span — this prevents dead-branch orphan spans in the
+    /// trace backend. A new span is only minted when there is no ambient activity context.
     /// </summary>
     public static Dictionary<string, string>? CaptureTraceContext(string activityName)
     {
-        using var activity = ActivitySource.StartActivity(activityName, ActivityKind.Producer);
-        if (activity is null)
-            return null;
+        // Prefer the ambient span's context directly to avoid creating a short-lived dead-branch
+        // Producer span that appears as an orphan in Grafana Tempo.
+        var ctx = Activity.Current?.Context ?? default;
+        if (ctx == default)
+        {
+            using var span = ActivitySource.StartActivity(activityName, ActivityKind.Producer);
+            if (span is null)
+                return null;
+            ctx = span.Context;
+        }
 
+        var carrier = new Dictionary<string, string>();
+        TraceContextPropagator.Inject(
+            new PropagationContext(ctx, Baggage.Current),
+            carrier,
+            static (c, key, value) => c[key] = value);
+        return carrier.Count > 0 ? carrier : null;
+    }
+
+    /// <summary>
+    /// Serializes a W3C traceparent (and tracestate when present) from an existing
+    /// <see cref="Activity"/> using the OTel <see cref="TraceContextPropagator"/>.
+    /// Returns the <c>traceparent</c> header value, or <see langword="null"/> when
+    /// <paramref name="activity"/> is <see langword="null"/>.
+    /// Prefer this over manual string formatting to ensure <c>tracestate</c> is preserved.
+    /// </summary>
+    public static string? FormatTraceParent(Activity? activity)
+    {
+        if (activity is null) return null;
         var carrier = new Dictionary<string, string>();
         TraceContextPropagator.Inject(
             new PropagationContext(activity.Context, Baggage.Current),
             carrier,
             static (c, key, value) => c[key] = value);
-        return carrier.Count > 0 ? carrier : null;
+        return carrier.GetValueOrDefault("traceparent");
     }
 }

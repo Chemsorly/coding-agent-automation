@@ -1,7 +1,7 @@
 using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
-using CodingAgentWebUI.JobController.Reconciliation;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using k8s.Models;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -21,21 +21,20 @@ namespace CodingAgentWebUI.JobController.UnitTests.Dispatch;
 public sealed class DispatchServiceTests
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
-    private readonly Mock<IPipelineApiConfigClient>   _configClient   = new();
-    private readonly Mock<IKubernetesJobClient>        _k8sClient      = new();
-    private readonly Mock<IReconciliationTrigger>      _reconciliationTrigger = new();
-    private readonly JobTemplateStore                  _templateStore;
-    private readonly DispatchServiceOptions            _options;
+    private readonly Mock<IPipelineApiConfigClient> _configClient = new();
+    private readonly Mock<IKubernetesJobClient> _k8sClient = new();
+    private readonly JobTemplateStore _templateStore;
+    private readonly DispatchServiceOptions _options;
 
     public DispatchServiceTests()
     {
         _options = new DispatchServiceOptions
         {
-            Namespace              = "test-ns",
-            PollIntervalSeconds    = 1,
-            RateLimitPerSecond     = 100,
-            AgentJobTimeoutSeconds  = 7200,
-            ChatPodConnectTimeoutSeconds   = 120
+            Namespace = "test-ns",
+            PollIntervalSeconds = 1,
+            RateLimitPerSecond = 100,
+            ChatJobMaxDurationSeconds = 7200,
+            ChatPodConnectTimeoutSeconds = 120
         };
 
         const string yaml = """
@@ -74,9 +73,9 @@ public sealed class DispatchServiceTests
     {
         var loop = new DispatchLoop(
             _workItemClient.Object, _configClient.Object, _k8sClient.Object,
-            _templateStore, new PvcPool(_options.KiroPvcPool), _options, _reconciliationTrigger.Object);
+            _templateStore, _options, new PvcSelectLock(), Mock.Of<IProviderFactory>());
 
-        return new DispatchService(leaderElection, loop, _options, new PvcPool(_options.KiroPvcPool), _k8sClient.Object);
+        return new DispatchService(leaderElection, loop, _options);
     }
 
     private static async Task RunExecuteForDuration(BackgroundService svc, CancellationToken stopToken)
@@ -104,7 +103,7 @@ public sealed class DispatchServiceTests
 
         // Assert: no API call was made — the inner loop was never entered
         _workItemClient.Verify(
-            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "DispatchLoop.RunOneCycleAsync must not be called when this instance is not the leader");
     }
@@ -115,12 +114,12 @@ public sealed class DispatchServiceTests
     public async Task WhenLeader_DispatchLoop_IsCalled()
     {
         // Arrange: starts as leader, nothing pending
-        var leaderCts    = new CancellationTokenSource();
+        var leaderCts = new CancellationTokenSource();
         var leaderElection = MakeLeaderElection(isLeader: true, leaderCts);
         var svc = MakeService(leaderElection);
 
         _workItemClient
-            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         using var stopCts = new CancellationTokenSource();
@@ -141,7 +140,7 @@ public sealed class DispatchServiceTests
 
         // Assert: inner loop was entered at least once
         _workItemClient.Verify(
-            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce,
             "DispatchLoop.RunOneCycleAsync must be called when this instance is the leader");
     }
@@ -152,21 +151,21 @@ public sealed class DispatchServiceTests
     public async Task WhenLeadershipAcquiredAfterWaiting_DispatchLoop_IsCalled()
     {
         // Arrange: start as non-leader
-        var leaderCts      = new CancellationTokenSource();
+        var leaderCts = new CancellationTokenSource();
         var leaderElection = MakeLeaderElection(isLeader: false, leaderCts);
         var svc = MakeService(leaderElection);
 
         _workItemClient
-            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
         using var stopCts = new CancellationTokenSource();
-        var executeTask   = RunExecuteForDuration(svc, stopCts.Token);
+        var executeTask = RunExecuteForDuration(svc, stopCts.Token);
 
         // Confirm no polling while waiting for leadership
         await Task.Delay(150);
         _workItemClient.Verify(
-            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Act: grant leadership
@@ -185,7 +184,7 @@ public sealed class DispatchServiceTests
         await executeTask;
 
         _workItemClient.Verify(
-            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);
     }
 }

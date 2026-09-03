@@ -22,7 +22,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Registered as a singleton in DI. Consumers access individual services via properties.
 /// </para>
 /// </summary>
-public sealed class DispatchInfrastructure
+public class DispatchInfrastructure
 {
     public ITokenVendingService TokenVending { get; }
     public IProviderFactory ProviderFactory { get; }
@@ -51,6 +51,19 @@ public sealed class DispatchInfrastructure
         LabelService = labelService;
         Resolution = resolution;
         _workItemClient = workItemClient;
+    }
+
+    /// <summary>
+    /// Protected constructor for test subclasses that override <see cref="PrepareDispatchCoreAsync"/>.
+    /// Dependencies are not used when the method is fully overridden, so null values are accepted
+    /// without validation.
+    /// </summary>
+    protected DispatchInfrastructure()
+    {
+        TokenVending = null!;
+        ProviderFactory = null!;
+        LabelService = null!;
+        Resolution = null!;
     }
 
     // ── Config Resolution ──────────────────────────────────────────────────────────
@@ -336,7 +349,7 @@ public sealed class DispatchInfrastructure
     /// A tuple containing all resolved dispatch artifacts, or <c>null</c> if issue context
     /// building failed (provider config not found).
     /// </returns>
-    internal async Task<(
+    internal virtual async Task<(
         IReadOnlyList<QualityGateConfiguration> QualityGates,
         IReadOnlyList<ReviewerConfiguration> Reviewers,
         IssueContextResult IssueContext,

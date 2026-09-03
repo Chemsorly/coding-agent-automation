@@ -22,7 +22,6 @@ public class ConfigMessagePackRoundtripPropertyTests
 {
     private static readonly string[] CompilationArgs = ["build", "--no-restore"];
     private static readonly string[] TestArgs = ["--no-build", "--logger", "trx"];
-    private static readonly string[] CoberturaPaths = ["TestResults/**/coverage.cobertura.xml"];
     private static readonly string[] BlacklistPaths = ["node_modules/", ".git/"];
     private static readonly string[] RequiredLabels = ["dotnet", "ci"];
 
@@ -48,10 +47,8 @@ public class ConfigMessagePackRoundtripPropertyTests
             from labels in Gen.ListOf(Gen.Elements("dotnet", "python", "java", "ci"))
             from compilationCmd in Gen.Elements("dotnet", "mvn", null as string)
             from testCmd in Gen.Elements("dotnet test", "pytest", null as string)
-            from coverage in Gen.Elements(0.80, 0.90, null as double?)
             from enabled in Gen.Elements(true, false)
             from order in Gen.Choose(0, 5)
-            from format in Gen.Elements("cobertura", "jacoco")
             select new QualityGateConfiguration
             {
                 Id = id,
@@ -61,13 +58,8 @@ public class ConfigMessagePackRoundtripPropertyTests
                 CompilationArguments = compilationCmd != null ? CompilationArgs : null,
                 TestCommand = testCmd,
                 TestArguments = testCmd != null ? TestArgs : null,
-                CoverageThreshold = coverage,
                 Enabled = enabled,
-                ExecutionOrder = order,
-                CoverageReportFormat = format,
-                CoverageReportPaths = format == "cobertura"
-                    ? CoberturaPaths
-                    : null
+                ExecutionOrder = order
             };
 
         return Prop.ForAll(gen.ToArbitrary(), original =>
@@ -81,11 +73,8 @@ public class ConfigMessagePackRoundtripPropertyTests
             d.CompilationArguments.Should().BeEquivalentTo(original.CompilationArguments);
             d.TestCommand.Should().Be(original.TestCommand);
             d.TestArguments.Should().BeEquivalentTo(original.TestArguments);
-            d.CoverageThreshold.Should().Be(original.CoverageThreshold);
             d.Enabled.Should().Be(original.Enabled);
             d.ExecutionOrder.Should().Be(original.ExecutionOrder);
-            d.CoverageReportFormat.Should().Be(original.CoverageReportFormat);
-            d.CoverageReportPaths.Should().BeEquivalentTo(original.CoverageReportPaths);
         });
     }
 

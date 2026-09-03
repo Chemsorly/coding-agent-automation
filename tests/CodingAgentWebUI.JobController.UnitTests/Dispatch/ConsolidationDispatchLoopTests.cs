@@ -1,8 +1,10 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.JobController.Dispatch;
-using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 
 namespace CodingAgentWebUI.JobController.UnitTests.Dispatch;
 
@@ -17,9 +19,11 @@ public sealed class ConsolidationDispatchLoopTests
 {
     private readonly Mock<IPipelineApiConsolidationWorkItemClient> _consolidationClient = new();
     private readonly Mock<IKubernetesJobClient> _k8sClient = new();
-    private readonly Mock<IReconciliationTrigger> _reconciliationTrigger = new();
     private readonly JobTemplateStore _templateStore;
     private readonly DispatchServiceOptions _options;
+
+    // Shared process-wide PVC selection lock — same singleton that would be injected by DI in production.
+    private readonly PvcSelectLock _pvcSelectLock = new();
 
     private static readonly Guid ItemId = Guid.NewGuid();
     private const string RunId = "consolidation-run-1";
@@ -31,7 +35,6 @@ public sealed class ConsolidationDispatchLoopTests
             Namespace = "test-ns",
             PollIntervalSeconds = 1,
             RateLimitPerSecond = 100,
-            AgentJobTimeoutSeconds = 7200,
             ChatPodConnectTimeoutSeconds = 120
         };
 
@@ -77,7 +80,7 @@ public sealed class ConsolidationDispatchLoopTests
         };
 
     private ConsolidationDispatchLoop CreateLoop() =>
-        new(_consolidationClient.Object, _k8sClient.Object, _templateStore, new PvcPool(_options.KiroPvcPool), _options, _reconciliationTrigger.Object);
+        new(_consolidationClient.Object, _k8sClient.Object, _templateStore, _options, _pvcSelectLock);
 
     // ── Happy path ─────────────────────────────────────────────────────────────
 
@@ -159,8 +162,15 @@ public sealed class ConsolidationDispatchLoopTests
 
     // ── PVC pool exhausted ─────────────────────────────────────────────────────
 
+    /// <summary>
+    /// PVC starvation must NOT call RequeueAsync — doing so would increment RetryCount
+    /// on every poll cycle (issue #2129). The item stays Pending and is picked up again
+    /// on the next cycle once a PVC is released.
+    ///
+    /// AC (b): all PVCs claimed → item held, no requeue.
+    /// </summary>
     [Fact]
-    public async Task WhenPvcPoolExhausted_ShouldRequeueAndNotCreateJob()
+    public async Task WhenAllPvcsClaimed_ShouldHoldItemInPending_NoRequeue()
     {
         const string kiroYaml = """
             - labels: dotnet10,kiro
@@ -169,28 +179,51 @@ public sealed class ConsolidationDispatchLoopTests
               maxConcurrent: 0
             """;
         var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
-        var emptyPoolOptions = new DispatchServiceOptions { Namespace = "test-ns", RateLimitPerSecond = 100, KiroPvcPool = [] };
+        var twoVcOptions = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            RateLimitPerSecond = 100,
+            KiroPvcPool = ["kiro-pvc-0", "kiro-pvc-1"]
+        };
 
         _consolidationClient
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending("dotnet10,kiro")]);
-        _consolidationClient
-            .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(MakeClaimed());
+
+        // Both PVCs are claimed by live Jobs
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList
+            {
+                Items =
+                [
+                    MakeJobWithPvc("job-0", "kiro-pvc-0"),
+                    MakeJobWithPvc("job-1", "kiro-pvc-1")
+                ]
+            });
 
         var loop = new ConsolidationDispatchLoop(
             _consolidationClient.Object, _k8sClient.Object,
-            kiroStore, new PvcPool([]), emptyPoolOptions,
-            _reconciliationTrigger.Object);
+            kiroStore, twoVcOptions,
+            _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        _consolidationClient.Verify(c => c.RequeueAsync(ItemId, It.IsAny<CancellationToken>()), Times.Once);
+        // PVC starvation must NOT call RequeueAsync (would increment RetryCount)
+        _consolidationClient.Verify(c => c.RequeueAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        // PVC starvation must NOT fire any run-state transition (no claim, no job)
+        _consolidationClient.Verify(c => c.TransitionRunAsync(
+            It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        // PVC check is before ClaimAsync, so no claim should have been attempted
+        _consolidationClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    /// <summary>
+    /// AC (a): PVC available → job created with correct PVC name.
+    /// </summary>
     [Fact]
-    public async Task WhenPvcPoolExhausted_ShouldCallRequestImmediateCycle()
+    public async Task WhenPvcAvailable_ShouldCreateJobWithCorrectPvcName()
     {
         const string kiroYaml = """
             - labels: dotnet10,kiro
@@ -199,7 +232,13 @@ public sealed class ConsolidationDispatchLoopTests
               maxConcurrent: 0
             """;
         var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
-        var emptyPoolOptions = new DispatchServiceOptions { Namespace = "test-ns", RateLimitPerSecond = 100, KiroPvcPool = [] };
+        var twoVcOptions = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            RateLimitPerSecond = 100,
+            ChatPodConnectTimeoutSeconds = 120,
+            KiroPvcPool = ["kiro-pvc-0", "kiro-pvc-1"]
+        };
 
         _consolidationClient
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -208,17 +247,30 @@ public sealed class ConsolidationDispatchLoopTests
             .Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
 
+        // Only kiro-pvc-0 is claimed; kiro-pvc-1 is free
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [MakeJobWithPvc("job-0", "kiro-pvc-0")] });
+
+        V1Job? capturedJob = null;
+        _k8sClient
+            .Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
+            .Returns(Task.CompletedTask);
+
         var loop = new ConsolidationDispatchLoop(
             _consolidationClient.Object, _k8sClient.Object,
-            kiroStore, new PvcPool([]), emptyPoolOptions,
-            _reconciliationTrigger.Object);
+            kiroStore, twoVcOptions,
+            _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
-        // Trigger must fire exactly once — not zero (no-op) and not more than once per cycle
-        _reconciliationTrigger.Verify(t => t.RequestImmediateCycle(), Times.Once);
-        // No K8s Job should be created
-        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        capturedJob.Should().NotBeNull();
+        var mountedPvc = capturedJob!.Spec.Template.Spec.Volumes
+            .FirstOrDefault(v => v.PersistentVolumeClaim?.ClaimName is not null)
+            ?.PersistentVolumeClaim?.ClaimName;
+        mountedPvc.Should().Be("kiro-pvc-1");
     }
 
     // ── Concurrency limit reached ──────────────────────────────────────────────
@@ -253,14 +305,22 @@ public sealed class ConsolidationDispatchLoopTests
 
         var loop = new ConsolidationDispatchLoop(
             _consolidationClient.Object, _k8sClient.Object,
-            limitedStore, new PvcPool([]), _options,
-            _reconciliationTrigger.Object);
+            limitedStore, _options,
+            _pvcSelectLock);
 
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         _consolidationClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         _k8sClient.Verify(c => c.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // TODO: Add completed-job exclusion tests for ConsolidationDispatchLoop equivalent to the
+    // DispatchLoopTests concurrency-map coverage added for issue #2176. BuildConcurrencyMapAsync is
+    // shared by both loops; if the call site in ConsolidationDispatchLoop ever diverges (different
+    // label filter, result wrapping, etc.) a regression would not be caught. Add at minimum:
+    //   - WhenOneRunningAndOneCompletedJobForSameSelector_ConcurrencyCountIsOne (mirror of DispatchLoopTests)
+    //   - WhenOnlyJobIsCompleted_ConcurrencyCountIsZero_AndDispatchProceeds
+    // to ensure the terminal-job filtering behaviour is verified through the ConsolidationDispatchLoop call path.
 
     // ── Project secrets → K8s Secret created ──────────────────────────────────
 
@@ -344,12 +404,12 @@ public sealed class ConsolidationDispatchLoopTests
         _consolidationClient.Verify(c => c.TransitionRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── Math.Max timeout selection ─────────────────────────────────────────────
+    // ── Item timeout drives activeDeadlineSeconds ──────────────────────────────
 
     [Fact]
-    public async Task WhenItemTimeoutExceedsGlobal_K8sJob_ActiveDeadlineSeconds_UsesItemTimeout()
+    public async Task WhenItemTimeoutSet_K8sJob_ActiveDeadlineSeconds_UsesItemTimeout()
     {
-        // item timeout (28800s) > global timeout (7200s) → activeDeadlineSeconds == 28860
+        // item timeout (28800s) → activeDeadlineSeconds == 28860 (28800 + 60 buffer)
         _consolidationClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([MakePending(timeoutSeconds: 28800)]);
         _consolidationClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
@@ -360,7 +420,7 @@ public sealed class ConsolidationDispatchLoopTests
             .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
             .Returns(Task.CompletedTask);
 
-        var loop = CreateLoop(); // _options.AgentJobTimeoutSeconds == 7200
+        var loop = CreateLoop();
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         capturedJob.Should().NotBeNull();
@@ -368,11 +428,19 @@ public sealed class ConsolidationDispatchLoopTests
     }
 
     [Fact]
-    public async Task WhenGlobalTimeoutExceedsItem_K8sJob_ActiveDeadlineSeconds_UsesGlobalTimeout()
+    public async Task WhenItemTimeoutIs900_K8sJob_ActiveDeadlineSeconds_Is960()
     {
-        // item timeout (3600s) < global timeout (7200s) → activeDeadlineSeconds == 7260
+        // item timeout (900s = 15 min) → activeDeadlineSeconds == 960 (900 + 60 buffer)
+        // Verifies per-project AgentTimeout=15m → activeDeadlineSeconds=960 (acceptance criterion)
+        // TODO: Add two sibling tests to complete ConsolidationDispatchLoop timeout coverage:
+        // 1. WhenItemTimeoutIsGlobalDefault_K8sJob_ActiveDeadlineSeconds_Is1860 — passes
+        //    MakePending(timeoutSeconds: 1800) and asserts activeDeadlineSeconds == 1860L.
+        // 2. WhenItemTimeoutIsZero_FallsBackToGlobalDefault_K8sJob_Is1860 — passes
+        //    MakePending(timeoutSeconds: 0) and asserts activeDeadlineSeconds == 1860L,
+        //    verifying the zero-fallback path for legacy rows.
+        // (TestQualityReviewer review [WARNING] @ ConsolidationDispatchLoopTests.cs:417)
         _consolidationClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending(timeoutSeconds: 3600)]);
+            .ReturnsAsync([MakePending(timeoutSeconds: 900)]);
         _consolidationClient.Setup(c => c.ClaimAsync(ItemId, It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeClaimed());
 
@@ -381,14 +449,116 @@ public sealed class ConsolidationDispatchLoopTests
             .Callback<V1Job, string, CancellationToken>((job, _, _) => capturedJob = job)
             .Returns(Task.CompletedTask);
 
-        var loop = CreateLoop(); // _options.AgentJobTimeoutSeconds == 7200
+        var loop = CreateLoop();
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         capturedJob.Should().NotBeNull();
-        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(7260L); // 7200 + 60
+        capturedJob!.Spec.ActiveDeadlineSeconds.Should().Be(960L); // 900 + 60
     }
 
-    // TODO: Add equal-values edge case test — WhenItemTimeoutEqualsGlobal_K8sJob_ActiveDeadlineSeconds_UsesSharedTimeout
-    // where item.TimeoutSeconds == agentJobTimeoutSeconds (e.g. both 7200s) → activeDeadlineSeconds == 7260.
-    // This boundary condition confirms that floor and ceiling converge cleanly at the same value.
+    // ── Metric / telemetry tests ───────────────────────────────────────────────
+    // These tests use MeterListener directly (IDisposable, no [Collection] fixture)
+    // because the JobController test project has no Metrics collection definition.
+    // Assertions use Contain-style checks to remain robust against process-wide meter
+    // pollution from parallel tests.
+
+    [Fact]
+    public async Task WhenAllPvcsClaimed_ShouldIncrementPvcPoolExhaustionsCounter()
+    {
+        // Arrange — kiro template, both PVCs already mounted by live jobs
+        const string kiroYaml = """
+            - labels: dotnet10,kiro
+              image: chemsorly/coding-agent:kiro-dotnet10
+              providerType: kiro
+              maxConcurrent: 0
+            """;
+        var kiroStore = JobTemplateStore.LoadFromYaml(kiroYaml);
+        var twoVcOptions = new DispatchServiceOptions
+        {
+            Namespace = "test-ns",
+            RateLimitPerSecond = 100,
+            KiroPvcPool = ["kiro-pvc-0", "kiro-pvc-1"]
+        };
+
+        _consolidationClient
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakePending("dotnet10,kiro")]);
+
+        _k8sClient
+            .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList
+            {
+                Items =
+                [
+                    MakeJobWithPvc("job-0", "kiro-pvc-0"),
+                    MakeJobWithPvc("job-1", "kiro-pvc-1")
+                ]
+            });
+
+        var loop = new ConsolidationDispatchLoop(
+            _consolidationClient.Object, _k8sClient.Object,
+            kiroStore, twoVcOptions, _pvcSelectLock);
+
+        // Wire up MeterListener to capture Counter<long> measurements from WorkDistribution meter
+        var recordings = new ConcurrentBag<(string InstrumentName, long Value, string? Pool)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        {
+            string? pool = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "pool") { pool = tag.Value?.ToString(); break; }
+            }
+            recordings.Add((instrument.Name, measurement, pool));
+        });
+        // TODO [WARNING]: listener.Start() MUST remain before RunOneCycleAsync. Start() triggers a
+        // retroactive InstrumentPublished callback for already-existing static instruments on
+        // WorkDistributionTelemetry.Meter, enabling measurement capture. Moving Start() after the
+        // await would miss all measurements and the assertion would silently pass vacuously.
+        listener.Start();
+
+        // Act
+        await loop.RunOneCycleAsync(CancellationToken.None);
+
+        // Assert — at least one PvcPoolExhaustions recording with value=1, pool=kiro
+        recordings.Should().Contain(
+            r => r.InstrumentName == "workdistribution.pvc_pool_exhaustions"
+                 && r.Value == 1L
+                 && r.Pool == "kiro",
+            "PvcPoolExhaustions must be incremented by 1 with pool=kiro when no PVC is available");
+        // TODO [WARNING]: Consider also asserting that ClaimAsync and CreateJobAsync are not invoked
+        // (Times.Never) when the PVC pool is exhausted. Without it, a future regression that removes
+        // the early-return would still pass this test if the counter fires before execution continues.
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    private static V1Job MakeJobWithPvc(string jobName, string pvcName) =>
+        new()
+        {
+            Metadata = new V1ObjectMeta { Name = jobName },
+            Spec = new V1JobSpec
+            {
+                Template = new V1PodTemplateSpec
+                {
+                    Spec = new V1PodSpec
+                    {
+                        Volumes =
+                        [
+                            new V1Volume
+                            {
+                                Name = "kiro-data",
+                                PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource { ClaimName = pvcName }
+                            }
+                        ]
+                    }
+                }
+            },
+            Status = new V1JobStatus { Active = 1 }
+        };
 }

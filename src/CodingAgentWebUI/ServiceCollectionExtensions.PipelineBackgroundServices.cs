@@ -126,7 +126,7 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<DispatchInfrastructure>(),
                 sp.GetRequiredService<IWorkDistributor>(),
                 sp.GetRequiredService<IAgentProfileStore>(),
-                sp.GetRequiredService<IConfigurationStore>(),
+                sp.GetRequiredService<IProviderConfigStore>(),
                 sp.GetRequiredService<IPipelineConfigStore>()),
             Log.Logger));
 

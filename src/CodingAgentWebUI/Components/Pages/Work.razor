@@ -59,7 +59,7 @@
             {
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table">
-                        <thead><tr><th>Issue</th><th>Status</th><th>Agent selector</th><th>Dispatched</th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Status</th><th>Agent selector</th><th>Dispatched</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var a in _active)
                             {
@@ -68,6 +68,14 @@
                                     <td><span class="cockpit-chip" style="color: @StatusColor(a.Status);">@a.Status</span></td>
                                     <td class="monitoring-mono monitoring-muted">@a.AgentSelector</td>
                                     <td>@(a.DispatchedAt is null ? "—" : Ago(a.DispatchedAt.Value))</td>
+                                    <td style="text-align: right;">
+                                        <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                disabled="@_cancelling.Contains(a.Id)"
+                                                title="Cancel this in-flight run"
+                                                @onclick="() => CancelWorkItemAsync(a.Id)">
+                                            @(_cancelling.Contains(a.Id) ? "Cancelling…" : "Cancel")
+                                        </button>
+                                    </td>
                                 </tr>
                             }
                         </tbody>
@@ -87,7 +95,7 @@
             {
                 <div class="monitoring-table-wrap">
                     <table class="monitoring-table">
-                        <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th></tr></thead>
+                        <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var p in _pending)
                             {
@@ -101,6 +109,14 @@
                                     <td>@(string.IsNullOrEmpty(p.InitiatedBy) ? "—" : p.InitiatedBy)</td>
                                     <td>@(p.RetryCount > 0 ? p.RetryCount.ToString() : "—")</td>
                                     <td title="@p.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(p.CreatedAt)</td>
+                                    <td style="text-align: right;">
+                                        <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                disabled="@_cancelling.Contains(p.Id)"
+                                                title="Remove this item from the queue"
+                                                @onclick="() => CancelWorkItemAsync(p.Id)">
+                                            @(_cancelling.Contains(p.Id) ? "Removing…" : "Remove")
+                                        </button>
+                                    </td>
                                 </tr>
                             }
                         </tbody>
@@ -169,6 +185,9 @@
     private bool _loading = true;
     private string? _error;
 
+    // WorkItem ids with an in-flight cancel request — disables the row's button until it settles.
+    private readonly HashSet<Guid> _cancelling = new();
+
     // Provider backlog is a LIVE query (issue provider + dependency checker) — loaded after first render.
     private IReadOnlyList<BacklogIssue> _backlog = [];
     private bool _backlogLoading = true;
@@ -226,6 +245,28 @@
         finally
         {
             _loading = false;
+        }
+    }
+
+    // Cancels an in-flight run or removes a queued item. Both are a WorkItem status transition to
+    // Cancelled via the API (PostStatus → RunLifecycleManager.CancelRunAsync) — the same effect as the
+    // old monitoring page's "Cancel run" / "Remove from queue". WorkItem.Id == run id.
+    private async Task CancelWorkItemAsync(Guid id)
+    {
+        if (!_cancelling.Add(id)) return;
+        try
+        {
+            await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
+            await RefreshQuietAsync();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Cancel failed: {ex.Message}";
+        }
+        finally
+        {
+            _cancelling.Remove(id);
         }
     }
 

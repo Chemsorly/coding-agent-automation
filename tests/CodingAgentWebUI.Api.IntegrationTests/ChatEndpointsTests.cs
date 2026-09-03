@@ -25,7 +25,7 @@ public sealed class ChatEndpointsTests
 
         var result = ChatEndpoints.ChatKeepalive(agentId, mockDispatcher.Object);
 
-        result.Should().BeOfType<Ok>("keepalive must always return 200");
+        result.Result.Should().BeOfType<Ok>("keepalive must return 200 for a valid agentId");
         mockDispatcher.Verify(d => d.SendClientKeepalive(agentId), Times.Once,
             "dispatcher.SendClientKeepalive must be called with the agentId from the route");
     }
@@ -39,7 +39,43 @@ public sealed class ChatEndpointsTests
 
         var result = ChatEndpoints.ChatKeepalive("unknown-agent", mockDispatcher.Object);
 
-        result.Should().BeOfType<Ok>("keepalive must return 200 even for unknown sessions");
+        result.Result.Should().BeOfType<Ok>("keepalive must return 200 even for unknown sessions");
+    }
+
+    [Theory]
+    [InlineData("../etc/passwd")]
+    [InlineData("agent@host")]
+    [InlineData("Agent-1")]
+    [InlineData("UPPERCASE")]
+    [InlineData("has space")]
+    [InlineData("")]
+    public void ChatKeepalive_InvalidAgentId_Returns400AndDoesNotCallDispatcher(string invalidAgentId)
+    {
+        var mockDispatcher = new Mock<IChatJobDispatcher>();
+
+        var result = ChatEndpoints.ChatKeepalive(invalidAgentId, mockDispatcher.Object);
+
+        result.Result.Should().BeOfType<BadRequest>(
+            $"agentId '{invalidAgentId}' contains characters outside [a-z0-9_.-] and must return 400");
+        mockDispatcher.Verify(d => d.SendClientKeepalive(It.IsAny<string>()), Times.Never,
+            "dispatcher must not be called when agentId is invalid");
+    }
+
+    [Theory]
+    [InlineData("caa-chat-abc123")]
+    [InlineData("agent.1_test")]
+    [InlineData("my-agent")]
+    [InlineData("a")]
+    public void ChatKeepalive_ValidAgentId_Returns200AndCallsDispatcher(string validAgentId)
+    {
+        var mockDispatcher = new Mock<IChatJobDispatcher>();
+
+        var result = ChatEndpoints.ChatKeepalive(validAgentId, mockDispatcher.Object);
+
+        result.Result.Should().BeOfType<Ok>(
+            $"agentId '{validAgentId}' is valid and must return 200");
+        mockDispatcher.Verify(d => d.SendClientKeepalive(validAgentId), Times.Once,
+            "dispatcher must be called for valid agentId");
     }
 
     // ─── TerminateChatSession ─────────────────────────────────────────────────

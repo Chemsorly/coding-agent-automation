@@ -42,11 +42,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     internal static string FormatGateLogValue(GateResult? gate) =>
         gate is null ? "N/A" : gate.Passed.ToString();
 
-    internal static string FormatCoverageLogValue(GateResult? gate) =>
-        gate is null ? "N/A" : gate.CoveragePercent.HasValue
-            ? $"{gate.Passed} ({gate.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%)"
-            : gate.Passed.ToString();
-
     private static string BuildQualityGateErrorSummary(QualityGateReport report)
     {
         var errors = new List<string>();
@@ -54,8 +49,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             errors.Add($"Compilation: {report.Compilation.Details}");
         if (!report.Tests.Passed)
             errors.Add($"Tests: {report.Tests.Details}");
-        if (report.Coverage is { Passed: false })
-            errors.Add($"Coverage: {report.Coverage.Details}");
         if (report.SecurityScan is { Passed: false })
             errors.Add($"Security: {report.SecurityScan.Details}");
         if (report.ExternalCi is { Passed: false })
@@ -69,8 +62,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         sb.AppendLine($"Quality gates failed (attempt {attempt}/{maxRetries}):");
         sb.AppendLine($"- Compilation: {(report.Compilation.Passed ? "PASSED" : "FAILED")} ({report.Compilation.Details})");
         sb.AppendLine($"- Tests: {(report.Tests.Passed ? "PASSED" : "FAILED")} ({report.Tests.Details})");
-        if (report.Coverage != null)
-            sb.AppendLine($"- Coverage: {(report.Coverage.Passed ? "PASSED" : "FAILED")} ({report.Coverage.Details})");
         if (report.SecurityScan != null)
             sb.AppendLine($"- Security: {(report.SecurityScan.Passed ? "PASSED" : "FAILED")} ({report.SecurityScan.Details})");
         if (report.ExternalCi != null)

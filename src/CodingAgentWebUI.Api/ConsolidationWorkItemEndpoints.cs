@@ -47,7 +47,8 @@ public static class ConsolidationWorkItemEndpoints
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending
                      && w.TaskType == WorkItemTaskType.Consolidation)
-            .OrderBy(w => w.CreatedAt)
+            .OrderByDescending(w => w.PriorityWeight)
+            .ThenBy(w => w.CreatedAt)
             .Take(maxResults)
             .Select(w => new PendingWorkItemDto
             {
@@ -58,7 +59,9 @@ public static class ConsolidationWorkItemEndpoints
                 CreatedAt = w.CreatedAt,
                 AgentSelector = w.AgentSelector,
                 RetryCount = w.RetryCount,
-                TimeoutSeconds = w.TimeoutSeconds
+                TimeoutSeconds = w.TimeoutSeconds,
+                TraceParent = w.TraceParent,
+                PriorityWeight = w.PriorityWeight
             })
             .ToListAsync(ct);
 

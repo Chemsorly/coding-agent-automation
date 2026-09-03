@@ -97,6 +97,8 @@ public class ApplyProjectOverridesTests
         result.BlacklistedPaths.Should().BeSameAs(config.BlacklistedPaths);
         result.BrainReadOnly.Should().Be(config.BrainReadOnly);
         result.MaxConsolidationDispatchRetries.Should().Be(config.MaxConsolidationDispatchRetries);
+        result.CiCancelledMoveMaxRetries.Should().Be(config.CiCancelledMoveMaxRetries);
+        result.FeedbackTimeoutSeconds.Should().Be(config.FeedbackTimeoutSeconds);
     }
 
     // ── Non-null fields → override global values ───────────────────────────────
@@ -664,6 +666,52 @@ public class ApplyProjectOverridesTests
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxConsolidationDispatchRetries.Should().Be(config.MaxConsolidationDispatchRetries);
+    }
+
+    [Fact]
+    public void CiCancelledMoveMaxRetries_NonNull_OverridesGlobal()
+    {
+        var config = TestPipelineConfig.Default() with { CiCancelledMoveMaxRetries = 3 };
+        var project = TestPipelineConfig.WithProject() with { CiCancelledMoveMaxRetries = 7 };
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.CiCancelledMoveMaxRetries.Should().Be(7);
+    }
+
+    [Fact]
+    public void CiCancelledMoveMaxRetries_NullOverride_InheritsFromGlobal()
+    {
+        var config = TestPipelineConfig.Default() with { CiCancelledMoveMaxRetries = 5 };
+        var project = TestPipelineConfig.WithProject(); // CiCancelledMoveMaxRetries is null
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.CiCancelledMoveMaxRetries.Should().Be(5);
+    }
+
+    // ── FeedbackTimeoutSeconds override ───────────────────────────────────────
+
+    [Fact]
+    public void FeedbackTimeoutSeconds_NonNull_OverridesGlobal()
+    {
+        var config = TestPipelineConfig.Default() with { FeedbackTimeoutSeconds = 60 };
+        var project = TestPipelineConfig.WithProject() with { FeedbackTimeoutSeconds = 120 };
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.FeedbackTimeoutSeconds.Should().Be(120);
+    }
+
+    [Fact]
+    public void FeedbackTimeoutSeconds_NullOverride_InheritsFromGlobal()
+    {
+        var config = TestPipelineConfig.Default() with { FeedbackTimeoutSeconds = 90 };
+        var project = TestPipelineConfig.WithProject(); // FeedbackTimeoutSeconds is null
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.FeedbackTimeoutSeconds.Should().Be(90);
     }
 
     // ── Drift-detection tests ──────────────────────────────────────────────────

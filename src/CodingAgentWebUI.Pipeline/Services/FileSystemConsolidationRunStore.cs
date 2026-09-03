@@ -8,8 +8,15 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// <summary>
 /// Filesystem-backed implementation of <see cref="IConsolidationRunStore"/>.
 /// Stores each run as a JSON file: {directory}/{runId}.json.
-/// Used in legacy (non-DB) mode.
+/// <para>
+/// <b>Deprecated:</b> No longer registered in any production DI container.
+/// All deployments route through <c>PostgresConsolidationRunStore</c> (direct DB) or
+/// <c>ApiBackedConsolidationRunStore</c> (API-backed). This class is retained for
+/// unit/integration tests that construct stores directly (contract tests,
+/// ConsolidationServiceTests, ConsolidationFeedbackCacheTests, etc.).
+/// </para>
 /// </summary>
+[Obsolete("Not registered in any production DI container. Use PostgresConsolidationRunStore or ApiBackedConsolidationRunStore. This class exists only for test infrastructure.")]
 public sealed class FileSystemConsolidationRunStore : IConsolidationRunStore
 {
     private readonly string _directory;

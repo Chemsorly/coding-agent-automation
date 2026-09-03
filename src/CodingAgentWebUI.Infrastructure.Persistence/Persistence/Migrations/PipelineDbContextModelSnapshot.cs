@@ -375,6 +375,9 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     b.Property<string>("Payload")
                         .HasColumnType("jsonb");
 
+                    b.Property<int>("PriorityWeight")
+                        .HasColumnType("integer");
+
                     b.Property<Guid?>("ProjectId")
                         .HasColumnType("uuid");
 
@@ -399,6 +402,9 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     b.Property<int>("TimeoutSeconds")
                         .HasColumnType("integer");
 
+                    b.Property<string>("TraceParent")
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
 
                     b.HasIndex("Status");
@@ -422,8 +428,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     b.HasOne("CodingAgentWebUI.Infrastructure.Persistence.Entities.ProjectEntity", null)
                         .WithMany()
                         .HasForeignKey("ProjectId")
-                        .OnDelete(DeleteBehavior.SetNull)
-                        .IsRequired(false);
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 #pragma warning restore 612, 618
         }

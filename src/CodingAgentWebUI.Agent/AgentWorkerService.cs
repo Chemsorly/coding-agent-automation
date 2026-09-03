@@ -144,7 +144,10 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     {
         PipelineTelemetry.AgentJobsReceived.Add(1);
 
-        using var receiveActivity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReceiveJob");
+        using var receiveActivity = PipelineTelemetry.ActivitySource.StartActivity(
+            "Agent.ReceiveJob",
+            ActivityKind.Server,
+            PipelineTelemetry.ExtractTraceContext(message.TraceContext));
         receiveActivity?.SetTag("job_id", message.JobId);
         receiveActivity?.SetTag("run_type", "implementation");
 
@@ -236,7 +239,9 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 FinalStep = PipelineStep.Failed,
                 FailureReason = ex.Message,
                 CompletedAt = DateTimeOffset.UtcNow,
-                IsRework = message.LinkedPullRequest is not null
+                // RunMode: outer catch fires before or during executor setup; DetectReworkStep has not run.
+                // LinkedPullRequest from the assignment is the best available signal.
+                RunMode = message.LinkedPullRequest is not null ? RunMode.Rework : RunMode.New
             };
         }
         finally

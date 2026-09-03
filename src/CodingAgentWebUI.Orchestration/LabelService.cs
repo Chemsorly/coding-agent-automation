@@ -118,11 +118,11 @@ public sealed class LabelService : ILabelService
         switch (targetKind)
         {
             case LabelTargetKind.Issue:
-                await SwapIssueLabelAsync(providerConfigId.Value, identifier, newLabel, ct);
+                await SwapIssueLabelAsync(providerConfigId.Value, identifier, newLabel, ct, throwOnRemoveExhaustion: true);
                 break;
 
             case LabelTargetKind.PullRequest:
-                await SwapPrLabelAsync(providerConfigId.Value, identifier, newLabel, ct);
+                await SwapPrLabelAsync(providerConfigId.Value, identifier, newLabel, ct, throwOnRemoveExhaustion: true);
                 break;
 
             default:
@@ -195,7 +195,8 @@ public sealed class LabelService : ILabelService
         string issueProviderConfigId,
         string issueIdentifier,
         string newLabel,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool throwOnRemoveExhaustion = false)
     {
         var issueConfig = await _configStore.GetProviderConfigByIdAsync(issueProviderConfigId, ProviderKind.Issue, ct);
         if (issueConfig is null)
@@ -212,7 +213,9 @@ public sealed class LabelService : ILabelService
             (label, c) => issueProvider.RemoveLabelAsync(issueIdentifier, label, c),
             (label, c) => issueProvider.AddLabelAsync(issueIdentifier, label, c),
             newLabel,
-            ct);
+            ct,
+            identifier: issueIdentifier,
+            throwOnRemoveExhaustion: throwOnRemoveExhaustion);
     }
 
     /// <summary>
@@ -222,7 +225,8 @@ public sealed class LabelService : ILabelService
         string repoProviderConfigId,
         string prIdentifier,
         string newLabel,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool throwOnRemoveExhaustion = false)
     {
         var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderConfigId, ProviderKind.Repository, ct);
         if (repoConfig is null)
@@ -247,6 +251,8 @@ public sealed class LabelService : ILabelService
             (label, c) => repoProvider.RemovePrLabelAsync(prNumber, label, c),
             (label, c) => repoProvider.AddPrLabelAsync(prNumber, label, c),
             newLabel,
-            ct);
+            ct,
+            identifier: prIdentifier,
+            throwOnRemoveExhaustion: throwOnRemoveExhaustion);
     }
 }

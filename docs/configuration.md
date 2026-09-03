@@ -32,8 +32,10 @@ Projects can override most general settings on a per-project basis using a nulla
 | `agentDisconnectGracePeriod` | 00:05:00 | How long to wait for a disconnected agent to reconnect before failing the run |
 | `agentBusyProgressTimeout` | 01:00:00 | How long a busy agent can go without reporting progress before being marked stuck |
 | `maxInfrastructureRetries` | 5 | Max retries for transient infrastructure failures (range: 0–10). These retries don't consume the agent's quality gate retry budget. |
+| `transientRetryDelay` | 00:00:30 | Delay between retry loop iterations when a transient provider error (`ProviderRateLimit` or `ProviderOverload`) is encountered. Default: 30 seconds. Set to zero in tests for faster execution. |
 | `heartbeatSweepIntervalSeconds` | 60 | Seconds between heartbeat monitor sweeps |
 | `heartbeatTimeoutSeconds` | 90 | Seconds without a heartbeat before an agent is considered stale |
+| `feedbackTimeoutSeconds` | 60 | Timeout in seconds for the agent call during feedback collection (both post-PR success path and post-retry-exhaustion failure path). Increase for slow models or large repositories. Configurable per project. |
 | `analysisCommitThreshold` | 30 | Number of commits on the default branch since last analysis that triggers automatic analysis refresh. Set to 0 to disable commit-count staleness detection |
 
 ### Feature Toggles
@@ -93,9 +95,12 @@ These settings control the lifetime of ephemeral chat session pods dispatched by
 
 | values.yaml key / env var | Default | Description |
 |---------------------------|---------|-------------|
-| `workDistribution.dispatch.agentJobTimeoutSeconds` | 7200 | Maximum lifetime (seconds) of any agent K8s Job (work-item agents, consolidation jobs, chat pods). Sets `activeDeadlineSeconds` on the Job spec — the pod is forcibly terminated by Kubernetes when this deadline passes. Minimum: 60s. |
+| `workDistribution.dispatch.chatJobMaxDurationSeconds` | 7200 | Maximum lifetime (seconds) of a **chat session** K8s Job pod. Sets `activeDeadlineSeconds` on the chat pod spec — the pod is forcibly terminated by Kubernetes when this deadline passes. Minimum: 60s. **Note:** this setting does NOT apply to work-item agent jobs or consolidation jobs; those derive their `activeDeadlineSeconds` from `PipelineConfiguration.AgentTimeout` (per-project overridable, default 30 min). See [Configuration — Pipeline Settings](configuration.md#pipeline-settings). |
 | `workDistribution.dispatch.chatPodConnectTimeoutSeconds` | 120 | Maximum time (seconds) the dispatcher waits for a chat pod to connect to the hub after the Job is created before aborting and returning an error to the caller. Minimum: 5s. |
 | `workDistribution.dispatch.chatTerminationGracePeriodSeconds` | 120 | `terminationGracePeriodSeconds` on the chat pod spec — time Kubernetes allows for graceful shutdown before SIGKILL. Minimum: 5s. |
+| `workDistribution.dispatch.chatIdleTimeoutSeconds` | 90 | Seconds a chat pod may remain idle (no client keepalive heartbeat) before the watcher terminates it automatically. The Blazor UI sends a heartbeat while the chat window is open; closed or crashed windows are cleaned up within this window. Minimum: 10s. |
+
+> **Note on `api.replicas`:** The `WorkDistribution:Dispatch:ChatReplicaCount` env var is automatically derived from `api.replicas` by the Helm chart — it is not a standalone `workDistribution.dispatch.*` key. When Redis is absent and `api.replicas > 1`, `ChatJobDispatcher` emits a startup warning that keepalive heartbeats may be silently lost on non-watcher replicas.
 
 ## Quality Gate Settings
 
@@ -116,8 +121,8 @@ The retry loop classifies agent failures into categories to distinguish provider
 
 | Error Category | HTTP Status | Retry Budget Consumed? | Behavior |
 |----------------|-------------|------------------------|----------|
-| `ProviderRateLimit` | 429 | **No** | `RetryCount` is rolled back. Loop waits 30 seconds then retries from the same position without burning a fix attempt. No cap on consecutive transient retries — only the overall job timeout (`agentTimeout`) bounds this. |
-| `ProviderOverload` | 503 | **No** | Same as `ProviderRateLimit` — 30s delay, no budget consumed. |
+| `ProviderRateLimit` | 429 | **No** | `RetryCount` is rolled back. Loop waits `TransientRetryDelay` (default: 30 seconds) then retries from the same position without burning a fix attempt. No cap on consecutive transient retries — only the overall job timeout (`agentTimeout`) bounds this. |
+| `ProviderOverload` | 503 | **No** | Same as `ProviderRateLimit` — waits `TransientRetryDelay`, no budget consumed. |
 | `PermanentAuthFailure` | 401/403 | Yes (1 attempt counted) | Loop aborts immediately — credentials cannot be fixed by retrying. |
 | `None` (default) | — | **Yes** | Normal code-fix attempt: `RetryCount` incremented, QG re-run after fix. |
 
@@ -259,9 +264,14 @@ For full request/response examples, authentication details, and query parameters
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 | `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 0, range: 0–300). The API now owns `IOrchestratorRunService` and rehydrates independently, so the Orchestrator no longer needs a startup delay. Increase only when a rolling-restart race condition is observed. |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
-| `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. |
 | `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8080`). **Required.** Used by `IPipelineApiConfigClient` to load pipeline configuration and by `IAgentHubConnection` as the fallback hub URL base. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
 | `PipelineApi__HubUrl` | Full URL of the Pipeline API SignalR hub (default: `{PipelineApi__BaseUrl}/hubs/agent`). The Orchestrator's `IAgentHubConnection` subscribes to this hub for live run streaming. Override via `api.hubUrl` in `values.yaml` only when the hub path differs from the default. |
+
+### Pipeline API
+
+| Variable | Description |
+|----------|-------------|
+| `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. Only consumed by the Pipeline API process, which owns the database connection. |
 
 ### SignalR Backplane (multi-replica)
 
@@ -295,7 +305,7 @@ The maintenance service is triggered by the Scheduler via `POST /api/scheduler/m
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
-| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-orchestrator`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`) |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-orchestrator`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). For the Orchestrator, configure via `otel.orchestratorServiceName` in `values.yaml`. Other processes use fixed names set in their own deployment templates. |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
 
 ### Agent Containers

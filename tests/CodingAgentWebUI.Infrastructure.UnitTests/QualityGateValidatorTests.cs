@@ -14,7 +14,6 @@ public class QualityGateValidatorTests
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = true },
-            Coverage = new GateResult { GateName = "Coverage", Passed = true },
             SecurityScan = new GateResult { GateName = "Security", Passed = true }
         };
 
@@ -52,7 +51,6 @@ public class QualityGateValidatorTests
         {
             Compilation = new GateResult { GateName = "Compilation", Passed = true },
             Tests = new GateResult { GateName = "Tests", Passed = true },
-            Coverage = null,
             SecurityScan = null
         };
 
@@ -171,48 +169,6 @@ public class QualityGateValidatorTests
             skipped.Should().Be(0);
         }
         finally { Directory.Delete(dir, true); }
-    }
-
-    // --- Cobertura Coverage Parsing Tests ---
-
-    [Fact]
-    public void ParseCoverageFromCobertura_WithSingleFile_ReturnsCorrectPercentage()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var file = WriteCoberturaFile(dir, "coverage.cobertura.xml", lineRate: 0.85, linesValid: 200);
-
-            var coverage = QualityGateValidator.ParseCoverageFromCobertura([file]);
-
-            coverage.Should().BeApproximately(85.0, 0.5);
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ParseCoverageFromCobertura_WithMultipleFiles_ReturnsWeightedAverage()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var file1 = WriteCoberturaFile(dir, "cov1.xml", lineRate: 0.9, linesValid: 100);
-            var file2 = WriteCoberturaFile(dir, "cov2.xml", lineRate: 0.6, linesValid: 300);
-
-            // Weighted: (90 + 180) / 400 = 67.5%
-            var coverage = QualityGateValidator.ParseCoverageFromCobertura([file1, file2]);
-
-            coverage.Should().BeApproximately(67.5, 0.5);
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ParseCoverageFromCobertura_WithNoFiles_ReturnsZero()
-    {
-        var coverage = QualityGateValidator.ParseCoverageFromCobertura([]);
-
-        coverage.Should().Be(0.0);
     }
 
     // --- Stdout Fallback Parsing Tests ---
@@ -359,89 +315,6 @@ public class QualityGateValidatorTests
         skipped.Should().Be(2);
     }
 
-    // --- Cobertura Edge Case Tests ---
-
-    [Fact]
-    public void ParseCoverageFromCobertura_MergesDuplicateFiles()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var xml1 = """
-                <?xml version="1.0" encoding="utf-8"?>
-                <coverage><packages><package><classes>
-                  <class name="A" filename="A.cs">
-                    <lines><line number="1" hits="1"/><line number="2" hits="0"/></lines>
-                  </class>
-                </classes></package></packages></coverage>
-                """;
-            var xml2 = """
-                <?xml version="1.0" encoding="utf-8"?>
-                <coverage><packages><package><classes>
-                  <class name="A" filename="A.cs">
-                    <lines><line number="1" hits="0"/><line number="2" hits="1"/></lines>
-                  </class>
-                </classes></package></packages></coverage>
-                """;
-            var f1 = Path.Combine(dir, "cov1.xml");
-            var f2 = Path.Combine(dir, "cov2.xml");
-            File.WriteAllText(f1, xml1);
-            File.WriteAllText(f2, xml2);
-
-            var result = QualityGateValidator.ParseCoverageFromCobertura([f1, f2]);
-            result.Should().Be(100.0); // Both lines covered after merge
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ParseCoverageFromCobertura_MalformedXml_SkipsFile()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var badFile = Path.Combine(dir, "bad.xml");
-            File.WriteAllText(badFile, "not xml");
-            var goodXml = """
-                <?xml version="1.0" encoding="utf-8"?>
-                <coverage><packages><package><classes>
-                  <class name="A" filename="A.cs">
-                    <lines><line number="1" hits="1"/><line number="2" hits="1"/></lines>
-                  </class>
-                </classes></package></packages></coverage>
-                """;
-            var goodFile = Path.Combine(dir, "good.xml");
-            File.WriteAllText(goodFile, goodXml);
-
-            var result = QualityGateValidator.ParseCoverageFromCobertura([badFile, goodFile]);
-            result.Should().Be(100.0);
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ParseCoverageFromCobertura_MissingHitsAttribute_TreatsAsZero()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var xml = """
-                <?xml version="1.0" encoding="utf-8"?>
-                <coverage><packages><package><classes>
-                  <class name="A" filename="A.cs">
-                    <lines><line number="1"/><line number="2" hits="1"/></lines>
-                  </class>
-                </classes></package></packages></coverage>
-                """;
-            var filePath = Path.Combine(dir, "nohits.xml");
-            File.WriteAllText(filePath, xml);
-
-            var result = QualityGateValidator.ParseCoverageFromCobertura([filePath]);
-            result.Should().Be(50.0); // 1 of 2 lines covered
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
     // --- BuildCiFailureDetails Edge Cases ---
 
     [Fact]
@@ -480,196 +353,6 @@ public class QualityGateValidatorTests
         details.Should().Contain("unknown");
     }
 
-    // --- JaCoCo Coverage Parsing Tests ---
-
-    [Fact]
-    public void ParseCoverageFromJacoco_WithValidFile_ReturnsCorrectPercentage()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var jacocoXml = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <report name="MyProject">
-                  <package name="com/example">
-                    <class name="com/example/MyClass" sourcefilename="MyClass.java">
-                      <method name="doSomething" desc="()V" line="10">
-                        <counter type="INSTRUCTION" missed="5" covered="10"/>
-                        <counter type="LINE" missed="2" covered="8"/>
-                      </method>
-                      <counter type="INSTRUCTION" missed="5" covered="10"/>
-                      <counter type="LINE" missed="2" covered="8"/>
-                    </class>
-                  </package>
-                  <counter type="INSTRUCTION" missed="5" covered="10"/>
-                  <counter type="LINE" missed="2" covered="8"/>
-                </report>
-                """;
-            var filePath = Path.Combine(dir, "jacoco.xml");
-            File.WriteAllText(filePath, jacocoXml);
-
-            var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
-            result.Should().Be(80.0);
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ParseCoverageFromJacoco_MultipleClasses_SumsCounters()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var jacocoXml = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <report name="MyProject">
-                  <package name="com/example">
-                    <class name="com/example/ClassA" sourcefilename="ClassA.java">
-                      <counter type="LINE" missed="5" covered="15"/>
-                    </class>
-                    <class name="com/example/ClassB" sourcefilename="ClassB.java">
-                      <counter type="LINE" missed="10" covered="10"/>
-                    </class>
-                  </package>
-                </report>
-                """;
-            var filePath = Path.Combine(dir, "jacoco.xml");
-            File.WriteAllText(filePath, jacocoXml);
-
-            var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
-            result.Should().Be(62.5);
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ParseCoverageFromJacoco_IgnoresNonClassCounters()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var jacocoXml = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <report name="MyProject">
-                  <package name="com/example">
-                    <class name="com/example/MyClass" sourcefilename="MyClass.java">
-                      <counter type="LINE" missed="3" covered="7"/>
-                    </class>
-                    <counter type="LINE" missed="3" covered="7"/>
-                  </package>
-                  <counter type="LINE" missed="3" covered="7"/>
-                </report>
-                """;
-            var filePath = Path.Combine(dir, "jacoco.xml");
-            File.WriteAllText(filePath, jacocoXml);
-
-            var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
-            result.Should().Be(70.0);
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ParseCoverageFromJacoco_EmptyFiles_ReturnsZero()
-    {
-        var result = QualityGateValidator.ParseCoverageFromJacoco([]);
-        result.Should().Be(0.0);
-    }
-
-    [Fact]
-    public void ParseCoverageFromJacoco_MalformedXml_SkipsFile()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var badFile = Path.Combine(dir, "bad.xml");
-            File.WriteAllText(badFile, "not xml at all");
-
-            var goodXml = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <report name="MyProject">
-                  <package name="com/example">
-                    <class name="com/example/MyClass" sourcefilename="MyClass.java">
-                      <counter type="LINE" missed="0" covered="10"/>
-                    </class>
-                  </package>
-                </report>
-                """;
-            var goodFile = Path.Combine(dir, "good.xml");
-            File.WriteAllText(goodFile, goodXml);
-
-            var result = QualityGateValidator.ParseCoverageFromJacoco([badFile, goodFile]);
-            result.Should().Be(100.0);
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ParseCoverageFromJacoco_MultipleFiles_SumsAcrossFiles()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var xml1 = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <report name="Module1">
-                  <package name="com/example">
-                    <class name="com/example/ClassA" sourcefilename="ClassA.java">
-                      <counter type="LINE" missed="0" covered="10"/>
-                    </class>
-                  </package>
-                </report>
-                """;
-            var xml2 = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <report name="Module2">
-                  <package name="com/example">
-                    <class name="com/example/ClassB" sourcefilename="ClassB.java">
-                      <counter type="LINE" missed="10" covered="0"/>
-                    </class>
-                  </package>
-                </report>
-                """;
-            var f1 = Path.Combine(dir, "jacoco1.xml");
-            var f2 = Path.Combine(dir, "jacoco2.xml");
-            File.WriteAllText(f1, xml1);
-            File.WriteAllText(f2, xml2);
-
-            var result = QualityGateValidator.ParseCoverageFromJacoco([f1, f2]);
-            result.Should().Be(50.0);
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
-    [Fact]
-    public void ParseCoverageFromJacoco_IgnoresNonLineCounterTypes()
-    {
-        var dir = CreateTempDir();
-        try
-        {
-            var jacocoXml = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <report name="MyProject">
-                  <package name="com/example">
-                    <class name="com/example/MyClass" sourcefilename="MyClass.java">
-                      <counter type="INSTRUCTION" missed="100" covered="0"/>
-                      <counter type="BRANCH" missed="50" covered="0"/>
-                      <counter type="COMPLEXITY" missed="20" covered="0"/>
-                      <counter type="METHOD" missed="10" covered="0"/>
-                      <counter type="LINE" missed="2" covered="8"/>
-                    </class>
-                  </package>
-                </report>
-                """;
-            var filePath = Path.Combine(dir, "jacoco.xml");
-            File.WriteAllText(filePath, jacocoXml);
-
-            var result = QualityGateValidator.ParseCoverageFromJacoco([filePath]);
-            result.Should().Be(80.0);
-        }
-        finally { Directory.Delete(dir, true); }
-    }
-
     // --- Helpers ---
 
     private static string CreateTempDir()
@@ -692,40 +375,6 @@ public class QualityGateValidatorTests
             </TestRun>
             """;
         File.WriteAllText(Path.Combine(dir, fileName), xml);
-    }
-
-    private static string WriteCoberturaFile(string dir, string fileName,
-        double lineRate, long linesValid)
-    {
-        var linesCovered = (long)(lineRate * linesValid);
-        var linesUncovered = linesValid - linesCovered;
-
-        // Generate line-level data matching the summary attributes
-        var lineElements = new System.Text.StringBuilder();
-        for (var i = 1; i <= linesCovered; i++)
-            lineElements.AppendLine($"              <line number=\"{i}\" hits=\"1\" />");
-        for (var i = (int)linesCovered + 1; i <= linesValid; i++)
-            lineElements.AppendLine($"              <line number=\"{i}\" hits=\"0\" />");
-
-        var xml = $"""
-            <?xml version="1.0" encoding="utf-8"?>
-            <coverage line-rate="{lineRate.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}" lines-valid="{linesValid}" lines-covered="{linesCovered}" version="1.0">
-              <packages>
-                <package name="TestAssembly">
-                  <classes>
-                    <class name="TestClass" filename="{fileName}.cs">
-                      <lines>
-            {lineElements}
-                      </lines>
-                    </class>
-                  </classes>
-                </package>
-              </packages>
-            </coverage>
-            """;
-        var path = Path.Combine(dir, fileName);
-        File.WriteAllText(path, xml);
-        return path;
     }
 
     [Fact]

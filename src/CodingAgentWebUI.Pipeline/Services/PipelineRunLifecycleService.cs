@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using Serilog.Context;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -129,6 +130,10 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     {
         run.FailureReason = reason;
         run.MarkCompleted();
+        // TODO: [WARNING] EmitOutputLine reads ActiveRun?.RunId internally. If ActiveRun differs from `run`
+        // (e.g. ActiveRun is null or points to a different run), the Serilog PipelineRunId property will be null
+        // or wrong. Consider passing run.RunId directly to ensure the Serilog entry is correlated to the correct
+        // run even when ActiveRun is not set. (#2178)
         EmitOutputLine($"❌ Pipeline failed: {reason}");
         TransitionTo(run, PipelineStep.Failed);
         await AddRunToHistoryAsync(run, ct).ConfigureAwait(false);
@@ -149,6 +154,14 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// <summary>Emits an output line to subscribers. Exception-isolated.</summary>
     public void EmitOutputLine(string message)
     {
+        var runId = ActiveRun?.RunId;
+        // TODO: [WARNING] When ActiveRun is null (pre-run or post-completion), runId is null and silently
+        // logged as the literal null. The acceptance criterion requires the run_id context property to be
+        // present and meaningful. A guard or diagnostic warning when ActiveRun is null may be appropriate. (#2178)
+        using (LogContext.PushProperty("PipelineRunId", runId))
+        {
+            _logger.Information("[Pipeline] {Line}", message);
+        }
         try { OnOutputLine?.Invoke(message); }
         catch (Exception ex) { _logger.Warning(ex, "OnOutputLine handler threw an exception"); }
     }
@@ -217,6 +230,12 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
             }
         }
         run.MarkCompleted();
+        // TODO: [WARNING] Double-emission risk: LocalPipelineExecutor.ExecutePipelineStepsAsync (line ~246) also
+        // calls buildResult.EmitOutputLine("🚫 Pipeline cancelled") via PipelineSignalRReporter on the
+        // CancelledOutcome path. In local (in-process) deployments both this call and the agent-side call can
+        // fire for the same cancellation event, causing "🚫 Pipeline cancelled" to appear twice in Serilog.
+        // The per-class test (EmitOutputLine_CancellationPath_SingleCallProducesExactlyOneEntry) guards only
+        // the PipelineSignalRReporter side and does not detect cross-class duplication. (#2178)
         EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);
         // Fire-and-forget: called from UI-triggered cancel; no ambient token available after CTS is cancelled

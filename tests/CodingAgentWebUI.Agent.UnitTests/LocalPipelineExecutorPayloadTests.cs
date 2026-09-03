@@ -41,25 +41,26 @@ public class LocalPipelineExecutorPayloadTests
     }
 
     [Fact]
-    public void BuildCompletionPayload_IsRework_WhenLinkedPullRequestSet()
+    public void BuildCompletionPayload_RunModeRework_WhenLinkedPullRequestSet()
     {
         var run = MakeRun();
         run.LinkedPullRequest = new LinkedPullRequest { Number = 99, Url = "https://github.com/org/repo/pull/99", BranchName = "fix/99", IsDraft = false };
+        run.RunMode = RunMode.Rework;
 
         var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
 
-        payload.IsRework.Should().BeTrue();
+        payload.RunMode.Should().Be(RunMode.Rework);
     }
 
     [Fact]
-    public void BuildCompletionPayload_IsNotRework_WhenNoLinkedPullRequest()
+    public void BuildCompletionPayload_RunModeNew_WhenNoLinkedPullRequest()
     {
         var run = MakeRun();
-        // LinkedPullRequest defaults to null
+        // LinkedPullRequest defaults to null, RunMode defaults to New
 
         var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
 
-        payload.IsRework.Should().BeFalse();
+        payload.RunMode.Should().Be(RunMode.New);
     }
 
     [Fact]
@@ -169,6 +170,31 @@ public class LocalPipelineExecutorPayloadTests
     }
 
     [Fact]
+    public void WhenRunHasFailureCategorySet_FailedOutcomePath_PayloadContainsFailureCategory()
+    {
+        // TODO: This test is tautological — it calls BuildFailurePayload directly with run.FailureCategory
+        // as the third argument, then asserts the returned payload contains that value. It verifies the
+        // BuildFailurePayload method stores its argument correctly, but does NOT verify that the call site
+        // in LocalPipelineExecutor's exception-handling path (FailedOutcome case) actually passes
+        // run.FailureCategory as the third argument. If that call site were reverted to
+        // BuildFailurePayload(run, ex.Message) (dropping the third arg), this test would still pass.
+        // A proper regression test should drive the full FailedOutcome path through LocalPipelineExecutor
+        // and assert the emitted payload carries the correct FailureCategory.
+        // (Issue #2202 review, TestQualityReviewer)
+        // Regression test for issue #2202 Fix C (secondary).
+        // Verifies that when run.FailureCategory is set (e.g. by ReconciliationService for Timeout),
+        // BuildFailurePayload is called with run.FailureCategory so the metric tag reflects the
+        // actual failure reason instead of null/"unknown".
+        var run = MakeRun();
+        run.FailureCategory = FailureReason.QualityGateExhausted;
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "Quality gate retries exhausted", run.FailureCategory);
+
+        payload.FailureCategory.Should().Be(FailureReason.QualityGateExhausted,
+            "FailureCategory set on run must be forwarded to the payload so metric tags are accurate");
+    }
+
+    [Fact]
     public void BuildFailurePayload_CopiesRetryCount()
     {
         var run = MakeRun();
@@ -180,14 +206,15 @@ public class LocalPipelineExecutorPayloadTests
     }
 
     [Fact]
-    public void BuildFailurePayload_IsRework_WhenLinkedPullRequestSet()
+    public void BuildFailurePayload_RunModeRework_WhenLinkedPullRequestSet()
     {
         var run = MakeRun();
         run.LinkedPullRequest = new LinkedPullRequest { Number = 55, Url = "https://github.com/org/repo/pull/55", BranchName = "fix/55", IsDraft = false };
+        run.RunMode = RunMode.Rework;
 
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "Error");
 
-        payload.IsRework.Should().BeTrue();
+        payload.RunMode.Should().Be(RunMode.Rework);
     }
 
     [Fact]

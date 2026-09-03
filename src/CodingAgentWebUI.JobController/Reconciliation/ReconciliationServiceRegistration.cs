@@ -13,7 +13,7 @@ public static class ReconciliationServiceRegistration
 {
     /// <summary>
     /// Registers <see cref="ReconciliationService"/> and <see cref="ReconciliationLoop"/>.
-    /// Requires <see cref="PvcPool"/> and <see cref="DispatchServiceOptions"/> to already be registered.
+    /// Requires <see cref="DispatchServiceOptions"/> to already be registered.
     /// Also registers <see cref="IReconciliationTrigger"/> as a forwarding alias to the singleton
     /// <see cref="ReconciliationService"/> instance, allowing <see cref="DispatchLoop"/> and
     /// <see cref="ConsolidationDispatchLoop"/> to request early reconciliation cycles without
@@ -24,7 +24,6 @@ public static class ReconciliationServiceRegistration
         services.AddSingleton<ReconciliationLoop>(sp => new ReconciliationLoop(
             sp.GetRequiredService<IPipelineApiWorkItemClient>(),
             sp.GetRequiredService<IKubernetesJobClient>(),
-            sp.GetRequiredService<PvcPool>(),
             sp.GetRequiredService<DispatchServiceOptions>()));
 
         services.AddSingleton<ReconciliationService>(sp => new ReconciliationService(
@@ -33,7 +32,7 @@ public static class ReconciliationServiceRegistration
 
         // Register IReconciliationTrigger as a forwarding alias to the same ReconciliationService
         // singleton. Both DispatchLoop and ConsolidationDispatchLoop depend on this interface
-        // to signal an early reconciliation cycle when the PVC pool is exhausted.
+        // to signal an early reconciliation cycle when needed.
         // The factory is lazy — IReconciliationTrigger is resolved only when DispatchLoop
         // is first requested, at which point ReconciliationService is already registered.
         services.AddSingleton<IReconciliationTrigger>(sp => sp.GetRequiredService<ReconciliationService>());

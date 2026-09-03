@@ -84,11 +84,19 @@ public class PipelineTelemetryQualityGateTests : IDisposable
     }
 
     [Fact]
+    public void PostPrCiDuration_Record_AcceptsValue()
+    {
+        PipelineTelemetry.PostPrCiDuration.Record(95.0,
+            PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-1", "TestProj"));
+
+        _measurements.Should().Contain(m => m.InstrumentName == "quality_gate.post_pr_ci.duration");
+    }
+
+    [Fact]
     public void QualityGateNames_AreStableConstants()
     {
         PipelineTelemetry.QualityGateNames.Compilation.Should().Be("compilation");
         PipelineTelemetry.QualityGateNames.Tests.Should().Be("tests");
-        PipelineTelemetry.QualityGateNames.Coverage.Should().Be("coverage");
         PipelineTelemetry.QualityGateNames.Security.Should().Be("security");
         PipelineTelemetry.QualityGateNames.ExternalCi.Should().Be("external_ci");
     }

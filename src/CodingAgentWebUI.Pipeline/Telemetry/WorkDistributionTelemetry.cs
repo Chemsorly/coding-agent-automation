@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Telemetry;
@@ -90,9 +91,15 @@ public static class WorkDistributionTelemetry
     public static readonly ObservableGauge<double> DispatcherLastPollEpoch =
         Meter.CreateObservableGauge<double>(
             "workdistribution.dispatcher_last_poll_epoch_seconds",
-            observeValues: () => _pollEpochRecorded
-                ? [new Measurement<double>(_lastPollEpochSeconds)]
-                : [],
+            observeValues: () =>
+            {
+                // Single volatile read — no torn-read possible between a "recorded" flag
+                // and the epoch value. Zero means RecordLastPollEpoch has not been called yet.
+                var ms = Volatile.Read(ref _pollEpochMillis);
+                return ms > 0
+                    ? [new Measurement<double>(ms / 1000.0)]
+                    : [];
+            },
             unit: "s",
             description: "Epoch seconds of the last DispatchService poll cycle");
 
@@ -173,8 +180,14 @@ public static class WorkDistributionTelemetry
 
     // ── Observable gauge backing state ──────────────────────────────────────
 
-    private static double _lastPollEpochSeconds;
-    private static bool _pollEpochRecorded;  // explicit init flag — avoids magic zero sentinel
+    // Single long encodes both "has been recorded" and "value":
+    //   0   → RecordLastPollEpoch has never been called (no measurement emitted)
+    //   > 0 → Unix epoch milliseconds of the last poll (divided by 1000.0 on read)
+    // Using a single field (accessed via Volatile.Read/Write) eliminates the two-field
+    // torn-read race that existed with the former (_lastPollEpochSeconds, _pollEpochRecorded) pair.
+    // Note: the C# 'volatile' keyword is restricted to types ≤ 4 bytes (CS0677), so
+    // Volatile.Read/Write are used instead for correct acquire/release memory ordering.
+    private static long _pollEpochMillis;
     private static int _credentialPoolAvailable;
     private static int _credentialPoolClaimed;
     private static Func<IEnumerable<Measurement<long>>>? _workItemsByStatusCallback;
@@ -195,8 +208,11 @@ public static class WorkDistributionTelemetry
     /// </summary>
     public static void RecordLastPollEpoch()
     {
-        _lastPollEpochSeconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
-        _pollEpochRecorded = true;
+        // Volatile.Write provides a release fence, ensuring that any preceding writes
+        // are visible to other threads before they observe the new epoch value.
+        // Collapses the old two-field (_lastPollEpochSeconds / _pollEpochRecorded) pattern
+        // into one field to prevent the export thread from observing an inconsistent pair.
+        Volatile.Write(ref _pollEpochMillis, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
     }
 
     /// <summary>
@@ -213,10 +229,18 @@ public static class WorkDistributionTelemetry
     /// Registers a callback that supplies workitems_by_status measurements.
     /// Called once at startup from DI registration when DB is configured.
     /// The callback should query WorkItems grouped by (Status, AgentSelector).
+    /// Logs a warning if called more than once (e.g. from a misconfigured DI container
+    /// or parallel test runs) — the second registration overwrites the first.
     /// </summary>
     public static void RegisterWorkItemsByStatusCallback(Func<IEnumerable<Measurement<long>>> callback)
     {
-        _workItemsByStatusCallback = callback;
+        if (Interlocked.CompareExchange(ref _workItemsByStatusCallback, callback, null) is not null)
+        {
+            Serilog.Log.Warning(
+                "WorkDistributionTelemetry: RegisterWorkItemsByStatusCallback called more than once — " +
+                "previous callback overwritten. This indicates a DI misconfiguration or parallel test run.");
+            _workItemsByStatusCallback = callback;
+        }
     }
 
     /// <summary>
@@ -251,7 +275,29 @@ public static class WorkDistributionTelemetry
     /// <summary>
     /// Emits a structured Information-level log for terminal work item transitions.
     /// Satisfies Requirement 10.3: workItemId, status, duration, agentId, failureReason.
+    /// Also emits <see cref="PipelineTelemetry.JobsCompleted"/>, <see cref="PipelineTelemetry.JobsFailed"/>,
+    /// and <see cref="PipelineTelemetry.JobDuration"/> from the long-lived Job Controller process to avoid
+    /// the pod-exit OTLP flush race that affects the agent-side recordings of the same instruments.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Double-counting:</strong> <see cref="PipelineRunInstrumentation.Dispose"/> also records
+    /// these same <c>pipeline.jobs.*</c> instruments from the ephemeral agent pod with richer tags
+    /// (<c>run_type</c>, <c>pipeline.project_id</c>, <c>pipeline.project_name</c>). When both the
+    /// agent-pod flush and this Job Controller recording succeed for the same job,
+    /// <c>pipeline_jobs_completed_total</c> / <c>pipeline_jobs_failed_total</c> will increment by 2 in
+    /// Prometheus. This is intentional: the metrics are now "at-least-once" reliable. The agent-pod
+    /// recording provides higher-fidelity tags and still works when the pod exits cleanly.
+    /// Use <c>workdistribution_workitems_terminated_total</c> for exact job counts.
+    /// </para>
+    /// <para>
+    /// <strong>Tag conventions:</strong> the Job Controller-side series carry <c>status</c> and (for
+    /// failures) <c>failure_reason</c> tags only — no <c>run_type</c> or project tags.
+    /// <c>failure_reason</c> values are snake_case (e.g. <c>"agent_error"</c>, <c>"timeout"</c>) to
+    /// match the agent-pod series on the same metric family. The emitter is further distinguishable
+    /// by <c>service.name=coding-agent-jobcontroller</c> vs the agent pod's <c>service.name</c>.
+    /// </para>
+    /// </remarks>
     public static void LogTerminalStatus(
         Guid workItemId,
         WorkItemStatus status,
@@ -277,5 +323,51 @@ public static class WorkDistributionTelemetry
             JobExecutionDuration.Record(duration.Value.TotalSeconds,
                 new KeyValuePair<string, object?>("status", status.ToString()));
         }
+
+        // Emit pipeline.jobs.* from the long-lived Job Controller to make these metrics reliable.
+        // See XML doc above for double-counting and tag-convention notes.
+        var statusTag = new KeyValuePair<string, object?>("status", status.ToString());
+        if (status == WorkItemStatus.Succeeded)
+        {
+            // NOTE: statusTag adds a "status" label to pipeline_jobs_completed_total that the
+            // agent-pod emitter (PipelineRunInstrumentation.Dispose) does NOT include. This creates two
+            // structurally incompatible label sets on the same metric family: the Job Controller series
+            // has {status="Succeeded"} while the agent-pod series has no status label. A bare
+            // increase(pipeline_jobs_completed_total[24h]) sums both correctly, but any Prometheus query
+            // filtering on {status="Succeeded"} will silently exclude agent-pod recordings.
+            // See observability.md — "Reliable sources by use case" for query guidance.
+            PipelineTelemetry.JobsCompleted.Add(1, statusTag);
+        }
+        else
+        {
+            // NOTE: WorkItemStatus.Cancelled is a real terminal status that reaches this else branch
+            // (via WorkItemEndpoints.EmitTerminalStatusTelemetryAsync), causing it to increment
+            // pipeline_jobs_failed_total with status="Cancelled", failure_reason="unknown". This
+            // inflates the failure counter and diverges from the agent-side PipelineRunInstrumentation
+            // which emits nothing for cancellations. Use workdistribution_workitems_terminated_total
+            // (which tags status accurately) for exact counts by status.
+            // snake_case failure_reason matches PipelineRunInstrumentation.Dispose() convention so
+            // that label-filtered Prometheus queries work uniformly across both emitters.
+            var failureReasonSnake = failureReason.HasValue
+                ? PascalToSnakeCase(failureReason.Value.ToString())
+                : "unknown";
+            PipelineTelemetry.JobsFailed.Add(1,
+                statusTag,
+                new KeyValuePair<string, object?>("failure_reason", failureReasonSnake));
+        }
+
+        if (duration.HasValue && duration.Value.TotalSeconds >= 0)
+            PipelineTelemetry.JobDuration.Record(duration.Value.TotalSeconds, statusTag);
     }
+
+    // Converts a PascalCase string to snake_case lowercase.
+    // E.g. "AgentError" → "agent_error", "Timeout" → "timeout", "QualityGateExhausted" → "quality_gate_exhausted".
+    // Mirrors ToFailureReasonTag() in PipelineRunInstrumentation (private partial class method) so that
+    // the failure_reason tag on pipeline.jobs.failed carries consistent values from both emitters.
+    // Uses a pre-compiled Regex to avoid repeated compilation; matchTimeout satisfies Sonar S6444.
+    private static readonly Regex PascalCaseBoundaryRegex =
+        new("(?<=[a-z0-9])([A-Z])", RegexOptions.None, matchTimeout: TimeSpan.FromSeconds(1));
+
+    private static string PascalToSnakeCase(string pascalCase) =>
+        PascalCaseBoundaryRegex.Replace(pascalCase, "_$1").ToLowerInvariant();
 }

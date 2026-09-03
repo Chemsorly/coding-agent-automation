@@ -76,6 +76,18 @@ public sealed record PipelineProject
     public int? MaxConsolidationDispatchRetries { get; init; }
 
     /// <summary>
+    /// Override for <see cref="PipelineConfiguration.CiCancelledMoveMaxRetries"/>.
+    /// Null = inherit from global configuration.
+    /// </summary>
+    public int? CiCancelledMoveMaxRetries { get; init; }
+
+    /// <summary>
+    /// Override for <see cref="PipelineConfiguration.FeedbackTimeoutSeconds"/>.
+    /// Null = inherit from global configuration.
+    /// </summary>
+    public int? FeedbackTimeoutSeconds { get; init; }
+
+    /// <summary>
     /// Optional markdown steering content written to the agent workspace before each run.
     /// Provides persistent behavioral instructions (code style, tool preferences, constraints).
     /// </summary>

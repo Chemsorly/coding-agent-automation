@@ -309,6 +309,60 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
         result.Should().Contain("501");
     }
 
+    [Fact]
+    public async Task ExtractLinkedIssuesAsync_BodyContainsSelfReference_DoesNotReturnPrNumber()
+    {
+        // Reproduces the production bug: PR #2194 body contained text like "PR #2194" (from AI review section)
+        // which SimpleHashPattern matched, returning the PR's own number as a linked issue.
+        // After fix: body parsing uses closing-keyword-only pattern, ignoring bare #N mentions.
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/2194/timeline"), Array.Empty<object>());
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/2194"),
+            BuildDetailedPRWithTitle(2194, "feature/auto-2194", false,
+                title: "feat: Fix something (#2132)",
+                body: "## Issue Context\n**Fix something** (#2132)\n\n## Issue Reference\nCloses #2132\n\n## AI Code Review\nSee PR #2194 for details. Also fixes issue with PR #2194 body."));
+
+        await using var provider = CreateProvider();
+        var result = await provider.ExtractLinkedIssuesAsync(2194, CancellationToken.None);
+
+        result.Should().Contain("2132", "linked issue from closing keyword must be extracted");
+        result.Should().NotContain("2194", "PR's own number must not be returned even if mentioned in body prose");
+    }
+
+    [Fact]
+    public async Task ExtractLinkedIssuesAsync_TimelineReturnsIssueRef_IncludesIt()
+    {
+        // Timeline crossreferenced event where source is a real issue (no pull_request field) — must be included
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/70/timeline"),
+            new[] { BuildCrossRefTimelineEvent(issueNumber: 42, isPullRequest: false) });
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/70"),
+            BuildDetailedPRWithTitle(70, "feature/x", false, title: "Fix (#42)", body: null));
+
+        await using var provider = CreateProvider();
+        var result = await provider.ExtractLinkedIssuesAsync(70, CancellationToken.None);
+
+        result.Should().Contain("42");
+    }
+
+    [Fact]
+    public async Task ExtractLinkedIssuesAsync_TimelineReturnsPrRef_DoesNotIncludePrNumber()
+    {
+        // Reproduces the production bug via timeline path: crossreferenced event where source is a PR
+        // (has pull_request field) — GitHub fires these when another PR/issue mentions this PR.
+        // After fix: events where source.issue.pull_request != null are filtered out.
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/2194/timeline"),
+            new[] { BuildCrossRefTimelineEvent(issueNumber: 2194, isPullRequest: true) });
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/2194"),
+            BuildDetailedPRWithTitle(2194, "feature/auto-2194", false,
+                title: "feat: Fix something (#2132)",
+                body: "## Issue Reference\nCloses #2132"));
+
+        await using var provider = CreateProvider();
+        var result = await provider.ExtractLinkedIssuesAsync(2194, CancellationToken.None);
+
+        result.Should().NotContain("2194", "crossreferenced event where source is a PR must be filtered out");
+        result.Should().Contain("2132", "closing keyword in body must still be extracted");
+    }
+
     // ── ListPullRequestCommentsAsync ──────────────────────────────────────────
 
     [Fact]
@@ -415,6 +469,40 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a timeline event JSON object representing a <c>crossreferenced</c> event.
+    /// The <paramref name="isPullRequest"/> flag controls whether the source issue carries a
+    /// <c>pull_request</c> field (non-null = PR), matching GitHub's actual API shape.
+    /// </summary>
+    private static object BuildCrossRefTimelineEvent(int issueNumber, bool isPullRequest)
+    {
+        object sourceIssue = isPullRequest
+            ? new
+            {
+                number = issueNumber,
+                title = $"PR or Issue #{issueNumber}",
+                state = "open",
+                pull_request = new { html_url = $"https://github.com/test-owner/test-repo/pull/{issueNumber}" }
+            }
+            : new
+            {
+                number = issueNumber,
+                title = $"Issue #{issueNumber}",
+                state = "open"
+                // No pull_request field — Octokit deserializes PullRequest as null
+            };
+
+        return new
+        {
+            @event = "cross-referenced",
+            source = new
+            {
+                type = "issue",
+                issue = sourceIssue
+            }
+        };
+    }
 
     private static object BuildDetailedPR(int number, string headRef, bool draft,
         string? body = "PR body") => new

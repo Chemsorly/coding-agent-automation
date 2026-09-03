@@ -312,7 +312,6 @@ public class PostgresConfigurationStoreTests : IDisposable
             CompilationArguments = ["build"],
             TestCommand = "dotnet",
             TestArguments = ["test"],
-            CoverageThreshold = 80.0,
             Enabled = true
         };
         await _store.SaveQualityGateConfigAsync(config, CancellationToken.None);
@@ -322,7 +321,6 @@ public class PostgresConfigurationStoreTests : IDisposable
         match.Id.Should().Be(id);
         match.DisplayName.Should().Be("Build & Test");
         match.CompilationCommand.Should().Be("dotnet");
-        match.CoverageThreshold.Should().Be(80.0);
     }
 
     [Fact]

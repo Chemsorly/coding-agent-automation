@@ -70,8 +70,8 @@ public sealed class PipelineRunSummary
     /// <summary>Analysis gate recommendation, or null if no assessment was produced.</summary>
     public AnalysisGateResult? AnalysisRecommendation { get; init; }
 
-    /// <summary>Whether this run was a rework of an existing PR.</summary>
-    public bool IsRework { get; init; }
+    /// <summary>What the pipeline did with the branch when this run started.</summary>
+    public RunMode RunMode { get; init; } = RunMode.New;
 
     /// <summary>Why the run failed, or null if it did not fail.</summary>
     public string? FailureReason { get; init; }
@@ -115,4 +115,11 @@ public sealed class PipelineRunSummary
 
     /// <summary>Agent provider config ID for display name resolution in the UI.</summary>
     public string? AgentProviderConfigId { get; init; }
+
+    /// <summary>
+    /// Feature branch name for this run, or null if not yet set (e.g. run is still in analysis).
+    /// Populated from <see cref="PipelineRun.BranchName"/> so the active-runs API endpoint
+    /// can return it to the Scheduler for the housekeeping branch-update guard.
+    /// </summary>
+    public string? BranchName { get; init; }
 }

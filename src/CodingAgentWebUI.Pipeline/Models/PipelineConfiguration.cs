@@ -656,4 +656,48 @@ public sealed record PipelineConfiguration
     [Key(78)]
     public TimeSpan TransientRetryDelay { get; init; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// When true, the closed-loop cycle runs a sweep after each dispatch pass to cancel Pending
+    /// Implementation WorkItems whose issue is no longer in the current cycle's eligibility set.
+    /// Default: false (safe rollout — enable explicitly in production when ready).
+    /// </summary>
+    [Key(79)]
+    public bool QueueSweepEnabled { get; init; }
+
+    /// <summary>
+    /// Maximum number of re-poll attempts when CI is cancelled because the branch HEAD moved
+    /// to a new commit (e.g. a teammate's push, a bot merge-from-main, or the pipeline's own
+    /// retry commit triggering GitHub's cancel-in-progress concurrency rule).
+    /// On each attempt the pipeline reads the current HEAD SHA; if it differs from the polled SHA,
+    /// it re-enters <see cref="PollCiWithNotStartedRetryAsync"/> on the new HEAD instead of treating
+    /// the cancellation as a gate failure and consuming an outer retry slot.
+    /// Default: 3. Valid range: 0–10.
+    /// </summary>
+    // Note: PollAndHandleInfraRetryAsync enforces the ExternalCiTimeout budget across the initial
+    // poll and all branch-moved re-polls using a single linked CancellationTokenSource, so total
+    // CI wait time is bounded by one ExternalCiTimeout window.
+    [Key(80)]
+    [ProjectOverridable(Order = 31)]
+    public int CiCancelledMoveMaxRetries
+    {
+        get => _ciCancelledMoveMaxRetries;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 0);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 10);
+            _ciCancelledMoveMaxRetries = value;
+        }
+    }
+    private readonly int _ciCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries;
+
+    /// <summary>
+    /// Timeout in seconds for the agent call during feedback collection (both success-path
+    /// <see cref="PullRequestFinalizationService.CollectFeedbackAsync"/> and failure-path
+    /// <c>CollectFailureFeedbackAsync</c> in <c>QualityGateExecutor</c>).
+    /// Default: 60 — matches the previous hard-coded <see cref="FeedbackConstraints.FailureFeedbackTimeoutSeconds"/>.
+    /// </summary>
+    [Key(81)]
+    [ProjectOverridable(Order = 32)]
+    public int FeedbackTimeoutSeconds { get; init; } = FeedbackConstraints.FailureFeedbackTimeoutSeconds;
+
 }

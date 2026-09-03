@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 public class PipelineRunSummaryTests
 {
     [Fact]
-    public void IsRework_WhenLinkedPullRequestSet_ReturnsTrue()
+    public void RunMode_WhenLinkedPullRequestSet_IsRework()
     {
         var run = new PipelineRun
         {
@@ -19,6 +19,7 @@ public class PipelineRunSummaryTests
             IssueProviderConfigId = "ip",
             RepoProviderConfigId = "rp",
             StartedAt = DateTime.UtcNow,
+            RunMode = RunMode.Rework,
             LinkedPullRequest = new LinkedPullRequest
             {
                 Number = 7,
@@ -30,7 +31,7 @@ public class PipelineRunSummaryTests
 
         var summary = run.ToSummary();
 
-        summary.IsRework.Should().BeTrue();
+        summary.RunMode.Should().Be(RunMode.Rework);
     }
 
     [Fact]
@@ -47,8 +48,7 @@ public class PipelineRunSummaryTests
             LatestQualityReport = new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true },
-                Tests = new GateResult { GateName = "Tests", Passed = false },
-                Coverage = new GateResult { GateName = "Coverage", Passed = false }
+                Tests = new GateResult { GateName = "Tests", Passed = false }
             }
         };
 
@@ -57,7 +57,6 @@ public class PipelineRunSummaryTests
         summary.QualityGateOutcomes.Should().NotBeNull();
         summary.QualityGateOutcomes!.Should().Contain(g => g.GateName == "Compilation" && g.Passed);
         summary.QualityGateOutcomes!.Should().Contain(g => g.GateName == "Tests" && !g.Passed);
-        summary.QualityGateOutcomes!.Should().Contain(g => g.GateName == "Coverage" && !g.Passed);
     }
 
     [Fact]
@@ -98,7 +97,7 @@ public class PipelineRunSummaryTests
     }
 
     [Fact]
-    public void IsRework_WhenLinkedPullRequestNull_ReturnsFalse()
+    public void RunMode_WhenNoLinkedPullRequest_IsNew()
     {
         var run = new PipelineRun
         {
@@ -112,7 +111,7 @@ public class PipelineRunSummaryTests
 
         var summary = run.ToSummary();
 
-        summary.IsRework.Should().BeFalse();
+        summary.RunMode.Should().Be(RunMode.New);
     }
 
     [Fact]

@@ -24,7 +24,7 @@ public sealed class ApiBackedServicesTests
         var itemId = Guid.NewGuid();
         var createdAt = DateTimeOffset.UtcNow.AddMinutes(-5);
 
-        client.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>
             {
                 new()
@@ -59,7 +59,7 @@ public sealed class ApiBackedServicesTests
     {
         var client = new Mock<IPipelineApiWorkItemClient>();
 
-        client.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>
             {
                 new()
@@ -88,7 +88,7 @@ public sealed class ApiBackedServicesTests
     public async Task GetPendingJobsAsync_EmptyList_ReturnEmptyAndSetsPendingCountZero()
     {
         var client = new Mock<IPipelineApiWorkItemClient>();
-        client.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>());
 
         var sut = new ApiBackedPendingWorkQuery(client.Object);
@@ -102,7 +102,7 @@ public sealed class ApiBackedServicesTests
     public async Task GetPendingJobsAsync_UpdatesPendingCount()
     {
         var client = new Mock<IPipelineApiWorkItemClient>();
-        client.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>
             {
                 new() { Id = Guid.NewGuid(), IssueIdentifier = "a#1", IssueProviderConfigId = "p1",
@@ -126,7 +126,7 @@ public sealed class ApiBackedServicesTests
     public async Task GetPendingJobsAsync_MultiLabelSelector_SplitsOnComma()
     {
         var client = new Mock<IPipelineApiWorkItemClient>();
-        client.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>
             {
                 new() { Id = Guid.NewGuid(), IssueIdentifier = "a#1", IssueProviderConfigId = "p1",
@@ -155,7 +155,7 @@ public sealed class ApiBackedServicesTests
     {
         // Arrange: DTO with all display fields populated
         var client = new Mock<IPipelineApiWorkItemClient>();
-        client.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>
             {
                 new()
@@ -193,7 +193,7 @@ public sealed class ApiBackedServicesTests
         // Arrange: null InitiatedBy simulates a payload where the key is absent.
         // System.Text.Json does not enforce `required` at runtime — missing keys produce null.
         var client = new Mock<IPipelineApiWorkItemClient>();
-        client.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>
             {
                 new()
@@ -222,7 +222,7 @@ public sealed class ApiBackedServicesTests
     {
         // Arrange: ProjectName is null but ProjectId is set — Name falls back to ProjectId
         var client = new Mock<IPipelineApiWorkItemClient>();
-        client.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>
             {
                 new()
@@ -254,7 +254,7 @@ public sealed class ApiBackedServicesTests
     {
         // Arrange: both ProjectName and ProjectId are null — Project must remain null
         var client = new Mock<IPipelineApiWorkItemClient>();
-        client.Setup(c => c.GetPendingAsync(200, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetPendingAsync(200, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PendingWorkItemDto>
             {
                 new()

@@ -8,6 +8,8 @@
 @using CodingAgentWebUI.Components.Shared
 @using Microsoft.AspNetCore.SignalR.Client
 @inject IPipelineApiRunHistoryClient RunHistory
+@inject IPipelineApiWorkItemClient WorkItems
+@inject IPipelineApiConfigClient ConfigClient
 @inject IConfigurationStore ConfigStore
 @inject IAgentHubConnection HubConnection
 @inject NavigationManager Nav
@@ -16,7 +18,8 @@
     Run Page — the deep-linkable run detail (see docs/frontend-redesign-handoff.md).
     Data: IPipelineApiRunHistoryClient.GetRunAsync(Guid) → PipelineRunSummary.
     Every field shown is a real property on the summary (tokens, cost, cache, phase
-    breakdown, review findings, feedback). Promoted from HistoryRunDetailModal.
+    breakdown, review findings, feedback). This page replaced the old run-detail modal and
+    hosts the live PipelineSidebar step ladder for active runs.
 *@
 
 <PageTitle>Run - Coding Agent</PageTitle>
@@ -109,7 +112,7 @@
             <div class="cockpit-card-pad cockpit-detail-grid">
                 <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset)</div></div>
                 <div class="cockpit-detail-item"><div class="k">Agent</div><div class="v mono">@(_resolvedAgentName ?? run.AgentId ?? "—")</div></div>
-                <div class="cockpit-detail-item"><div class="k">Initiated by</div><div class="v">@run.InitiatedBy</div></div>
+                <div class="cockpit-detail-item"><div class="k">Initiated by</div><div class="v">@InitiatedByConstants.ToDisplayString(run.InitiatedBy, run.RunMode)</div></div>
                 @if (run.ModelName is not null)
                 {
                     <div class="cockpit-detail-item"><div class="k">Model</div><div class="v mono">@run.ModelName</div></div>
@@ -182,11 +185,30 @@
             }
         </div>
 
+        @* Pipeline progress — full step ladder (ported from the old monitoring modal's PipelineSidebar).
+           Shown for live runs (streamed via hub snapshots) and completed runs (seeded from the summary).
+           The sidebar renders its own "Cancel Pipeline" button when IsRunning. *@
+        @if (_model is not null)
+        {
+            <div class="cockpit-card">
+                <div class="cockpit-card-header">
+                    <h2>Pipeline progress</h2>
+                    @if (_isLive)
+                    {
+                        <span class="step-badge step-running">@((_liveStep ?? run.FinalStep).ToDisplayName())</span>
+                    }
+                </div>
+                <div class="cockpit-card-pad">
+                    <PipelineSidebar Run="_model" IsRunning="_isLive" MaxRetries="_maxRetries" OnCancel="CancelRunAsync" />
+                </div>
+            </div>
+        }
+
         @if (_isLive)
         {
             <div class="cockpit-card">
                 <div class="cockpit-card-header">
-                    <h2>Live trace</h2>
+                    <h2>Live output</h2>
                     <span class="step-badge step-running">@((_liveStep ?? run.FinalStep).ToDisplayName())</span>
                 </div>
                 <div class="cockpit-card-pad">
@@ -224,6 +246,11 @@
     private ElementReference _logRef;
     private bool _scrollOnRender;
 
+    // View model for PipelineSidebar — seeded from the summary (completed runs) or a RunStateSnapshot
+    // (active runs), then kept live via hub step/snapshot events. Ported from the old AgentMonitoring modal.
+    private PipelineRun? _model;
+    private int _maxRetries = 3;
+
     private static bool IsActive(PipelineRunSummary r)
         => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
 
@@ -233,6 +260,7 @@
         _error = null;
         _run = null;
         _resolvedAgentName = null;
+        _model = null;
 
         if (!Guid.TryParse(RunId, out var id))
         {
@@ -251,6 +279,19 @@
                 _resolvedAgentName = cfg?.DisplayName;
             }
             _isLive = _run is not null && IsActive(_run);
+
+            // Seed the sidebar view model from the summary. For active runs the RunStateSnapshot
+            // pushed on SubscribeToRun refines it with live pipeline detail (quality gates, PR, review).
+            if (_run is not null && _model is null)
+                _model = BuildRunModelFromSummary(_run);
+
+            try
+            {
+                var config = await ConfigClient.GetPipelineConfigAsync(_cts.Token);
+                _maxRetries = config.MaxRetries;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { Serilog.Log.Debug(ex, "RunPage: failed to load pipeline config for MaxRetries; using default"); }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -286,7 +327,7 @@
             _stepSub = HubConnection.On<string, PipelineStep, DateTimeOffset>(
                 HubMethodNames.OnStepTransition, (jobId, step, _) => OnStep(jobId, step));
             _snapshotSub = HubConnection.On<string, RunStateSnapshot>(
-                HubMethodNames.OnRunStateSnapshot, (jobId, snap) => OnStep(jobId, snap.CurrentStep));
+                HubMethodNames.OnRunStateSnapshot, (jobId, snap) => OnSnapshot(jobId, snap));
             _completedSub = HubConnection.On<string, JobCompletionPayload>(
                 HubMethodNames.OnRunCompleted, (jobId, _) => OnCompleted(jobId));
 
@@ -317,7 +358,42 @@
     private void OnStep(string jobId, PipelineStep step)
     {
         if (jobId != RunId) return;
-        _ = InvokeAsync(() => { _liveStep = step; StateHasChanged(); });
+        _ = InvokeAsync(() =>
+        {
+            _liveStep = step;
+            if (_model is not null)
+            {
+                _model.CurrentStep = step;
+                // HighWaterMark must use logical order (RunningEnvironmentSetup has the highest enum int
+                // but is logically early), so compare via StepOrder rather than the raw enum value.
+                if (StepOrder.GetOrder(step) > StepOrder.GetOrder(_model.HighWaterMark))
+                    _model.HighWaterMark = step;
+            }
+            StateHasChanged();
+        });
+    }
+
+    // OnRunStateSnapshot(jobId, snapshot) — seed/refresh the PipelineSidebar view model with live
+    // pipeline detail (quality gates, PR status, code-review iterations). Ported from AgentMonitoring.
+    private void OnSnapshot(string jobId, RunStateSnapshot snapshot)
+    {
+        if (jobId != RunId) return;
+        _ = InvokeAsync(() =>
+        {
+            _model ??= new PipelineRun
+            {
+                RunId = jobId,
+                IssueIdentifier = snapshot.IssueIdentifier ?? _run?.IssueIdentifier ?? string.Empty,
+                IssueTitle = snapshot.IssueTitle ?? _run?.IssueTitle ?? string.Empty,
+                IssueProviderConfigId = string.Empty,
+                RepoProviderConfigId = string.Empty,
+                BrainProviderConfigId = snapshot.BrainProviderConfigId,
+                RunType = snapshot.RunType,
+            };
+            ApplySnapshotToRunModel(_model, snapshot);
+            _liveStep = snapshot.CurrentStep;
+            StateHasChanged();
+        });
     }
 
     private void OnCompleted(string jobId)
@@ -326,9 +402,117 @@
         _ = InvokeAsync(async () =>
         {
             _isLive = false;
-            await OnParametersSetAsync();   // reload the now-terminal summary
+            // Reload the now-terminal summary for final metadata, and advance the sidebar model's
+            // step to the terminal step — without discarding the live pipeline detail (quality gates,
+            // PR, review) already accumulated from snapshots.
+            if (Guid.TryParse(RunId, out var id))
+            {
+                try
+                {
+                    _run = await RunHistory.GetRunAsync(id, _cts.Token);
+                    if (_run is not null && _model is not null)
+                    {
+                        _model.CurrentStep = _run.FinalStep;
+                        if (StepOrder.GetOrder(_run.FinalStep) > StepOrder.GetOrder(_model.HighWaterMark))
+                            _model.HighWaterMark = _run.FinalStep;
+                    }
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to reload completed run {RunId}", RunId); }
+            }
             StateHasChanged();
         });
+    }
+
+    // Cancels the active run via the API (WorkItem.Id == PipelineRun.RunId). PostStatus(Cancelled)
+    // drives RunLifecycleManager.CancelRunAsync on the server — the same effect as the old modal's
+    // "Cancel Run". The live OnRunCompleted event will flip the view to its terminal state.
+    private async Task CancelRunAsync()
+    {
+        if (!Guid.TryParse(RunId, out var id)) return;
+        try
+        {
+            await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to cancel run {RunId}", RunId); }
+    }
+
+    // ── Sidebar view-model builders (ported from AgentMonitoring.razor.cs) ──
+
+    // Seeds the sidebar view model from a completed/loaded run summary. For active runs the hub's
+    // RunStateSnapshot refines it; for completed runs the summary is the only source.
+    private static PipelineRun BuildRunModelFromSummary(PipelineRunSummary summary)
+    {
+        var model = new PipelineRun
+        {
+            RunId = summary.RunId,
+            IssueIdentifier = summary.IssueIdentifier,
+            IssueTitle = summary.IssueTitle,
+            // IssueProviderConfigId / RepoProviderConfigId are not on the summary and the sidebar
+            // does not read them; use placeholders. BrainProviderConfigId is init-only, so it must
+            // be set at construction — the sidebar hides brain steps when it is null.
+            IssueProviderConfigId = string.Empty,
+            RepoProviderConfigId = string.Empty,
+            BrainProviderConfigId = summary.BrainRepoUsed ? "placeholder" : null,
+        };
+
+        model.CurrentStep = summary.FinalStep;
+        model.HighWaterMark = summary.FinalStep;
+        model.RetryCount = summary.RetryCount;
+        model.AnalysisRecommendation = summary.AnalysisRecommendation;
+        model.CodeReviewAgentsRun = summary.CodeReviewAgentsRun;
+        model.ModelName = summary.ModelName;
+        model.PullRequestUrl = summary.PullRequestUrl;
+        model.DecompositionSubIssuesCreated = summary.DecompositionSubIssuesCreated;
+        model.DecompositionSubIssuesAttempted = summary.DecompositionSubIssuesAttempted;
+        model.BrainUpdatesPushed = summary.BrainUpdatesPushed;
+        model.ResetStartedAt(summary.StartedAtOffset);
+        model.RunMode = summary.RunMode;
+
+        return model;
+    }
+
+    // Applies a live RunStateSnapshot to the sidebar view model (both on construct and on update).
+    private static void ApplySnapshotToRunModel(PipelineRun model, RunStateSnapshot snapshot)
+    {
+        model.CurrentStep = snapshot.CurrentStep;
+        model.HighWaterMark = snapshot.HighWaterMark;
+        model.RetryCount = snapshot.RetryCount;
+        model.BranchName = snapshot.BranchName;
+        model.BaselineHealthPassed = snapshot.BaselineHealthPassed;
+        model.BrainContextLoaded = snapshot.BrainContextLoaded;
+        model.BrainKnowledgeFileCount = snapshot.BrainKnowledgeFileCount;
+        model.IssueLabels = snapshot.IssueLabels;
+        model.AnalysisSkipped = snapshot.AnalysisSkipped;
+        model.AnalysisRecommendation = snapshot.AnalysisRecommendation;
+        model.FilesChangedCount = snapshot.FilesChangedCount;
+        model.LinesAdded = snapshot.LinesAdded;
+        model.LinesRemoved = snapshot.LinesRemoved;
+        model.CodeReviewIterationsCompleted = snapshot.CodeReviewIterationsCompleted;
+        model.CodeReviewIterationInProgress = snapshot.CodeReviewIterationInProgress;
+        model.CodeReviewIterationsTotal = snapshot.CodeReviewIterationsTotal;
+        model.CodeReviewAgentsRun = snapshot.CodeReviewAgentsRun;
+        model.SetCodeReviewCounts(snapshot.CodeReviewCriticalCount, snapshot.CodeReviewWarningCount, snapshot.CodeReviewSuggestionCount);
+        model.LatestQualityReport = snapshot.LatestQualityReport;
+        model.PullRequestUrl = snapshot.PullRequestUrl;
+        model.PullRequestNumber = snapshot.PullRequestNumber;
+        model.IsDraftPr = snapshot.IsDraftPr;
+        model.BlacklistedFilesDetected = snapshot.BlacklistedFilesDetected;
+        model.OpenIssuesDownloaded = snapshot.OpenIssuesDownloaded;
+        model.BrainFilesCommitted = snapshot.BrainFilesCommitted;
+        model.BrainUpdatesPushed = snapshot.BrainUpdatesPushed;
+        model.DecompositionSubIssuesCreated = snapshot.DecompositionSubIssuesCreated;
+        model.DecompositionSubIssuesAttempted = snapshot.DecompositionSubIssuesAttempted;
+        model.FailureReason = snapshot.FailureReason;
+        model.ModelName = snapshot.ModelName;
+        model.RepositoryName = snapshot.RepositoryName;
+        // Drain before re-enqueuing so a reconnect's second snapshot does not duplicate entries.
+        while (model.QualityGateHistory.TryDequeue(out _)) { }
+        foreach (var report in snapshot.QualityGateHistory)
+            model.QualityGateHistory.Enqueue(report);
+        if (snapshot.StartedAtOffset != default)
+            model.ResetStartedAt(snapshot.StartedAtOffset);
     }
 
     private static string Truncate(string? s, int n)

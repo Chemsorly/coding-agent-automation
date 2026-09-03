@@ -30,7 +30,8 @@ internal sealed class IssueProviderIssueOperations : IAgentIssueOperations
                 (label, c) => _issueProvider.RemoveLabelAsync(issueIdentifier, label, c),
                 (label, c) => _issueProvider.AddLabelAsync(issueIdentifier, label, c),
                 newLabel,
-                ct);
+                ct,
+                identifier: issueIdentifier.Value);
         }
         catch (Exception ex)
         {
