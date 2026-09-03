@@ -34,9 +34,6 @@ internal static class ApiSerilogRegistration
             // AuthenticateResult.NoResult() to be logged at Warning by the framework. Genuine invalid-key
             // failures are logged directly via the injected Serilog.ILogger and are NOT affected by this override.
             // Was: LogEventLevel.Warning — probes emit at Warning so that level didn't suppress them.
-            // TODO: Add a test that builds the LoggerConfiguration via ApiSerilogRegistration and asserts the
-            // Microsoft.AspNetCore.Authentication category override is present at Error level (not Warning),
-            // to guard against regression to the original level that allowed probe noise through.
             .MinimumLevel.Override("Microsoft.AspNetCore.Authentication", Serilog.Events.LogEventLevel.Error)
             // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
             .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
