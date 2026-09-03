@@ -26,13 +26,14 @@ public sealed class SmokeTests : E2ETestBase
     [Fact]
     public async Task AgentCoding_Page_Loads()
     {
+        // /agent-coding is the Pipelines page (the route is kept as an alias); its heading is "Pipelines".
         await Page.GotoAsync($"{BaseUrl}/agent-coding");
 
         // Wait for the page to render (Blazor Server needs a moment to establish circuit)
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
 
         var heading = await Page.TextContentAsync("h1");
-        Assert.Contains("Agent Coding", heading);
+        Assert.Contains("Pipelines", heading);
     }
 
     [Fact]
@@ -47,14 +48,14 @@ public sealed class SmokeTests : E2ETestBase
     }
 
     [Fact]
-    public async Task AgentMonitoring_Page_Loads()
+    public async Task Fleet_Page_Loads()
     {
-        await Page.GotoAsync($"{BaseUrl}/agent-monitoring");
+        await Page.GotoAsync($"{BaseUrl}/fleet");
 
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
 
         var heading = await Page.TextContentAsync("h1");
-        Assert.Contains("Agent", heading);
+        Assert.Contains("Fleet", heading);
     }
 
     [Fact]

@@ -145,8 +145,14 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
             // Replace IPipelineApiWorkItemClient with a mock to prevent real HTTP calls.
             var workItemClientMock = new Mock<IPipelineApiWorkItemClient>();
+            workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<PendingWorkItemDto>)Array.Empty<PendingWorkItemDto>());
+            // 2-arg sweep overload (ApiBackedPendingWorkQuery / IWorkItemSweepClient path).
             workItemClientMock.Setup(s => s.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((IReadOnlyList<PendingWorkItemDto>)Array.Empty<PendingWorkItemDto>());
+            // Active (in-flight) work items — the Work page queries these directly.
+            workItemClientMock.Setup(s => s.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((IReadOnlyList<ActiveWorkItemDto>)Array.Empty<ActiveWorkItemDto>());
             services.RemoveAll<IPipelineApiWorkItemClient>();
             services.AddSingleton(workItemClientMock.Object);
 
@@ -172,7 +178,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             // Spec 045: IPipelineApiRunHistoryClient is registered by AddPipelineApiClient() and would
             // try to connect to localhost:9999. Replace with a mock to prevent real HTTP calls.
             var runHistoryMock = new Mock<IPipelineApiRunHistoryClient>();
-            runHistoryMock.Setup(s => s.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            runHistoryMock.Setup(s => s.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = Array.Empty<PipelineRunSummary>(), Page = 1, PageSize = 50, HasMore = false });
             runHistoryMock.Setup(s => s.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((PipelineRunSummary?)null);

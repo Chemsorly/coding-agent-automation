@@ -1,0 +1,8 @@
+@page "/consolidation"
+@inject NavigationManager Nav
+
+@* Consolidation is folded into Pipelines (per-template triggers + Harness Suggestions). This preserves the old URL. *@
+
+@code {
+    protected override void OnInitialized() => Nav.NavigateTo("pipelines", replace: true);
+}

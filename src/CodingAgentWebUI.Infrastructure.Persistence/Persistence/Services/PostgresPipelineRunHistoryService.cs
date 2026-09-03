@@ -101,7 +101,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             throw new ArgumentOutOfRangeException(nameof(page), page,
                 $"Value would cause overflow when computing the page offset. Maximum page for pageSize={pageSize} is {int.MaxValue / pageSize + 1}.");
 
-        return await GetRunHistoryPagedInternalAsync(page, pageSize, ct).ConfigureAwait(false);
+        return await GetRunHistoryPagedInternalAsync(page, pageSize, finalStep: null, projectId: null, ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -114,7 +114,25 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         if (!feedbackOnly)
             return await GetRunHistoryAsync(page, pageSize, ct).ConfigureAwait(false);
 
-        return await GetRunHistoryPagedWithFeedbackFilterInternalAsync(page, pageSize, ct).ConfigureAwait(false);
+        return await GetRunHistoryPagedWithFeedbackFilterInternalAsync(page, pageSize, finalStep: null, projectId: null, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep, string? projectId, CancellationToken ct = default)
+    {
+        // No filters → defer to the existing feedback/plain paths (unchanged, incl. the offset overflow guard).
+        if (finalStep is null && string.IsNullOrEmpty(projectId))
+            return await GetRunHistoryAsync(page, pageSize, feedbackOnly, ct).ConfigureAwait(false);
+
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
+
+        // FinalStep and ProjectId are mapped columns, so both filters run DB-side before paging —
+        // pagination stays correct across the whole history. Feedback (JSONB) is combined in the same query.
+        return feedbackOnly
+            ? await GetRunHistoryPagedWithFeedbackFilterInternalAsync(page, pageSize, finalStep, projectId, ct).ConfigureAwait(false)
+            : await GetRunHistoryPagedInternalAsync(page, pageSize, finalStep, projectId, ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -258,7 +276,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         };
     }
 
-    private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedWithFeedbackFilterInternalAsync(int page, int pageSize, CancellationToken ct)
+    private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedWithFeedbackFilterInternalAsync(int page, int pageSize, PipelineStep? finalStep, string? projectId, CancellationToken ct)
     {
         // Filter feedbackOnly at the DB query level using Postgres JSONB `?` (key-exists) operator.
         // Since "Feedback" is embedded in the SummaryJson JSONB column (not a standalone column),
@@ -266,17 +284,25 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         // This ensures the page boundary is correctly applied after the feedback filter —
         // unlike the export endpoint (faithful port of legacy in-memory-post-paging behaviour).
         // Spec 045 reconciles the divergence.
+        // The optional outcome (FinalStep, int) and project (ProjectId, text) filters are folded into the
+        // SAME SQL, so "feedback only" + an outcome tab / a project scope still pages correctly (all applied
+        // before OFFSET/LIMIT). Filter values flow through EF DbParameters ({n}), so projectId is safe.
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
 
+        var sql = @"SELECT * FROM ""PipelineRuns"" WHERE ""SummaryJson"" IS NOT NULL AND ""SummaryJson"" ? 'Feedback' AND ""SummaryJson"" ->> 'Feedback' IS NOT NULL";
+        var filterArgs = new List<object>();
+        if (finalStep is { } step) { sql += " AND \"FinalStep\" = {" + filterArgs.Count + "}"; filterArgs.Add((int)step); }
+        if (!string.IsNullOrEmpty(projectId)) { sql += " AND \"ProjectId\" = {" + filterArgs.Count + "}"; filterArgs.Add(projectId); }
+        sql += " ORDER BY \"StartedAt\" DESC OFFSET {" + filterArgs.Count + "} LIMIT {" + (filterArgs.Count + 1) + "}";
+
         return await ScanPagedAsync(db, page, pageSize,
-            fetchBatch: static async (db, offset, batchSize, ct) =>
-                await db.PipelineRuns
-                    .FromSqlRaw(
-                        @"SELECT * FROM ""PipelineRuns"" WHERE ""SummaryJson"" IS NOT NULL AND ""SummaryJson"" ? 'Feedback' AND ""SummaryJson"" ->> 'Feedback' IS NOT NULL ORDER BY ""StartedAt"" DESC OFFSET {0} LIMIT {1}",
-                        offset, batchSize)
-                    .AsNoTracking()
-                    .ToListAsync(ct)
-                    .ConfigureAwait(false),
+            fetchBatch: async (db, offset, batchSize, innerCt) =>
+            {
+                var args = new List<object>(filterArgs) { offset, batchSize };
+                return await db.PipelineRuns
+                    .FromSqlRaw(sql, args.ToArray())
+                    .AsNoTracking().ToListAsync(innerCt).ConfigureAwait(false);
+            },
             include: s => s.Feedback is not null,
             ct).ConfigureAwait(false);
     }
@@ -299,7 +325,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             .ToList();
     }
 
-    private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedInternalAsync(int page, int pageSize, CancellationToken ct)
+    private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedInternalAsync(int page, int pageSize, PipelineStep? finalStep, string? projectId, CancellationToken ct)
     {
         // We need pageSize + 1 valid (non-consolidation) items to determine HasMore.
         // Because consolidation ghost entries may exist in the table (defense-in-depth filter),
@@ -307,14 +333,22 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
 
         return await ScanPagedAsync(db, page, pageSize,
-            fetchBatch: static async (db, offset, batchSize, ct) =>
-                await db.PipelineRuns
-                    .AsNoTracking()
+            fetchBatch: async (db, offset, batchSize, innerCt) =>
+            {
+                // Outcome (FinalStep) and project (ProjectId) filters run DB-side, before the page
+                // offset — so paging is correct across the whole history.
+                IQueryable<PipelineRunEntity> q = db.PipelineRuns.AsNoTracking();
+                if (finalStep is { } step)
+                    q = q.Where(r => r.FinalStep == step);
+                if (!string.IsNullOrEmpty(projectId))
+                    q = q.Where(r => r.ProjectId == projectId);
+                return await q
                     .OrderByDescending(r => r.StartedAt)
                     .Skip(offset)
                     .Take(batchSize)
-                    .ToListAsync(ct)
-                    .ConfigureAwait(false),
+                    .ToListAsync(innerCt)
+                    .ConfigureAwait(false);
+            },
             include: null,
             ct).ConfigureAwait(false);
     }

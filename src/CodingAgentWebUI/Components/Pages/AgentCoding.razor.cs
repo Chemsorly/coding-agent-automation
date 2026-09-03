@@ -14,7 +14,7 @@ public partial class AgentCoding : IDisposable
     [Inject] private ILoopStatusService LoopService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
-    [CascadingParameter] private MainLayout? Layout { get; set; }
+    [CascadingParameter] private CockpitLayout? Layout { get; set; }
 
     private string? _errorMessage;
     private string? _successMessage;

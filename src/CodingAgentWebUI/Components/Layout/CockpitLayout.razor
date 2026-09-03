@@ -1,0 +1,248 @@
+@inherits LayoutComponentBase
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Components.Shared
+@using CodingAgentWebUI.Services
+@using Serilog
+@inject IPipelineApiConfigClient ConfigClient
+@inject IPipelineApiRunHistoryClient RunHistory
+@inject CockpitState State
+@inject IFaroService Faro
+@inject NotificationFaroBridge FaroBridge
+@inject IJSRuntime JS
+
+@*
+    Cockpit shell — the redesigned frontend's layout (see docs/frontend-redesign-handoff.md).
+    Opt in per-page with `@layout CockpitLayout`. Re-themes tokens via the `.cockpit` scope
+    (cockpit.css), so token-based components adopt the new look with no rewrite.
+    Nav destinations that aren't built yet render inert ("soon"); they light up as their slices land.
+*@
+
+<div class="cockpit">
+
+    <nav class="cockpit-sidebar" aria-label="Main navigation">
+        <div class="cockpit-brand">
+            <span class="cockpit-brand-mark"><Icon Name="bot" Size="19" /></span>
+            <span class="cockpit-brand-text">
+                <span class="cockpit-brand-name">Coding Agent</span>
+                <span class="cockpit-brand-sub">Automation</span>
+            </span>
+        </div>
+
+        <div class="cockpit-nav">
+            <NavLink class="cockpit-nav-link" href="overview" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="monitor" Size="18" /></span><span class="cockpit-nav-text">Overview</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="work" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="clipboard-list" Size="18" /></span><span class="cockpit-nav-text">Work</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="runs" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="scroll-text" Size="18" /></span><span class="cockpit-nav-text">Runs</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="fleet" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="bot" Size="18" /></span><span class="cockpit-nav-text">Fleet</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="attention" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="alert-triangle" Size="18" /></span><span class="cockpit-nav-text">Attention</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="insights" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="bar-chart-2" Size="18" /></span><span class="cockpit-nav-text">Insights</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="pipelines" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="refresh-cw" Size="18" /></span><span class="cockpit-nav-text">Pipelines</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="settings" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="settings" Size="18" /></span><span class="cockpit-nav-text">Settings</span>
+            </NavLink>
+
+            <div class="cockpit-nav-sep"></div>
+            <span class="cockpit-nav-group">Tools</span>
+            <NavLink class="cockpit-nav-link" href="knowledge" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="brain" Size="18" /></span><span class="cockpit-nav-text">Knowledge</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="agent-chat" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="message-circle" Size="18" /></span><span class="cockpit-nav-text">Agent Chat</span>
+            </NavLink>
+            <NavLink class="cockpit-nav-link" href="about" Match="NavLinkMatch.Prefix">
+                <span class="cockpit-nav-icon"><Icon Name="info" Size="18" /></span><span class="cockpit-nav-text">About</span>
+            </NavLink>
+        </div>
+
+        <div class="cockpit-sidebar-footer">
+            <SidebarHealthIndicators />
+            <button class="cockpit-theme-toggle" @onclick="ToggleTheme" title="Toggle light / dark">
+                <Icon Name="@(_theme == "dark" ? "sun" : "moon")" Size="16" />
+                <span>@(_theme == "dark" ? "Light" : "Dark") mode</span>
+            </button>
+        </div>
+    </nav>
+
+    <div class="cockpit-main">
+        <div class="cockpit-topbar">
+            <label class="cockpit-project-switcher" title="Project scope">
+                <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+                <select value="@State.SelectedProjectId" @onchange="OnProjectChanged" aria-label="Project scope">
+                    <option value="">All projects</option>
+                    @foreach (var p in _projects)
+                    {
+                        <option value="@p.Id">@p.Name</option>
+                    }
+                </select>
+            </label>
+
+            <div class="cockpit-search" aria-hidden="true">
+                <Icon Name="search" Size="15" />
+                <span>Search runs, issues, agents…</span>
+            </div>
+
+            <div class="cockpit-topbar-right">
+                <a href="/attention" class="cockpit-attention @(State.AttentionCount > 0 ? "" : "is-disabled")" title="Attention inbox" style="text-decoration: none;">
+                    <Icon Name="alert-triangle" Size="14" /> @(State.AttentionCount > 0 ? $"{State.AttentionCount} need attention" : "Attention")
+                </a>
+            </div>
+        </div>
+
+        <div class="cockpit-body">
+            <FirstRunBanner />
+            <CascadingValue Value="this" IsFixed="true">
+                @Body
+            </CascadingValue>
+        </div>
+    </div>
+</div>
+
+<ShortcutHelpOverlay IsVisible="_showShortcutHelp" OnClose="CloseShortcutHelp" />
+
+@code {
+    private IReadOnlyList<PipelineProject> _projects = [];
+
+    // Global keyboard help (ported from the retired MainLayout — the '?' overlay + Escape).
+    private DotNetObjectReference<CockpitLayout>? _dotNetRef;
+    private bool _showShortcutHelp;
+
+    /// <summary>Raised on Escape so pages (e.g. Pipelines dispatch drawers) can close their overlays.</summary>
+    public event Action? OnEscapePressed;
+
+    protected override void OnInitialized() => State.OnChange += HandleStateChanged;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // The config API can be unavailable in some run modes — degrade to "All projects".
+            Log.Warning(ex, "CockpitLayout: failed to load projects for the scope switcher");
+            _projects = [];
+        }
+
+        await RefreshAttentionCountAsync();
+    }
+
+    private void OnProjectChanged(ChangeEventArgs e)
+    {
+        var id = e.Value as string ?? "";
+        var name = _projects.FirstOrDefault(p => p.Id == id)?.Name;
+        State.SetProject(id, name);
+    }
+
+    private async Task RefreshAttentionCountAsync()
+    {
+        // Top-bar Attention count from recent run history (same predicates as the Attention screen).
+        // Runs once per circuit; the Attention page refreshes it on visit.
+        try
+        {
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false);
+            var count = runs.Items.Count(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady)
+                      + runs.Items.Count(r => r.FinalStep == PipelineStep.Failed)
+                      + runs.Items.Count(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed);
+            State.SetAttentionCount(count);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "CockpitLayout: failed to compute attention count");
+        }
+    }
+
+    private void HandleStateChanged() => InvokeAsync(StateHasChanged);
+
+    // Theme follows the app's shared toggle (data-theme + localStorage). App.razor applies the
+    // stored theme before Blazor renders; this just syncs the button icon and flips it on click.
+    private string _theme = "dark";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                _dotNetRef = DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("registerGlobalKeyboardHandler", _dotNetRef);
+
+                var t = await JS.InvokeAsync<string>("getTheme");
+                if (!string.IsNullOrEmpty(t) && t != _theme)
+                {
+                    _theme = t;
+                    StateHasChanged();
+                }
+
+                // Signal to Faro that the Blazor circuit connected successfully (ported from MainLayout).
+                await Faro.PushEventAsync("blazor.circuit.connected");
+            }
+            catch (JSDisconnectedException) { }
+            catch (JSException) { }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+        }
+
+        // Flush any notifications added since the last render to Faro (ported from MainLayout).
+        await FaroBridge.FlushAsync();
+    }
+
+    [JSInvokable]
+    public async Task HandleGlobalKey(string key)
+    {
+        switch (key)
+        {
+            case "Escape":
+                if (_showShortcutHelp)
+                    _showShortcutHelp = false;
+                else
+                    OnEscapePressed?.Invoke();
+                break;
+            case "?":
+                _showShortcutHelp = !_showShortcutHelp;
+                break;
+        }
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void CloseShortcutHelp()
+    {
+        _showShortcutHelp = false;
+        StateHasChanged();
+    }
+
+    private async Task ToggleTheme()
+    {
+        _theme = _theme == "dark" ? "light" : "dark";
+        try { await JS.InvokeVoidAsync("setTheme", _theme); }
+        catch (JSException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        State.OnChange -= HandleStateChanged;
+        // Push disconnect while JS is still available (ported from MainLayout; FaroService swallows a dead circuit).
+        await Faro.PushEventAsync("blazor.circuit.disconnected");
+        try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
+        catch (JSDisconnectedException) { }
+        catch (InvalidOperationException) { }
+        _dotNetRef?.Dispose();
+    }
+}

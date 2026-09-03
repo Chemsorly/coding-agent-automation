@@ -1,0 +1,213 @@
+@page "/attention"
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Components.Shared
+@using CodingAgentWebUI.Services
+@inject IPipelineApiRunHistoryClient RunHistory
+@inject BlockedIssuesService BlockedIssues
+@inject CockpitState State
+@inject NavigationManager Nav
+
+@*
+    Attention — things that may need a human (see docs/frontend-redesign-handoff.md).
+    Real from run history: needs-refinement (AnalysisRecommendation == NotReady), failed runs,
+    decomposition plans posted. The blocked-issues section is a LIVE query (issue-provider + the
+    dependency checker, the same path the dispatch drawer uses) — loaded async after first render so
+    it never blocks the page. Rows deep-link to the run (and its PR / issue where present).
+*@
+
+<PageTitle>Attention - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Attention</h1>
+            <span class="cockpit-page-sub">@(_loading ? "…" : $"{_sections.Sum(s => s.Rows.Count)}") item(s) that may need a human — acted on in the issue tracker</span>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">Loading…</div></div>
+    }
+    else if (_error is not null)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">@_error</div></div>
+    }
+    else
+    {
+        @foreach (var sec in _sections.Where(s => s.Rows.Count > 0))
+        {
+            <div class="cockpit-card">
+                <div class="cockpit-card-header">
+                    <span style="display: inline-flex; align-items: center; gap: 9px;">
+                        <span style="width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: @sec.Color; background: @sec.Bg;"><Icon Name="@sec.Icon" Size="15" /></span>
+                        <h2>@sec.Title</h2>
+                    </span>
+                    <span style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; background: var(--surface-alt); padding: 1px 8px; border-radius: 999px;">@sec.Rows.Count</span>
+                </div>
+                @foreach (var r in sec.Rows)
+                {
+                    <div class="cockpit-run-row" @onclick="() => OpenRun(r.RunId)">
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@r.IssueIdentifier @r.IssueTitle</div>
+                            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">@sec.Subline(r)</div>
+                        </div>
+                        <span style="display: inline-flex; align-items: center; gap: 12px; flex-shrink: 0;">
+                            @if (!string.IsNullOrEmpty(r.IssueUrl))
+                            {
+                                <a href="@r.IssueUrl" target="_blank" rel="noopener" class="mono" style="font-size: 11.5px; font-weight: 600;" @onclick:stopPropagation="true" title="Open the issue in the provider">Issue ↗</a>
+                            }
+                            @if (!string.IsNullOrEmpty(r.PullRequestUrl))
+                            {
+                                <a href="@r.PullRequestUrl" target="_blank" rel="noopener" class="mono" style="font-size: 11.5px; font-weight: 600;" @onclick:stopPropagation="true">PR ↗</a>
+                            }
+                            <Icon Name="chevron-right" Size="16" Class="cockpit-row-chevron" />
+                        </span>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (_sections.Sum(s => s.Rows.Count) == 0)
+        {
+            <div class="cockpit-card"><div class="cockpit-empty">Nothing needs attention right now.</div></div>
+        }
+
+        <div class="cockpit-card">
+            <div class="cockpit-card-header">
+                <h2>Blocked issues</h2>
+                <span style="font-size: 12px; color: var(--text-muted);">@(_blockedLoading ? "checking…" : _blockedIssues.Count.ToString())</span>
+            </div>
+            @if (_blockedLoading)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">Checking issue dependencies…</div>
+            }
+            else if (_blockedIssues.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">No open issues are blocked by dependencies.</div>
+            }
+            else
+            {
+                @foreach (var b in _blockedIssues)
+                {
+                    <div class="cockpit-run-row" style="cursor: default;">
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@b.Identifier @b.Title</div>
+                            <div style="font-size: 12px; color: var(--warning); margin-top: 2px;">Blocked by @string.Join(", ", b.BlockedBy.Select(n => $"#{n}"))</div>
+                        </div>
+                        @if (!string.IsNullOrEmpty(b.Url))
+                        {
+                            <a href="@b.Url" target="_blank" rel="noopener" class="mono" style="font-size: 11.5px; font-weight: 600; flex-shrink: 0;" title="Open the issue in the provider">Issue ↗</a>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private sealed record Section(string Icon, string Color, string Bg, string Title,
+        List<PipelineRunSummary> Rows, Func<PipelineRunSummary, string> Subline);
+
+    private readonly CancellationTokenSource _cts = new();
+    private bool _loading = true;
+    private string? _error;
+    private List<Section> _sections = new();
+
+    // Blocked issues are a LIVE provider query (see BlockedIssuesService) — loaded after first render.
+    private IReadOnlyList<BlockedIssue> _blockedIssues = [];
+    private bool _blockedLoading = true;
+
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    // Kick off the blocked-issues query only after the run-based sections have rendered, so the live
+    // provider calls never delay the page's first paint.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await LoadBlockedIssuesAsync();
+    }
+
+    // Re-aggregate when the top-bar project scope changes. (SetAttentionCount raises OnChange, not
+    // OnProjectChanged, so publishing the count below cannot re-trigger this handler.)
+    private async void HandleProjectChanged()
+    {
+        try
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+            await LoadBlockedIssuesAsync();
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadBlockedIssuesAsync()
+    {
+        _blockedLoading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            _blockedIssues = await BlockedIssues.GetBlockedIssuesAsync(State.SelectedProjectId, _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch { /* the service already degrades to empty on provider errors */ }
+        finally
+        {
+            _blockedLoading = false;
+            try { await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { }
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
+            var items = runs.Items;
+
+            var needsRefinement = items.Where(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady).ToList();
+            var failed = items.Where(r => r.FinalStep == PipelineStep.Failed).ToList();
+            var plans = items.Where(r => r.RunType == PipelineRunType.DecompositionAnalysis && r.FinalStep == PipelineStep.Completed).ToList();
+
+            _sections = new()
+            {
+                new("alert-triangle", "#B45309", "var(--warning-bg)", "Needs refinement", needsRefinement,
+                    _ => "Confidence gate: scope not ready — refine on the issue"),
+                new("x-circle", "#DC2626", "var(--error-bg)", "Failed runs", failed,
+                    r => string.IsNullOrEmpty(r.FailureReason)
+                        ? (r.RetryCount > 0 ? $"Failed after {r.RetryCount} retries" : "Failed")
+                        : r.FailureReason),
+                new("puzzle", "#4F46E5", "var(--bg-active)", "Decomposition plans posted", plans,
+                    _ => "Plan posted — approve by adding agent:epic-approved on the issue"),
+            };
+
+            State.SetAttentionCount(_sections.Sum(s => s.Rows.Count));
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load attention items: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void OpenRun(string runId) => Nav.NavigateTo($"/runs/{runId}");
+
+    public async ValueTask DisposeAsync()
+    {
+        State.OnProjectChanged -= HandleProjectChanged;
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

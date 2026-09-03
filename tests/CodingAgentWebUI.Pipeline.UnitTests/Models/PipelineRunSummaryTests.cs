@@ -35,6 +35,68 @@ public class PipelineRunSummaryTests
     }
 
     [Fact]
+    public void ToSummary_FlattensQualityGateOutcomes_FromLatestReport()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            LatestQualityReport = new QualityGateReport
+            {
+                Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                Tests = new GateResult { GateName = "Tests", Passed = false }
+            }
+        };
+
+        var summary = run.ToSummary();
+
+        summary.QualityGateOutcomes.Should().NotBeNull();
+        summary.QualityGateOutcomes!.Should().Contain(g => g.GateName == "Compilation" && g.Passed);
+        summary.QualityGateOutcomes!.Should().Contain(g => g.GateName == "Tests" && !g.Passed);
+    }
+
+    [Fact]
+    public void ToSummary_NoQualityReport_LeavesGateOutcomesNull()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+
+        run.ToSummary().QualityGateOutcomes.Should().BeNull();
+    }
+
+    [Fact]
+    public void ToSummary_CapturesBrainUsageFields()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            BrainContextLoaded = true,
+            BrainKnowledgeFileCount = 7
+        };
+
+        var summary = run.ToSummary();
+
+        summary.BrainContextLoaded.Should().BeTrue();
+        summary.BrainKnowledgeFileCount.Should().Be(7);
+    }
+
+    [Fact]
     public void RunMode_WhenNoLinkedPullRequest_IsNew()
     {
         var run = new PipelineRun

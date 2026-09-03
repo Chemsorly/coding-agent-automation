@@ -58,7 +58,7 @@ public sealed class PipelineRunEndpointTests
             $"{method} {path} must reject agent-tier derived keys after W0-04 — operator-only endpoint");
     }
 
-    private Guid SeedRun(bool hasFeedback = false)
+    private Guid SeedRun(bool hasFeedback = false, PipelineStep finalStep = PipelineStep.Completed, string? projectId = null, string? issueUrl = null)
     {
         var runId = Guid.NewGuid();
         RunFeedback? feedback = hasFeedback
@@ -75,13 +75,15 @@ public sealed class PipelineRunEndpointTests
             RunId = runId.ToString(),
             IssueIdentifier = new IssueIdentifier($"run-issue-{Guid.NewGuid():N}"),
             IssueTitle = "Test run",
-            FinalStep = PipelineStep.Completed,
+            FinalStep = finalStep,
 #pragma warning disable CS0618
             StartedAt = DateTime.UtcNow,
             CompletedAt = DateTime.UtcNow,
 #pragma warning restore CS0618
             StartedAtOffset = DateTimeOffset.UtcNow,
             CompletedAtOffset = DateTimeOffset.UtcNow,
+            ProjectId = projectId,
+            IssueUrl = issueUrl,
             Feedback = feedback
         };
 
@@ -91,7 +93,8 @@ public sealed class PipelineRunEndpointTests
             RunId = runId,
             IssueIdentifier = summary.IssueIdentifier.Value,
             IssueTitle = summary.IssueTitle,
-            FinalStep = PipelineStep.Completed,
+            FinalStep = finalStep,
+            ProjectId = projectId,
             StartedAt = DateTimeOffset.UtcNow,
             CompletedAt = DateTimeOffset.UtcNow,
             SummaryJson = JsonSerializer.Serialize(summary, PipelineJsonOptions.Default)
@@ -135,6 +138,50 @@ public sealed class PipelineRunEndpointTests
         // Both runs should appear (no filtering)
         body.Items.Should().Contain(r => r.RunId == withFeedback.ToString()
             || r.RunId == withoutFeedback.ToString());
+    }
+
+    [Fact]
+    public async Task GetRunHistory_FinalStepFilter_ReturnsOnlyMatchingOutcome()
+    {
+        var failed = SeedRun(finalStep: PipelineStep.Failed);
+        var completed = SeedRun(finalStep: PipelineStep.Completed);
+
+        var response = await _client.GetAsync("/api/pipeline-runs?finalStep=Failed&pageSize=500");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content.ReadFromJsonAsync<PagedResult<PipelineRunSummary>>(PipelineJsonOptions.Default);
+        body.Should().NotBeNull();
+        body!.Items.Should().Contain(r => r.RunId == failed.ToString());
+        body.Items.Should().NotContain(r => r.RunId == completed.ToString());
+    }
+
+    [Fact]
+    public async Task GetRunHistory_ProjectIdFilter_ReturnsOnlyMatchingProject()
+    {
+        var inA = SeedRun(projectId: "project-a");
+        var inB = SeedRun(projectId: "project-b");
+
+        var response = await _client.GetAsync("/api/pipeline-runs?projectId=project-a&pageSize=500");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await response.Content.ReadFromJsonAsync<PagedResult<PipelineRunSummary>>(PipelineJsonOptions.Default);
+        body.Should().NotBeNull();
+        body!.Items.Should().Contain(r => r.RunId == inA.ToString());
+        body.Items.Should().NotContain(r => r.RunId == inB.ToString());
+    }
+
+    [Fact]
+    public async Task GetRunById_RoundTripsIssueUrl()
+    {
+        const string url = "https://github.com/owner/repo/issues/42";
+        var runId = SeedRun(issueUrl: url);
+
+        var response = await _client.GetAsync($"/api/pipeline-runs/{runId}");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var summary = await response.Content.ReadFromJsonAsync<PipelineRunSummary>(PipelineJsonOptions.Default);
+        summary.Should().NotBeNull();
+        summary!.IssueUrl.Should().Be(url);
     }
 
     // ── Single run ────────────────────────────────────────────────────────────────

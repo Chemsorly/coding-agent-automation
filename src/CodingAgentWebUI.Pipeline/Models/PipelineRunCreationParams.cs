@@ -20,6 +20,9 @@ public sealed class PipelineRunCreationParams
     /// <summary>Issue title for display.</summary>
     public required string IssueTitle { get; init; }
 
+    /// <summary>Web URL of the issue on the provider, or null if unknown.</summary>
+    public string? IssueUrl { get; init; }
+
     /// <summary>Provider config ID for issue operations.</summary>
     public required string IssueProviderConfigId { get; init; }
 
