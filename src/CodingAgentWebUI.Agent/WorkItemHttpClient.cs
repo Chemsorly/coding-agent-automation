@@ -7,8 +7,6 @@ using CodingAgentWebUI.Pipeline.Models;
 using OpenTelemetry;
 using OpenTelemetry.Context.Propagation;
 
-// WorkItemStatusUpdate moved to CodingAgentWebUI.Pipeline.Models
-
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
