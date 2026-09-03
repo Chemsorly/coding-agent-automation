@@ -1572,6 +1572,11 @@ public class ChatJobDispatcherTests
         // Double-decrement within this dispatcher's own session is prevented by the
         // Interlocked.CompareExchange(ref entry.Cleaned, 1, 0) gate in CleanupSession.
         // HasActiveSession(agentId)==false independently confirms the session was cleaned.
+        // TODO (WARNING): The >= 1 assertion no longer detects a double-decrement bug within
+        // this dispatcher's own CleanupSession if a second decrement originates from the same
+        // dispatcher instance (e.g., due to a future refactor that removes the CompareExchange
+        // gate). The root cause is shared global static instrument state across parallel tests.
+        // If/when the instrument is made test-injectable (or tests are isolated), restore == 1.
         Interlocked.Read(ref decrementCount).Should().BeGreaterThanOrEqualTo(1,
             "workdistribution_chat_sessions_active must be decremented (−1) by CleanupSession " +
             "after the watcher faults");

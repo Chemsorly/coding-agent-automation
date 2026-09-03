@@ -502,6 +502,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     /// <inheritdoc />
     public async Task<IReadOnlyList<AgentEntry>> GetIdleAgentsAsync(CancellationToken ct = default)
     {
+        // TODO (WARNING): CancellationToken `ct` is accepted but not forwarded to SetMembersAsync
+        // or HashGetAllAsync. If the caller cancels (e.g. HTTP request aborted, shutdown), Redis
+        // I/O will not honour the cancellation and the method will not return until all round-trips
+        // complete. Pass `ct` to each store call once IRedisStore supports cancellation tokens.
         var members = await _store.SetMembersAsync(AgentsIdleKey);
         if (members.Length == 0) return Array.Empty<AgentEntry>();
 
@@ -525,17 +529,19 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // The merge-and-assign is wrapped in lock(_cacheUpdateLock) to serialise this assignment
         // with concurrent Register/DeregisterAsync write paths (which also hold the lock), so that
         // their cache updates cannot be silently overwritten by this assignment.
-        // TODO (WARNING): The lock narrows but does not eliminate the resurrection race. The Redis
+        // KNOWN-STALENESS: The lock narrows but does not eliminate the resurrection race. The Redis
         // reads (SetMembersAsync + Task.WhenAll HGETALL) happen *before* the lock is acquired, so
         // `list` may still contain a deregistered agent if DeregisterAsync runs after the idle-set
         // fetch but before this lock entry. Concretely: (1) SetMembersAsync returns [A, B];
         // (2) DeregisterAsync acquires lock, RemoveFromAllAgentsCache → cache=[B], releases lock,
         // then removes A from Redis; (3) this lock is acquired, existing=[B], merged=[A,B] —
         // agent-A is resurrected until the next write-path update. This residual staleness is
-        // acceptable for the OTel gauge (dispatch reads Redis directly and is unaffected), but
-        // the comment should not claim the lock *prevents* resurrection — it only prevents the
-        // write-overwrite race where a concurrent lock-protected update is silently clobbered.
-        // No await inside the lock — only in-memory list operations after all Redis I/O is done.
+        // acceptable: dispatch reads Redis directly (not this cache) so dispatch correctness is
+        // unaffected; the OTel gauge may transiently over-count but self-corrects on the next
+        // write-path update (Register, Deregister, or heartbeat). The lock prevents the
+        // write-overwrite race (a concurrent lock-protected Register/Deregister update being
+        // silently clobbered), which was the primary bug. No await inside the lock — only
+        // in-memory list operations after all Redis I/O is done.
         lock (_cacheUpdateLock)
         {
             var idleIds = new HashSet<string>(list.Select(e => e.AgentId.Value));
@@ -563,12 +569,21 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     /// <inheritdoc />
     public async Task<IReadOnlyList<AgentEntry>> GetAllAgentsAsync(CancellationToken ct = default)
     {
+        // TODO (WARNING): CancellationToken `ct` is accepted but not forwarded to SetMembersAsync
+        // or HashGetAllAsync. If the caller cancels (e.g. HTTP request aborted, shutdown), Redis
+        // I/O will not honour the cancellation and the method will not return until all round-trips
+        // complete. Pass `ct` to each store call once IRedisStore supports cancellation tokens.
         var members = await _store.SetMembersAsync(AgentsAllKey);
         if (members.Length == 0)
         {
             // Wrap under lock for the same reason as the main path: a concurrent Register
             // that runs between SetMembersAsync returning empty and this assignment would have
             // its cache update silently overwritten with an empty list.
+            // KNOWN-STALENESS: The lock does not prevent a Register that completed between
+            // SetMembersAsync returning [] and this lock acquisition from being wiped: (1)
+            // SetMembersAsync → []; (2) Register → lock → _allAgentsCache=[A] → release; (3) this
+            // lock → _allAgentsCache=[]. The agent disappears from sync reads until the next
+            // write-path update. Acceptable: dispatch reads Redis directly; OTel gauge self-corrects.
             lock (_cacheUpdateLock) { _allAgentsCache = []; }
             return Array.Empty<AgentEntry>();
         }

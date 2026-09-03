@@ -477,48 +477,54 @@ public sealed class DistributedAgentRegistryServiceTests
     }
 
     // ── _allAgentsCache race condition regression tests ────────────────────────
+    // Note: FakeRedisStore uses synchronous (already-completed) Tasks, which means the true
+    // concurrent TOCTOU window (Redis idle-set fetch racing with Deregister) cannot be
+    // triggered deterministically in unit tests. The tests below instead verify the
+    // sequential post-condition invariants: that after a deregister + idle/all-agents refresh,
+    // the cache correctly reflects the deregistered state. These are valid regression tests for
+    // the overall behavior even though they cannot exercise the exact race window.
+    // TODO (WARNING): The three GetByAgentId snapshot-fallback tests (GetByAgentId_ReturnsEntry_FromLocalSnapshot_WhenRedisReturnsEmpty,
+    // GetByAgentId_ReturnsNull_AfterDeregister_EvenWithRedisPending, GetByAgentId_ReturnsNull_AfterDeregister_SnapshotFallbackDoesNotResurrect)
+    // and the AlwaysEmptyHashRedisStore helper were removed as part of the _allAgentsCache fix (issue #2219).
+    // These tests covered the _localSnapshot → GetAgentRaw fallback path introduced in issue #2144.
+    // Their removal leaves the snapshot-fallback branch uncovered: a regression that broke snapshot
+    // fallback (e.g., removing the _localSnapshot lookup in GetAgentRaw) would not be caught.
+    // Consider restoring them or adding equivalent coverage for the fire-and-forget registration gap.
 
     [Fact]
-    public async Task GetIdleAgentsAsync_DoesNotResurrectDeregisteredAgent_WhenMergeRacesDeregister()
+    public async Task GetIdleAgentsAsync_CacheExcludesDeregisteredAgent_AfterDeregisterAndRefresh()
     {
-        // Arrange: register two agents so cache = [agent-1, agent-2] and both are in agents:idle.
+        // Arrange: register two agents — both end up in agents:idle and _allAgentsCache.
         _sut.Register(Msg("agent-1"), "conn-1");
         _sut.Register(Msg("agent-2"), "conn-2");
 
-        // Simulate the race: call GetIdleAgentsAsync while agent-1 is still in Redis idle set
-        // (so it lands in the merged cache), then deregister agent-1 and call GetIdleAgentsAsync
-        // again — post-fix the merge must not re-introduce agent-1 into _allAgentsCache.
-        // Step 1: prime the cache — GetIdleAgentsAsync sees [agent-1, agent-2] in Redis.
+        // Prime the cache: GetIdleAgentsAsync sees [agent-1, agent-2] in Redis idle set
+        // and populates _allAgentsCache = [agent-1, agent-2].
         await _sut.GetIdleAgentsAsync();
 
-        // Step 2: deregister agent-1 under lock (RemoveFromAllAgentsCache removes it).
+        // Deregister agent-1: RemoveFromAllAgentsCache (under lock) removes it from the cache,
+        // and DeregisterAsync removes it from agents:idle and agents:all in Redis.
         _sut.Deregister(new AgentId("agent-1"));
         await _sut.LastDeregisterTask;
 
-        // At this point _allAgentsCache = [agent-2] (set by RemoveFromAllAgentsCache under lock).
-        // agent-1 is also removed from agents:idle in Redis by DeregisterAsync.
-
-        // Step 3: call GetIdleAgentsAsync again. Pre-fix: it reads existing = [agent-2],
-        // fetches idle list = [agent-2] from Redis (agent-1 gone), computes merged = [agent-2]
-        // — no resurrection here since agent-1 is already out of the idle set. The true race
-        // window requires agent-1 to still be in the Redis idle set during the fetch, which
-        // FakeRedisStore's synchronous execution makes hard to trigger deterministically.
-        // Instead we verify the lock semantics: after deregister + GetIdleAgentsAsync, the
-        // cache must not contain agent-1.
-        // TODO (WARNING): This test does not exercise the resurrection scenario it names. By the time
-        // Step 3's GetIdleAgentsAsync runs, agent-1 has already been removed from agents:idle in
-        // FakeRedisStore (by await LastDeregisterTask), so the merge never sees agent-1 and this
-        // test would pass identically against the un-patched code. The true resurrection race
-        // (agent-1 still in Redis idle set when GetIdleAgentsAsync fetches, then Deregister runs)
-        // cannot be triggered deterministically with FakeRedisStore's synchronous execution model.
-        // To properly cover this scenario, FakeRedisStore would need a controllable yield point, or
-        // _allAgentsCache would need to be directly injectable for test setup.
+        // Act: call GetIdleAgentsAsync again. The Redis idle set now contains only agent-2,
+        // so the lock-protected merge produces _allAgentsCache = [agent-2].
         await _sut.GetIdleAgentsAsync();
 
-        // Assert: cache does not contain the deregistered agent.
+        // TODO (WARNING): This test verifies the sequential post-condition (deregister before
+        // the second GetIdleAgentsAsync call) but does not exercise the lock-protection fix.
+        // The correct result arises because agent-1 is absent from the Redis idle set at the
+        // time of the call, not because of the lock. The actual race the lock prevents — a
+        // concurrent DeregisterAsync running between SetMembersAsync and the lock entry — cannot
+        // be triggered deterministically with a synchronous FakeRedisStore. A more targeted test
+        // would prime the cache via the write path (RemoveFromAllAgentsCache) to reflect the
+        // deregistered state, then call GetIdleAgentsAsync and confirm the write-path update was
+        // not silently overwritten by the lock-protected merge.
+
+        // Assert: the deregistered agent is not in the cache after the refresh.
         var all = _sut.GetAllAgents();
         all.Should().NotContain(a => a.AgentId.Value == "agent-1",
-            "deregistered agent must not be resurrected in _allAgentsCache by GetIdleAgentsAsync");
+            "deregistered agent must not appear in _allAgentsCache after GetIdleAgentsAsync refresh");
         all.Should().ContainSingle(a => a.AgentId.Value == "agent-2",
             "the still-registered agent must remain in the cache");
     }
@@ -526,30 +532,42 @@ public sealed class DistributedAgentRegistryServiceTests
     [Fact]
     public async Task GetBusyAgentCount_AfterDeregister_ReturnsZeroNotPermanentlyElevated()
     {
-        // Arrange: register agent-1, transition to Busy (so GetBusyAgentCount would return 1),
-        // then deregister. After deregistration the count must drop to 0.
+        // Arrange: register agent-1 and transition it to Busy.
         _sut.Register(Msg("agent-1"), "conn-1");
         _sut.TransitionStatus(new AgentId("agent-1"), AgentStatus.Busy);
+        // TODO (WARNING): TransitionStatus is fire-and-forget (TransitionStatusAsync via
+        // ContinueWith). The pre-condition assertion below relies on FakeRedisStore returning
+        // already-completed Tasks so that TransitionStatusAsync resolves synchronously before
+        // GetBusyAgentCount() is called. If FakeRedisStore is ever changed to yield, the Busy
+        // status may not have been written to Redis before the read, causing countBefore == 0
+        // and an intermittent pre-condition failure. Add a LastTransitionTask hook (analogous
+        // to LastDeregisterTask/LastHeartbeatTask) and await it here to make this explicit.
+
+        // Pre-condition: count must be 1 before deregister so the test can verify the drop.
+        // GetBusyAgentCount reads GetAllAgentsAsync which reads Redis; TransitionStatusAsync
+        // writes the Busy status to Redis, so this assertion confirms both the status
+        // transition and the Redis read path are working.
+        var countBefore = _sut.GetBusyAgentCount();
+        countBefore.Should().Be(1,
+            "agent-1 must be counted as Busy before deregistration (pre-condition)");
+
+        // Deregister agent-1: DeregisterAsync removes it from agents:all in Redis and
+        // RemoveFromAllAgentsCache removes it from _allAgentsCache under lock.
         _sut.Deregister(new AgentId("agent-1"));
         await _sut.LastDeregisterTask;
 
         // Act: GetBusyAgentCount calls GetAllAgents() → GetAllAgentsAsync() → reads Redis.
         // DeregisterAsync removed agent-1 from agents:all in Redis, so GetAllAgentsAsync
-        // returns an empty list and the count must be 0.
-        // TODO (WARNING): This test does not cover the multi-cycle resurrection scenario from AC#3.
-        // GetBusyAgentCount always goes through GetAllAgentsAsync which unconditionally reads Redis
-        // and re-populates the cache — so this test verifies Redis consistency (which was never
-        // broken) rather than _allAgentsCache staleness. The actual failure mode is: a sync caller
-        // reads the stale _allAgentsCache after a GetIdleAgentsAsync partial-merge re-introduced a
-        // deregistered Busy agent. A test covering the full multi-cycle path would need to:
-        // (1) prime the cache with a Busy agent via GetIdleAgentsAsync, (2) deregister it,
-        // (3) trigger a GetIdleAgentsAsync that sees the agent still in the Redis idle set (stale
-        // fetch window), then (4) read GetBusyAgentCount via a cache-only path (not via Redis).
-        // FakeRedisStore's synchronous execution makes step 3 non-deterministic to trigger.
+        // returns an empty list and the count must drop to 0.
+        // Note: GetBusyAgentCount always reads through GetAllAgentsAsync (a full Redis read),
+        // so this test verifies that the Redis deregistration path is complete and that the
+        // count correctly reflects the post-deregister state. The lock-protected cache fix
+        // ensures that a concurrent write-path update (e.g. Register) is not overwritten by
+        // a subsequent GetAllAgentsAsync full-replacement, which is the complementary invariant.
         var count = _sut.GetBusyAgentCount();
 
         // Assert
         count.Should().Be(0,
-            "deregistered agent must not remain in _allAgentsCache as Busy across dispatch cycles");
+            "deregistered agent must not be counted as Busy after DeregisterAsync completes");
     }
 }
