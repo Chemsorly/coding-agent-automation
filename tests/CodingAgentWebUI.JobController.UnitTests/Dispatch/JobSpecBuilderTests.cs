@@ -57,11 +57,6 @@ public sealed class JobSpecBuilderTests
     [Fact]
     public void WhenDerivedKeySecretName_Set_AgentApiKeyEnvVar_FromSecret_NoMasterMount()
     {
-        // TODO: This test only exercises DerivedKeySecretName with WorkItemId = null (the non-work-item path).
-        // The combination DerivedKeySecretName != null with WorkItemId != null now throws (new guard), so the
-        // original workItemId: Guid.NewGuid() was changed to null. The test suite covers only the non-work-item
-        // positive path for DerivedKeySecretName; consider adding a test for a non-work-item pod type that
-        // confirms DerivedKeySecretName still wires env vars correctly when WorkItemId is null.
         var template = KiroTemplate();
         var ctx = BaseCtx(workItemId: null) with
         {
@@ -94,10 +89,6 @@ public sealed class JobSpecBuilderTests
     public void Build_WhenDerivedKeySecretNameSetForWorkItemPod_ShouldThrow()
     {
         // Guard: DerivedKeySecretName + WorkItemId together → double-derivation footgun.
-        // TODO: The message content assertions (.Contain("double-derivation"), .Contain("decisions.md"))
-        // are tied to the specific wording of the exception message. If the message is rephrased without
-        // those exact tokens the test will fail for cosmetic reasons. Consider relaxing to only assert
-        // the exception type if message wording flexibility is desired in future.
         var ctx = BaseCtx(workItemId: Guid.NewGuid()) with
         {
             DerivedKeySecretName = "caa-derived-abc123"
