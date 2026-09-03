@@ -5,6 +5,12 @@ public sealed class PipelineRunSummary
     public required string RunId { get; init; }
     public required IssueIdentifier IssueIdentifier { get; init; }
     public required string IssueTitle { get; init; }
+
+    /// <summary>Web URL of the issue on the provider, or null if unknown. Enables "open in provider" links.</summary>
+    public string? IssueUrl { get; init; }
+
+    /// <summary>Per-gate pass/fail outcomes from the run's final quality-gate report, or null if gates didn't run. Powers the Insights per-gate ranking.</summary>
+    public IReadOnlyList<GateOutcome>? QualityGateOutcomes { get; init; }
     public required PipelineStep FinalStep { get; init; }
 
     [Obsolete("Use StartedAtOffset for timezone-safe comparisons")]
@@ -48,6 +54,12 @@ public sealed class PipelineRunSummary
 
     /// <summary>Whether brain updates were pushed successfully.</summary>
     public bool BrainUpdatesPushed { get; init; }
+
+    /// <summary>Whether brain knowledge was loaded into this run's context.</summary>
+    public bool BrainContextLoaded { get; init; }
+
+    /// <summary>Number of brain knowledge files loaded into this run's context (0 when none/unused). Powers the Knowledge usage aggregate.</summary>
+    public int BrainKnowledgeFileCount { get; init; }
 
     /// <summary>Which agent executed this run, or null for test-infrastructure runs.</summary>
     public string? AgentId { get; init; }

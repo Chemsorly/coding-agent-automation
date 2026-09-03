@@ -11,4 +11,7 @@ public sealed class IssueSummary : IHasCreatedAt
 
     /// <summary>Issue body text, used for dependency reference parsing. Null when not populated.</summary>
     public string? Description { get; init; }
+
+    /// <summary>Web URL of the issue on the provider (GitHub HtmlUrl / GitLab WebUrl), or null if unknown.</summary>
+    public string? Url { get; init; }
 }

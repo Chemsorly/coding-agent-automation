@@ -1,0 +1,155 @@
+@page "/knowledge"
+@layout CockpitLayout
+@implements IDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
+@using CodingAgentWebUI.Components.Shared
+@inject IPipelineApiRunHistoryClient RunHistory
+@inject CockpitState State
+
+@*
+    Knowledge — real aggregate brain usage across the fetched run window (see docs/frontend-redesign-handoff.md).
+    Uses per-run fields that ARE recorded: BrainRepoUsed, BrainContextLoaded, BrainKnowledgeFileCount,
+    BrainUpdatesPushed (the last two captured onto the summary at ToSummary). The per-FILE impact
+    ("which knowledge file lifts success") still needs agent-side instrumentation of the files that
+    enter each run's context — noted honestly below, not fabricated.
+*@
+
+<PageTitle>Knowledge - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Knowledge</h1>
+            <span class="cockpit-page-sub">How the agent brain is used across recent runs</span>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">Loading…</div></div>
+    }
+    else if (_error is not null)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">@_error</div></div>
+    }
+    else if (_total == 0)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">No runs in the recent window yet.</div></div>
+    }
+    else
+    {
+        <div class="cockpit-stat-strip">
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Runs · recent</span><span class="cockpit-stat-v">@_total</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Used brain</span><span class="cockpit-stat-v">@_withBrain<span style="font-size: 15px; color: var(--text-faint);"> · @Pct(_withBrain)%</span></span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Context loaded</span><span class="cockpit-stat-v">@_ctxLoaded</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg files loaded</span><span class="cockpit-stat-v">@_avgFiles.ToString("0.0")</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Updates pushed</span><span class="cockpit-stat-v">@_updatesPushed</span></div>
+        </div>
+
+        <div class="cockpit-card">
+            <div class="cockpit-card-header"><h2>Does the brain help?</h2><span style="font-size: 12px; color: var(--text-muted);">completed-rate over the recent window</span></div>
+            <div class="cockpit-card-pad">
+                @if (_brainRuns == 0 || _nonBrainRuns == 0)
+                {
+                    <div style="font-size: 12.5px; color: var(--text-muted);">Needs runs both with and without the brain in this window to compare (@_brainRuns with · @_nonBrainRuns without).</div>
+                }
+                else
+                {
+                    <div style="display: grid; grid-template-columns: 140px 1fr 120px; gap: 10px 14px; align-items: center;">
+                        <span style="font-size: 13px; font-weight: 600;">With brain</span>
+                        <div style="height: 10px; border-radius: 5px; background: var(--surface-alt); overflow: hidden;"><div style="height: 100%; width: @_brainSuccess%; background: var(--success);"></div></div>
+                        <span style="font-size: 12.5px; color: var(--text-muted); text-align: right;">@_brainSuccess% · @_brainRuns runs</span>
+
+                        <span style="font-size: 13px; font-weight: 600;">Without brain</span>
+                        <div style="height: 10px; border-radius: 5px; background: var(--surface-alt); overflow: hidden;"><div style="height: 100%; width: @_nonBrainSuccess%; background: var(--text-faint);"></div></div>
+                        <span style="font-size: 12.5px; color: var(--text-muted); text-align: right;">@_nonBrainSuccess% · @_nonBrainRuns runs</span>
+                    </div>
+                    <div style="margin-top: 12px; font-size: 12.5px;">
+                        @{ var lift = _brainSuccess - _nonBrainSuccess; }
+                        <span style="font-weight: 700; color: @(lift >= 0 ? "var(--success)" : "var(--error)");">@(lift >= 0 ? "+" : "")@lift pts</span>
+                        <span style="color: var(--text-muted);"> completed-rate on runs that used the brain — a correlation over a small recent window, not a causal measure.</span>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="cockpit-card cockpit-card-pad" style="display: flex; gap: 12px; align-items: flex-start; font-size: 12.5px; color: var(--text-muted); line-height: 1.55;">
+            <span style="flex-shrink: 0; color: var(--accent);"><Icon Name="info" Size="15" /></span>
+            <span>
+                <strong style="color: var(--text);">Per-file impact isn't shown</strong> — "which knowledge file lifts outcomes / what's stale or never loaded" needs the agent to record the specific brain files that enter each run's context, then join to the outcome. Only the per-run <em>counts</em> above are recorded today, so nothing per-file is fabricated. <a href="/pipelines">Pipelines</a> consolidates the brain via Brain Consolidation.
+            </span>
+        </div>
+    }
+</div>
+
+@code {
+    private readonly CancellationTokenSource _cts = new();
+    private bool _loading = true;
+    private string? _error;
+
+    private int _total, _withBrain, _ctxLoaded, _updatesPushed;
+    private double _avgFiles;
+    private int _brainRuns, _nonBrainRuns, _brainSuccess, _nonBrainSuccess;
+
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async void HandleProjectChanged()
+    {
+        try { await LoadAsync(); await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        _total = _withBrain = _ctxLoaded = _updatesPushed = 0;
+        _avgFiles = 0;
+        _brainRuns = _nonBrainRuns = _brainSuccess = _nonBrainSuccess = 0;
+        try
+        {
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
+            var items = runs.Items;
+            _total = items.Count;
+            if (_total == 0) { _loading = false; return; }
+
+            _withBrain = items.Count(r => r.BrainRepoUsed);
+            _ctxLoaded = items.Count(r => r.BrainContextLoaded);
+            _updatesPushed = items.Count(r => r.BrainUpdatesPushed);
+
+            var loaded = items.Where(r => r.BrainContextLoaded && r.BrainKnowledgeFileCount > 0).ToList();
+            _avgFiles = loaded.Count > 0 ? loaded.Average(r => r.BrainKnowledgeFileCount) : 0;
+
+            // Correlation: completed-rate of runs that used the brain vs. those that didn't.
+            var brain = items.Where(r => r.BrainRepoUsed).ToList();
+            var nonBrain = items.Where(r => !r.BrainRepoUsed).ToList();
+            _brainRuns = brain.Count;
+            _nonBrainRuns = nonBrain.Count;
+            _brainSuccess = _brainRuns > 0 ? (int)Math.Round(100.0 * brain.Count(r => r.FinalStep == PipelineStep.Completed) / _brainRuns) : 0;
+            _nonBrainSuccess = _nonBrainRuns > 0 ? (int)Math.Round(100.0 * nonBrain.Count(r => r.FinalStep == PipelineStep.Completed) / _nonBrainRuns) : 0;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load knowledge metrics: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private int Pct(int count) => _total > 0 ? (int)Math.Round(100.0 * count / _total) : 0;
+
+    public void Dispose()
+    {
+        State.OnProjectChanged -= HandleProjectChanged;
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}

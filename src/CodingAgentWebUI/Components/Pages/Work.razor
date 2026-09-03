@@ -1,0 +1,312 @@
+@page "/work"
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Services
+@using CodingAgentWebUI.Components.Shared
+@inject IPipelineApiWorkItemClient WorkItems
+@inject BlockedIssuesService BlockedIssues
+@inject CockpitState State
+@inject NavigationManager Nav
+
+@*
+    Work — the app-side work queue (see docs/frontend-redesign-handoff.md).
+    Data: IPipelineApiWorkItemClient.GetPendingAsync (queued) + GetActiveAsync (in-flight).
+    Browsing the provider's issue backlog with dependency-based readiness + dispatch is the
+    dispatch-drawer flow (Pipelines → Browse Issues) — linked, not duplicated here.
+    Per-issue PriorityWeight is intentionally absent (no backend field).
+*@
+
+<PageTitle>Work - Coding Agent</PageTitle>
+
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Work</h1>
+            <span class="cockpit-page-sub">Queued and in-flight work items</span>
+        </div>
+        <a href="/pipelines" class="cockpit-pager-btn" style="text-decoration: none;">
+            <Icon Name="search" Size="14" /> Browse &amp; dispatch
+        </a>
+    </div>
+
+    <AutoRefresh IntervalSeconds="10" OnTick="RefreshQuietAsync" />
+
+    @if (_loading)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">Loading work…</div></div>
+    }
+    else if (_error is not null)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">@_error</div></div>
+    }
+    else
+    {
+        <div class="cockpit-stat-strip">
+            <div class="cockpit-stat"><span class="cockpit-stat-l">In flight</span><span class="cockpit-stat-v">@_active.Count</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Queued</span><span class="cockpit-stat-v">@_pending.Count</span></div>
+        </div>
+
+        <!-- in flight -->
+        <div class="cockpit-card">
+            <div class="cockpit-card-header"><h2>In flight</h2><span style="font-size: 12px; color: var(--text-muted);">@_active.Count</span></div>
+            @if (_active.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">Nothing dispatched right now.</div>
+            }
+            else
+            {
+                <div class="monitoring-table-wrap">
+                    <table class="monitoring-table">
+                        <thead><tr><th>Issue</th><th>Status</th><th>Agent selector</th><th>Dispatched</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var a in _active)
+                            {
+                                <tr>
+                                    <td class="monitoring-mono">#@a.IssueIdentifier</td>
+                                    <td><span class="cockpit-chip" style="color: @StatusColor(a.Status);">@a.Status</span></td>
+                                    <td class="monitoring-mono monitoring-muted">@a.AgentSelector</td>
+                                    <td>@(a.DispatchedAt is null ? "—" : Ago(a.DispatchedAt.Value))</td>
+                                    <td style="text-align: right;">
+                                        <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                disabled="@_cancelling.Contains(a.Id)"
+                                                title="Cancel this in-flight run"
+                                                @onclick="() => CancelWorkItemAsync(a.Id)">
+                                            @(_cancelling.Contains(a.Id) ? "Cancelling…" : "Cancel")
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        <!-- queue -->
+        <div class="cockpit-card">
+            <div class="cockpit-card-header"><h2>Queue</h2><span style="font-size: 12px; color: var(--text-muted);">@_pending.Count</span></div>
+            @if (_pending.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">The queue is empty.</div>
+            }
+            else
+            {
+                <div class="monitoring-table-wrap">
+                    <table class="monitoring-table">
+                        <thead><tr><th>Issue</th><th>Type</th><th>Project</th><th>Initiated by</th><th>Retries</th><th>Age</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var p in _pending)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="monitoring-mono" style="font-weight: 600;">#@p.IssueIdentifier</span>
+                                        <span style="color: var(--text-muted);">@Truncate(p.IssueTitle, 60)</span>
+                                    </td>
+                                    <td><span class="cockpit-chip">@p.TaskType</span></td>
+                                    <td>@(string.IsNullOrEmpty(p.ProjectName) ? "—" : p.ProjectName)</td>
+                                    <td>@(string.IsNullOrEmpty(p.InitiatedBy) ? "—" : p.InitiatedBy)</td>
+                                    <td>@(p.RetryCount > 0 ? p.RetryCount.ToString() : "—")</td>
+                                    <td title="@p.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(p.CreatedAt)</td>
+                                    <td style="text-align: right;">
+                                        <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                disabled="@_cancelling.Contains(p.Id)"
+                                                title="Remove this item from the queue"
+                                                @onclick="() => CancelWorkItemAsync(p.Id)">
+                                            @(_cancelling.Contains(p.Id) ? "Removing…" : "Remove")
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        <!-- provider backlog (live: issue provider + dependency checker) -->
+        <div class="cockpit-card">
+            <div class="cockpit-card-header">
+                <h2>Provider backlog</h2>
+                <span style="font-size: 12px; color: var(--text-muted);">@(_backlogLoading ? "checking…" : $"{_backlog.Count(b => b.IsReady)} ready · {_backlog.Count} open")</span>
+            </div>
+            @if (_backlogLoading)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">Checking the provider backlog…</div>
+            }
+            else if (_backlog.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">No open issues found (or no issue provider configured).</div>
+            }
+            else
+            {
+                <div class="monitoring-table-wrap">
+                    <table class="monitoring-table">
+                        <thead><tr><th>Issue</th><th>Readiness</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var b in _backlog)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="monitoring-mono" style="font-weight: 600;">#@b.Identifier</span>
+                                        <span style="color: var(--text-muted);">@Truncate(b.Title, 60)</span>
+                                    </td>
+                                    <td>
+                                        @if (b.IsReady)
+                                        {
+                                            <span class="cockpit-chip" style="color: var(--success); background: var(--success-bg);">Ready</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="cockpit-chip" style="color: var(--warning); background: var(--warning-bg);">Blocked by @string.Join(", ", b.BlockedBy.Select(n => $"#{n}"))</span>
+                                        }
+                                    </td>
+                                    <td style="text-align: right;">
+                                        @if (!string.IsNullOrEmpty(b.Url))
+                                        {
+                                            <a href="@b.Url" target="_blank" rel="noopener" class="mono" style="font-size: 11.5px; font-weight: 600;" title="Open the issue in the provider">Issue ↗</a>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private readonly CancellationTokenSource _cts = new();
+    private IReadOnlyList<PendingWorkItemDto> _pending = [];
+    private IReadOnlyList<ActiveWorkItemDto> _active = [];
+    private bool _loading = true;
+    private string? _error;
+
+    // WorkItem ids with an in-flight cancel request — disables the row's button until it settles.
+    private readonly HashSet<Guid> _cancelling = new();
+
+    // Provider backlog is a LIVE query (issue provider + dependency checker) — loaded after first render.
+    private IReadOnlyList<BacklogIssue> _backlog = [];
+    private bool _backlogLoading = true;
+
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
+    // Load the live provider backlog only after the queue has rendered, so provider calls never delay first paint.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await LoadBacklogAsync();
+    }
+
+    // Re-query when the top-bar project scope changes (quiet — keeps the current view until data returns).
+    private async void HandleProjectChanged()
+    {
+        try
+        {
+            await RefreshQuietAsync();
+            await InvokeAsync(StateHasChanged);
+            await LoadBacklogAsync();
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadBacklogAsync()
+    {
+        _backlogLoading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            _backlog = await BlockedIssues.GetBacklogAsync(State.SelectedProjectId, _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch { /* the service already degrades to empty on provider errors */ }
+        finally
+        {
+            _backlogLoading = false;
+            try { await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { }
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load work: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    // Cancels an in-flight run or removes a queued item. Both are a WorkItem status transition to
+    // Cancelled via the API (PostStatus → RunLifecycleManager.CancelRunAsync) — the same effect as the
+    // old monitoring page's "Cancel run" / "Remove from queue". WorkItem.Id == run id.
+    private async Task CancelWorkItemAsync(Guid id)
+    {
+        if (!_cancelling.Add(id)) return;
+        try
+        {
+            await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
+            await RefreshQuietAsync();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Cancel failed: {ex.Message}";
+        }
+        finally
+        {
+            _cancelling.Remove(id);
+        }
+    }
+
+    // Quiet tick refresh — no spinner, keep stale data on a transient error.
+    private async Task RefreshQuietAsync()
+    {
+        try
+        {
+            _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
+            _error = null;
+        }
+        catch (OperationCanceledException) { }
+        catch { /* keep last-known data until the next tick */ }
+    }
+
+    private static string StatusColor(WorkItemStatus s) => s switch
+    {
+        WorkItemStatus.Running => "var(--accent)",
+        WorkItemStatus.Dispatched => "var(--nav-active-fg)",
+        WorkItemStatus.Failed => "var(--error)",
+        _ => "var(--text-muted)"
+    };
+
+    private static string Truncate(string? s, int n)
+        => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
+
+    private static string Ago(DateTimeOffset t)
+    {
+        var d = DateTimeOffset.UtcNow - t;
+        if (d.TotalMinutes < 1) return "just now";
+        if (d.TotalMinutes < 60) return $"{(int)d.TotalMinutes}m ago";
+        if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
+        return $"{(int)d.TotalDays}d ago";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        State.OnProjectChanged -= HandleProjectChanged;
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

@@ -70,7 +70,8 @@ public sealed class WorkItemEndpointTests
         WorkItemTaskType taskType = WorkItemTaskType.Implementation,
         FailureReason? failureReason = null,
         DateTimeOffset? completedAt = null,
-        DateTimeOffset? createdAt = null)
+        DateTimeOffset? createdAt = null,
+        Guid? projectId = null)
     {
         using var db = _factory.CreateDbContext();
         var entity = new WorkItemEntity
@@ -85,7 +86,8 @@ public sealed class WorkItemEndpointTests
             TimeoutSeconds = 3600,
             CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
             FailureReason = failureReason,
-            CompletedAt = completedAt
+            CompletedAt = completedAt,
+            ProjectId = projectId
         };
         db.WorkItems.Add(entity);
         db.SaveChanges();
@@ -400,6 +402,23 @@ public sealed class WorkItemEndpointTests
         var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
         items.Should().NotBeNull();
         items!.Should().NotContain(i => i.Id == consolidation.Id);
+    }
+
+    [Fact]
+    public async Task GetPendingWorkItems_ProjectIdFilter_ReturnsOnlyMatchingProject()
+    {
+        var projectA = Guid.NewGuid();
+        var projectB = Guid.NewGuid();
+        var inA = SeedEntity(WorkItemStatus.Pending, projectId: projectA);
+        var inB = SeedEntity(WorkItemStatus.Pending, projectId: projectB);
+
+        // The switcher passes the project id as a Guid-string; the endpoint parses it back to the uuid column.
+        var response = await _client.GetAsync($"/api/work-items/pending?projectId={projectA}");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var items = await response.Content.ReadFromJsonAsync<List<PendingWorkItemDto>>(PipelineJsonOptions.Default);
+        items.Should().NotBeNull();
+        items!.Should().Contain(i => i.Id == inA.Id);
+        items.Should().NotContain(i => i.Id == inB.Id);
     }
 
     [Fact]

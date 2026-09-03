@@ -1,4 +1,4 @@
-@page "/consolidation"
+@* Route retired — this component is now embedded in Pipelines (AgentCoding.razor). /consolidation redirects there (ConsolidationRedirect.razor). *@
 @implements IDisposable
 @using CodingAgentWebUI.Api.Client
 @using CodingAgentWebUI.Pipeline.Interfaces
@@ -11,7 +11,8 @@
 @inject ConsolidationBadgeService BadgeService
 @inject IPipelineApiConfigClient ConfigClient
 
-<PageTitle>Consolidation - Coding Agent</PageTitle>
+@* No <PageTitle> — this component is embedded in the Pipelines page and must not override its
+   browser-tab title (a <PageTitle> rendered later wins). The Pipelines page owns the title. *@
 
 <div class="consolidation-page">
     <header class="consolidation-header">
@@ -337,7 +338,9 @@
 
         try
         {
-            _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None);
+            // Null-coalesce: this section is embedded in the Pipelines page, so a null return
+            // (e.g. a service that doesn't honour the non-null contract) must not NRE the render.
+            _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None) ?? [];
         }
         catch (Exception ex)
         {
