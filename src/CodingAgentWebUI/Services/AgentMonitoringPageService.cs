@@ -322,7 +322,7 @@ public class AgentMonitoringPageService
     /// </summary>
     public async Task<(bool Success, string? Error)> SetPriorityAsync(Guid workItemId, int priorityWeight)
     {
-        // TODO [WARNING]: priorityWeight is not validated against the 0–1000 range here. The
+        // TODO: priorityWeight is not validated against the 0–1000 range here. The
         // component's @onchange guard and <input min/max> attributes enforce the range client-side,
         // but this public method can be called directly (e.g. from tests or future code paths) with
         // an out-of-range value. The API will return a 400 HttpRequestException, which is caught and

@@ -465,7 +465,7 @@ public sealed class AgentMonitoringPageServiceTests
         _mockPendingWorkQuery.Verify(
             q => q.GetPendingJobsAsync(It.IsAny<CancellationToken>()),
             Times.Once);
-        // TODO [WARNING]: This test only verifies that GetPendingJobsAsync is called (Times.Once).
+        // TODO: This test only verifies that GetPendingJobsAsync is called (Times.Once).
         // It does not assert that QueuedJobs is actually updated with the result — a service
         // implementation that calls the query but discards its return value would still pass.
         // Strengthen by seeding the mock with a return value containing a known PriorityWeight and
@@ -481,7 +481,7 @@ public sealed class AgentMonitoringPageServiceTests
         _mockWorkItemClient
             .Setup(c => c.SetPriorityAsync(workItemId, 9999, It.IsAny<CancellationToken>()))
             .ThrowsAsync(serverError);
-        // TODO [WARNING]: The mock is keyed to the exact value 9999. If the service forwarded a
+        // TODO: The mock is keyed to the exact value 9999. If the service forwarded a
         // different value (e.g. silently clamped it), the mock would not throw and the test would
         // see (true, null) instead of (false, error), masking a wrong-argument bug. Consider using
         // It.IsAny<int>() or a sentinel value that is clearly invalid (e.g. -1 or int.MaxValue) and

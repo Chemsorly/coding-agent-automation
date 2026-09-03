@@ -908,7 +908,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
         runModel.Should().NotBeNull("snapshot should seed the sidebar view model");
         runModel!.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
         runModel.HighWaterMark.Should().Be(PipelineStep.GeneratingCode);
-        // TODO [WARNING]: Weak assertion — only checks Contains on one entry out of two. A stronger assertion
+        // TODO: Weak assertion — only checks Contains on one entry out of two. A stronger assertion
         // would be BeEquivalentTo(["agent:next", "dotnet"]) to catch partial-copy bugs in ApplySnapshotToRunModel.
         runModel.IssueLabels.Should().Contain("agent:next");
     }
@@ -937,7 +937,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
         // Fire snapshot for a DIFFERENT run
         await cut.InvokeAsync(() => _onRunStateSnapshot!("different-run", snapshot));
 
-        // TODO [WARNING]: This assertion is satisfied before the snapshot fires because OpenRunDetail does
+        // TODO: This assertion is satisfied before the snapshot fires because OpenRunDetail does
         // not receive a RunStateSnapshot (no mock returns one), so the model was always going to be null.
         // The test would pass even if the job-ID guard in HandleRunStateSnapshot were entirely removed.
         // Fix: first seed the model with a matching snapshot, then fire the mismatched one, and assert
@@ -977,7 +977,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
         // Fire snapshot immediately (before/during API call)
         await cut.InvokeAsync(() => _onRunStateSnapshot!(runId, snapshot));
 
-        // TODO [WARNING]: This test does not actually interleave the snapshot with an in-flight GetRunAsync
+        // TODO: This test does not actually interleave the snapshot with an in-flight GetRunAsync
         // call. GetRunAsync is mocked to return null synchronously, so the API call completes before the
         // snapshot fires. The race path (snapshot arriving while GetRunAsync is still awaited) is not
         // exercised. A tautological pass is possible: the model is null not because of the race but because
@@ -1205,7 +1205,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
 
         var runModel = GetField<PipelineRun?>(cut.Instance, "_activeModalRunModel");
         runModel.Should().NotBeNull("completed run with BrainRepoUsed=true should have a sidebar model");
-        // TODO [WARNING]: Assertion is too weak — NotBeNull() passes for any non-null value including a single
+        // TODO: Assertion is too weak — NotBeNull() passes for any non-null value including a single
         // space or an empty string. The code sets the sentinel to "placeholder"; if that changes to a value the
         // sidebar rejects (e.g. empty string), this test will still pass. Use NotBeNullOrEmpty() to at minimum
         // verify the sentinel is a non-empty string that PipelineSidebar.IsStepHidden will treat as "used".
@@ -1274,7 +1274,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
         await cut.InvokeAsync(() => { }); // flush
 
         // SubscribeToRun should be called again after reconnect
-        // TODO [WARNING]: Times.AtLeast(2) would pass even if the reconnect handler triggered 10 extra
+        // TODO: Times.AtLeast(2) would pass even if the reconnect handler triggered 10 extra
         // subscriptions (e.g. a loop or multiple handler registrations). Use Times.Exactly(2) to catch
         // accidental duplicate-registration bugs where HubConnection.Reconnected += HandleReconnected
         // is called multiple times.
@@ -1337,7 +1337,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
 
         var runModel = GetField<PipelineRun?>(cut.Instance, "_activeModalRunModel");
         runModel.Should().NotBeNull("snapshot must seed the sidebar view model");
-        // TODO [WARNING]: This test only covers the model-construction path (where _activeModalRunModel is null
+        // TODO: This test only covers the model-construction path (where _activeModalRunModel is null
         // when the snapshot arrives). The existing-model path — where the model already exists and
         // ApplySnapshotToRunModel is called on it directly — is not independently covered for non-zero
         // CodeReviewCriticalCount. In practice there is no fix gap because SetCodeReviewCounts is called
@@ -1406,7 +1406,7 @@ public class AgentMonitoringAdditionalTests : BunitContext
         // Simulate reconnect: the reconnect handler calls SubscribeToRun again.
         // The server would re-push OnRunStateSnapshot; we simulate that by firing the snapshot again manually
         // after the reconnect handler runs. This is equivalent to the live path and avoids complex mock chaining.
-        // TODO [WARNING]: This test fires _onRunStateSnapshot manually to simulate the server re-pushing after
+        // TODO: This test fires _onRunStateSnapshot manually to simulate the server re-pushing after
         // reconnect, rather than verifying that HandleReconnected itself triggers the re-push. If
         // HandleReconnected is later changed to stop calling SubscribeToRun, the drain bug could re-emerge
         // without this test catching it. The actual regression guard is only the final
