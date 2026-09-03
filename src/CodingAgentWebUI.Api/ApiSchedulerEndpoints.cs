@@ -23,7 +23,7 @@ public static class ApiSchedulerEndpoints
     // ── POST /api/scheduler/maintenance/retention-sweep ───────────────────────
 
     /// <summary>
-    /// Executes all five DatabaseMaintenanceService sweep operations and returns counts.
+    /// Executes all six DatabaseMaintenanceService sweep operations and returns counts.
     /// The Scheduler's RetentionSweepSchedulerService gates calls on its own leader election,
     /// so only one Scheduler replica triggers the sweep per interval. The API is stateless —
     /// no secondary leader gate is needed here.

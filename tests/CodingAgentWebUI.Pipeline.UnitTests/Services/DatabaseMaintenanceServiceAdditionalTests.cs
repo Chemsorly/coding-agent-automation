@@ -244,6 +244,25 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
             .Should().NotThrowAsync("ExecuteSqlRawAsync failure must be caught and logged");
     }
 
+    // ── ReconcileOrphanedPipelineRuns — fault-isolation path ─────────────────
+
+    /// <summary>
+    /// Verifies that <c>ReconcileOrphanedPipelineRunsAsync</c> swallows the
+    /// <see cref="InvalidOperationException"/> thrown by the EF Core InMemory provider
+    /// when <c>ExecuteSqlRawAsync</c> is called (InMemory does not support raw SQL).
+    /// Regression guard: if the catch block were removed, the exception would propagate
+    /// out of <c>RunRetentionSweepAsync</c> and prevent remaining sweeps from running.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOrphanedPipelineRuns_InMemoryThrows_HandledGracefully()
+    {
+        // InMemory EF does not support ExecuteSqlRawAsync — the method catches the exception.
+        var service = CreateService();
+
+        await service.Invoking(s => s.ReconcileOrphanedPipelineRunsAsync(CancellationToken.None))
+            .Should().NotThrowAsync("ExecuteSqlRawAsync failure must be caught and logged");
+    }
+
     // ── RunMaintenanceCycle — leader but consolidation throws ────────────────
     // ── RunMaintenanceCycle test removed (Spec 047) ────────────────────────────
     // RunMaintenanceCycleAsync was removed when DatabaseMaintenanceService was converted

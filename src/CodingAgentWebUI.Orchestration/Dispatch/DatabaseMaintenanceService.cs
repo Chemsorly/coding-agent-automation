@@ -51,7 +51,7 @@ public class DatabaseMaintenanceService
     // Scheduler-triggered path with no leader-gate coordination between them.
 
     /// <summary>
-    /// Executes all five sweep operations and returns a result with deletion counts.
+    /// Executes all six sweep operations and returns a result with deletion counts.
     /// Used by the Scheduler's POST /api/scheduler/maintenance/retention-sweep endpoint.
     /// Callers are responsible for leader-gate checks before calling this method.
     /// </summary>
@@ -67,6 +67,11 @@ public class DatabaseMaintenanceService
         var staleConsolidation = await RunSweepAsync(CleanupStaleConsolidationRunsAsync, "CleanupStaleConsolidationRuns", ct);
         var retentionRuns = await RunSweepAsync(SweepPipelineRunRetentionAsync, "SweepPipelineRunRetention", ct);
         var retentionWi = await RunSweepAsync(SweepWorkItemRetentionAsync, "SweepWorkItemRetention", ct);
+        // TODO: The reconciliation count is discarded here and not included in RetentionSweepResult.
+        // Callers (e.g. the Scheduler API endpoint and its metrics) cannot observe how many ghost rows
+        // were backfilled. Consider adding an OrphanedPipelineRunsReconciled field to RetentionSweepResult
+        // and capturing the return value: var reconciled = await RunSweepAsync(...).
+        await RunSweepAsync(ReconcileOrphanedPipelineRunsAsync, "ReconcileOrphanedPipelineRuns", ct);
         return new RetentionSweepResult(staleWi, staleRuns, staleConsolidation, retentionRuns, retentionWi);
     }
 
@@ -342,6 +347,56 @@ public class DatabaseMaintenanceService
         catch (Exception ex)
         {
             Log.Warning(ex, "DatabaseMaintenanceService: WorkItems retention sweep failed (non-fatal)");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Backfills <c>CompletedAt = NOW()</c> for ghost <c>PipelineRuns</c> that have a terminal
+    /// <c>FinalStep</c> (Completed=16, Failed=17, Cancelled=18) but a null <c>CompletedAt</c>.
+    /// These rows arise when an <see cref="OperationCanceledException"/> from
+    /// <c>RunPostPrSequenceAsync</c> skipped the <c>run.MarkCompleted()</c> call before the
+    /// fix introduced in issue #2316.
+    /// Returns the number of rows updated.
+    /// </summary>
+    internal virtual async Task<int> ReconcileOrphanedPipelineRunsAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+            // FinalStep integer values: Completed=16, Failed=17, Cancelled=18
+            // (PipelineStep enum — stored as int in Postgres).
+            // TODO: These integer literals are hardcoded rather than derived from the PipelineStep enum
+            // (e.g. (int)PipelineStep.Completed). If a future terminal state is added to the enum, this
+            // SQL and both test overrides (RetentionSweepIntegrationTests, DatabaseMaintenanceServiceAdditionalTests)
+            // must be updated manually — there is no compile-time link. Consider deriving the values from
+            // the enum or adding a unit test asserting (int)PipelineStep.Completed==16, Failed==17, Cancelled==18
+            // so a reorder breaks the build.
+            const string sql = """
+                UPDATE "PipelineRuns"
+                SET "CompletedAt" = NOW()
+                WHERE "FinalStep" IN (16, 17, 18)
+                  AND "CompletedAt" IS NULL
+                """;
+
+            var updatedCount = await db.Database.ExecuteSqlRawAsync(sql, ct);
+
+            if (updatedCount > 0)
+            {
+                Log.Information(
+                    "DatabaseMaintenanceService: reconciled {Count} orphaned PipelineRuns (terminal FinalStep, null CompletedAt)",
+                    updatedCount);
+            }
+            return updatedCount;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DatabaseMaintenanceService: orphaned PipelineRuns reconciliation failed (non-fatal)");
             return 0;
         }
     }

@@ -119,38 +119,43 @@ public sealed class PullRequestFinalizationService
         if (!prCreationSucceeded)
             return;
 
-        // TODO: RunPostPrSequenceAsync executes outside the try-catch above. Any non-OCE exception
-        // thrown here (e.g., from transitionCallback invocations for GeneratingPrDescription,
-        // ReflectingOnRun, SyncingBrainRepoPostRun) will propagate without setting the activity
-        // error status or emitting the _logger.Error call that the original in-try placement
-        // provided. Consider wrapping this call and the state-mutation lines below in their own
-        // try-catch to restore the error logging and activity status on failure.
-        await RunPostPrSequenceAsync(
-            new PostPrSequenceRequest
-            {
-                Run = run,
-                IsDraft = isDraft,
-                AgentProvider = agentProvider,
-                RepoProvider = repoProvider,
-                Config = config,
-                BrainSync = brainSync,
-                BrainProvider = brainProvider,
-                FeedbackService = feedbackService,
-                HistoryService = historyService,
-                EmitOutputLine = emitOutputLine,
-                TransitionCallback = transitionCallback
-            },
-            ct);
-
-        run.MarkCompleted();
-        // TODO: run.MarkCompleted(), run.CurrentStep, and run.FinalLabel are set here outside
-        // any exception handler. If RunPostPrSequenceAsync propagates an OperationCanceledException
-        // (ct is passed through), these mutations are skipped, leaving the run without a
-        // CompletedAt timestamp and in an inconsistent step state. Consider wrapping
-        // RunPostPrSequenceAsync and these lines in a try-finally or try-catch to guarantee
-        // final state is always set.
-        run.CurrentStep = finalStep;
-        run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
+        // The try-finally guarantees run.MarkCompleted(), run.CurrentStep, and run.FinalLabel are
+        // always set, even when RunPostPrSequenceAsync propagates an OperationCanceledException
+        // (e.g. from SyncingBrainRepoPostRun or any other post-PR housekeeping step). The run
+        // created a PR successfully and must always exit with CompletedAt set. The OCE is NOT
+        // swallowed — it continues propagating after the finally block executes.
+        // TODO: The finally block unconditionally marks the run as Completed/Done even when
+        // RunPostPrSequenceAsync throws a non-OCE exception. In practice this is safe today because
+        // every sub-step inside RunPostPrSequenceAsync catches its own non-OCE exceptions and does
+        // not rethrow, so a non-OCE escape is considered impossible by contract. If that assumption
+        // ever changes, the fix should add a catch block to set FailureReason/Failed for genuine
+        // non-OCE failures and restore error logging + activity.SetStatus(Error) that existed in
+        // the pre-refactor in-try placement (see the removed TODO at commit origin of this block).
+        try
+        {
+            await RunPostPrSequenceAsync(
+                new PostPrSequenceRequest
+                {
+                    Run = run,
+                    IsDraft = isDraft,
+                    AgentProvider = agentProvider,
+                    RepoProvider = repoProvider,
+                    Config = config,
+                    BrainSync = brainSync,
+                    BrainProvider = brainProvider,
+                    FeedbackService = feedbackService,
+                    HistoryService = historyService,
+                    EmitOutputLine = emitOutputLine,
+                    TransitionCallback = transitionCallback
+                },
+                ct);
+        }
+        finally
+        {
+            run.MarkCompleted();
+            run.CurrentStep = finalStep;
+            run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
+        }
     }
 
     /// <summary>
