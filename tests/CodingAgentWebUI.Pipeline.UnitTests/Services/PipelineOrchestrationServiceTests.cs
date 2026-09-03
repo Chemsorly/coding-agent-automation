@@ -2117,7 +2117,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Contain("Analysis failed after 2 attempt(s)");
         run.CompletedAt.Should().NotBeNull();
-        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:needs-refinement", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        // TODO [WARNING]: The label is asserted as a string literal "agent:needs-refinement" rather than
+        // AgentLabels.NeedsRefinement. A future rename of the constant that changes its string value would leave
+        // this assertion silently wrong. Use AgentLabels.NeedsRefinement instead (see AgentPhaseExecutorAnalysisTests
+        // for the consistent pattern).
     }
 
     [Fact]

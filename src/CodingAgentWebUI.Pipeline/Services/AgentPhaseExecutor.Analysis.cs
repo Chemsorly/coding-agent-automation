@@ -174,7 +174,7 @@ public partial class AgentPhaseExecutor
                 await FailPhaseAsync(new FailPhaseRequest(
                     run,
                     $"Analysis failed after {attempt + 1} attempt(s): {ex.Message}",
-                    AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, CancellationToken.None));
+                    AgentLabels.NeedsRefinement, PipelineStep.Failed, context.IssueOps, context.Callbacks, CancellationToken.None));
                 return (false, null);
             }
         }

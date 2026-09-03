@@ -185,7 +185,9 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         // implementation detail of System.Diagnostics.Activity, not a documented test contract. If the
         // runtime ever defers the callback, capturedTags may be empty at assertion time, producing a
         // spurious (false-negative) failure. This is a fragility risk, not a current defect.
-        var capturedTags = new List<(string key, object? value)>();
+        // ConcurrentBag is used because ActivityStopped fires on whichever thread disposes the Activity,
+        // which may be a thread-pool thread distinct from the test thread enumerating the collection.
+        var capturedTags = new System.Collections.Concurrent.ConcurrentBag<(string key, object? value)>();
         using var activityListener = new ActivityListener
         {
             ShouldListenTo = source => source.Name == PipelineTelemetry.SourceName,
@@ -231,7 +233,9 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         // TODO [WARNING]: Same ActivityStopped timing fragility as HandleAssignJobAsync_SetsRunTypeTagImplementation —
         // the callback firing synchronously on Dispose() is an undocumented implementation detail.
         // If deferred, capturedTags may be empty at assertion time (spurious failure).
-        var capturedTags = new List<(string key, object? value)>();
+        // ConcurrentBag is used because ActivityStopped fires on whichever thread disposes the Activity,
+        // which may be a thread-pool thread distinct from the test thread enumerating the collection.
+        var capturedTags = new System.Collections.Concurrent.ConcurrentBag<(string key, object? value)>();
         using var activityListener = new ActivityListener
         {
             ShouldListenTo = source => source.Name == PipelineTelemetry.SourceName,
