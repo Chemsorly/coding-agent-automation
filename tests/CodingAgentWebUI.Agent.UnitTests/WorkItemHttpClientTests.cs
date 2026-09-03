@@ -465,6 +465,106 @@ public class WorkItemHttpClientTests
         capturedRequest!.Headers.Contains("traceparent").Should().BeFalse();
     }
 
+    // ── PostLabelSwapAsync — Response Classification ─────────────────────
+
+    [Fact]
+    public async Task PostLabelSwap_200OK_ReturnsTrue()
+    {
+        var handler = new FakeHandler(HttpStatusCode.OK);
+        var client = CreateClient(handler);
+
+        var result = await client.PostLabelSwapAsync("wi-1", "agent:in-progress", CancellationToken.None);
+
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task PostLabelSwap_404NotFound_ReturnsFalse()
+    {
+        var handler = new FakeHandler(HttpStatusCode.NotFound);
+        var client = CreateClient(handler);
+
+        var result = await client.PostLabelSwapAsync("wi-gone", "agent:in-progress", CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PostLabelSwap_UnexpectedClientError_ReturnsFalse()
+    {
+        var handler = new FakeHandler(HttpStatusCode.Forbidden);
+        var client = CreateClient(handler);
+
+        var result = await client.PostLabelSwapAsync("wi-1", "agent:in-progress", CancellationToken.None);
+
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PostLabelSwap_5xx_ThrowsWorkItemLabelSwapException()
+    {
+        // After resilience handler exhaustion, a 5xx may leak through
+        var handler = new FakeHandler(HttpStatusCode.InternalServerError);
+        var client = CreateClient(handler);
+
+        var act = () => client.PostLabelSwapAsync("wi-5xx", "agent:in-progress", CancellationToken.None);
+
+        await act.Should().ThrowAsync<WorkItemLabelSwapException>()
+            .WithMessage("*Server error 500*retries exhausted*");
+    }
+
+    // ── PostLabelSwapAsync — Exception Wrapping ───────────────────────────
+
+    [Fact]
+    public async Task PostLabelSwap_HttpRequestException_WrapsInWorkItemLabelSwapException()
+    {
+        var handler = new ThrowingHandler(new HttpRequestException("Connection reset"));
+        var client = CreateClient(handler);
+
+        var act = () => client.PostLabelSwapAsync("wi-net", "agent:in-progress", CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<WorkItemLabelSwapException>();
+        ex.WithMessage("*All retries exhausted*");
+        ex.WithInnerException<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task PostLabelSwap_TimeoutException_WrapsInWorkItemLabelSwapException()
+    {
+        var handler = new ThrowingHandler(new TimeoutException("Timed out"));
+        var client = CreateClient(handler);
+
+        var act = () => client.PostLabelSwapAsync("wi-timeout", "agent:in-progress", CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<WorkItemLabelSwapException>();
+        ex.WithMessage("*All retries exhausted*");
+        ex.WithInnerException<TimeoutException>();
+    }
+
+    // ── PostLabelSwapAsync — Guard Clauses ────────────────────────────────
+
+    [Fact]
+    public async Task PostLabelSwap_NullWorkItemId_Throws()
+    {
+        var handler = new FakeHandler(HttpStatusCode.OK);
+        var client = CreateClient(handler);
+
+        var act = () => client.PostLabelSwapAsync(null!, "agent:in-progress", CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task PostLabelSwap_NullLabel_Throws()
+    {
+        var handler = new FakeHandler(HttpStatusCode.OK);
+        var client = CreateClient(handler);
+
+        var act = () => client.PostLabelSwapAsync("wi-1", null!, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
     // ── Test Helpers ─────────────────────────────────────────────────────
 
     private static JobAssignmentMessage CreateMinimalAssignment(string jobId, string issueId) => new()
