@@ -1373,12 +1373,13 @@ public sealed class ReconciliationLoopErrorTests
 }
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────
-// These tests use MeterListener directly (IDisposable, no [Collection] fixture)
-// because the JobController test project has no Metrics collection definition.
-// The static WorkDistributionTelemetry.Meter and PipelineTelemetry.Meter are process-wide,
-// so concurrent tests may fire instrument recordings while a listener is active. Assertions
-// use Contain-style checks and snapshot-delta patterns to remain robust.
+// [Collection("Metrics")] serializes this class against all other metric test classes in
+// this assembly so that concurrent MeterListener instances never receive each other's
+// emissions from the static WorkDistributionTelemetry.Meter and PipelineTelemetry.Meter
+// singletons. The snapshot-delta pattern (countAfter - countBefore == N) is only safe
+// when no other test can fire between the before-snapshot and the after-snapshot.
 
+[Collection("Metrics")]
 public sealed class ReconciliationLoopMetricTests : IDisposable
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
