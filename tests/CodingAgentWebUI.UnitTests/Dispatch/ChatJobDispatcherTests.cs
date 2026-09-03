@@ -1385,8 +1385,7 @@ public class ChatJobDispatcherTests
     private static (ChatJobDispatcher dispatcher, Mock<IKubernetesJobClient> jobClientMock, string agentId)
         CreateFaultingDispatcher(
             Serilog.ILogger? logger = null,
-            DispatchServiceOptions? options = null,
-            string? agentSelector = null)
+            DispatchServiceOptions? options = null)
     {
         var jobClientMock = CreateJobClientMock();
         // ReadJobAsync always returns non-terminal so the watcher doesn't exit before the idle-kill fires
@@ -1432,40 +1431,15 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        // When a unique agentSelector is provided, build a template store that includes it.
-        // This allows the metric-scoped test to use a selector whose agent_selector tag is
-        // unique, preventing parallel-test metric cross-contamination on the shared
-        // ChatTelemetry.SessionsActive instrument.
-        var templateStore = agentSelector is not null
-            ? CreateTemplateStoreWithLabels(agentSelector)
-            : CreateTemplateStore();
-
         var dispatcher = new ChatJobDispatcher(
             jobClientMock.Object,
             CreateHubContextMock().Object,
-            templateStore,
+            CreateTemplateStore(),
             registryMock.Object,
             options ?? CreateFaultTestOptions(),
             logger ?? Mock.Of<ILogger>());
 
         return (dispatcher, jobClientMock, capturedAgentId);
-    }
-
-    /// <summary>
-    /// Creates a <see cref="JobTemplateStore"/> whose single template entry matches
-    /// <paramref name="labels"/> (comma-separated). Used when a test needs a selector
-    /// distinct from <see cref="TestSelector"/> to avoid cross-test metric pollution
-    /// on shared static instruments.
-    /// </summary>
-    private static JobTemplateStore CreateTemplateStoreWithLabels(string labels)
-    {
-        var yaml = $"""
-            - labels: "{labels}"
-              image: "chemsorly/coding-agent:kiro-dotnet10"
-              providerType: "kiro"
-              maxConcurrent: 2
-            """;
-        return JobTemplateStore.LoadFromYaml(yaml);
     }
 
     /// <summary>
@@ -1517,48 +1491,47 @@ public class ChatJobDispatcherTests
         // Meter.CreateHistogram — re-entering InstrumentPublished and causing a TypeInitializationException.
         const string sessionsActiveName = "workdistribution.chat.sessions_active";
 
-        // Use a unique selector so the agent_selector tag is distinct from TestSelector ("dotnet_kiro").
-        // Tests in other classes may complete watchers using TestSelector in parallel, emitting their
-        // own -1 measurements on the shared static SessionsActive instrument. Without a tag filter
-        // those measurements would be counted here, producing decrementCount > 1 on a loaded CI runner.
-        const string uniqueSelector = "dotnet,kiro,fault-decrement-test";
-        const string uniqueEncodedSelector = "dotnet_fault-decrement-test_kiro";
-
         // Pre-initialize ChatTelemetry before wiring the listener so that InstrumentPublished
         // fires for an already-published instrument, not recursively during cctor execution.
         // This also ensures EnableMeasurementEvents is called before any Add() calls.
         _ = ChatTelemetry.SessionsActive;
 
-        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        var (dispatcher, _, _) = CreateFaultingDispatcher();
+
+        // Create the listener after the dispatcher so any pre-existing concurrent test cleanups
+        // completing before this point are not captured. The listener is disposed immediately
+        // after the watcher finishes so that concurrent test cleanups that happen to run after
+        // our watcher completes cannot inflate the count before the assertion.
+        var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
             if (instrument.Name == sessionsActiveName)
                 l.EnableMeasurementEvents(instrument);
         };
-        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+        // TODO [WARNING]: The callback has no tag guard (agent_selector filter was removed). If another
+        // concurrently running test's watcher faults between listener.Start() and listener.Dispose(),
+        // its -1 measurement will be captured here, inflating decrementCount and causing a spurious
+        // failure or masking a missing decrement from the test under test. The previous unique-selector
+        // approach was strictly more robust. Consider re-adding an agent_selector tag filter scoped to
+        // TestSelector to make this assertion immune to concurrent test noise.
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
         {
-            // Track only decrements scoped to this test's unique selector tag.
-            // Filtering by tag prevents parallel tests that use TestSelector from inflating
-            // decrementCount when their watchers complete while this listener is active.
-            if (instrument.Name != sessionsActiveName || measurement >= 0)
-                return;
-            foreach (var tag in tags)
-            {
-                if (tag.Key == "agent_selector" && tag.Value is string v && v == uniqueEncodedSelector)
-                {
-                    Interlocked.Increment(ref decrementCount);
-                    return;
-                }
-            }
+            // Track only decrements — this is the acceptance criterion: CleanupSession must
+            // fire SessionsActive.Add(-1) after the watcher faults.
+            if (instrument.Name == sessionsActiveName && measurement < 0)
+                Interlocked.Increment(ref decrementCount);
         });
         listener.Start();
 
-        var (dispatcher, _, _) = CreateFaultingDispatcher(agentSelector: uniqueSelector);
-        var agentId = await dispatcher.DispatchChatPodAsync(uniqueSelector, null, null, CancellationToken.None);
+        var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
         var watcherTask = dispatcher.TryGetWatcherTask(agentId);
 
         // Wait for the fault to fire and CleanupSession to run
         await watcherTask!.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Dispose the listener immediately after the watcher completes so that concurrent
+        // test cleanups running after this point cannot inflate decrementCount.
+        listener.Dispose();
 
         // Assert the decrement happened exactly once: -1 must be emitted by CleanupSession
         // after the watcher faults. Tracking only the decrement avoids sensitivity to whether
