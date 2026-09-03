@@ -101,10 +101,12 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         var runRow = Page.Locator(".cockpit-run-row").Filter(new() { HasTextString = "#71" });
         await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
 
-        // Click and wait for navigation together to avoid a timing race on slow CI runners.
-        await Page.RunAndWaitForNavigationAsync(
-            async () => await runRow.First.ClickAsync(),
-            new() { UrlString = $"**/runs/{runId}", Timeout = 30_000 });
+        // Start waiting for URL before the click so the full 30s budget is available
+        // regardless of how quickly Blazor begins routing on the CI runner.
+        var navigationTask = Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 30_000 });
+        await runRow.First.ClickAsync();
+        await navigationTask;
+        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         var pageText = await Page.TextContentAsync("body");
         Assert.Contains("#71", pageText);
     }
