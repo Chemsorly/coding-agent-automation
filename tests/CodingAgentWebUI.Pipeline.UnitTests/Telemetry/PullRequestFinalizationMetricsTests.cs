@@ -327,14 +327,10 @@ public class PullRequestFinalizationMetricsTests : IDisposable
         // and each sub-phase also emits its own independent metric.
         // PullRequestNumber must NOT be pre-set — the orchestrator sets it from the PR URL (→ "99").
         // Pre-setting it causes the orchestrator to take the "update existing PR" path, returning null.
+        const string projectId = "does-not-subsume-sub-phases-test-proj";
         var run = CreateRunForFullPrCreation();
+        run.ProjectId = projectId; // unique project ID for tag-based isolation (avoids ConcurrentBag LIFO ordering issues)
         var (request, _) = BuildPrCreationRequest(run, isDraft: false);
-
-        // Snapshot bag count before the call so we can filter to only entries emitted by this
-        // invocation, avoiding tautological assertions from residue left by earlier tests in the
-        // [Collection("Metrics")] group (e.g. GeneratePrDescriptionAsync_EmitsStepDurationMetric).
-        var histCountBefore = _histograms.Count;
-        var counterCountBefore = _counters.Count;
 
         await _sut.RunFullPrCreationAsync(request, CancellationToken.None);
 
@@ -344,44 +340,56 @@ public class PullRequestFinalizationMetricsTests : IDisposable
         run.PullRequestNumber.Should().NotBeNullOrEmpty(
             "Orchestrator should have set PullRequestNumber from the PR URL");
 
-        // Filter to only the histogram and counter entries emitted during this specific invocation.
-        var newHistograms = _histograms.ToArray().Skip(histCountBefore).ToList();
-        var newCounters = _counters.ToArray().Skip(counterCountBefore).ToList();
+        // Filter to only entries emitted by this invocation, scoped by unique project ID.
+        // ConcurrentBag.ToArray() does not preserve insertion order (LIFO), so count-snapshot +
+        // Skip is not reliable. Filtering by the unique project ID tag is deterministic.
+        var projectTag = new KeyValuePair<string, object?>("pipeline.project_id", projectId);
+        var thisRunHistograms = _histograms
+            .Where(h => h.Tags.Contains(projectTag))
+            .ToList();
+        var thisRunCounters = _counters
+            .Where(c => c.Tags.Contains(projectTag))
+            .ToList();
 
-        // Note: ConcurrentBag does not preserve insertion order, so Skip() on ToArray() is not
-        // guaranteed to return only post-call entries. For additional isolation, filter by the
-        // run's project ID tag where needed. BuildStepTags does not include a run_id tag, so
-        // the snapshot count is the primary isolation mechanism here.
+        // Guard: confirm the project ID tag is present (catches tag-key typos before the assertions below)
+        thisRunHistograms.Should().NotBeEmpty(
+            $"at least one histogram should be tagged with pipeline.project_id={projectId}; " +
+            $"if this fails, BuildStepTags is not emitting the project_id tag");
 
         // CreatePullRequest metric emitted
-        newHistograms.Should().Contain(h =>
+        thisRunHistograms.Should().Contain(h =>
             h.Name == "pipeline.step.duration"
             && h.Tags.Contains(new KeyValuePair<string, object?>("step_name", "CreatePullRequest")),
             "CreatePullRequest step duration should be emitted by this invocation");
+
+        thisRunCounters.Should().Contain(c =>
+            c.Name == "pipeline.step.count"
+            && c.Tags.Contains(new KeyValuePair<string, object?>("step_name", "CreatePullRequest")),
+            "CreatePullRequest step count should be emitted by this invocation");
 
         // Sub-phase metrics emitted independently (not subsumed into CreatePullRequest)
         // Note: no brain provider → Reflection/BrainSyncPostRun are skipped.
         // GeneratePrDescription: run.PullRequestNumber="99" after orchestrator, so it runs.
         // FeedbackCollection: always runs on non-draft.
-        var capturedStepNames = newHistograms
+        var capturedStepNames = thisRunHistograms
             .Where(h => h.Name == "pipeline.step.duration")
             .Select(h => h.Tags.FirstOrDefault(t => t.Key == "step_name").Value?.ToString() ?? "(none)")
             .ToList();
 
         capturedStepNames.Should().Contain("GeneratePrDescription",
             $"Expected GeneratePrDescription metric from this invocation. " +
-            $"Captured step_names since snapshot: [{string.Join(", ", capturedStepNames)}]. " +
+            $"Captured step_names for project {projectId}: [{string.Join(", ", capturedStepNames)}]. " +
             $"run.PullRequestNumber={run.PullRequestNumber}, run.CurrentStep={run.CurrentStep}");
 
         capturedStepNames.Should().Contain("FeedbackCollection",
             $"Expected FeedbackCollection metric from this invocation. " +
-            $"Captured step_names since snapshot: [{string.Join(", ", capturedStepNames)}]");
+            $"Captured step_names for project {projectId}: [{string.Join(", ", capturedStepNames)}]");
 
         // Sub-phase count metrics also emitted
         var subPhaseNames = new[] { "GeneratePrDescription", "FeedbackCollection" };
         foreach (var stepName in subPhaseNames)
         {
-            newCounters.Should().Contain(c =>
+            thisRunCounters.Should().Contain(c =>
                 c.Name == "pipeline.step.count"
                 && c.Tags.Contains(new KeyValuePair<string, object?>("step_name", stepName)),
                 $"step_name={stepName} counter should be emitted independently by this invocation");
