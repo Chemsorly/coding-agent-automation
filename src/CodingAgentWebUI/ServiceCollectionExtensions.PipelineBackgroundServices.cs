@@ -32,7 +32,7 @@ public static partial class ServiceCollectionExtensions
     {
         // ── Spec 047: Loop status polling (replaces in-process PipelineLoopService) ──────────
         // Polls GET /loop/status on the Scheduler every 3 seconds (configurable via
-        // SchedulerApi:StatusPollIntervalSeconds). MainLayout and AgentCoding inject
+        // SchedulerApi:StatusPollIntervalSeconds). The Overview and Pipelines pages inject
         // ILoopStatusService instead of IPipelineLoopService — same read-only surface.
         // Register the concrete type as a singleton first so the hosted service and the
         // ILoopStatusService alias both share the same instance. E2E tests replace only
