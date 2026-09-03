@@ -19,6 +19,11 @@
     <!-- Grafana Faro: faro-init.js reads faro-collector-url meta and dynamically loads the CDN bundles -->
     <script src="js/faro-init.js"></script>
     <link rel="stylesheet" href="css/app.css" />
+    <!-- Redesigned shell fonts + theme (see docs/frontend-redesign-handoff.md). Scoped to .cockpit; legacy shell unaffected. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="css/cockpit.css" />
     <link rel="stylesheet" href="CodingAgentWebUI.styles.css" />
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>

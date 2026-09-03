@@ -11,8 +11,11 @@ using Microsoft.Playwright;
 namespace CodingAgentWebUI.E2ETests.Tests;
 
 /// <summary>
-/// Tests that validate monitoring page interactions: run detail modal, queue management,
-/// and agent status display.
+/// Run/agent interaction coverage, migrated from the retired /agent-monitoring page to the cockpit
+/// pages that replaced it: active + queued work on /work, the live run detail on /runs/{id}, and
+/// agent status on /fleet. The dispatch + fake-agent arrange is unchanged; only the UI assertions
+/// were retargeted. (The old run-detail modal is now a full page, so the "closes on Escape" modal
+/// test was retired — RunPage is navigated to and away from, not opened/closed as an overlay.)
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection(E2ECollection.Name)]
@@ -20,14 +23,18 @@ public sealed class MonitoringInteractionTests : E2ETestBase
 {
     public MonitoringInteractionTests(E2EFixture fixture) : base(fixture) { }
 
-    [Fact]
-    public async Task Monitoring_ActiveRun_ShowsInTable()
+    /// <summary>
+    /// Seeds a template/profile/issue, dispatches it, then has the connected <paramref name="agent"/>
+    /// accept the job and report <paramref name="step"/>. Returns the active run's id once the server
+    /// reflects the step. Mirrors the arrange the old monitoring tests repeated inline.
+    /// </summary>
+    private async Task<string> SeedDispatchAndActivateAsync(
+        FakeAgentClient agent, string templateName, string issueId, PipelineStep step = PipelineStep.GeneratingCode)
     {
-        // Arrange: seed template, issue, profile, and connect an agent
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-1",
-            Name = "Monitor Template",
+            Name = templateName,
             IssueProviderId = "issue-e2e",
             RepoProviderId = "repo-e2e",
             Enabled = true
@@ -44,266 +51,97 @@ public sealed class MonitoringInteractionTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
-            Identifier = "70",
-            Title = "Monitoring active run test",
+            Identifier = issueId,
+            Title = $"Issue {issueId} test",
             Description = "Test",
             Labels = new[] { "enhancement" }
         });
 
-        await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        // Dispatch the issue
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
-        await codingPage.SelectTemplateAsync("Monitor Template");
+        await codingPage.SelectTemplateAsync(templateName);
         await codingPage.ClickBrowseIssuesAsync();
-        await codingPage.SelectIssueAsync("70");
-        await codingPage.ClickStartPipelineAsync();
-
-        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        await fakeAgent.AcceptJobAsync(assignment.JobId);
-        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
-
-        // Wait for the run to reflect the step in server state
-        var runService = Fixture.RunService;
-        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "70" && r.CurrentStep == PipelineStep.GeneratingCode));
-
-        // Act: navigate to monitoring page
-        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
-        await monitoringPage.NavigateAsync();
-
-        // Assert: active run is visible in the table
-        var activeRunsHeader = await Page.TextContentAsync("h2:has-text('Active Runs')");
-        Assert.NotNull(activeRunsHeader);
-        Assert.DoesNotContain("(0)", activeRunsHeader); // Should have at least 1 active run
-
-        // Verify the issue identifier is shown
-        var issueCell = await Page.QuerySelectorAsync("td:has-text('#70')");
-        Assert.NotNull(issueCell);
-    }
-
-    [Fact]
-    public async Task Monitoring_RunDetailModal_OpensOnRowClick()
-    {
-        // Arrange: seed template, issue, profile, and connect an agent
-        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
-        {
-            Id = "template-1",
-            Name = "Modal Template",
-            IssueProviderId = "issue-e2e",
-            RepoProviderId = "repo-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = "profile-e2e",
-            DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        Fixture.IssueProvider.Issues.Add(new IssueDetail
-        {
-            Identifier = "71",
-            Title = "Modal test issue",
-            Description = "Test",
-            Labels = new[] { "enhancement" }
-        });
-
-        await using var fakeAgent = new FakeAgentClient("modal-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        // Dispatch and get the run active
-        var codingPage = new AgentCodingPage(Page, BaseUrl);
-        await codingPage.NavigateAsync();
-        await codingPage.SelectTemplateAsync("Modal Template");
-        await codingPage.ClickBrowseIssuesAsync();
-        await codingPage.SelectIssueAsync("71");
-        await codingPage.ClickStartPipelineAsync();
-
-        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        await fakeAgent.AcceptJobAsync(assignment.JobId);
-        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
-
-        // Wait for the run to reflect the step in server state
-        var runService = Fixture.RunService;
-        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "71" && r.CurrentStep == PipelineStep.GeneratingCode));
-
-        // Act: navigate to monitoring and click the active run row
-        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
-        await monitoringPage.NavigateAsync();
-
-        // Click this run's row in the Active Runs table.
-        //
-        // Three tables on this page share tr.monitoring-row-clickable — active runs, agents, recent
-        // runs — and only the active-runs row's click opens the run-detail modal (the agent row's
-        // opens an agent modal). Worse, the run's own GUID appears in both the active-runs RUN ID
-        // cell and the agent row's ACTIVE JOB cell, so filtering by run id alone still matches the
-        // agent row. Scope to the Active Runs <section> so neither the agents table nor the id
-        // collision can misdirect the click. This used to "work" only because the agents table was
-        // always empty (the monolith registry had no writer); now it renders real agents.
-        var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "71").RunId;
-        var runRow = Page.Locator("section:has(h2:has-text('Active Runs')) tr.monitoring-row-clickable")
-            .Filter(new() { HasTextString = runId });
-        await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
-        await runRow.First.ClickAsync();
-
-        // Wait for modal to open
-        await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });
-
-        // Assert: modal is open
-        var modal = Page.Locator(".modal-overlay");
-        var modalCount = await modal.CountAsync();
-        Assert.True(modalCount > 0, "Run detail modal should open when clicking an active run row");
-
-        // Verify modal contains issue info
-        var modalText = await Page.TextContentAsync(".modal-card");
-        Assert.Contains("#71", modalText);
-    }
-
-    [Fact]
-    public async Task Monitoring_RunDetailModal_ClosesOnEscape()
-    {
-        // Arrange: same setup as above — get an active run
-        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
-        {
-            Id = "template-1",
-            Name = "Escape Template",
-            IssueProviderId = "issue-e2e",
-            RepoProviderId = "repo-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = "profile-e2e",
-            DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        Fixture.IssueProvider.Issues.Add(new IssueDetail
-        {
-            Identifier = "72",
-            Title = "Escape modal test",
-            Description = "Test",
-            Labels = new[] { "enhancement" }
-        });
-
-        await using var fakeAgent = new FakeAgentClient("escape-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        var codingPage = new AgentCodingPage(Page, BaseUrl);
-        await codingPage.NavigateAsync();
-        await codingPage.SelectTemplateAsync("Escape Template");
-        await codingPage.ClickBrowseIssuesAsync();
-        await codingPage.SelectIssueAsync("72");
-        await codingPage.ClickStartPipelineAsync();
-
-        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        await fakeAgent.AcceptJobAsync(assignment.JobId);
-        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
-
-        // Wait for the run to reflect the step in server state
-        var runService = Fixture.RunService;
-        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "72" && r.CurrentStep == PipelineStep.GeneratingCode));
-
-        // Navigate to monitoring and open the modal for this run, scoped to the Active Runs
-        // section — see the note in Monitoring_RunDetailModal_OpensOnRowClick.
-        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
-        await monitoringPage.NavigateAsync();
-        var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "72").RunId;
-        var runRow = Page.Locator("section:has(h2:has-text('Active Runs')) tr.monitoring-row-clickable")
-            .Filter(new() { HasTextString = runId });
-        await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
-        await runRow.First.ClickAsync();
-        await Page.WaitForSelectorAsync(".modal-overlay", new() { Timeout = 5_000 });
-
-        // Act: focus the modal overlay (tabindex="-1" makes it focusable) then press Escape
-        await Page.FocusAsync(".modal-overlay");
-        await Page.Keyboard.PressAsync("Escape");
-
-        // Wait for modal to close
-        await Page.WaitForSelectorAsync(".modal-overlay", new() { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
-
-        // Assert: modal is closed
-        var modalCount = await Page.Locator(".modal-overlay").CountAsync();
-        Assert.Equal(0, modalCount);
-    }
-
-    [Fact]
-    public async Task Monitoring_AgentStatus_ShowsBusyDuringJob()
-    {
-        // Arrange: connect an agent and give it a job
-        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
-        {
-            Id = "template-1",
-            Name = "Status Template",
-            IssueProviderId = "issue-e2e",
-            RepoProviderId = "repo-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = "profile-e2e",
-            DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        Fixture.IssueProvider.Issues.Add(new IssueDetail
-        {
-            Identifier = "73",
-            Title = "Status test issue",
-            Description = "Test",
-            Labels = new[] { "enhancement" }
-        });
-
-        await using var fakeAgent = new FakeAgentClient("status-agent-1", "e2e");
-        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        // Dispatch and accept job
-        var codingPage = new AgentCodingPage(Page, BaseUrl);
-        await codingPage.NavigateAsync();
-        await codingPage.SelectTemplateAsync("Status Template");
-        await codingPage.ClickBrowseIssuesAsync();
-        await codingPage.SelectIssueAsync("73");
+        await codingPage.SelectIssueAsync(issueId);
         await codingPage.ClickStartPipelineAsync();
 
         await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 15_000 });
-        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        await fakeAgent.AcceptJobAsync(assignment.JobId);
-        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
+        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await agent.AcceptJobAsync(assignment.JobId);
+        await agent.ReportStepAsync(assignment.JobId, step);
 
-        // Wait for the run to reflect the step in server state
         var runService = Fixture.RunService;
-        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "73" && r.CurrentStep == PipelineStep.GeneratingCode));
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == issueId && r.CurrentStep == step));
+        return runService.GetActiveRuns().First(r => r.IssueIdentifier == issueId).RunId;
+    }
 
-        // Act: navigate to monitoring
-        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
-        await monitoringPage.NavigateAsync();
+    [Fact]
+    public async Task Work_ActiveRun_ShowsInFlight()
+    {
+        await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await SeedDispatchAndActivateAsync(fakeAgent, "Monitor Template", "70");
 
-        // Assert: agent shows "Busy" status (poll DOM until rendered — timer-driven refresh)
-        await monitoringPage.WaitForAgentStatusAsync("status-agent-1", "Busy", timeoutMs: 15_000);
+        // Assert: the in-flight run is visible on /work.
+        var work = new WorkPage(Page, BaseUrl);
+        await work.NavigateAsync();
+        await work.WaitForInFlightAsync("70", timeoutMs: 15_000);
+        Assert.True(await work.IsIssueInFlightAsync("70"), "Active run #70 should appear in the Work 'In flight' table");
+    }
 
-        // Verify the agent cell is actually visible with the expected status text
-        var agentStatusCell = await Page.QuerySelectorAsync($"td:has-text(\"status-agent-1\")");
-        Assert.NotNull(agentStatusCell);
+    [Fact]
+    public async Task ActiveRun_RowClick_OpensRunDetailPage()
+    {
+        await using var fakeAgent = new FakeAgentClient("modal-agent-1", "e2e");
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        var runId = await SeedDispatchAndActivateAsync(fakeAgent, "Modal Template", "71");
+
+        // Act: the Overview "Active runs" card lists runs and navigates to /runs/{id} on click.
+        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
+        var runRow = Page.Locator(".cockpit-run-row").Filter(new() { HasTextString = "#71" });
+        await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
+        await runRow.First.ClickAsync();
+
+        // Assert: we land on the run detail page and it shows the issue.
+        await Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 10_000 });
+        var pageText = await Page.TextContentAsync("body");
+        Assert.Contains("#71", pageText);
+    }
+
+    [Fact]
+    public async Task RunDetailPage_ShowsPipelineProgress_ForActiveRun()
+    {
+        await using var fakeAgent = new FakeAgentClient("detail-agent-1", "e2e");
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        var runId = await SeedDispatchAndActivateAsync(fakeAgent, "Detail Template", "74");
+
+        // The run detail page renders the live "Pipeline progress" card (PipelineSidebar) for active runs.
+        var detail = new RunDetailPage(Page, BaseUrl);
+        await detail.NavigateAsync(runId);
+        await detail.PipelineProgressCard.First.WaitForAsync(new() { Timeout = 15_000 });
+        Assert.True(await detail.PipelineProgressCard.CountAsync() > 0, "Run detail page should show the Pipeline progress card for an active run");
+
+        var pageText = await detail.GetPageTextAsync();
+        Assert.Contains("#74", pageText);
+    }
+
+    [Fact]
+    public async Task Fleet_AgentStatus_ShowsBusyDuringJob()
+    {
+        await using var fakeAgent = new FakeAgentClient("status-agent-1", "e2e");
+        await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await SeedDispatchAndActivateAsync(fakeAgent, "Status Template", "73");
+
+        // Assert: the agent shows "Busy" on /fleet (poll — the fleet view auto-refreshes on a timer).
+        var fleet = new FleetPage(Page, BaseUrl);
+        await fleet.NavigateAsync();
+        await fleet.WaitForAgentStatusAsync("status-agent-1", "Busy", timeoutMs: 15_000);
+        Assert.True(await fleet.IsAgentVisibleAsync("status-agent-1"), "Busy agent should be visible on Fleet");
     }
 
     [Fact(Skip = "Requires DB/SignalR mode (pending queue). Legacy mode fails dispatch immediately when no agent is available.")]
-    public async Task Monitoring_UnassignedRun_ShowsInQueueOnly_NotActiveRuns()
+    public async Task Work_UnassignedRun_ShowsInQueueOnly_NotInFlight()
     {
-        // Arrange: seed template, issue, profile — but do NOT connect any agent
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
         {
             Id = "template-1",
@@ -330,7 +168,6 @@ public sealed class MonitoringInteractionTests : E2ETestBase
             Labels = new[] { "enhancement" }
         });
 
-        // Act: dispatch the issue (no agent available → queued)
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
         await codingPage.SelectTemplateAsync("Queue Only Template");
@@ -338,59 +175,28 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         await codingPage.SelectIssueAsync("80");
         await codingPage.ClickStartPipelineAsync();
 
-        // Wait for dispatch to complete — success message auto-dismisses after 3s,
-        // so instead wait for the drawer overlay to become hidden (dispatch closes drawer on success).
-        await Page.WaitForSelectorAsync("div.dispatch-drawer-overlay.open", new() { State = Microsoft.Playwright.WaitForSelectorState.Hidden, Timeout = 30_000 });
+        await Page.WaitForSelectorAsync("div.dispatch-drawer-overlay.open",
+            new() { State = WaitForSelectorState.Hidden, Timeout = 30_000 });
 
-        // Navigate to monitoring page
-        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
-        await monitoringPage.NavigateAsync();
+        var work = new WorkPage(Page, BaseUrl);
+        await work.NavigateAsync();
 
-        // Assert: Active Runs should be 0 (no agent assigned)
-        var activeRunCount = await monitoringPage.GetActiveRunCountAsync();
-        Assert.Equal(0, activeRunCount);
+        // Queued but not in flight (no agent assigned yet).
+        Assert.True(await work.IsIssueQueuedAsync("80"), "Issue #80 should appear in the Queue");
+        Assert.False(await work.IsIssueInFlightAsync("80"), "Issue #80 should NOT be in flight while unassigned");
 
-        // Assert: Job Queue should contain the issue
-        var jobQueueText = await Page.TextContentAsync("h2:has-text('Job Queue')");
-        Assert.NotNull(jobQueueText);
-        Assert.DoesNotContain("(0)", jobQueueText);
-
-        // Assert: issue #80 is NOT in Active Runs section
-        var activeRunsSection = await Page.QuerySelectorAsync("section:has(h2:has-text('Active Runs'))");
-        Assert.NotNull(activeRunsSection);
-        var activeRunsHtml = await activeRunsSection.InnerHTMLAsync();
-        Assert.DoesNotContain("#80", activeRunsHtml);
-
-        // Assert: issue #80 IS in Job Queue section
-        var jobQueueSection = await Page.QuerySelectorAsync("section:has(h2:has-text('Job Queue'))");
-        Assert.NotNull(jobQueueSection);
-        var jobQueueHtml = await jobQueueSection.InnerHTMLAsync();
-        Assert.Contains("#80", jobQueueHtml);
-
-        // Now connect an agent and verify the job moves to Active Runs
+        // Connect an agent; the job should move to in flight.
         await using var fakeAgent = new FakeAgentClient("late-agent-1", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        // Wait for the agent to receive and accept the job
         var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await fakeAgent.AcceptJobAsync(assignment.JobId);
         await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
 
-        // Wait for server state to reflect
         var runService = Fixture.RunService;
-        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r =>
-            r.IssueIdentifier == "80" && r.AgentId == "late-agent-1"));
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "80" && r.AgentId == "late-agent-1"));
 
-        // Refresh monitoring page (wait for 5s refresh cycle)
-        await Page.WaitForTimeoutAsync(6000);
-
-        // Assert: Active Runs now shows the issue
-        var updatedActiveRunCount = await monitoringPage.GetActiveRunCountAsync();
-        Assert.True(updatedActiveRunCount >= 1,
-            $"Expected at least 1 active run after agent connected, got {updatedActiveRunCount}");
-
-        var updatedActiveSection = await Page.QuerySelectorAsync("section:has(h2:has-text('Active Runs'))");
-        var updatedActiveHtml = await updatedActiveSection!.InnerHTMLAsync();
-        Assert.Contains("#80", updatedActiveHtml);
+        await work.NavigateAsync();
+        await work.WaitForInFlightAsync("80", timeoutMs: 15_000);
+        Assert.True(await work.IsIssueInFlightAsync("80"), "Issue #80 should move to In flight after an agent picks it up");
     }
 }
