@@ -37,6 +37,20 @@ public sealed class BlockedIssuesService
     /// </summary>
     public async Task<IReadOnlyList<BlockedIssue>> GetBlockedIssuesAsync(string? projectId, CancellationToken ct)
     {
+        var backlog = await GetBacklogAsync(projectId, ct);
+        return backlog
+            .Where(b => !b.IsReady && b.BlockedBy.Count > 0)
+            .Select(b => new BlockedIssue(b.Identifier, b.Title, b.BlockedBy, b.Url))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Returns the open provider issues across the enabled templates' issue providers, each tagged with
+    /// its dispatch readiness (ready, or blocked by still-open dependencies). Project-scoped and
+    /// degrades to a partial/empty list on any provider error rather than throwing.
+    /// </summary>
+    public async Task<IReadOnlyList<BacklogIssue>> GetBacklogAsync(string? projectId, CancellationToken ct)
+    {
         List<PipelineJobTemplate> enabled;
         IReadOnlyList<ProviderConfig> issueConfigs;
         try
@@ -69,7 +83,7 @@ public sealed class BlockedIssuesService
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        var blocked = new List<BlockedIssue>();
+        var backlog = new List<BacklogIssue>();
         var seen = new HashSet<string>(StringComparer.Ordinal);   // dedupe across providers
 
         foreach (var providerId in providerIds)
@@ -86,10 +100,11 @@ public sealed class BlockedIssuesService
                 var stateCache = new Dictionary<int, bool>();
                 foreach (var issue in issues.Items)
                 {
+                    if (!seen.Add(issue.Identifier))
+                        continue;
                     var result = await _dependencyChecker.CheckAsync(
                         issue.Identifier, issue.Description ?? string.Empty, provider, stateCache, ct);
-                    if (!result.IsReady && result.BlockedBy.Count > 0 && seen.Add(issue.Identifier))
-                        blocked.Add(new BlockedIssue(issue.Identifier, issue.Title, result.BlockedBy, issue.Url));
+                    backlog.Add(new BacklogIssue(issue.Identifier, issue.Title, issue.Url, result.IsReady, result.BlockedBy));
                 }
             }
             catch (OperationCanceledException) { throw; }
@@ -99,6 +114,6 @@ public sealed class BlockedIssuesService
             }
         }
 
-        return blocked;
+        return backlog;
     }
 }

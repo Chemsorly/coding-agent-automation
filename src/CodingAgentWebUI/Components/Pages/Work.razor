@@ -6,6 +6,7 @@
 @using CodingAgentWebUI.Services
 @using CodingAgentWebUI.Components.Shared
 @inject IPipelineApiWorkItemClient WorkItems
+@inject BlockedIssuesService BlockedIssues
 @inject CockpitState State
 @inject NavigationManager Nav
 
@@ -107,6 +108,57 @@
                 </div>
             }
         </div>
+
+        <!-- provider backlog (live: issue provider + dependency checker) -->
+        <div class="cockpit-card">
+            <div class="cockpit-card-header">
+                <h2>Provider backlog</h2>
+                <span style="font-size: 12px; color: var(--text-muted);">@(_backlogLoading ? "checking…" : $"{_backlog.Count(b => b.IsReady)} ready · {_backlog.Count} open")</span>
+            </div>
+            @if (_backlogLoading)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">Checking the provider backlog…</div>
+            }
+            else if (_backlog.Count == 0)
+            {
+                <div class="cockpit-empty" style="padding: 24px;">No open issues found (or no issue provider configured).</div>
+            }
+            else
+            {
+                <div class="monitoring-table-wrap">
+                    <table class="monitoring-table">
+                        <thead><tr><th>Issue</th><th>Readiness</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var b in _backlog)
+                            {
+                                <tr>
+                                    <td>
+                                        <span class="monitoring-mono" style="font-weight: 600;">#@b.Identifier</span>
+                                        <span style="color: var(--text-muted);">@Truncate(b.Title, 60)</span>
+                                    </td>
+                                    <td>
+                                        @if (b.IsReady)
+                                        {
+                                            <span class="cockpit-chip" style="color: var(--success); background: var(--success-bg);">Ready</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="cockpit-chip" style="color: var(--warning); background: var(--warning-bg);">Blocked by @string.Join(", ", b.BlockedBy.Select(n => $"#{n}"))</span>
+                                        }
+                                    </td>
+                                    <td style="text-align: right;">
+                                        @if (!string.IsNullOrEmpty(b.Url))
+                                        {
+                                            <a href="@b.Url" target="_blank" rel="noopener" class="mono" style="font-size: 11.5px; font-weight: 600;" title="Open the issue in the provider">Issue ↗</a>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
     }
 </div>
 
@@ -117,7 +169,18 @@
     private bool _loading = true;
     private string? _error;
 
+    // Provider backlog is a LIVE query (issue provider + dependency checker) — loaded after first render.
+    private IReadOnlyList<BacklogIssue> _backlog = [];
+    private bool _backlogLoading = true;
+
     protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
+    // Load the live provider backlog only after the queue has rendered, so provider calls never delay first paint.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await LoadBacklogAsync();
+    }
 
     // Re-query when the top-bar project scope changes (quiet — keeps the current view until data returns).
     private async void HandleProjectChanged()
@@ -126,8 +189,26 @@
         {
             await RefreshQuietAsync();
             await InvokeAsync(StateHasChanged);
+            await LoadBacklogAsync();
         }
         catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadBacklogAsync()
+    {
+        _backlogLoading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            _backlog = await BlockedIssues.GetBacklogAsync(State.SelectedProjectId, _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch { /* the service already degrades to empty on provider errors */ }
+        finally
+        {
+            _backlogLoading = false;
+            try { await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { }
+        }
     }
 
     protected override async Task OnInitializedAsync()

@@ -77,6 +77,27 @@ public class PipelineRunSummaryTests
     }
 
     [Fact]
+    public void ToSummary_CapturesBrainUsageFields()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            BrainContextLoaded = true,
+            BrainKnowledgeFileCount = 7
+        };
+
+        var summary = run.ToSummary();
+
+        summary.BrainContextLoaded.Should().BeTrue();
+        summary.BrainKnowledgeFileCount.Should().Be(7);
+    }
+
+    [Fact]
     public void IsRework_WhenLinkedPullRequestNull_ReturnsFalse()
     {
         var run = new PipelineRun

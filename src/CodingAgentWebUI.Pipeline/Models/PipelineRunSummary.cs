@@ -55,6 +55,12 @@ public sealed class PipelineRunSummary
     /// <summary>Whether brain updates were pushed successfully.</summary>
     public bool BrainUpdatesPushed { get; init; }
 
+    /// <summary>Whether brain knowledge was loaded into this run's context.</summary>
+    public bool BrainContextLoaded { get; init; }
+
+    /// <summary>Number of brain knowledge files loaded into this run's context (0 when none/unused). Powers the Knowledge usage aggregate.</summary>
+    public int BrainKnowledgeFileCount { get; init; }
+
     /// <summary>Which agent executed this run, or null for test-infrastructure runs.</summary>
     public string? AgentId { get; init; }
 

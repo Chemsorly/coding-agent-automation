@@ -6,8 +6,10 @@
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Components.Shared
+@using Microsoft.AspNetCore.SignalR.Client
 @inject IPipelineApiRunHistoryClient RunHistory
 @inject IConfigurationStore ConfigStore
+@inject IAgentHubConnection HubConnection
 @inject NavigationManager Nav
 
 @*
@@ -180,6 +182,26 @@
             }
         </div>
 
+        @if (_isLive)
+        {
+            <div class="cockpit-card">
+                <div class="cockpit-card-header">
+                    <h2>Live trace</h2>
+                    <span class="step-badge step-running">@((_liveStep ?? run.FinalStep).ToDisplayName())</span>
+                </div>
+                <div class="cockpit-card-pad">
+                    @if (_liveOutput.Count == 0)
+                    {
+                        <div class="cockpit-empty" style="padding: 16px;">Waiting for output…</div>
+                    }
+                    else
+                    {
+                        <pre class="run-live-log" @ref="_logRef">@string.Join("\n", _liveOutput)</pre>
+                    }
+                </div>
+            </div>
+        }
+
         <FeedbackSection Feedback="run.Feedback" />
     }
 </div>
@@ -192,6 +214,18 @@
     private string? _resolvedAgentName;
     private bool _loading = true;
     private string? _error;
+
+    // Live trace (active runs only) — reuses the agent hub the monitoring modal streams from.
+    private bool _isLive;
+    private bool _subscribed;
+    private PipelineStep? _liveStep;
+    private readonly List<string> _liveOutput = new();
+    private IDisposable? _outputSub, _stepSub, _completedSub, _snapshotSub;
+    private ElementReference _logRef;
+    private bool _scrollOnRender;
+
+    private static bool IsActive(PipelineRunSummary r)
+        => r.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -216,6 +250,7 @@
                     _run.AgentProviderConfigId, ProviderKind.Agent, _cts.Token);
                 _resolvedAgentName = cfg?.DisplayName;
             }
+            _isLive = _run is not null && IsActive(_run);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -226,6 +261,74 @@
         {
             _loading = false;
         }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Subscribe to the live run stream once, after the interactive circuit exists (not during prerender).
+        if (_isLive && !_subscribed)
+            await SubscribeLiveAsync();
+
+        if (_scrollOnRender)
+        {
+            _scrollOnRender = false;
+            try { await _logRef.FocusAsync(); } catch (Exception) { /* element may be gone */ }
+        }
+    }
+
+    private async Task SubscribeLiveAsync()
+    {
+        _subscribed = true;   // guard against duplicate subscribes across renders
+        try
+        {
+            _outputSub = HubConnection.On<string, IReadOnlyList<string>>(
+                HubMethodNames.OnOutputLines, (jobId, lines) => OnOutput(jobId, lines));
+            _stepSub = HubConnection.On<string, PipelineStep, DateTimeOffset>(
+                HubMethodNames.OnStepTransition, (jobId, step, _) => OnStep(jobId, step));
+            _snapshotSub = HubConnection.On<string, RunStateSnapshot>(
+                HubMethodNames.OnRunStateSnapshot, (jobId, snap) => OnStep(jobId, snap.CurrentStep));
+            _completedSub = HubConnection.On<string, JobCompletionPayload>(
+                HubMethodNames.OnRunCompleted, (jobId, _) => OnCompleted(jobId));
+
+            if (HubConnection.State == HubConnectionState.Disconnected)
+                await HubConnection.StartAsync(_cts.Token);
+            await HubConnection.InvokeAsync(HubMethodNames.SubscribeToRun, RunId, _cts.Token);
+        }
+        catch (Exception ex)
+        {
+            // Live trace is best-effort; the post-hoc summary above still stands.
+            Serilog.Log.Warning(ex, "RunPage: failed to subscribe to live run {RunId}", RunId);
+        }
+    }
+
+    private void OnOutput(string jobId, IReadOnlyList<string> lines)
+    {
+        if (jobId != RunId) return;
+        _ = InvokeAsync(() =>
+        {
+            _liveOutput.AddRange(lines);
+            if (_liveOutput.Count > 2000)   // cap the buffer
+                _liveOutput.RemoveRange(0, _liveOutput.Count - 2000);
+            _scrollOnRender = true;
+            StateHasChanged();
+        });
+    }
+
+    private void OnStep(string jobId, PipelineStep step)
+    {
+        if (jobId != RunId) return;
+        _ = InvokeAsync(() => { _liveStep = step; StateHasChanged(); });
+    }
+
+    private void OnCompleted(string jobId)
+    {
+        if (jobId != RunId) return;
+        _ = InvokeAsync(async () =>
+        {
+            _isLive = false;
+            await OnParametersSetAsync();   // reload the now-terminal summary
+            StateHasChanged();
+        });
     }
 
     private static string Truncate(string? s, int n)
@@ -242,6 +345,20 @@
 
     public async ValueTask DisposeAsync()
     {
+        if (_subscribed)
+        {
+            try
+            {
+                if (HubConnection.State == HubConnectionState.Connected)
+                    await HubConnection.InvokeAsync(HubMethodNames.UnsubscribeFromRun, RunId, CancellationToken.None);
+            }
+            catch (Exception) { /* best-effort unsubscribe */ }
+        }
+        _outputSub?.Dispose();
+        _stepSub?.Dispose();
+        _completedSub?.Dispose();
+        _snapshotSub?.Dispose();
+
         await _cts.CancelAsync();
         _cts.Dispose();
     }

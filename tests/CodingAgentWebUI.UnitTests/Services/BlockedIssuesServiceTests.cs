@@ -64,6 +64,46 @@ public class BlockedIssuesServiceTests
     }
 
     [Fact]
+    public async Task GetBacklogAsync_ReturnsAllOpenIssues_WithReadiness()
+    {
+        var template = new PipelineJobTemplate
+        {
+            Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true
+        };
+
+        var config = new Mock<IPipelineApiConfigClient>();
+        config.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { template });
+        config.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
+
+        var provider = new Mock<IIssueProvider>();
+        provider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TwoIssues());
+        provider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TwoIssues());
+
+        var factory = new Mock<IProviderFactory>();
+        factory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(provider.Object);
+
+        var dep = new Mock<IDependencyChecker>();
+        dep.Setup(d => d.CheckAsync(It.Is<IssueIdentifier>(i => i.Value == "10"), It.IsAny<string?>(),
+                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DependencyCheckResult { IsReady = false, BlockedBy = new[] { 5 }, TotalDependencies = 1 });
+        dep.Setup(d => d.CheckAsync(It.Is<IssueIdentifier>(i => i.Value == "11"), It.IsAny<string?>(),
+                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        var sut = new BlockedIssuesService(config.Object, factory.Object, dep.Object);
+
+        var result = await sut.GetBacklogAsync(projectId: null, CancellationToken.None);
+
+        Assert.Equal(2, result.Count);
+        Assert.Contains(result, b => b.Identifier == "10" && !b.IsReady && b.BlockedBy.Contains(5));
+        Assert.Contains(result, b => b.Identifier == "11" && b.IsReady && b.BlockedBy.Count == 0);
+    }
+
+    [Fact]
     public async Task GetBlockedIssuesAsync_DisabledTemplatesIgnored_ReturnsEmpty()
     {
         var config = new Mock<IPipelineApiConfigClient>();

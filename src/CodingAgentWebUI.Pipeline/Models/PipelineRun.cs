@@ -382,6 +382,8 @@ public sealed partial class PipelineRun
         ModelName = ModelName,
         BrainRepoUsed = BrainProviderConfigId != null,
         BrainUpdatesPushed = BrainUpdatesPushed,
+        BrainContextLoaded = BrainContextLoaded,
+        BrainKnowledgeFileCount = BrainKnowledgeFileCount,
         AgentId = AgentId,
         InitiatedBy = InitiatedBy,
         AnalysisRecommendation = AnalysisRecommendation,

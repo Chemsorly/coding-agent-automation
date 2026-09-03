@@ -49,7 +49,26 @@
             <div class="cockpit-stat"><span class="cockpit-stat-l">Idle</span><span class="cockpit-stat-v" style="color: var(--success);">@idle</span></div>
             <div class="cockpit-stat"><span class="cockpit-stat-l">Disconnected</span><span class="cockpit-stat-v" style="color: var(--text-faint);">@disconnected</span></div>
             <div class="cockpit-stat"><span class="cockpit-stat-l">Utilization</span><span class="cockpit-stat-v">@utilization<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
+            <div class="cockpit-stat" title="@(_pool is { Total: > 0 } ? "Kiro credential (PVC) slots available / configured" : "Credential pooling not configured")">
+                <span class="cockpit-stat-l">Credentials</span>
+                <span class="cockpit-stat-v">
+                    @if (_pool is { Total: > 0 } p)
+                    {
+                        <span style="color: @(p.Available == 0 ? "var(--error)" : "var(--success)");">@p.Available</span><span style="font-size: 15px; color: var(--text-faint);">/@p.Total</span>
+                    }
+                    else
+                    {
+                        <span style="font-size: 15px; color: var(--text-faint);">—</span>
+                    }
+                </span>
+            </div>
         </div>
+        @if (_pool is { Total: > 0, Available: 0 })
+        {
+            <div class="cockpit-card cockpit-card-pad" style="color: var(--error); font-size: 12.5px; border-color: var(--error);">
+                <Icon Name="alert-triangle" Size="14" /> Credential pool exhausted — all @_pool.Total slots are claimed, so new work can't dispatch until one frees up.
+            </div>
+        }
 
         <div class="cockpit-card">
             @if (agents.Count == 0)
@@ -149,6 +168,7 @@
 @code {
     private readonly CancellationTokenSource _cts = new();
     private IReadOnlyList<AgentEntry>? _agents;
+    private CredentialPoolStatus? _pool;
     private bool _loading = true;
     private string? _error;
     private string? _expandedId;
@@ -164,6 +184,7 @@
         try
         {
             _agents = await AgentClient.GetAgentsAsync(_cts.Token);
+            await LoadPoolAsync();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -176,12 +197,21 @@
         }
     }
 
+    // Credential pool is secondary — a failure here must not fault the agents view.
+    private async Task LoadPoolAsync()
+    {
+        try { _pool = await AgentClient.GetCredentialPoolAsync(_cts.Token); }
+        catch (OperationCanceledException) { throw; }
+        catch { _pool = null; }
+    }
+
     // Quiet tick refresh — no spinner, keeps the expanded row and stale data on a transient error.
     private async Task RefreshQuietAsync()
     {
         try
         {
             _agents = await AgentClient.GetAgentsAsync(_cts.Token);
+            await LoadPoolAsync();
             _error = null;
         }
         catch (OperationCanceledException) { }

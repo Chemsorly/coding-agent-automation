@@ -356,6 +356,15 @@
 .cockpit-finding.is-suggestion .cockpit-finding-v { color: var(--accent); }
 .cockpit-detail-sub-label { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 10px; }
 
+/* ---- Run page: live trace log --------------------------------------------- */
+.run-live-log {
+    max-height: 380px; overflow: auto; margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px; line-height: 1.55; color: var(--text);
+    background: var(--subtle-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; white-space: pre-wrap; word-break: break-word;
+}
+
 /* ---- Fleet: expandable agent detail row ------------------------------------ */
 .cockpit .fleet-chevron { color: var(--text-faint); flex-shrink: 0; transition: none; }
 .cockpit .fleet-detail-row > td { background: var(--subtle-bg); padding: 4px 16px 14px; }

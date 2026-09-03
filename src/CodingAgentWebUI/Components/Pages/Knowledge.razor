@@ -1,12 +1,20 @@
 @page "/knowledge"
 @layout CockpitLayout
+@implements IDisposable
+@using CodingAgentWebUI.Api.Client
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Services
 @using CodingAgentWebUI.Components.Shared
+@inject IPipelineApiRunHistoryClient RunHistory
+@inject CockpitState State
 
 @*
-    Knowledge — concept screen (see docs/frontend-redesign-handoff.md).
-    The agent brain is real (a git repo synced per run; consolidated via Pipelines), but the
-    impact / usage metrics this screen would show need per-run knowledge-usage instrumentation
-    that does not exist yet. So this ships as an honest placeholder — NO sample/fabricated data.
+    Knowledge — real aggregate brain usage across the fetched run window (see docs/frontend-redesign-handoff.md).
+    Uses per-run fields that ARE recorded: BrainRepoUsed, BrainContextLoaded, BrainKnowledgeFileCount,
+    BrainUpdatesPushed (the last two captured onto the summary at ToSummary). The per-FILE impact
+    ("which knowledge file lifts success") still needs agent-side instrumentation of the files that
+    enter each run's context — noted honestly below, not fabricated.
 *@
 
 <PageTitle>Knowledge - Coding Agent</PageTitle>
@@ -14,44 +22,134 @@
 <div class="cockpit-page">
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <h1>Knowledge</h1>
-                <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: #6D28D9; background: var(--bg-active-alt); border: 1px solid #E4D9FB; padding: 3px 9px; border-radius: 999px;">Not instrumented yet</span>
-            </div>
-            <span class="cockpit-page-sub">Which brain knowledge actually influences runs</span>
+            <h1>Knowledge</h1>
+            <span class="cockpit-page-sub">How the agent brain is used across recent runs</span>
         </div>
     </div>
 
-    <div class="cockpit-card cockpit-card-pad" style="display: flex; gap: 14px; align-items: flex-start;">
-        <span style="width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #6D28D9; background: var(--bg-active-alt);"><Icon Name="brain" Size="18" /></span>
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-            <span style="font-size: 14px; font-weight: 700;">The brain is real — its impact metrics aren't measured yet</span>
-            <span style="font-size: 13px; color: var(--text-muted); line-height: 1.55; max-width: 720px;">
-                Each run syncs the agent brain (a git repo of knowledge files) before and after execution, and
-                <a href="/pipelines">Pipelines</a> consolidates it via Brain Consolidation. What this screen would add —
-                <strong>which files influence outcomes</strong>, what's stale or never loaded, and consolidation candidates —
-                needs per-run <em>knowledge-usage</em> instrumentation (record which brain files entered each run's context,
-                then join to the run outcome). That data isn't captured today, so nothing here is shown rather than
-                fabricating it.
+    @if (_loading)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">Loading…</div></div>
+    }
+    else if (_error is not null)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">@_error</div></div>
+    }
+    else if (_total == 0)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">No runs in the recent window yet.</div></div>
+    }
+    else
+    {
+        <div class="cockpit-stat-strip">
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Runs · recent</span><span class="cockpit-stat-v">@_total</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Used brain</span><span class="cockpit-stat-v">@_withBrain<span style="font-size: 15px; color: var(--text-faint);"> · @Pct(_withBrain)%</span></span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Context loaded</span><span class="cockpit-stat-v">@_ctxLoaded</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg files loaded</span><span class="cockpit-stat-v">@_avgFiles.ToString("0.0")</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Updates pushed</span><span class="cockpit-stat-v">@_updatesPushed</span></div>
+        </div>
+
+        <div class="cockpit-card">
+            <div class="cockpit-card-header"><h2>Does the brain help?</h2><span style="font-size: 12px; color: var(--text-muted);">completed-rate over the recent window</span></div>
+            <div class="cockpit-card-pad">
+                @if (_brainRuns == 0 || _nonBrainRuns == 0)
+                {
+                    <div style="font-size: 12.5px; color: var(--text-muted);">Needs runs both with and without the brain in this window to compare (@_brainRuns with · @_nonBrainRuns without).</div>
+                }
+                else
+                {
+                    <div style="display: grid; grid-template-columns: 140px 1fr 120px; gap: 10px 14px; align-items: center;">
+                        <span style="font-size: 13px; font-weight: 600;">With brain</span>
+                        <div style="height: 10px; border-radius: 5px; background: var(--surface-alt); overflow: hidden;"><div style="height: 100%; width: @_brainSuccess%; background: var(--success);"></div></div>
+                        <span style="font-size: 12.5px; color: var(--text-muted); text-align: right;">@_brainSuccess% · @_brainRuns runs</span>
+
+                        <span style="font-size: 13px; font-weight: 600;">Without brain</span>
+                        <div style="height: 10px; border-radius: 5px; background: var(--surface-alt); overflow: hidden;"><div style="height: 100%; width: @_nonBrainSuccess%; background: var(--text-faint);"></div></div>
+                        <span style="font-size: 12.5px; color: var(--text-muted); text-align: right;">@_nonBrainSuccess% · @_nonBrainRuns runs</span>
+                    </div>
+                    <div style="margin-top: 12px; font-size: 12.5px;">
+                        @{ var lift = _brainSuccess - _nonBrainSuccess; }
+                        <span style="font-weight: 700; color: @(lift >= 0 ? "var(--success)" : "var(--error)");">@(lift >= 0 ? "+" : "")@lift pts</span>
+                        <span style="color: var(--text-muted);"> completed-rate on runs that used the brain — a correlation over a small recent window, not a causal measure.</span>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="cockpit-card cockpit-card-pad" style="display: flex; gap: 12px; align-items: flex-start; font-size: 12.5px; color: var(--text-muted); line-height: 1.55;">
+            <span style="flex-shrink: 0; color: var(--accent);"><Icon Name="info" Size="15" /></span>
+            <span>
+                <strong style="color: var(--text);">Per-file impact isn't shown</strong> — "which knowledge file lifts outcomes / what's stale or never loaded" needs the agent to record the specific brain files that enter each run's context, then join to the outcome. Only the per-run <em>counts</em> above are recorded today, so nothing per-file is fabricated. <a href="/pipelines">Pipelines</a> consolidates the brain via Brain Consolidation.
             </span>
         </div>
-    </div>
-
-    <div class="cockpit-card">
-        <div class="cockpit-card-header"><h2>What it will show, once instrumented</h2></div>
-        <div class="cockpit-card-pad" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px;">
-            <div class="cockpit-detail-item">
-                <div style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px;"><Icon Name="bar-chart-2" Size="15" /> Highest-impact knowledge</div>
-                <div style="font-size: 12.5px; color: var(--text-muted); margin-top: 4px;">Success-rate lift on runs where a file was in context vs. not.</div>
-            </div>
-            <div class="cockpit-detail-item">
-                <div style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px;"><Icon Name="scroll" Size="15" /> Stale &amp; unused</div>
-                <div style="font-size: 12.5px; color: var(--text-muted); margin-top: 4px;">Files rarely loaded or with negative lift — prune or merge candidates.</div>
-            </div>
-            <div class="cockpit-detail-item">
-                <div style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px;"><Icon Name="refresh-cw" Size="15" /> Consolidation candidates</div>
-                <div style="font-size: 12.5px; color: var(--text-muted); margin-top: 4px;">Feeds the Brain Consolidation trigger in Pipelines.</div>
-            </div>
-        </div>
-    </div>
+    }
 </div>
+
+@code {
+    private readonly CancellationTokenSource _cts = new();
+    private bool _loading = true;
+    private string? _error;
+
+    private int _total, _withBrain, _ctxLoaded, _updatesPushed;
+    private double _avgFiles;
+    private int _brainRuns, _nonBrainRuns, _brainSuccess, _nonBrainSuccess;
+
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async void HandleProjectChanged()
+    {
+        try { await LoadAsync(); await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        _total = _withBrain = _ctxLoaded = _updatesPushed = 0;
+        _avgFiles = 0;
+        _brainRuns = _nonBrainRuns = _brainSuccess = _nonBrainSuccess = 0;
+        try
+        {
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
+            var items = runs.Items;
+            _total = items.Count;
+            if (_total == 0) { _loading = false; return; }
+
+            _withBrain = items.Count(r => r.BrainRepoUsed);
+            _ctxLoaded = items.Count(r => r.BrainContextLoaded);
+            _updatesPushed = items.Count(r => r.BrainUpdatesPushed);
+
+            var loaded = items.Where(r => r.BrainContextLoaded && r.BrainKnowledgeFileCount > 0).ToList();
+            _avgFiles = loaded.Count > 0 ? loaded.Average(r => r.BrainKnowledgeFileCount) : 0;
+
+            // Correlation: completed-rate of runs that used the brain vs. those that didn't.
+            var brain = items.Where(r => r.BrainRepoUsed).ToList();
+            var nonBrain = items.Where(r => !r.BrainRepoUsed).ToList();
+            _brainRuns = brain.Count;
+            _nonBrainRuns = nonBrain.Count;
+            _brainSuccess = _brainRuns > 0 ? (int)Math.Round(100.0 * brain.Count(r => r.FinalStep == PipelineStep.Completed) / _brainRuns) : 0;
+            _nonBrainSuccess = _nonBrainRuns > 0 ? (int)Math.Round(100.0 * nonBrain.Count(r => r.FinalStep == PipelineStep.Completed) / _nonBrainRuns) : 0;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load knowledge metrics: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private int Pct(int count) => _total > 0 ? (int)Math.Round(100.0 * count / _total) : 0;
+
+    public void Dispose()
+    {
+        State.OnProjectChanged -= HandleProjectChanged;
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+}
