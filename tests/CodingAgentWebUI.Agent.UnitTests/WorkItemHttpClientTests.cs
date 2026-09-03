@@ -93,6 +93,24 @@ public class WorkItemHttpClientTests
     }
 
     [Fact]
+    public async Task GetAssignment_503ServiceUnavailable_ThrowsWorkItemFetchException()
+    {
+        // 503 means enrichment failed on the server; after resilience handler exhaustion it leaks through.
+        // TODO: [WARNING] This test bypasses the resilience handler (CreateClient uses a plain FakeHandler
+        // without AddStandardResilienceHandler). It verifies the switch-case code path but does NOT verify
+        // the acceptance criterion "WorkItemHttpClient.GetAssignmentAsync retries on 503 response." Add an
+        // integration-level test that wires up the real resilience pipeline and asserts the handler is
+        // invoked more than once before WorkItemFetchException is thrown.
+        var handler = new FakeHandler(HttpStatusCode.ServiceUnavailable);
+        var client = CreateClient(handler);
+
+        var act = () => client.GetAssignmentAsync("wi-503", CancellationToken.None);
+
+        await act.Should().ThrowAsync<WorkItemFetchException>()
+            .WithMessage("*503*");
+    }
+
+    [Fact]
     public async Task GetAssignment_5xx_ThrowsWorkItemFetchException()
     {
         // After resilience handler exhaustion, a 5xx may leak through to the client
