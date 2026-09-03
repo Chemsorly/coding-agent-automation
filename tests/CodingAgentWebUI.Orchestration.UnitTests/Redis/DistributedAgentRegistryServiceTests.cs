@@ -478,6 +478,14 @@ public sealed class DistributedAgentRegistryServiceTests
     }
 
     // ── UpdateAgentFieldAsync — fault path ────────────────────────────────────
+    // TODO (WARNING): Three tests that covered the GetByAgentId _localSnapshot fallback (issue #2144) were
+    // removed as part of this change: GetByAgentId_ReturnsEntry_FromLocalSnapshot_WhenRedisReturnsEmpty,
+    // GetByAgentId_ReturnsNull_AfterDeregister_EvenWithRedisPending, and
+    // GetByAgentId_ReturnsNull_AfterDeregister_SnapshotFallbackDoesNotResurrect. Their removal reduces
+    // coverage of the snapshot-fallback branch in GetAgentRaw (unrelated to the fault-handling fix here).
+    // A regression in the snapshot-fallback path will now go undetected. Restore or replace these tests
+    // to restore coverage for the issue #2144 correctness guarantee.
+    // (CorrectnessReviewer WARNING / TestQualityReviewer WARNING)
 
     [Fact]
     public async Task UpdateAgentFieldAsync_WhenRedisFaults_LogsWarningAndDoesNotThrow()
@@ -500,6 +508,13 @@ public sealed class DistributedAgentRegistryServiceTests
 
         // Assert: no exception propagated to the caller
         exception.Should().BeNull("Redis faults must not propagate — callers rely on fire-and-forget safety");
+
+        // TODO (WARNING): agent-1 is never registered before this call, so _localSnapshot has no entry
+        // and the snapshot-update branch inside the try is never reached. A regression that moved the
+        // _localSnapshot update outside the try (breaking the "snapshot must only update on Redis success"
+        // invariant documented in the production comment) would not be detected by this test. Add a separate
+        // test that faults on HashSetFieldAsync (after a successful ExistsAsync) and then asserts the snapshot
+        // is NOT updated for a pre-registered agent to pin this invariant. (TestQualityReviewer WARNING line 508)
 
         // Assert: a single Warning was logged including both field name and agentId
         var warnings = sink.Events.Where(e => e.Level == LogEventLevel.Warning).ToList();
