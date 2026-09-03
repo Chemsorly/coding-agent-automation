@@ -487,12 +487,6 @@ public partial class GitHubRepositoryProvider
                 }
             }
 
-            if (issueNumbers.Count > 0)
-            {
-                // API found results — still parse title/body for additional references
-                // that may not appear in timeline events (e.g., "Related to #42" without closing keyword).
-                // The HashSet deduplicates across all sources.
-            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
