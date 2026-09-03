@@ -75,7 +75,7 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase
 
         // And the work item really is waiting for a pod: nothing has claimed it, because nothing
         // is connected. This is the half of the assertion the old error-banner check never made.
-        var pending = await Fixture.WorkItems.GetPendingAsync(50, CancellationToken.None);
+        var pending = await Fixture.WorkItems.GetPendingAsync(50, ct: CancellationToken.None);
         Assert.Contains(pending, w => w.IssueIdentifier == "50");
     }
 

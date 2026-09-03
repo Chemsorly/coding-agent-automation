@@ -19,7 +19,7 @@ public sealed class MultiAgentDispatchTests : E2ETestBase
     public MultiAgentDispatchTests(E2EFixture fixture) : base(fixture) { }
 
     [Fact]
-    public async Task MultiAgent_AgentConnects_ShowsInMonitoringPage()
+    public async Task MultiAgent_AgentConnects_ShowsInFleet()
     {
         // Arrange: connect a fake agent
         await using var fakeAgent = new FakeAgentClient("monitor-agent-1", "e2e");
@@ -29,17 +29,17 @@ public sealed class MultiAgentDispatchTests : E2ETestBase
         // AgentRegistrySyncService background poller is disabled in the E2E harness.
         await Fixture.ForceAgentRegistryRefreshAsync();
 
-        // Act: navigate to the monitoring page
-        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
-        await monitoringPage.NavigateAsync();
+        // Act: navigate to the Fleet page
+        var fleet = new FleetPage(Page, BaseUrl);
+        await fleet.NavigateAsync();
 
         // Assert: the agent is visible with "Idle" status
-        var isVisible = await monitoringPage.IsAgentVisibleAsync("monitor-agent-1");
-        Assert.True(isVisible, "Expected agent 'monitor-agent-1' to be visible on the monitoring page");
+        var isVisible = await fleet.IsAgentVisibleAsync("monitor-agent-1");
+        Assert.True(isVisible, "Expected agent 'monitor-agent-1' to be visible on the Fleet page");
 
-        await monitoringPage.WaitForAgentStatusAsync("monitor-agent-1", "Idle", timeoutMs: 15_000);
+        await fleet.WaitForAgentStatusAsync("monitor-agent-1", "Idle", timeoutMs: 15_000);
 
-        var agentCount = await monitoringPage.GetRegisteredAgentCountAsync();
+        var agentCount = await fleet.GetAgentCountAsync();
         Assert.True(agentCount >= 1, $"Expected at least 1 registered agent, got {agentCount}");
     }
 

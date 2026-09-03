@@ -20,6 +20,12 @@ public interface IPipelineApiAgentClient
     Task<IReadOnlyList<AgentEntry>> GetAgentsAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// Returns the Kiro credential (PVC) pool snapshot — configured slots, available, and claimed —
+    /// for the Fleet screen. <see cref="CredentialPoolStatus.Total"/> is 0 when pooling isn't configured.
+    /// </summary>
+    Task<CredentialPoolStatus> GetCredentialPoolAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Delivers a chat prompt to the agent identified by <paramref name="agentId"/> via
     /// <c>POST /api/agents/{agentId}/chat-prompt</c>.
     ///
