@@ -90,7 +90,9 @@ public sealed class PullRequestFinalizationService
             finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
             if (isDraft)
             {
-                run.FailureReason = "Quality gates failed after max retries; draft PR created.";
+                // Preserve a more specific failure reason if already set (e.g., "CI never started after N retries").
+                // Fall back to the generic draft message for all other exhaustion paths.
+                run.FailureReason ??= "Quality gates failed after max retries; draft PR created.";
             }
             // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
 
