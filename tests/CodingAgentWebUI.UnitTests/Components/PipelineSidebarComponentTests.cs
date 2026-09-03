@@ -594,7 +594,7 @@ public class PipelineSidebarComponentTests : BunitContext
         Assert.NotEmpty(cut.FindAll(".phase-breakdown-body"));
 
         // Simulate a live update: add a new phase to the same PipelineRun object and force re-render.
-        // In production, StateHasChanged is called on the parent (AgentMonitoring.razor) which passes
+        // In production, StateHasChanged is called on the parent (RunPage.razor) which passes
         // the same PipelineRun reference. Here we trigger StateHasChanged directly on the component
         // via reflection (it is protected on ComponentBase).
         run.Metrics.PhaseBreakdown.TryAdd("codegen", new PhaseUsage(10000, 0.08m));

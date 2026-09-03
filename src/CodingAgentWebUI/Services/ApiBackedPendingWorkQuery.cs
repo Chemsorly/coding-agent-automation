@@ -26,7 +26,7 @@ internal sealed class ApiBackedPendingWorkQuery : IPendingWorkQuery
 
     public async Task<IReadOnlyList<PendingJob>> GetPendingJobsAsync(CancellationToken ct = default)
     {
-        var items = await _client.GetPendingAsync(maxResults: 200, ct);
+        var items = await _client.GetPendingAsync(maxResults: 200, ct: ct);
         _pendingCount = items.Count;
 
         return items.Select(item => new PendingJob

@@ -7,9 +7,16 @@ using Microsoft.Extensions.DependencyInjection;
 namespace CodingAgentWebUI.E2ETests.Tests;
 
 /// <summary>
-/// E2E tests for the Consolidation page (/consolidation): page rendering, trigger buttons, the
-/// queued-dispatch feedback an operator sees, and badge behaviour. Covers feature 021
-/// (Consolidation Loops).
+/// E2E tests for the consolidation section — folded into the Pipelines page (/pipelines) when the
+/// legacy shell was retired (the old /consolidation route redirects there). Covers page rendering,
+/// trigger buttons, and the queued-dispatch feedback an operator sees. Feature 021 (Consolidation Loops).
+///
+/// <para>
+/// <c>ConsolidationPage_BadgeVisibleInSidebar_WhenNonZero</c> was removed with the legacy shell: the
+/// consolidation nav badge (<c>.sidebar-badge</c> in the old MainLayout) no longer exists — the
+/// cockpit nav has no such indicator. The badge <i>service</i> reset-on-load is still pinned by
+/// <c>ConsolidationPage_BadgeResetsOnPageLoad</c>.
+/// </para>
 ///
 /// <para>
 /// <b>Six tests were removed here rather than ported.</b> They connected a <c>FakeAgentClient</c>
@@ -54,11 +61,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Wait for the Blazor interactive content to render by checking for any section header
         await Page.WaitForSelectorAsync(".settings-section h2", new() { Timeout = 10_000 });
 
-        // Assert
+        // Assert: the section is embedded in the Pipelines page now (its own header is hidden),
+        // so the page title reads "Pipelines".
         var title = await page.GetPageTitleAsync();
-        Assert.Contains("Consolidation", title);
+        Assert.Contains("Pipelines", title);
 
-        // The page should show "No enabled templates configured." in the template section
+        // The consolidation section should show "No enabled templates configured."
         var pageText = await Page.TextContentAsync(".consolidation-page");
         Assert.Contains("No enabled templates configured", pageText);
     }
@@ -204,29 +212,6 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         // Assert: badge was reset to zero
         Assert.Equal(0, badgeService.BadgeCount);
-    }
-
-    [Fact]
-    public async Task ConsolidationPage_BadgeVisibleInSidebar_WhenNonZero()
-    {
-        // Arrange: increment badge before navigating
-        var badgeService = Fixture.Factory.Services.GetRequiredService<ConsolidationBadgeService>();
-        badgeService.IncrementBy(3);
-
-        // Act: navigate to a different page (not consolidation, so badge isn't reset)
-        await Page.GotoAsync($"{BaseUrl}/agent-monitoring");
-        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-
-        // Wait for the sidebar badge to render (Blazor interactive circuit must be established)
-        await Page.WaitForSelectorAsync(".sidebar-badge", new() { Timeout = 10_000 });
-
-        // Assert: badge is visible in the sidebar
-        var badge = await Page.QuerySelectorAsync(".sidebar-badge");
-        Assert.NotNull(badge);
-        var badgeText = await badge.TextContentAsync();
-        Assert.NotNull(badgeText);
-        var badgeValue = int.Parse(badgeText.Trim());
-        Assert.True(badgeValue >= 3, $"Badge should be at least 3, was {badgeValue}");
     }
 
 }
