@@ -90,8 +90,24 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
                     _logger.Error("Work item {WorkItemId} not found (404) for assignment fetch", workItemId);
                     throw new WorkItemFetchException($"Work item {workItemId} not found (404)");
 
+                case HttpStatusCode.ServiceUnavailable:
+                    // 503 means enrichment failed transiently on the server (DB timeout, provider resolution
+                    // failure, etc.). The resilience handler retries 503 automatically (it is in the default
+                    // retry-eligible set for AddStandardResilienceHandler). After all retries are exhausted
+                    // the exception caught above wraps the error as WorkItemFetchException.
+                    // Logging here is at Error because a 503 that reached this point means the resilience
+                    // handler already exhausted its budget.
+                    // TODO: [WARNING] The assumption that AddStandardResilienceHandler retries 503 automatically
+                    // is load-bearing for the acceptance criterion "WorkItemHttpClient.GetAssignmentAsync retries
+                    // on 503 response", but no test verifies it. The unit test GetAssignment_503ServiceUnavailable_
+                    // ThrowsWorkItemFetchException bypasses the resilience handler (uses FakeHandler directly).
+                    // Add an integration-level test that intercepts multiple calls and verifies the handler is
+                    // invoked more than once on 503 before throwing WorkItemFetchException.
+                    _logger.Error("Service unavailable (503) from GET /api/work-items/{WorkItemId}/assignment (retries exhausted); enrichment failed on the orchestrator", workItemId);
+                    throw new WorkItemFetchException(
+                        $"Service unavailable (503) from GET /api/work-items/{workItemId}/assignment (retries exhausted)");
+
                 default:
-                    // TODO: Add explicit >= 500 check with "retries exhausted" message for consistency with PostStatusAsync
                     _logger.Error("Unexpected status {StatusCode} from GET /api/work-items/{WorkItemId}/assignment", (int)response.StatusCode, workItemId);
                     throw new WorkItemFetchException(
                         $"Unexpected status {(int)response.StatusCode} from GET /api/work-items/{workItemId}/assignment");
