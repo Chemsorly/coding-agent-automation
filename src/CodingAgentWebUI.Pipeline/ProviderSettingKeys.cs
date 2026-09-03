@@ -79,6 +79,13 @@ public static class ProviderSettingKeys
 
     // ── Token vending (written by orchestrator) ──────────────────────────
 
-    /// <summary>Token expiration timestamp (written to provider settings at runtime).</summary>
+    /// <summary>
+    /// Token expiration timestamp written to provider settings at dispatch time by
+    /// <c>TokenVendingService.PrepareAgentConfigsAsync</c> (GitHub App configs only).
+    /// This value is currently write-only — no agent-side code reads it to gate token
+    /// refresh calls. Server-side caching in <c>GitHubAppAuthService</c> (5-minute renewal
+    /// buffer) prevents the orchestrator from vending expired tokens, making unconditional
+    /// per-call refresh safe in practice.
+    /// </summary>
     public const string TokenExpiresAt = "tokenExpiresAt";
 }
