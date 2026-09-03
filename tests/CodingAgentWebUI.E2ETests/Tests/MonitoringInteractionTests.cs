@@ -100,10 +100,12 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         var runRow = Page.Locator(".cockpit-run-row").Filter(new() { HasTextString = "#71" });
         await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
-        await runRow.First.ClickAsync();
 
-        // Assert: we land on the run detail page and it shows the issue.
-        await Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 10_000 });
+        // Start waiting for URL before the click so the full 30s budget is available
+        // regardless of how quickly Blazor begins routing on the CI runner.
+        var navigationTask = Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 30_000 });
+        await runRow.First.ClickAsync();
+        await navigationTask;
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         var pageText = await Page.TextContentAsync("body");
         Assert.Contains("#71", pageText);
