@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using MessagePack;
@@ -5,18 +6,54 @@ using MessagePack;
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
-/// Controls whether review agents share the codegen session or run in isolation.
+/// Controls whether review agents run in isolation.
 /// Isolated is the zero value so that default(ReviewIsolation) matches the intended default
 /// — MessagePack source-generated formatters use default(T) for missing array elements.
+///
+/// ReviewIsolation.Shared was removed in #2233 (decision #1042). The custom
+/// <see cref="ReviewIsolationJsonConverter"/> maps any unknown string value (including the
+/// legacy "Shared") to <see cref="Isolated"/> so that old stored JSON configs deserialize
+/// without error. The [JsonConverter] attribute is on the enum type itself so that the
+/// fallback applies regardless of which JsonSerializerOptions instance is in use.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
+[JsonConverter(typeof(ReviewIsolationJsonConverter))]
 public enum ReviewIsolation
 {
     /// <summary>Review agents run in fresh sessions with no shared context (default).</summary>
     Isolated = 0,
+}
 
-    /// <summary>Review agents share the codegen session (legacy behavior).</summary>
-    Shared = 1
+/// <summary>
+/// Custom JSON converter for <see cref="ReviewIsolation"/> that provides graceful migration
+/// for stored configs that still contain the legacy "Shared" string value. Any unknown value
+/// (including "Shared") maps to <see cref="ReviewIsolation.Isolated"/>.
+///
+/// Registered at the type level so that it takes precedence over any global
+/// <see cref="JsonStringEnumConverter"/> in <see cref="PipelineJsonOptions"/>.
+/// </summary>
+public sealed class ReviewIsolationJsonConverter : JsonConverter<ReviewIsolation>
+{
+    public override ReviewIsolation Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        // TODO: reader.TokenType is not checked before calling GetString(). If the JSON value is
+        // a number (e.g. "reviewIsolation": 0 or 1 — valid under the old JsonStringEnumConverter
+        // with allowIntegerValues:true, or produced by round-tripping MessagePack-integer payloads
+        // through JSON), GetString() throws InvalidOperationException. Add a
+        // reader.TokenType == JsonTokenType.Number guard that reads the integer and maps it to
+        // ReviewIsolation.Isolated to maintain the graceful-migration contract for integer inputs.
+        var value = reader.GetString();
+        if (string.Equals(value, nameof(ReviewIsolation.Isolated), StringComparison.OrdinalIgnoreCase))
+            return ReviewIsolation.Isolated;
+
+        // Unknown value (e.g. legacy "Shared") — map to Isolated for graceful migration.
+        return ReviewIsolation.Isolated;
+    }
+
+    public override void Write(Utf8JsonWriter writer, ReviewIsolation value, JsonSerializerOptions options)
+    {
+        // Always write as a quoted string to match JsonStringEnumConverter behaviour.
+        writer.WriteStringValue(nameof(ReviewIsolation.Isolated));
+    }
 }
 
 [MessagePackObject]
@@ -47,8 +84,11 @@ public sealed record CodeReviewConfiguration
     // stale Key(3) values are silently ignored and ReviewIsolation defaults to Isolated.
 
     /// <summary>
-    /// Controls whether review agents share the codegen session or run in fresh isolated sessions.
-    /// Default is Isolated to eliminate self-attribution bias.
+    /// Controls whether review agents run in fresh isolated sessions.
+    /// Always Isolated — the only valid value since ReviewIsolation.Shared was removed in #2233.
+    /// Retained at Key(4) for wire compatibility; stored MessagePack payloads with integer 1
+    /// at Key(4) deserialize to (ReviewIsolation)1 (unnamed) which is safe because execution
+    /// unconditionally uses UseResume = false regardless of this field's value.
     /// </summary>
     [Key(4)]
     public ReviewIsolation ReviewIsolation { get; init; } = ReviewIsolation.Isolated;
