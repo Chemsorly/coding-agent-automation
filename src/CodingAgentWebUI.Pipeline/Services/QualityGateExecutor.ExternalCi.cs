@@ -343,9 +343,12 @@ public partial class QualityGateExecutor
     /// <summary>
     /// Polls CI with automatic retry when CI never starts (GitHub Actions sometimes doesn't trigger).
     /// First waits up to <see cref="PipelineConfiguration.CiNotStartedTimeout"/> for any runs to appear.
-    /// If no runs appear, creates an empty commit and re-pushes to trigger CI, repeating up to
+    /// If no runs appear, performs a branch-wide CI check (SHA=null) to detect runs that already passed
+    /// on a prior commit — if found, returns immediately without creating a re-trigger commit.
+    /// Otherwise creates an empty commit and re-pushes to trigger CI, repeating up to
     /// <see cref="PipelineConfiguration.CiNotStartedMaxRetries"/> times.
-    /// Once runs are detected (or retries exhausted), delegates to the full WaitForCompletionAsync.
+    /// When retries are exhausted, sets <see cref="PipelineRun.FailureReason"/> and returns a
+    /// deterministic <see cref="PipelineRunState.Failed"/> status without blocking on a full timeout.
     /// </summary>
     private async Task<PipelineRunStatus> PollCiWithNotStartedRetryAsync(
         QualityGateContext context,
@@ -378,11 +381,24 @@ public partial class QualityGateExecutor
             // CI never started within the short timeout
             if (attempt >= maxRetries)
             {
-                _logger.Error("Pipeline {RunId} CI never started after {MaxRetries} re-push retries. " +
-                              "Falling back to full timeout wait.", run.RunId, maxRetries);
-                callbacks.EmitOutputLine($"⚠️ CI never started after {maxRetries} retries — waiting with full timeout as last resort...");
-                return await pipelineProvider.WaitForCompletionAsync(
-                    run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+                // Deterministic failure — do NOT fall through to WaitForCompletionAsync.
+                // The re-trigger SHA also has no CI runs; blocking for ExternalCiTimeout here
+                // just wastes time before the run reaches FinalizeDraftPrAsync.
+                var msg = $"CI never started after {maxRetries} retries";
+                // TODO: run.FailureReason uses simple assignment here. This is correct today because
+                // AppendExternalCiIfNeededAsync exits early if any prior gate failed, so FailureReason
+                // is always null at this point. However, if ExecuteInfraRetryAsync sets FailureReason
+                // on a prior infra-retry pass and then re-enters PollCiWithNotStartedRetryAsync, this
+                // assignment will silently overwrite the infra-retry reason. Consider using ??= for
+                // consistency with the ??= guard in PullRequestFinalizationService. (#2317)
+                run.FailureReason = msg;
+                _logger.Error("Pipeline {RunId} {Message} — failing run", run.RunId, msg);
+                callbacks.EmitOutputLine($"❌ {msg} — failing run");
+                return new PipelineRunStatus
+                {
+                    State = PipelineRunState.Failed,
+                    Jobs = Array.Empty<PipelineJobResult>()
+                };
             }
 
             _logger.Warning(
@@ -391,13 +407,47 @@ public partial class QualityGateExecutor
             callbacks.EmitOutputLine(
                 $"⚠️ CI never started (attempt {attempt + 1}/{maxRetries}) — re-pushing to trigger GitHub Actions...");
 
-            // Final check before re-pushing — avoid racing with GitHub's delayed trigger
+            // Final check before re-pushing — avoid racing with GitHub's delayed trigger for the current SHA
             var lastCheck = await pipelineProvider.GetRunStatusAsync(run.BranchName!, pollSha, ct);
             if (lastCheck.State != PipelineRunState.Pending || lastCheck.Jobs.Count > 0)
             {
                 _logger.Information("Pipeline {RunId} CI appeared just before re-push (race avoided), proceeding to full wait", run.RunId);
                 return await pipelineProvider.WaitForCompletionAsync(
                     run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+            }
+
+            // Branch-wide check: detect if CI already passed on a prior SHA of this branch.
+            // GitHub's SHA filter (r.HeadSha == commitSha) made the re-trigger commit blind to
+            // runs on the original SHA. A passing run here means CI is done — skip the re-push.
+            // Placed after the SHA-specific last-check guard so that a delayed trigger for the
+            // current SHA still takes the more precise SHA-specific completion-wait path.
+            var branchStatus = await pipelineProvider.GetRunStatusAsync(run.BranchName!, commitSha: null, ct);
+            if (branchStatus?.State == PipelineRunState.Passed)
+            {
+                _logger.Information(
+                    "Pipeline {RunId} CI already passed on a prior SHA on branch {Branch} — skipping re-trigger",
+                    run.RunId, run.BranchName);
+                callbacks.EmitOutputLine("✅ CI already passed on this branch — skipping re-trigger");
+                // TODO: branchStatus.Jobs reflects the prior-SHA run's job results, not the current HEAD's.
+                // Downstream reporting that cross-references job SHAs against the current commit will see
+                // stale data. If a future gate or audit log validates that reported CI jobs cover the current
+                // commit, this will be incorrect. A SHA-lineage guard would eliminate this: confirm that
+                // branchStatus.Jobs[*].HeadSha is an ancestor of (or equal to) pollSha before accepting. (#2317)
+                //
+                // TODO: The branch-wide check trusts any Passed run on the branch without validating that
+                // the passing run's HeadSha is a known ancestor of pollSha. If the PR branch is reused
+                // across pipeline sessions, or a prior completed run left a Passed status in GitHub Actions
+                // history, this check will return that stale result and promote CI as passed for a HEAD
+                // commit whose CI never actually ran. A SHA-lineage guard would eliminate this false-positive
+                // path. Branch names generated by this pipeline are session-unique today, but that is not
+                // enforced in code and is not documented as a precondition here. (#2317)
+                //
+                // TODO: The guard only short-circuits on PipelineRunState.Passed. If CI is currently
+                // Running on the original SHA (a slow job still in progress), branchStatus.State == Running
+                // falls through and the re-trigger commit is pushed, potentially triggering GitHub's
+                // cancel-in-progress concurrency rule and cancelling the active run. Consider also returning
+                // early (and waiting for completion) when branchStatus.State == Running. (#2317)
+                return branchStatus;
             }
 
             // Create empty commit and re-push
@@ -413,9 +463,9 @@ public partial class QualityGateExecutor
             catch (Exception shaEx) { _logger.Debug(shaEx, "Pipeline {RunId} could not read HEAD after re-push", run.RunId); }
         }
 
-        // Should not reach here, but satisfy the compiler
-        return await pipelineProvider.WaitForCompletionAsync(
-            run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+        // Should not reach here — the attempt >= maxRetries branch always returns.
+        // Return a deterministic failure rather than an open-ended WaitForCompletionAsync call.
+        return new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = Array.Empty<PipelineJobResult>() };
     }
 
     /// <summary>
