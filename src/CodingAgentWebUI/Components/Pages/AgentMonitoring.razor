@@ -1,0 +1,307 @@
+@page "/agent-monitoring"
+@implements IAsyncDisposable
+@using CodingAgentWebUI.Pipeline
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Orchestration.Dispatch
+@using CodingAgentWebUI.Orchestration.Health
+@using CodingAgentWebUI.Orchestration.Registry
+@using CodingAgentWebUI.Services
+
+<PageTitle>Agent Monitoring - Coding Agent</PageTitle>
+
+<div class="agent-monitoring-page">
+    <header class="agent-header">
+        <h1>Agent Monitoring</h1>
+        @{
+            var isStale = _lastRefreshFailed || (Clock.GetUtcNow() - _lastSuccessfulRefresh).TotalSeconds > 30;
+        }
+        <span class="freshness-indicator @(isStale ? "freshness-warning" : "")">
+            @if (isStale)
+            {
+                <text><Icon Name="alert-triangle" Size="14" /> Last updated: @FormatTimeAgo(_lastSuccessfulRefresh)@(_lastRefreshFailed ? " (refresh failed)" : " (stale)")</text>
+            }
+            else
+            {
+                <text>Last updated: @FormatTimeAgo(_lastSuccessfulRefresh) · Refreshing every 5s</text>
+            }
+        </span>
+    </header>
+
+    <RunHistoryStats Runs="_runHistory" Agents="Registry.GetAllAgents()" QueueLength="_queuedJobs.Count" ShowAgentStats="true" />
+
+    <ActiveRunsSection ActiveRuns="_activeRuns"
+                       ActiveConsolidationRuns="_activeConsolidationRuns"
+                       Agents="_agents"
+                       OnRunSelected="OpenRunDetail"
+                       OnCancelRun="CancelAgentRunById"
+                       OnCancelConsolidation="CancelConsolidationRun" />
+
+    @* ── Run Detail Modal ── *@
+    @if (_showRunDetailModal)
+    {
+        @* Spec 045: live run view restored via IAgentHubConnection hub subscriptions.
+           _activeModalRun is loaded from GET /api/pipeline-runs/{runId} on modal open,
+           then refreshed on OnRunCompleted. Output lines stream in via OnOutputLines.
+           If the run is still active (not in history), _activeModalRun may be null until
+           the API returns it — show a loading indicator in that case. *@
+        var modalRun = _activeModalRun;
+        if (modalRun != null)
+        {
+            var modalAgent = modalRun.AgentId != null ? Registry.GetByAgentId(new Pipeline.Models.AgentId(modalRun.AgentId)) : null;
+            <div class="modal-overlay" tabindex="-1" @ref="_modalOverlayRef" @onclick="DismissRunDetailModal" @onkeydown="HandleModalKeyDown">
+                <div class="modal-card modal-card-wide" @onclick:stopPropagation="true"
+                     role="dialog" aria-modal="true" aria-labelledby="run-detail-title">
+                    <h3 id="run-detail-title">
+                        Run @Truncate(modalRun.RunId, 12) — #@modalRun.IssueIdentifier @Truncate(modalRun.IssueTitle, 40)
+                    </h3>
+
+                    <div class="modal-two-column">
+                        <div class="modal-column-left">
+                            <div class="modal-provider-list">
+                                <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Providers</h4>
+                                @{
+                                    var agentProviderConfig = ResolveProvider(modalRun.AgentProviderConfigId);
+                                }
+                                <div><strong>Agent:</strong> @(agentProviderConfig?.DisplayName ?? modalRun.AgentId ?? "—") (@(agentProviderConfig?.ProviderType ?? "—")) — Model: @(modalRun.ModelName ?? "—")</div>
+                            </div>
+
+                            <div class="monitoring-detail-grid">
+                                <div><strong>Retries:</strong> @modalRun.RetryCount/@_maxRetries</div>
+                                @if (modalRun.TotalCost is not null and > 0m)
+                                {
+                                    <div><strong>Cost:</strong> @CostFormatter.FormatCost(modalRun.TotalCost)</div>
+                                }
+                                @if (modalRun.TotalTokens > 0)
+                                {
+                                    <div><strong>Tokens:</strong> @CostFormatter.FormatTokens(modalRun.TotalTokens)</div>
+                                }
+                                @if (modalRun.CacheReadTokens > 0 || modalRun.CacheWriteTokens > 0)
+                                {
+                                    <div><strong>Cache read/write:</strong> @CostFormatter.FormatTokens(modalRun.CacheReadTokens) / @CostFormatter.FormatTokens(modalRun.CacheWriteTokens)</div>
+                                }
+                                <div><strong>Step:</strong> @(_activeModalCurrentStep ?? modalRun.FinalStep)</div>
+                            </div>
+
+                            @if (modalRun.PhaseBreakdown is { Count: > 0 } phaseBreakdown)
+                            {
+                                <Collapsible CssClass="phase-breakdown" HeaderClass="phase-breakdown-header" BodyClass="phase-breakdown-body">
+                                    <Header>
+                                        <span>Cost Breakdown (@phaseBreakdown.Count phases)</span>
+                                    </Header>
+                                    <ChildContent>
+                                        <table class="monitoring-table" style="margin-top: 6px;">
+                                            <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
+                                            <tbody>
+                                            @foreach (var phase in phaseBreakdown
+                                                .OrderByDescending(p => p.Value.Cost ?? 0m)
+                                                .ThenByDescending(p => p.Value.Tokens))
+                                            {
+                                                <tr>
+                                                    <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
+                                                    <td>@CostFormatter.FormatTokens(phase.Value.Tokens)</td>
+                                                    <td>@CostFormatter.FormatCost(phase.Value.Cost)</td>
+                                                </tr>
+                                            }
+                                            </tbody>
+                                        </table>
+                                    </ChildContent>
+                                </Collapsible>
+                            }
+
+                            @* ── Agent Info Section ── *@
+                            <div class="modal-agent-section">
+                                <h4 style="font-size: 0.85rem; margin: 12px 0 6px;">Agent</h4>
+                                @if (modalAgent != null)
+                                {
+                                    <div class="agent-detail-grid">
+                                        <div class="detail-label">Agent ID</div>
+                                        <div class="detail-value detail-mono">@modalAgent.AgentId</div>
+                                        <div class="detail-label">Hostname</div>
+                                        <div class="detail-value">@modalAgent.Hostname</div>
+                                        <div class="detail-label">Labels</div>
+                                        <div class="detail-value">
+                                            @foreach (var label in modalAgent.Labels)
+                                            {
+                                                <span class="sidebar-label">@label</span>
+                                            }
+                                        </div>
+                                        <div class="detail-label">Connection</div>
+                                        <div class="detail-value detail-mono">@Truncate(modalAgent.ConnectionId, 20)</div>
+                                        <div class="detail-label">Status</div>
+                                        <div class="detail-value">
+                                            <span class="monitoring-status monitoring-status-@modalAgent.Status.ToString().ToLowerInvariant()">
+                                                <Icon Name="circle" Size="12" Class="@GetStatusColorClass(modalAgent.Status)" /> @modalAgent.Status
+                                            </span>
+                                            @if (modalAgent.Disabled)
+                                            {
+                                                <span class="badge-disabled-table">disabled</span>
+                                            }
+                                        </div>
+                                        <div class="detail-label">Last Heartbeat</div>
+                                        <div class="detail-value">@FormatTimeAgo(modalAgent.LastHeartbeatAt)</div>
+                                    </div>
+
+
+
+                                    @* Agent Actions *@
+                                    <div style="margin-top: 8px; display: flex; gap: 8px;">
+                                        @if (modalAgent.Disabled)
+                                        {
+                                            <button class="btn-enable" @onclick="() => EnableAgent(modalAgent)">✓ Enable</button>
+                                        }
+                                        else
+                                        {
+                                            <button class="btn-disable" @onclick="() => DisableAgent(modalAgent)">⊘ Disable</button>
+                                        }
+                                        <button class="btn-force-disconnect" @onclick="ShowDisconnectConfirm">⚡ Force Disconnect</button>
+                                    </div>
+
+                                    @if (_showDisconnectConfirm)
+                                    {
+                                        <div class="agent-detail-confirm">
+                                            <p>Force disconnect <strong>@modalAgent.AgentId</strong>?</p>
+                                            <p class="confirm-warning">This will deregister the agent and mark any active run as Failed.</p>
+                                            <div class="confirm-buttons">
+                                                <button class="btn-force-disconnect" @onclick="() => ForceDisconnect(modalAgent)">Confirm</button>
+                                                <button class="btn-cancel" @onclick="() => _showDisconnectConfirm = false">Cancel</button>
+                                            </div>
+                                        </div>
+                                    }
+                                }
+                                else
+                                {
+                                    <div class="monitoring-empty" style="font-size: 0.85rem;">Agent unavailable (disconnected or deregistered).</div>
+                                }
+                            </div>
+
+                            @* Spec 045: output lines streamed live via IAgentHubConnection OnOutputLines events.
+                               Backlog is pushed by AgentHub.SubscribeToRun immediately on subscribe (Req 3.4a). *@
+                            @if (_activeModalOutputLines.Count > 0)
+                            {
+                                <div>
+                                    <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Output (last @Math.Min(_activeModalOutputLines.Count, 100) lines)</h4>
+                                    <div class="output-panel" id="modalOutputPanel">
+                                        @foreach (var line in _activeModalOutputLines.TakeLast(100))
+                                        {
+                                            <div class="output-line">@line</div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="modal-column-right">
+                            @* Spec 045 follow-up: PipelineSidebar restored via RunStateSnapshot hub event.
+                               _activeModalRunModel is seeded from RunStateSnapshot on SubscribeToRun (active runs)
+                               or from PipelineRunSummary directly (completed runs). Shows fallback while pending. *@
+                            @if (_activeModalRunModel != null)
+                            {
+                                <PipelineSidebar Run="@_activeModalRunModel"
+                                                 IsRunning="@IsActiveRun(modalRun)"
+                                                 MaxRetries="@_maxRetries" />
+                            }
+                            else
+                            {
+                                @* Fallback while RunStateSnapshot is pending for active runs *@
+                                <div class="monitoring-detail-grid" style="margin-bottom: 8px;">
+                                    <div><strong>Current Step:</strong> @(_activeModalCurrentStep ?? modalRun.FinalStep)</div>
+                                </div>
+                            }
+
+                            @* ── Feedback Section ── *@
+                            <CodingAgentWebUI.Components.Shared.FeedbackSection Feedback="modalRun.Feedback" />
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button class="btn-cancel" @onclick="DismissRunDetailModal">Close</button>
+                        @if (modalRun.AgentId != null)
+                        {
+                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                    @onclick="() => CancelAgentRunById(modalRun.RunId)">
+                                Cancel Run
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    }
+
+    <!-- Registered Agents -->
+    <section class="settings-section" style="margin: 16px 20px;">
+        <h2><Icon Name="bot" Size="16" /> Registered Agents (@_agents.Count)</h2>
+        @if (_agents.Count == 0)
+        {
+            <div class="monitoring-empty">No agents registered. Start agent containers to connect.</div>
+        }
+        else
+        {
+            <div class="monitoring-table-wrap">
+                <table class="monitoring-table">
+                    <thead>
+                        <tr>
+                            <th>Agent ID</th>
+                            <th>Labels</th>
+                            <th>Status</th>
+                            <th>Active Job</th>
+                            <th>Last Heartbeat</th>
+                            <th>Registered</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var agent in _agents)
+                        {
+                            <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant() @(agent.Disabled ? "monitoring-row-disabled" : "") monitoring-row-clickable"
+                                @onclick="() => SelectAgent(agent.AgentId.Value)">
+                                <td class="monitoring-mono" title="@agent.AgentId">@agent.AgentId</td>
+                                <td>
+                                    @foreach (var label in agent.Labels)
+                                    {
+                                        <span class="sidebar-label">@label</span>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="monitoring-status monitoring-status-@agent.Status.ToString().ToLowerInvariant()">
+                                        <Icon Name="circle" Size="12" Class="@GetStatusColorClass(agent.Status)" /> @agent.Status
+                                    </span>
+                                    @if (agent.Disabled)
+                                    {
+                                        <span class="badge-disabled-table">disabled</span>
+                                    }
+                                </td>
+                                <td class="monitoring-mono" title="@(agent.ActiveJobId ?? "")">@(agent.ActiveJobId ?? "—")</td>
+                                <td>@FormatTimeAgo(agent.LastHeartbeatAt)</td>
+                                <td>@agent.RegisteredAt.ToLocalTime().ToString("HH:mm:ss")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <JobQueueSection QueuedJobs="_queuedJobs"
+                     QueuedConsolidationRuns="_queuedConsolidationRuns"
+                     OnRemoveFromQueue="HandleRemoveFromQueue"
+                     OnCancelConsolidation="CancelConsolidationRun"
+                     OnSetPriority="HandleSetPriority" />
+    @if (!string.IsNullOrEmpty(_priorityError))
+    {
+        <div class="settings-status status-error" style="margin: 0 20px 8px;">
+            <Icon Name="alert-triangle" Size="14" /> Priority update failed: @_priorityError
+        </div>
+    }
+
+    <RecentRunsSection RunHistory="_runHistory"
+                       IsExpanded="_historyExpanded"
+                       IsExpandedChanged="expanded => _historyExpanded = expanded"
+                       OnRunSelected="OpenHistoryRunDetail" />
+
+    <HistoryRunDetailModal Run="_selectedHistoryRun"
+                           IsVisible="_showHistoryDetailModal"
+                           OnDismiss="DismissHistoryDetailModal" />
+
+</div>
