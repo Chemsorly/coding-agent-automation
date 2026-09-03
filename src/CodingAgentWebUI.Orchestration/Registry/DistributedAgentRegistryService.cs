@@ -584,6 +584,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             // SetMembersAsync → []; (2) Register → lock → _allAgentsCache=[A] → release; (3) this
             // lock → _allAgentsCache=[]. The agent disappears from sync reads until the next
             // write-path update. Acceptable: dispatch reads Redis directly; OTel gauge self-corrects.
+            // TODO (WARNING): A transient empty SetMembersAsync result (e.g. agents:all temporarily
+            // inconsistent, or a Redis blip) will also wipe the cache here — distinct from the
+            // concurrent-Register scenario above. If agents:all returns [] spuriously while live
+            // agents exist, _allAgentsCache is cleared and the OTel gauge will under-count until the
+            // next Register/Deregister/heartbeat write-path update. The "OTel gauge self-corrects"
+            // guarantee depends on a write-path update following promptly. Consider skipping the
+            // cache clear when the current cache is non-empty and the Redis result is unexpectedly
+            // empty (e.g. keep existing cache on empty-result rather than overwriting with []).
             lock (_cacheUpdateLock) { _allAgentsCache = []; }
             return Array.Empty<AgentEntry>();
         }

@@ -570,4 +570,16 @@ public sealed class DistributedAgentRegistryServiceTests
         count.Should().Be(0,
             "deregistered agent must not be counted as Busy after DeregisterAsync completes");
     }
+
+    // TODO (WARNING): UpdateAgentFieldAsync_WhenRedisFaults_LogsWarningAndDoesNotThrow was removed
+    // as part of the _allAgentsCache fix (issue #2219) along with its FaultingRedisStore and
+    // CaptureSink helpers. The production fault-handling path in UpdateAgentFieldAsync — the
+    // catch (Exception ex) when (ex is not OperationCanceledException) block, the Warning log,
+    // and the no-throw guarantee — is now completely uncovered. A regression removing the try/catch
+    // or breaking the warning log would not be caught by the test suite. Restore or replace:
+    //   - UpdateAgentFieldAsync_WhenRedisFaults_LogsWarningAndDoesNotThrow
+    //   - FaultingRedisStore (or a parameterised variant to cover ExistsAsync, HashSetFieldAsync,
+    //     and ExpireAsync fault injection)
+    //   - CaptureSink (or use TestUtilities.CaptureSink if one exists)
+    // These are unrelated to the _allAgentsCache race and should be restored in a follow-up.
 }
