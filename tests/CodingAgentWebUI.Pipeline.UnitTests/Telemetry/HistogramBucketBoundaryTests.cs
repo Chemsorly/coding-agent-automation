@@ -33,6 +33,12 @@ public class HistogramBucketBoundaryTests
         boundaries.Should().Equal(1, 2, 5, 10, 20, 30, 60, 120, 300);
     }
 
+    // TODO: PostPrCiDuration received explicit InstrumentAdvice bucket boundaries in the same change that
+    // fixed BrainSyncDuration, but no regression-guard test was added. Every other histogram with explicit
+    // boundaries in PipelineTelemetry has a corresponding test in this file. Add a test asserting
+    // PostPrCiDuration.Advice?.HistogramBucketBoundaries equals [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
+    // so that future removal of the InstrumentAdvice is caught by the suite.
+
     // ── WorkDistributionTelemetry histograms ────────────────────────────────────
     // These guard against removing InstrumentAdvice, which would revert to the SDK default
     // ms-scale boundaries (max = 1000ms) — useless for dispatch durations measured in seconds.
