@@ -1,10 +1,11 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
-
-// WorkItemStatusUpdate moved to CodingAgentWebUI.Pipeline.Models
+using OpenTelemetry;
+using OpenTelemetry.Context.Propagation;
 
 namespace CodingAgentWebUI.Agent;
 
@@ -17,6 +18,9 @@ namespace CodingAgentWebUI.Agent;
 /// <c>AddStandardResilienceHandler()</c> configured at the DI registration level.</para>
 /// <para><b>GET /api/work-items/{id}/assignment</b> — single call; transient failures retried by handler.</para>
 /// <para><b>POST /api/work-items/{id}/status</b> — single call; transient failures retried by handler.</para>
+/// <para><b>Traceparent propagation</b> — W3C <c>traceparent</c> is injected from <see cref="Activity.Current"/>
+/// into every outgoing request header so that API handler spans appear as children of the agent's
+/// <c>WorkItemAgent.Execute</c> span in Grafana Tempo.</para>
 /// </remarks>
 public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
 {
@@ -31,6 +35,12 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
 
     private static readonly JsonSerializerOptions JsonOptions = PipelineJsonOptions.Default;
 
+    /// <summary>
+    /// W3C trace context propagator used to inject <c>traceparent</c> and <c>tracestate</c>
+    /// headers into outgoing orchestration-channel HTTP requests.
+    /// </summary>
+    private static readonly TraceContextPropagator TraceContextPropagator = new();
+
     public WorkItemHttpClient(HttpClient httpClient, Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
@@ -38,6 +48,29 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
 
         _httpClient = httpClient;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Injects the current W3C trace context (<c>traceparent</c> and, when present,
+    /// <c>tracestate</c>) from <see cref="Activity.Current"/> into the request headers.
+    /// No-op when there is no ambient activity (graceful backward-compat: API endpoints
+    /// that receive no <c>traceparent</c> start a new root span rather than failing).
+    /// </summary>
+    // TODO [WARNING]: InjectTraceContext reads Activity.Current at call time. Activity.Current is
+    // AsyncLocal-backed, so its value on a thread pool continuation may differ from the activity
+    // that was current when the async method was entered. In all three callers (GetAssignmentAsync,
+    // PostStatusAsync, PostLabelSwapAsync) this method is called synchronously before the first
+    // await, which is correct. If this method is ever moved to after an await boundary (e.g., inside
+    // a retry callback), it could silently inject null or the wrong context without a compiler error.
+    private static void InjectTraceContext(HttpRequestMessage request)
+    {
+        if (Activity.Current is null)
+            return;
+
+        TraceContextPropagator.Inject(
+            new PropagationContext(Activity.Current.Context, Baggage.Current),
+            request,
+            static (req, key, value) => req.Headers.TryAddWithoutValidation(key, value));
     }
 
     /// <summary>
@@ -59,7 +92,10 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
             var url = string.IsNullOrEmpty(AgentId)
                 ? $"/api/work-items/{workItemId}/assignment"
                 : $"/api/work-items/{workItemId}/assignment?agentId={Uri.EscapeDataString(AgentId)}";
-            response = await _httpClient.GetAsync(url, ct);
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            InjectTraceContext(request);
+            response = await _httpClient.SendAsync(request, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -132,8 +168,11 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
             var url = string.IsNullOrEmpty(AgentId)
                 ? $"/api/work-items/{workItemId}/status"
                 : $"/api/work-items/{workItemId}/status?agentId={Uri.EscapeDataString(AgentId)}";
-            response = await _httpClient.PostAsJsonAsync(
-                url, update, JsonOptions, ct);
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Content = JsonContent.Create(update, options: JsonOptions);
+            InjectTraceContext(request);
+            response = await _httpClient.SendAsync(request, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -176,6 +215,64 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
             }
         }
     }
+
+    /// <summary>
+    /// Posts a label-swap request to the orchestrator for the given work item.
+    /// The API uses the <paramref name="label"/> field for wire compatibility but always swaps to agent:in-progress.
+    /// Transient failures (5xx, network errors) are retried transparently by the resilience handler.
+    /// </summary>
+    /// <returns>True if accepted (200); false if the work item was not found (404).</returns>
+    /// <exception cref="WorkItemLabelSwapException">Thrown when all retries are exhausted.</exception>
+    public async Task<bool> PostLabelSwapAsync(string workItemId, string label, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(workItemId);
+        ArgumentNullException.ThrowIfNull(label);
+
+        HttpResponseMessage response;
+        try
+        {
+            var url = string.IsNullOrEmpty(AgentId)
+                ? $"/api/work-items/{workItemId}/label-swap"
+                : $"/api/work-items/{workItemId}/label-swap?agentId={Uri.EscapeDataString(AgentId)}";
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Content = JsonContent.Create(new { label }, options: JsonOptions);
+            InjectTraceContext(request);
+            response = await _httpClient.SendAsync(request, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Error(ex, "All retries exhausted for POST label-swap for work item {WorkItemId}", workItemId);
+            throw new WorkItemLabelSwapException(
+                $"All retries exhausted for POST label-swap for work item {workItemId}: {ex.Message}", ex);
+        }
+
+        using (response)
+        {
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.OK:
+                    _logger.Information("Posted label-swap for work item {WorkItemId}", workItemId);
+                    return true;
+
+                case HttpStatusCode.NotFound:
+                    _logger.Warning("Work item {WorkItemId} not found (404) for label-swap POST", workItemId);
+                    return false;
+
+                default:
+                    if ((int)response.StatusCode >= 500)
+                    {
+                        _logger.Error("Server error {StatusCode} from POST label-swap for work item {WorkItemId} (retries exhausted)",
+                            (int)response.StatusCode, workItemId);
+                        throw new WorkItemLabelSwapException(
+                            $"Server error {(int)response.StatusCode} from POST label-swap for work item {workItemId} (retries exhausted)");
+                    }
+                    _logger.Error("Unexpected status {StatusCode} from POST /api/work-items/{WorkItemId}/label-swap",
+                        (int)response.StatusCode, workItemId);
+                    return false;
+            }
+        }
+    }
 }
 
 /// <summary>
@@ -195,4 +292,13 @@ public sealed class WorkItemStatusPostException : Exception
 {
     public WorkItemStatusPostException(string message) : base(message) { }
     public WorkItemStatusPostException(string message, Exception inner) : base(message, inner) { }
+}
+
+/// <summary>
+/// Thrown when the agent cannot POST a label-swap request after all retries.
+/// </summary>
+public sealed class WorkItemLabelSwapException : Exception
+{
+    public WorkItemLabelSwapException(string message) : base(message) { }
+    public WorkItemLabelSwapException(string message, Exception inner) : base(message, inner) { }
 }

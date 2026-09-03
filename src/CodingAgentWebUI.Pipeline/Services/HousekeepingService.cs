@@ -61,6 +61,24 @@ public sealed class HousekeepingService : IHousekeepingService
     /// </summary>
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastCleanupAt = new();
 
+    /// <summary>
+    /// Tracks when each PR last had a branch update triggered, keyed by (repoProviderId, prNumber).
+    /// Keyed by repo to prevent cross-repo collisions when the singleton handles multiple repos
+    /// (two repos can both have a PR #N — their cooldown entries must not interfere).
+    /// Used to deprioritise recently-triggered PRs so the single concurrency slot
+    /// drains the queue fairly instead of re-selecting the same PR on every cycle.
+    /// </summary>
+    private readonly ConcurrentDictionary<(string repoId, int prNumber), DateTimeOffset> _lastTriggeredAt = new();
+
+    /// <summary>
+    /// Minimum time between consecutive branch-update triggers for the same PR.
+    /// Prevents a single PR from monopolising the slot when CI takes longer than
+    /// one poll cycle — the PR is deprioritised for this window after each trigger.
+    /// Defaults to 25 minutes to comfortably exceed a typical CI run (~20 min).
+    /// Overridable in tests.
+    /// </summary>
+    internal TimeSpan TriggerCooldown { get; set; } = TimeSpan.FromMinutes(25);
+
     public HousekeepingService(IOrchestratorRunService runService, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(runService);
@@ -107,6 +125,7 @@ public sealed class HousekeepingService : IHousekeepingService
             if (!currentPrNumbers.Contains(prNumber))
             {
                 inFlight.Remove(prNumber);
+                _lastTriggeredAt.TryRemove((repoProviderId, prNumber), out _); // PR merged/closed — clear cooldown state
                 PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
             else
@@ -149,8 +168,23 @@ public sealed class HousekeepingService : IHousekeepingService
             activeRunBranchesUnavailable = true;
         }
 
-        // ── Step 5: Shuffle candidates (uniform random) to prevent oldest-first starvation ────
-        var sorted = agentDonePrs.OrderBy(_ => Random.Shared.Next()).ToList();
+        // ── Step 5: Order candidates — auto-merge first, then by cooldown, random within each tier
+        // Tier 0: auto-merge enabled + cooldown expired  → update urgently (human approved merge)
+        // Tier 1: no auto-merge + cooldown expired        → update when slot is free
+        // Tier 2: cooldown active (any)                   → deprioritised, recently triggered
+        // Random within each tier prevents starvation among peers.
+        var now5 = UtcNow();
+        var sorted = agentDonePrs
+            .OrderBy(pr =>
+            {
+                var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, pr.Number), DateTimeOffset.MinValue);
+                var cooledDown = (now5 - lastTriggered) >= TriggerCooldown;
+                if (!cooledDown)     return 2;   // recently triggered — back of queue
+                if (pr.HasAutoMerge) return 0;   // auto-merge + cooled — front
+                return 1;                        // no auto-merge + cooled — middle
+            })
+            .ThenBy(_ => Random.Shared.Next())
+            .ToList();
 
         // ── Step 6a: Handle Conflicted PRs — swap linked issue to agent:next ─
         foreach (var pr in sorted)
@@ -219,6 +253,21 @@ public sealed class HousekeepingService : IHousekeepingService
                 continue;
             }
 
+            // Cooldown guard: skip if this PR was triggered too recently.
+            // This prevents a PR whose CI hasn't finished yet (Blocked→clean→behind
+            // fast-cycle) from immediately re-occupying the slot and starving others.
+            var now6b = UtcNow();
+            var lastTriggered = _lastTriggeredAt.GetValueOrDefault((repoProviderId, pr.Number), DateTimeOffset.MinValue);
+            if ((now6b - lastTriggered) < TriggerCooldown)
+            {
+                _logger.Debug(
+                    "HousekeepingService: PR #{PrNumber} is behind but was triggered {Elapsed:F0}m ago (cooldown {Cooldown:F0}m) — skipping to allow other PRs to proceed",
+                    pr.Number, (now6b - lastTriggered).TotalMinutes, TriggerCooldown.TotalMinutes);
+                PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag);
+                continue;
+            }
+
+            _lastTriggeredAt[(repoProviderId, pr.Number)] = now6b;
             inFlight.Add(pr.Number);
             PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
             await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));
