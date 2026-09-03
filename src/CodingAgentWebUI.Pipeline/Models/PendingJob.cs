@@ -64,6 +64,13 @@ public sealed record PendingJob
     public int ConsolidationDispatchAttempt { get; init; }
 
     /// <summary>
+    /// Intra-queue dispatch priority. Higher values are dispatched first.
+    /// Mirrors <see cref="PendingWorkItemDto.PriorityWeight"/>. Defaults to 0.
+    /// Range: 0–1000.
+    /// </summary>
+    public int PriorityWeight { get; init; }
+
+    /// <summary>
     /// Whether this pending job is a consolidation job.
     /// <see cref="RunType"/> is the single reliable discriminator — set to
     /// <see cref="PipelineRunType.Consolidation"/> by <c>DbPendingWorkQuery.ResolveRunType</c>.
