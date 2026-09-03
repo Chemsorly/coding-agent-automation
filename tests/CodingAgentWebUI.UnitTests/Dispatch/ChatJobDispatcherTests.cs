@@ -1508,6 +1508,12 @@ public class ChatJobDispatcherTests
             if (instrument.Name == sessionsActiveName)
                 l.EnableMeasurementEvents(instrument);
         };
+        // TODO [WARNING]: The callback has no tag guard (agent_selector filter was removed). If another
+        // concurrently running test's watcher faults between listener.Start() and listener.Dispose(),
+        // its -1 measurement will be captured here, inflating decrementCount and causing a spurious
+        // failure or masking a missing decrement from the test under test. The previous unique-selector
+        // approach was strictly more robust. Consider re-adding an agent_selector tag filter scoped to
+        // TestSelector to make this assertion immune to concurrent test noise.
         listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
         {
             // Track only decrements — this is the acceptance criterion: CleanupSession must

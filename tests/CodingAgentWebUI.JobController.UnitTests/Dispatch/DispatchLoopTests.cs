@@ -1381,6 +1381,11 @@ public sealed class DispatchLoopTests
 // The static PipelineTelemetry.Meter is process-wide, so concurrent tests may fire
 // QueueWaitTime.Record(...) while a listener is active. Assertions use Contain-style
 // checks to remain robust against concurrent test noise.
+// TODO [WARNING]: DispatchLoopMetricTests is not in a [Collection] fixture to serialize execution
+// against other test classes that listen on PipelineTelemetry.Meter. If two instances run
+// concurrently, _recordings may capture measurements from the other test's dispatch. A false
+// negative is possible (but low-probability) if a concurrent test fires a matching recording
+// before this test's listener is started. The Contain-style assertion prevents false positives.
 
 public sealed class DispatchLoopMetricTests : IDisposable
 {
@@ -1486,6 +1491,10 @@ public sealed class DispatchLoopMetricTests : IDisposable
             _templateStore, _options, _pvcSelectLock, _providerFactory.Object);
 
     // ─── AC: QueueWaitTime.Record() fires on successful dispatch ─────────────
+    // TODO [WARNING]: No test covers the negative path where TryCreateK8sJobAsync fails
+    // (created = false; return). A regression that moves QueueWaitTime.Record() above the
+    // early-return guard would go undetected. Add a companion test that stubs the K8s client
+    // to fail job creation and asserts that no "dispatch.queue.wait_time" recording appears.
 
     /// <summary>
     /// AC: QueueWaitTime.Record() is called with the correct wait duration and run_type tag
@@ -1533,6 +1542,10 @@ public sealed class DispatchLoopMetricTests : IDisposable
         await loop.RunOneCycleAsync(CancellationToken.None);
 
         // Assert — a QueueWaitTime recording was captured for this dispatch
+        // TODO [WARNING]: The lower bound (25.0) does not verify that item.CreatedAt specifically
+        // was used as the start time. A regression substituting a different field (e.g., one 90 s
+        // in the past) would produce a value still within [25, 120) and pass. Tightening the range
+        // to e.g. >= 28.0 && < 40.0 would catch start-time substitution errors on non-loaded runners.
         _recordings.Should().Contain(
             r => r.InstrumentName == "dispatch.queue.wait_time"
                  && r.Value >= 25.0    // tolerates up to 5s clock jitter below 30s nominal wait

@@ -324,6 +324,10 @@ public sealed class DispatchLoop
             createdAt: item.CreatedAt,
             agentSelector: item.AgentSelector);
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+        // TODO [WARNING]: ToDefaultRunType() throws UnreachableException for any unrecognised WorkItemTaskType.
+        // If a new enum member is added without updating the mapping, this call will throw and abort the
+        // post-dispatch metric block (the K8s job already exists at this point). Consider wrapping in
+        // try/catch to degrade gracefully and avoid leaving the dispatch in a partially-recorded state.
         PipelineTelemetry.QueueWaitTime.Record(
             (now - item.CreatedAt).TotalSeconds,
             PipelineTelemetry.RunTypeTag(item.TaskType.ToDefaultRunType()));
