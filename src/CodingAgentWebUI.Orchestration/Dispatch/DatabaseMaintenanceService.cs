@@ -67,7 +67,8 @@ public class DatabaseMaintenanceService
         var staleConsolidation = await RunSweepAsync(CleanupStaleConsolidationRunsAsync, "CleanupStaleConsolidationRuns", ct);
         var retentionRuns = await RunSweepAsync(SweepPipelineRunRetentionAsync, "SweepPipelineRunRetention", ct);
         var retentionWi = await RunSweepAsync(SweepWorkItemRetentionAsync, "SweepWorkItemRetention", ct);
-        return new RetentionSweepResult(staleWi, staleRuns, staleConsolidation, retentionRuns, retentionWi);
+        var orphanedRuns = await RunSweepAsync(ReconcileOrphanedPipelineRunsAsync, "ReconcileOrphanedPipelineRuns", ct);
+        return new RetentionSweepResult(staleWi, staleRuns, staleConsolidation, retentionRuns, retentionWi, orphanedRuns);
     }
 
     private static async Task<int> RunSweepAsync(Func<CancellationToken, Task<int>> sweep, string name, CancellationToken ct)
@@ -93,7 +94,8 @@ public class DatabaseMaintenanceService
         int StalePipelineRunsDeleted,
         int StaleConsolidationRunsDeleted,
         int RetentionPipelineRunsDeleted,
-        int RetentionWorkItemsDeleted);
+        int RetentionWorkItemsDeleted,
+        int OrphanedPipelineRunsBackfilled);
 
     /// <summary>
     /// Terminal WorkItems older than retention period → DELETE (server-side).
@@ -207,6 +209,62 @@ public class DatabaseMaintenanceService
         catch (Exception ex)
         {
             Log.Warning(ex, "DatabaseMaintenanceService: failed to cleanup stale consolidation runs (non-fatal)");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Backfills <c>CompletedAt = NOW()</c> for orphaned PipelineRuns whose <c>FinalStep</c> is a terminal
+    /// value (Completed=16, Failed=17, Cancelled=18) but whose <c>CompletedAt</c> is NULL.
+    /// These "ghost" runs result from <c>RunFullPrCreationAsync</c> being interrupted by an
+    /// <c>OperationCanceledException</c> before the terminal-state mutations could execute, causing
+    /// the Redis hash to carry an empty <c>completedAtOffset</c> which round-trips as NULL in Postgres.
+    /// Without <c>CompletedAt</c> set, all retention sweeps skip these rows and they accumulate
+    /// permanently in the "Active Runs" UI panel.
+    /// Returns the number of rows updated.
+    /// </summary>
+    internal virtual async Task<int> ReconcileOrphanedPipelineRunsAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+            // FinalStep ordinals: Completed=16, Failed=17, Cancelled=18 (PipelineStep enum)
+            // Only rows with a terminal FinalStep and null CompletedAt are orphaned.
+            // Use ExecuteSqlRawAsync for a single-round-trip server-side UPDATE.
+            const string sql = """
+                UPDATE "PipelineRuns"
+                SET "CompletedAt" = NOW() AT TIME ZONE 'UTC'
+                WHERE "FinalStep" IN (16, 17, 18)
+                  AND "CompletedAt" IS NULL
+                """;
+            // TODO [WARNING]: The ordinals (16, 17, 18) for PipelineStep.Completed/Failed/Cancelled are hardcoded.
+            // If the enum is ever renumbered the sweep will silently match wrong rows (or miss the target rows)
+            // without any compile-time error. Consider building the IN list from (int)PipelineStep.Completed,
+            // (int)PipelineStep.Failed, (int)PipelineStep.Cancelled via string interpolation at startup.
+
+            var updatedCount = await db.Database.ExecuteSqlRawAsync(sql, ct);
+            // TODO [WARNING]: The DotNetSpecialist review flagged this call as binding to the params object[]
+            // overload (boxing the CancellationToken). This is incorrect per C# overload resolution: a candidate
+            // applicable in normal form is always preferred over one applicable only in expanded/params form, so
+            // ExecuteSqlRawAsync(sql, ct) correctly resolves to ExecuteSqlRawAsync(string, CancellationToken).
+            // If this ever causes confusion, use the named-argument form: ExecuteSqlRawAsync(sql, cancellationToken: ct).
+
+            if (updatedCount > 0)
+            {
+                Log.Warning(
+                    "DatabaseMaintenanceService: backfilled CompletedAt on {Count} orphaned PipelineRun row(s) with terminal FinalStep and null CompletedAt (ghost runs from OCE path)",
+                    updatedCount);
+            }
+            return updatedCount;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DatabaseMaintenanceService: ReconcileOrphanedPipelineRuns sweep failed (non-fatal)");
             return 0;
         }
     }

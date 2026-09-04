@@ -55,6 +55,10 @@ public sealed class HttpSchedulerApiClient : ISchedulerApiClient
         var response = await _http.PostAsync("/api/scheduler/maintenance/retention-sweep", content: null, ct);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<RetentionSweepResultDto>(PipelineJsonOptions.Default, ct);
+        // TODO [WARNING]: The 5-argument fallback constructor omits the new OrphanedPipelineRunsBackfilled
+        // parameter (which has a default value of 0, making this compile silently). If that default is removed
+        // in a future refactor, this callsite will break with no clear indication of why. Use a named argument
+        // or update to explicitly pass all 6 parameters: new RetentionSweepResultDto(0, 0, 0, 0, 0, 0).
         return result ?? new RetentionSweepResultDto(0, 0, 0, 0, 0);
     }
 

@@ -1079,6 +1079,85 @@ public class PullRequestFinalizationServiceTests
         run.FinalLabel.Should().Be(AgentLabels.Done);
     }
 
+    [Fact]
+    public async Task RunFullPrCreationAsync_WhenRunPostPrSequenceThrowsOce_SetsCompletedAt()
+    {
+        // Regression test for: RunFullPrCreationAsync OCE from RunPostPrSequenceAsync skips
+        // MarkCompleted(), leaving CompletedAt=null — ghost PipelineRun with null CompletedAt.
+        // The terminal mutations (MarkCompleted, CurrentStep, FinalLabel) are now in a finally
+        // block so they execute even when RunPostPrSequenceAsync propagates an OCE.
+
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        var report = CreateReport();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var agentProvider = new Mock<IAgentProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+        // PR creation succeeds — all repo operations are mocked to complete immediately so
+        // the already-cancelled token below does not interfere with the PR creation phase.
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>());
+        repoProvider.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/pull/99");
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<IssueIdentifier>())).Returns("Closes #1");
+
+        // Use an already-cancelled token so the OCE carries a genuinely cancelled token,
+        // matching the production scenario exactly (host shutdown / job cancellation).
+        // The mocked repo operations complete synchronously without inspecting the token,
+        // so cancelling before the call does not short-circuit PR creation.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // RunPostPrSequenceAsync propagates OCE (e.g., from GeneratingPrDescription / brain sync)
+        // Simulate by throwing from the agent provider that is called inside RunPostPrSequenceAsync.
+        // The OCE carries cts.Token (IsCancellationRequested=true), which is the same token passed
+        // to RunFullPrCreationAsync — this is the unambiguous OCE-propagation path under test.
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ThrowsAsync(new OperationCanceledException(cts.Token));
+
+        var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
+
+        var act = () => _sut.RunFullPrCreationAsync(
+            new PrCreationRequest
+            {
+                Run = run,
+                Report = report,
+                IsDraft = false,
+                PrOrchestrator = prOrchestrator,
+                RepoProvider = repoProvider.Object,
+                AgentProvider = agentProvider.Object,
+                BrainProvider = null,
+                BrainSync = null,
+                Config = config,
+                Issue = null,
+                IssueComments = null,
+                FeedbackService = feedbackService,
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => Task.CompletedTask
+            },
+            cts.Token);
+
+        // OCE propagates out of RunFullPrCreationAsync
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // Even though OCE propagated, the finally block must have run MarkCompleted()
+        run.CompletedAtOffset.Should().NotBeNull("MarkCompleted() must be called in finally even on OCE");
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.FinalLabel.Should().Be(AgentLabels.Done);
+    }
+
     // TODO: This test only asserts exception propagation but does not verify that activity?.SetStatus(ActivityStatusCode.Error, ...) is called. Consider using a custom ActivityListener to assert telemetry decoration.
     [Fact]
     public async Task RunFullPrCreationAsync_ExceptionPropagates_WithTelemetryDecoration()

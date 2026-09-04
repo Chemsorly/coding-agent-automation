@@ -33,14 +33,15 @@ public record LoopStartResultDto(bool Started, string? Error);
 
 /// <summary>
 /// Result of a full retention sweep triggered via POST /api/scheduler/maintenance/retention-sweep.
-/// Each field corresponds to one of the five sweep operations in DatabaseMaintenanceService.
+/// Each field corresponds to one of the sweep operations in DatabaseMaintenanceService.
 /// </summary>
 public record RetentionSweepResultDto(
     int StaleWorkItemsDeleted,
     int StalePipelineRunsDeleted,
     int StaleConsolidationRunsDeleted,
     int RetentionPipelineRunsDeleted,
-    int RetentionWorkItemsDeleted);
+    int RetentionWorkItemsDeleted,
+    int OrphanedPipelineRunsBackfilled = 0);
 
 /// <summary>Work item count grouped by status, returned by GET /api/work-items/counts-by-status.</summary>
 public record WorkItemCountDto(string Status, string AgentSelector, long Count);

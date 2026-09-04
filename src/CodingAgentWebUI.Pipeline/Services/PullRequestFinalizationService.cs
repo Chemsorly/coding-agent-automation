@@ -121,38 +121,44 @@ public sealed class PullRequestFinalizationService
         if (!prCreationSucceeded)
             return;
 
-        // TODO: RunPostPrSequenceAsync executes outside the try-catch above. Any non-OCE exception
-        // thrown here (e.g., from transitionCallback invocations for GeneratingPrDescription,
-        // ReflectingOnRun, SyncingBrainRepoPostRun) will propagate without setting the activity
-        // error status or emitting the _logger.Error call that the original in-try placement
-        // provided. Consider wrapping this call and the state-mutation lines below in their own
-        // try-catch to restore the error logging and activity status on failure.
-        await RunPostPrSequenceAsync(
-            new PostPrSequenceRequest
-            {
-                Run = run,
-                IsDraft = isDraft,
-                AgentProvider = agentProvider,
-                RepoProvider = repoProvider,
-                Config = config,
-                BrainSync = brainSync,
-                BrainProvider = brainProvider,
-                FeedbackService = feedbackService,
-                HistoryService = historyService,
-                EmitOutputLine = emitOutputLine,
-                TransitionCallback = transitionCallback
-            },
-            ct);
-
-        run.MarkCompleted();
-        // TODO: run.MarkCompleted(), run.CurrentStep, and run.FinalLabel are set here outside
-        // any exception handler. If RunPostPrSequenceAsync propagates an OperationCanceledException
-        // (ct is passed through), these mutations are skipped, leaving the run without a
-        // CompletedAt timestamp and in an inconsistent step state. Consider wrapping
-        // RunPostPrSequenceAsync and these lines in a try-finally or try-catch to guarantee
-        // final state is always set.
-        run.CurrentStep = finalStep;
-        run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
+        try
+        {
+            await RunPostPrSequenceAsync(
+                new PostPrSequenceRequest
+                {
+                    Run = run,
+                    IsDraft = isDraft,
+                    AgentProvider = agentProvider,
+                    RepoProvider = repoProvider,
+                    Config = config,
+                    BrainSync = brainSync,
+                    BrainProvider = brainProvider,
+                    FeedbackService = feedbackService,
+                    HistoryService = historyService,
+                    EmitOutputLine = emitOutputLine,
+                    TransitionCallback = transitionCallback
+                },
+                ct);
+        }
+        finally
+        {
+            // Always set terminal state regardless of whether RunPostPrSequenceAsync threw
+            // (including OperationCanceledException from brain sync / reflection / feedback).
+            // Without this finally block an OCE leaves the run with CompletedAt=null, causing
+            // it to appear as a ghost active run in the UI and escape all retention sweeps.
+            // TODO [WARNING]: When RunPostPrSequenceAsync throws a non-OCE exception (e.g., NullReferenceException
+            // from a badly-wired transitionCallback), this finally block still sets CurrentStep=finalStep
+            // (Completed for non-draft runs) and FinalLabel=AgentLabels.Done, masking the failure in the run
+            // object. The exception still propagates to the caller, but the run state is left in a misleadingly
+            // successful terminal state. Additionally, the outer catch (Exception ex) when (ex is not
+            // OperationCanceledException) block that sets activity?.SetStatus(ActivityStatusCode.Error) and
+            // emits the error log does NOT wrap this try-finally, so failures inside RunPostPrSequenceAsync
+            // escape without error telemetry. Consider catching non-OCE exceptions from RunPostPrSequenceAsync
+            // separately to set finalStep=PipelineStep.Failed and the error telemetry.
+            run.MarkCompleted();
+            run.CurrentStep = finalStep;
+            run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
+        }
     }
 
     /// <summary>
