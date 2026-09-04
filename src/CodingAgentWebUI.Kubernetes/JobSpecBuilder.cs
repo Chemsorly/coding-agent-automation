@@ -72,6 +72,14 @@ public static class JobSpecBuilder
     /// </summary>
     public static V1Job Build(JobTemplate template, BuildContext ctx)
     {
+        if (ctx.DerivedKeySecretName is not null && ctx.WorkItemId is not null)
+            throw new InvalidOperationException(
+                $"BuildContext.DerivedKeySecretName must not be set for work-item pods " +
+                $"(WorkItemId={ctx.WorkItemId}). Agent code (HubConnectionManager, WorkItemHttpClient) " +
+                $"re-derives the key internally from AGENT_API_KEY + AGENT_ID; injecting a pre-derived " +
+                $"key causes double-derivation and authentication failure (infinite SignalR reconnect loop). " +
+                $"See docs/internals/decisions.md — DerivedKeySecretName footgun.");
+
         var isKiroAgent = IsKiroAgent(template.ProviderType);
 
         var envVars = BuildEnvVars(template, ctx);

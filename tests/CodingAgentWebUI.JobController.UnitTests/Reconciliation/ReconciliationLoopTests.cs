@@ -1375,11 +1375,11 @@ public sealed class ReconciliationLoopErrorTests
 }
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────
-// These tests use MeterListener directly to capture instrument recordings from the
-// static WorkDistributionTelemetry.Meter and PipelineTelemetry.Meter. Both meters are
-// process-wide, so parallel tests in the same process can fire recordings into an active
-// listener and cause spurious snapshot-delta failures. [Collection("Metrics")] serializes
-// all metric tests in this project, eliminating the race window.
+// These tests use MeterListener directly (IDisposable).
+// [Collection("Metrics")] serializes all instances of this class so that stray recordings
+// from sibling test instances do not contaminate snapshot-delta assertions. The static
+// WorkDistributionTelemetry.Meter and PipelineTelemetry.Meter are process-wide: any active
+// listener receives recordings from all concurrent callers, regardless of test instance.
 
 [Collection("Metrics")]
 public sealed class ReconciliationLoopMetricTests : IDisposable
@@ -1701,21 +1701,13 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     [Fact]
     public void LogTerminalStatus_Failed_EmitsPipelineJobsFailed_WithSnakeCaseTag()
     {
-        // TODO [WARNING]: The snapshot filter was broadened from exact-tag-match (status==Failed && failure_reason==timeout)
-        // to instrument-name-only. The [Collection("Metrics")] serialization already prevents cross-test contamination,
-        // so the broader filter adds no robustness benefit but weakens the delta assertion — a stray pipeline.jobs.failed
-        // emission from a different failure_reason earlier in the same serialized run could inflate the delta count.
-        // The separate tag-content assertion below (failure_reason == "timeout") also cannot confirm the recording was
-        // produced by *this* call vs a previous test's emission with the same tag value. Restore the tag-filtered snapshot
-        // (status==Failed && failure_reason==timeout) to make the count-delta assertion strictly scoped to this test's call.
+        // Snapshot before to tolerate stray recordings
         var failedCountBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
 
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Failed, TimeSpan.FromSeconds(60), null, FailureReason.Timeout);
 
         var failedCountAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
-        // TODO [WARNING]: Same broadened-filter issue as the snapshot above — if the filter is ever re-narrowed to
-        // exact tags (status==Failed && failure_reason==timeout), update both the before and after snapshots together.
         (failedCountAfter - failedCountBefore).Should().Be(1,
             "pipeline.jobs.failed must be incremented once for a Failed status");
 
