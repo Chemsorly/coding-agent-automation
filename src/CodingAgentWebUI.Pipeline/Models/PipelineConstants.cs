@@ -105,11 +105,11 @@ public static class PipelineConstants
     /// <summary>Default poll interval for external CI status (30 seconds).</summary>
     public static readonly TimeSpan DefaultExternalCiPollInterval = TimeSpan.FromSeconds(30);
 
-    /// <summary>Default timeout for detecting that CI never started (5 minutes).</summary>
-    public static readonly TimeSpan DefaultCiNotStartedTimeout = TimeSpan.FromMinutes(5);
+    /// <summary>Default timeout for detecting that CI never started (10 minutes).</summary>
+    public static readonly TimeSpan DefaultCiNotStartedTimeout = TimeSpan.FromMinutes(10);
 
-    /// <summary>Default max retries when CI never starts (re-push to trigger).</summary>
-    public const int DefaultCiNotStartedMaxRetries = 5;
+    /// <summary>Default max retries when CI never starts (re-push to trigger). 15 retries x 10min = 150min budget.</summary>
+    public const int DefaultCiNotStartedMaxRetries = 15;
 
     /// <summary>Default max retries when CI is cancelled due to a branch move (new HEAD detected).</summary>
     public const int DefaultCiCancelledMoveMaxRetries = 3;
