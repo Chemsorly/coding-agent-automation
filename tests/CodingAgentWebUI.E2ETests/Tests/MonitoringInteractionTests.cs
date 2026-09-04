@@ -106,7 +106,10 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         var navigationTask = Page.WaitForURLAsync($"**/runs/{runId}", new() { Timeout = 30_000 });
         await runRow.First.ClickAsync();
         await navigationTask;
-        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
+        // Wait for the run-detail h1 specifically (contains #71) rather than any h1.
+        // The run detail page shows a loading state until the async data fetch completes;
+        // waiting for any h1 can match the interim loading skeleton before #71 is rendered.
+        await Page.WaitForSelectorAsync("h1:has-text(\"#71\")", new() { Timeout = 15_000 });
         var pageText = await Page.TextContentAsync("body");
         Assert.Contains("#71", pageText);
     }
