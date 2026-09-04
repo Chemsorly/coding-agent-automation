@@ -1717,7 +1717,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                  && r.Tags.Any(t => t.Key == "failure_reason" && (string?)t.Value == "timeout"),
             "failure_reason tag must be snake_case 'timeout', not PascalCase 'Timeout'");
 
-        // TODO [WARNING]: The negative assertion below (completed not emitted for Failed) is weak:
+        // NOTE: The negative assertion below (completed not emitted for Failed) is weak:
         // completedCountBefore is captured after the first LogTerminalStatus call has already run,
         // so it avoids contamination from that call, but it is still vulnerable to a race window
         // where stray parallel tests fire between the snapshot and the assertion. The assertion
