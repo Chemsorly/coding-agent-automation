@@ -18,6 +18,12 @@ public partial class LayerBoundaryTests
     private static readonly System.Reflection.Assembly PipelineAssembly =
         typeof(Pipeline.Services.PipelineOrchestrationService).Assembly;
 
+    // Spec 048 Phase 1: Contracts is the extracted shared surface. Its types keep the
+    // CodingAgentWebUI.Pipeline.* namespaces (namespace-preserving move), so the boundary
+    // is checked at the ASSEMBLY-reference level, not by namespace.
+    private static readonly System.Reflection.Assembly ContractsAssembly =
+        typeof(CodingAgentWebUI.Pipeline.Models.PipelineRunSummary).Assembly;
+
     // T9 split: Infrastructure is now two assemblies.
     // Providers: no EF Core, no Npgsql — safe for untrusted agent pods.
     // Persistence: EF Core + Npgsql — API and orchestrator only.
@@ -55,6 +61,24 @@ public partial class LayerBoundaryTests
             dir = dir.Parent;
         }
         throw new InvalidOperationException($"Could not find repo root from '{start}'");
+    }
+
+    // ── Spec 048 Phase 1: Contracts boundary ────────────────────────────
+    // Contracts must never reference the Pipeline assembly — the whole point of the
+    // extraction. Checked via assembly references because the two share namespaces.
+    // Positive control: Pipeline DOES reference Contracts, proving both the mechanism
+    // and the one-way direction (Pipeline → Contracts, never the reverse).
+    [Fact]
+    public void Contracts_ShouldNot_ReferencePipelineAssembly()
+    {
+        var contractsRefs = ContractsAssembly.GetReferencedAssemblies()
+            .Select(a => a.Name).ToList();
+        Assert.DoesNotContain("CodingAgentWebUI.Pipeline", contractsRefs);
+
+        // Positive control — if this fails, the reflection check is not seeing references.
+        var pipelineRefs = PipelineAssembly.GetReferencedAssemblies()
+            .Select(a => a.Name).ToList();
+        Assert.Contains("CodingAgentWebUI.Contracts", pipelineRefs);
     }
 
     [Fact]
