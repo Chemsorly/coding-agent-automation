@@ -146,15 +146,6 @@ public sealed class PullRequestFinalizationService
             // (including OperationCanceledException from brain sync / reflection / feedback).
             // Without this finally block an OCE leaves the run with CompletedAt=null, causing
             // it to appear as a ghost active run in the UI and escape all retention sweeps.
-            // TODO [WARNING]: When RunPostPrSequenceAsync throws a non-OCE exception (e.g., NullReferenceException
-            // from a badly-wired transitionCallback), this finally block still sets CurrentStep=finalStep
-            // (Completed for non-draft runs) and FinalLabel=AgentLabels.Done, masking the failure in the run
-            // object. The exception still propagates to the caller, but the run state is left in a misleadingly
-            // successful terminal state. Additionally, the outer catch (Exception ex) when (ex is not
-            // OperationCanceledException) block that sets activity?.SetStatus(ActivityStatusCode.Error) and
-            // emits the error log does NOT wrap this try-finally, so failures inside RunPostPrSequenceAsync
-            // escape without error telemetry. Consider catching non-OCE exceptions from RunPostPrSequenceAsync
-            // separately to set finalStep=PipelineStep.Failed and the error telemetry.
             run.MarkCompleted();
             run.CurrentStep = finalStep;
             run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;

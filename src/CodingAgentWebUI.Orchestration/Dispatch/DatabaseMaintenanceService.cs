@@ -238,17 +238,8 @@ public class DatabaseMaintenanceService
                 WHERE "FinalStep" IN (16, 17, 18)
                   AND "CompletedAt" IS NULL
                 """;
-            // TODO [WARNING]: The ordinals (16, 17, 18) for PipelineStep.Completed/Failed/Cancelled are hardcoded.
-            // If the enum is ever renumbered the sweep will silently match wrong rows (or miss the target rows)
-            // without any compile-time error. Consider building the IN list from (int)PipelineStep.Completed,
-            // (int)PipelineStep.Failed, (int)PipelineStep.Cancelled via string interpolation at startup.
 
             var updatedCount = await db.Database.ExecuteSqlRawAsync(sql, ct);
-            // TODO [WARNING]: The DotNetSpecialist review flagged this call as binding to the params object[]
-            // overload (boxing the CancellationToken). This is incorrect per C# overload resolution: a candidate
-            // applicable in normal form is always preferred over one applicable only in expanded/params form, so
-            // ExecuteSqlRawAsync(sql, ct) correctly resolves to ExecuteSqlRawAsync(string, CancellationToken).
-            // If this ever causes confusion, use the named-argument form: ExecuteSqlRawAsync(sql, cancellationToken: ct).
 
             if (updatedCount > 0)
             {
