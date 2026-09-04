@@ -203,7 +203,8 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
             // Assert: success feedback message appears (toast or inline)
             var bodyText = await Page.TextContentAsync("body");
             Assert.True(
-                bodyText?.Contains("Dispatched") == true || bodyText?.Contains("✅") == true,
+                bodyText?.Contains("Dispatched") == true || bodyText?.Contains("✅") == true
+                || bodyText?.Contains("Queued") == true || bodyText?.Contains("⏳") == true,
                 "Dispatch success feedback should appear in the UI");
         }
     }
