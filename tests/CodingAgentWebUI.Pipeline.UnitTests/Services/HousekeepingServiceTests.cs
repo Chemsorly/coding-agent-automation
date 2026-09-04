@@ -631,6 +631,13 @@ public class HousekeepingServiceTests
 
     // ── Conflicted + different branch active → guard is branch-name–specific ─
 
+    // TODO: This test conflates two concerns — the branch-name specificity guard (primary) and the implicit
+    // assertion that agent:error remains a valid rework target (incidental). If agent:error were accidentally
+    // added to TerminalReworkBlockers, this test would still fail for the right reason, but only because
+    // AddLabelAsync is Times.Once — not because of a dedicated agent:error pass-through assertion. Consider
+    // adding a dedicated test: ExecuteAsync_ConflictedPr_IssueWithAgentError_SwapsToAgentNext (no active
+    // runs, simple setup) so the agent:error-as-rework-target invariant is tested independently of the
+    // branch guard. (Raised by TestQualityReviewer review on 2026-09-04.)
     [Fact]
     public async Task ExecuteAsync_ConflictedPr_DifferentBranchIsActive_ProceedsWithReworkSwap()
     {
@@ -1137,24 +1144,19 @@ public class HousekeepingServiceTests
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── Conflicted + agent:error → swap proceeds (intentional rework target) ─
+    // ── Conflicted + agent:needs-refinement → swap proceeds (intentional rework target) ─
 
-    // TODO: this test duplicates ExecuteAsync_ConflictedPr_DifferentBranchIsActive_ProceedsWithReworkSwap
-    // (~line 603) which already covers the agent:error rework path with identical setup and assertions.
-    // Consider replacing this test with one for agent:needs-refinement, the other intentional rework
-    // target mentioned in the issue that has no coverage in this file.
-    // (review-findings WARNING, HousekeepingServiceTests.cs:951)
     [Fact]
-    public async Task ExecuteAsync_ConflictedPr_IssueWithAgentError_SwapsToNext()
+    public async Task ExecuteAsync_ConflictedPr_IssueWithAgentNeedsRefinement_SwapsToNext()
     {
-        // agent:error is a human-placed signal that rework is needed — must remain a valid rework target.
+        // agent:needs-refinement is a human-placed signal that rework is needed — must remain a valid rework target.
         var (svc, provider, issues, _) = Create();
         provider.Setup(p => p.IsPullRequestBehindBaseAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(PrMergeabilityStatus.Conflicted);
         provider.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
                 .ReturnsAsync((IReadOnlyList<string>)["42"]);
         issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(MakeIssue("42", AgentLabels.Error));
+              .ReturnsAsync(MakeIssue("42", AgentLabels.NeedsRefinement));
         issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
               .Returns(Task.CompletedTask);
         issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -1165,7 +1167,7 @@ public class HousekeepingServiceTests
         issues.Verify(i => i.AddLabelAsync(
             It.Is<IssueIdentifier>(id => id.Value == "42"),
             AgentLabels.Next, It.IsAny<CancellationToken>()), Times.Once,
-            "agent:error is an intentional rework target — label swap must proceed");
+            "agent:needs-refinement is an intentional rework target — label swap must proceed");
     }
 
     // ── Branch with agent:epic-review issue → not deleted ────────────────────
