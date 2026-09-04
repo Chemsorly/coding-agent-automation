@@ -79,7 +79,7 @@ public sealed class AgentCodingPage
     /// <summary>Selects an issue from the drawer by its identifier.</summary>
     public async Task SelectIssueAsync(string identifier)
     {
-        await _page.ClickAsync($"[data-testid='issue-row-{identifier}']");
+        await _page.ClickAsync($"[data-issue-id='{identifier}']");
     }
 
     /// <summary>Clicks the "Start Pipeline on #X" button in the drawer.</summary>
