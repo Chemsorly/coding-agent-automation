@@ -1472,6 +1472,59 @@ public class LocalPipelineExecutorTests : IDisposable
         await act.Should().NotThrowAsync();
     }
 
+    /// <summary>
+    /// Regression test for issue #2229.
+    /// RunningEnvironmentSetup has ordinal 29 but logical order 2. With the broken raw-ordinal
+    /// comparison, once HWM reaches 29 all subsequent steps (ordinals 2–4) can never advance it.
+    /// The fix uses StepOrder.GetOrder for the comparison, matching the server-side logic.
+    /// Satisfies AC1 (uses StepOrder.GetOrder) and AC2 (HWM does not get stuck at ordinal 29).
+    /// Note: AC3 ("SignalR metadata payloads carry the correct logical HWM value") is only
+    /// transitively covered here — BuildStepMetadata does not embed HighWaterMark as a metadata
+    /// key, and the disconnected hub connection silently discards all payloads, so no assertion
+    /// on emitted metadata content is made. The BuildStepMetadata helpers still use raw ordinal
+    /// comparisons on newStep (separate TODO in PipelineSignalRReporter.cs).
+    /// TODO: Add a test that captures and inspects metadata payload content after
+    /// RunningEnvironmentSetup to fully verify AC3 once the BuildStepMetadata helpers are fixed.
+    /// </summary>
+    [Fact]
+    public async Task TransitionToInternalAsync_RunningEnvironmentSetup_DoesNotPreventSubsequentHwmAdvancement()
+    {
+        // Arrange — mirrors real pipeline execution order
+        var run = CreateMinimalRun();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+
+        // Act & Assert — assert HWM after every step so a future regression is immediately locatable
+
+        // Step 1: CloningRepository — ordinal 1, logical order 1
+        await reporter.TransitionToInternalAsync(PipelineStep.CloningRepository, CancellationToken.None);
+        run.HighWaterMark.Should().Be(PipelineStep.CloningRepository);
+
+        // Step 2: RunningEnvironmentSetup — ordinal 29, logical order 2
+        // With broken code: HWM jumps to ordinal 29, preventing all subsequent advances.
+        await reporter.TransitionToInternalAsync(PipelineStep.RunningEnvironmentSetup, CancellationToken.None);
+        run.HighWaterMark.Should().Be(PipelineStep.RunningEnvironmentSetup);
+
+        // Step 3: SyncingBrainRepoPreRun — ordinal 2, logical order 3
+        // With broken code: (int)2 < 29 → HWM stuck at RunningEnvironmentSetup.
+        await reporter.TransitionToInternalAsync(PipelineStep.SyncingBrainRepoPreRun, CancellationToken.None);
+        run.HighWaterMark.Should().Be(PipelineStep.SyncingBrainRepoPreRun,
+            "SyncingBrainRepoPreRun (ordinal 2) must advance HWM past RunningEnvironmentSetup (ordinal 29) because its logical order (3) is greater");
+
+        // Step 4: CreatingBranch — ordinal 3, logical order 4
+        // With broken code: (int)3 < 29 → HWM stuck.
+        await reporter.TransitionToInternalAsync(PipelineStep.CreatingBranch, CancellationToken.None);
+        run.HighWaterMark.Should().Be(PipelineStep.CreatingBranch,
+            "CreatingBranch (ordinal 3) must advance HWM because its logical order (4) is greater than RunningEnvironmentSetup's logical order (2)");
+
+        // Step 5: VerifyingBaseline — ordinal 4, logical order 5
+        // With broken code: (int)4 < 29 → HWM stuck.
+        await reporter.TransitionToInternalAsync(PipelineStep.VerifyingBaseline, CancellationToken.None);
+        run.HighWaterMark.Should().Be(PipelineStep.VerifyingBaseline,
+            "VerifyingBaseline (ordinal 4) must advance HWM because its logical order (5) is greater than RunningEnvironmentSetup's logical order (2)");
+    }
+
     // ── EmitOutputLineInternalAsync (PipelineSignalRReporter) ────────────
 
     [Fact]
