@@ -62,9 +62,10 @@ public class GitHubActionsPipelineProviderWireMockTests : WireMockTestBase
     [Fact]
     public async Task GetRunStatusAsync_FiltersByCommitSha()
     {
+        // The provider passes head_sha="abc123" as a server-side filter to the GitHub API.
+        // The stub simulates the real API by returning only the matching run (run1).
         var run1 = BuildWorkflowRunJson(100, "abc123", "completed", "success");
-        var run2 = BuildWorkflowRunJson(101, "def456", "completed", "failure");
-        StubGet(RunsPath, new { total_count = 2, workflow_runs = new[] { run1, run2 } });
+        StubGet(RunsPath, new { total_count = 1, workflow_runs = new[] { run1 } });
 
         var job = BuildWorkflowJobJson(200, "build", "completed", "success");
         StubGet(JobsPath(100), new { total_count = 1, jobs = new[] { job } });

@@ -918,97 +918,32 @@ public sealed class DispatchLoopTests
 
     // ─── Eligibility gate — ineligible labels (AC #2) ─────────────────────────
 
-    // TODO: Consolidate into a single [Theory]/[InlineData] and add ErrorMessage assertions
-    // that verify the specific label name is included in the cancellation reason.
-
-    /// <summary>AC #2: issue has agent:error — must cancel.</summary>
-    [Fact]
-    public async Task WhenIssueHasIneligibleLabel_Error_ShouldCancelWorkItem()
+    /// <summary>
+    /// AC #2: WorkItem whose issue has any ineligible label must be cancelled, not dispatched.
+    /// Covers: agent:error, agent:needs-refinement, agent:wont-do, agent:cancelled.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(AgentLabels.Error))]
+    [InlineData(nameof(AgentLabels.NeedsRefinement))]
+    [InlineData(nameof(AgentLabels.WontDo))]
+    [InlineData(nameof(AgentLabels.Cancelled))]
+    public async Task WhenIssueHasIneligibleLabel_ShouldCancelWorkItem(string labelPropertyName)
     {
+        var label = labelPropertyName switch
+        {
+            nameof(AgentLabels.Error) => AgentLabels.Error,
+            nameof(AgentLabels.NeedsRefinement) => AgentLabels.NeedsRefinement,
+            nameof(AgentLabels.WontDo) => AgentLabels.WontDo,
+            nameof(AgentLabels.Cancelled) => AgentLabels.Cancelled,
+            _ => throw new ArgumentOutOfRangeException(nameof(labelPropertyName))
+        };
+
         _issueProvider
             .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "1", Title = "Test", Description = "",
-                Labels = new[] { AgentLabels.Error }
-            });
-
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending()]);
-
-        var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
-
-        _workItemClient.Verify(c => c.PostStatusAsync(
-            ItemId,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
-            It.IsAny<CancellationToken>()),
-            Times.Once);
-        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    /// <summary>AC #2: issue has agent:needs-refinement — must cancel.</summary>
-    [Fact]
-    public async Task WhenIssueHasIneligibleLabel_NeedsRefinement_ShouldCancelWorkItem()
-    {
-        _issueProvider
-            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail
-            {
-                Identifier = "1", Title = "Test", Description = "",
-                Labels = new[] { AgentLabels.NeedsRefinement }
-            });
-
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending()]);
-
-        var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
-
-        _workItemClient.Verify(c => c.PostStatusAsync(
-            ItemId,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
-            It.IsAny<CancellationToken>()),
-            Times.Once);
-        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    /// <summary>AC #2: issue has agent:wont-do — must cancel.</summary>
-    [Fact]
-    public async Task WhenIssueHasIneligibleLabel_WontDo_ShouldCancelWorkItem()
-    {
-        _issueProvider
-            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail
-            {
-                Identifier = "1", Title = "Test", Description = "",
-                Labels = new[] { AgentLabels.WontDo }
-            });
-
-        _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([MakePending()]);
-
-        var loop = CreateLoop();
-        await loop.RunOneCycleAsync(CancellationToken.None);
-
-        _workItemClient.Verify(c => c.PostStatusAsync(
-            ItemId,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == nameof(WorkItemStatus.Cancelled)),
-            It.IsAny<CancellationToken>()),
-            Times.Once);
-        _workItemClient.Verify(c => c.ClaimAsync(It.IsAny<Guid>(), It.IsAny<ClaimWorkItemRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    /// <summary>AC #2: issue has agent:cancelled — must cancel.</summary>
-    [Fact]
-    public async Task WhenIssueHasIneligibleLabel_Cancelled_ShouldCancelWorkItem()
-    {
-        _issueProvider
-            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new IssueDetail
-            {
-                Identifier = "1", Title = "Test", Description = "",
-                Labels = new[] { AgentLabels.Cancelled }
+                Labels = new[] { label }
             });
 
         _workItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))

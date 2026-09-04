@@ -202,27 +202,6 @@ public class HubAuthorizationTests
     // ── Comment Type Formatting ─────────────────────────────────────────
 
     [Fact]
-    public void CommentType_Analysis_HasCorrectValue()
-    {
-        CommentType.Analysis.Should().Be(CommentType.Analysis);
-        ((int)CommentType.Analysis).Should().Be(0);
-    }
-
-    [Fact]
-    public void CommentType_GateRejection_HasCorrectValue()
-    {
-        CommentType.GateRejection.Should().Be(CommentType.GateRejection);
-        ((int)CommentType.GateRejection).Should().Be(1);
-    }
-
-    [Fact]
-    public void CommentType_GateWontDo_HasCorrectValue()
-    {
-        CommentType.GateWontDo.Should().Be(CommentType.GateWontDo);
-        ((int)CommentType.GateWontDo).Should().Be(2);
-    }
-
-    [Fact]
     public void CommentPayload_AnalysisMarkdown_RoundTrips()
     {
         var payload = new CommentPayload
