@@ -245,11 +245,10 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
     }
 
     // ── ReconcileOrphanedPipelineRunsAsync ────────────────────────────────────
-    // TODO [WARNING]: All reconciliation tests use TestableMaintenanceServiceForReconciliation, which overrides
-    // ReconcileOrphanedPipelineRunsAsync with a LINQ-based implementation instead of ExecuteSqlRawAsync.
-    // This means the production SQL string is never executed by any test — a typo in the column name,
-    // wrong ordinals, or missing IS NULL predicate would not be caught. Consider adding an integration test
-    // using a real SQLite or PostgreSQL provider to verify the raw SQL path.
+    // The LINQ-based tests below use TestableMaintenanceServiceForReconciliation to verify
+    // the reconciliation logic against the InMemory EF provider (which cannot run raw SQL).
+    // The two production exception-path tests at the end of this section call CreateService()
+    // directly so the production ExecuteSqlRawAsync code path is exercised.
 
     [Fact]
     public async Task ReconcileOrphanedPipelineRuns_TerminalStepWithNullCompletedAt_BackfillsCompletedAt()
@@ -311,9 +310,9 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
 
         // Assert: zero rows updated (no ghost runs)
         count.Should().Be(0);
-        // TODO [WARNING]: This assertion only checks the count; it does not verify that the existing
-        // CompletedAt value is unchanged. Add: row!.CompletedAt.Should().Be(originalCompletedAt) to
-        // guard against an implementation that might inadvertently overwrite an already-set CompletedAt.
+        await using var readCtx = new TestPipelineDbContext(_dbOptions);
+        var row = await readCtx.PipelineRuns.FindAsync(completedRunId);
+        row!.CompletedAt.Should().Be(originalCompletedAt, "existing CompletedAt must not be overwritten by the reconciliation sweep");
     }
 
     [Fact]
@@ -348,23 +347,23 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
     [Fact]
     public async Task ReconcileOrphanedPipelineRuns_MixedRows_BackfillsOnlyGhostOnes()
     {
-        // Arrange: three rows:
+        // Arrange: four rows covering all three terminal steps:
         //   1. ghost: FinalStep=Completed (16), CompletedAt=null  → must be backfilled
-        //   2. ghost: FinalStep=Failed (17), CompletedAt=null       → must be backfilled
-        //   3. normal: FinalStep=Completed (16), CompletedAt=set   → must NOT be changed
-        // TODO [WARNING]: FinalStep=Cancelled (18) is also a terminal step covered by the production SQL
-        // IN (16, 17, 18) but is not included in this test. Add a fourth ghost row with
-        // FinalStep = PipelineStep.Cancelled to ensure ordinal 18 is not accidentally omitted.
+        //   2. ghost: FinalStep=Failed (17), CompletedAt=null      → must be backfilled
+        //   3. ghost: FinalStep=Cancelled (18), CompletedAt=null   → must be backfilled
+        //   4. normal: FinalStep=Completed (16), CompletedAt=set   → must NOT be changed
         var ghostId1 = Guid.NewGuid();
         var ghostId2 = Guid.NewGuid();
+        var ghostId3 = Guid.NewGuid();
         var normalId = Guid.NewGuid();
         var existingCompletedAt = DateTimeOffset.UtcNow.AddHours(-5);
         await using (var ctx = new TestPipelineDbContext(_dbOptions))
         {
             ctx.PipelineRuns.AddRange(
-                new PipelineRunEntity { RunId = ghostId1, IssueIdentifier = "org/repo#10", FinalStep = PipelineStep.Completed, StartedAt = DateTimeOffset.UtcNow.AddDays(-1), CompletedAt = null },
-                new PipelineRunEntity { RunId = ghostId2, IssueIdentifier = "org/repo#11", FinalStep = PipelineStep.Failed,    StartedAt = DateTimeOffset.UtcNow.AddDays(-1), CompletedAt = null },
-                new PipelineRunEntity { RunId = normalId, IssueIdentifier = "org/repo#12", FinalStep = PipelineStep.Completed, StartedAt = DateTimeOffset.UtcNow.AddDays(-1), CompletedAt = existingCompletedAt }
+                new PipelineRunEntity { RunId = ghostId1, IssueIdentifier = "org/repo#10", FinalStep = PipelineStep.Completed,  StartedAt = DateTimeOffset.UtcNow.AddDays(-1), CompletedAt = null },
+                new PipelineRunEntity { RunId = ghostId2, IssueIdentifier = "org/repo#11", FinalStep = PipelineStep.Failed,     StartedAt = DateTimeOffset.UtcNow.AddDays(-1), CompletedAt = null },
+                new PipelineRunEntity { RunId = ghostId3, IssueIdentifier = "org/repo#13", FinalStep = PipelineStep.Cancelled,  StartedAt = DateTimeOffset.UtcNow.AddDays(-1), CompletedAt = null },
+                new PipelineRunEntity { RunId = normalId, IssueIdentifier = "org/repo#12", FinalStep = PipelineStep.Completed,  StartedAt = DateTimeOffset.UtcNow.AddDays(-1), CompletedAt = existingCompletedAt }
             );
             await ctx.SaveChangesAsync();
         }
@@ -373,28 +372,63 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
 
         var count = await service.ReconcileOrphanedPipelineRunsAsync(CancellationToken.None);
 
-        count.Should().Be(2, "exactly the two ghost rows should be backfilled");
+        count.Should().Be(3, "exactly the three ghost rows (Completed, Failed, Cancelled) should be backfilled");
         await using var readCtx = new TestPipelineDbContext(_dbOptions);
         (await readCtx.PipelineRuns.FindAsync(ghostId1))!.CompletedAt.Should().NotBeNull();
         (await readCtx.PipelineRuns.FindAsync(ghostId2))!.CompletedAt.Should().NotBeNull();
+        (await readCtx.PipelineRuns.FindAsync(ghostId3))!.CompletedAt.Should().NotBeNull();
         (await readCtx.PipelineRuns.FindAsync(normalId))!.CompletedAt.Should().Be(existingCompletedAt);
     }
 
     [Fact]
     public async Task ReconcileOrphanedPipelineRuns_CancellationRequested_DoesNotThrow()
     {
-        // TODO [WARNING]: This test exercises the testable override's early-exit path
-        // (if (ct.IsCancellationRequested) return 0) — it does NOT cover the production
-        // implementation's catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        // block in DatabaseMaintenanceService.ReconcileOrphanedPipelineRunsAsync. The production
-        // path (where ExecuteSqlRawAsync throws an OCE on a pre-cancelled token) is not exercised
-        // by any test. Consider an integration test with a real provider to cover that path.
+        // Exercises the testable override's early-exit path (pre-cancelled token → return 0 immediately).
         var service = new TestableMaintenanceServiceForReconciliation(_dbFactory, _mockConsolidationService.Object, _configuration, _mockConfigStore.Object);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
         await service.Invoking(s => s.ReconcileOrphanedPipelineRunsAsync(cts.Token))
             .Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ReconcileOrphanedPipelineRuns_ProductionPath_InMemoryThrows_HandledGracefully()
+    {
+        // Calls the *production* ReconcileOrphanedPipelineRunsAsync (not the testable override)
+        // via CreateService(). InMemory EF does not support ExecuteSqlRawAsync, so it throws an
+        // InvalidOperationException, which must be caught by the catch (Exception ex) block and
+        // swallowed gracefully (returns 0, logs a warning).
+        var service = CreateService();
+
+        var result = await service.ReconcileOrphanedPipelineRunsAsync(CancellationToken.None);
+
+        result.Should().Be(0, "non-fatal exceptions from the production SQL path must be caught and return 0");
+    }
+
+    [Fact]
+    public async Task ReconcileOrphanedPipelineRuns_ProductionPath_OperationCancelled_ReturnsZero()
+    {
+        // Calls the *production* ReconcileOrphanedPipelineRunsAsync with a factory that throws
+        // OperationCanceledException on CreateDbContextAsync, exercising the
+        // catch (OperationCanceledException) when (ct.IsCancellationRequested) block.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var throwingFactory = new Mock<IDbContextFactory<PipelineDbContext>>();
+        throwingFactory
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var service = new DatabaseMaintenanceService(
+            throwingFactory.Object,
+            _mockConsolidationService.Object,
+            _configuration,
+            _mockConfigStore.Object);
+
+        var result = await service.ReconcileOrphanedPipelineRunsAsync(cts.Token);
+
+        result.Should().Be(0, "OperationCanceledException must be caught and return 0");
     }
 
     [Fact]

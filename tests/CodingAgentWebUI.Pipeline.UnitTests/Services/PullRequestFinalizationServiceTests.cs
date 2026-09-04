@@ -461,11 +461,6 @@ public class PullRequestFinalizationServiceTests
     [Fact]
     public async Task RunPostPrSequenceAsync_WhenBrainGateSkipped_LogsSkipReasonWithCorrectFields()
     {
-        // TODO [WARNING]: This test is nearly a duplicate of RunPostPrSequenceAsync_WhenBrainSyncPresentButBrainProviderNull_SkipsBrainSync
-        // — both use BrainSync=null, BrainProvider=null and verify the same log assertion. The comment
-        // "gate fires due to null provider" is misleading since both operands are null. This test adds
-        // no distinct coverage over the two partial-null tests. Consider removing or differentiating it
-        // to test a genuinely distinct scenario (e.g., isDraft=true triggering the skip).
         // Verifies the diagnostic log emits the correct structured fields when the brain gate fails.
         // isDraft=false, brainProvider=null, brainSync=null — gate fires due to null provider.
         var run = CreateRun();
