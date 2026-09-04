@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -21,6 +23,9 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     private readonly IWorkItemSweepClient? _workItemClient;
     private readonly ILeaderGate? _leaderGate;
     private readonly Serilog.ILogger _logger;
+    private readonly System.Diagnostics.Metrics.Counter<long> _queueSweepCancelled;
+    private readonly System.Diagnostics.Metrics.Counter<long> _queueSweepSkipped;
+    private readonly System.Diagnostics.Metrics.Counter<long> _queueSweepFailed;
 
     private TaskCompletionSource _activationSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Lock _lock = new();
@@ -110,6 +115,20 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
         _dispatcher = deps.DispatchOrchestration is not null
             ? new DispatchScheduler(deps.Orchestration, deps.DispatchOrchestration, deps.DependencyChecker, _cacheManager, deps.Logger)
             : null;
+
+        if (deps.MeterFactory is not null)
+        {
+            var meter = deps.MeterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
+            _queueSweepCancelled = meter.CreateCounter<long>("pipeline.queue_sweep.cancelled", "{item}", "WorkItems cancelled as stale by the queue sweep");
+            _queueSweepSkipped = meter.CreateCounter<long>("pipeline.queue_sweep.skipped", "{item}", "WorkItems skipped by the queue sweep");
+            _queueSweepFailed = meter.CreateCounter<long>("pipeline.queue_sweep.failed", "{item}", "PostStatusAsync unexpected failures during queue sweep");
+        }
+        else
+        {
+            _queueSweepCancelled = PipelineTelemetry.QueueSweepCancelled;
+            _queueSweepSkipped = PipelineTelemetry.QueueSweepSkipped;
+            _queueSweepFailed = PipelineTelemetry.QueueSweepFailed;
+        }
     }
 
     /// <summary>

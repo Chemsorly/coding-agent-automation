@@ -44,44 +44,25 @@ public class LocalPipelineExecutorDepsConstructorTests
 
     // ── Null guards — required members ──────────────────────────────────
 
-    [Fact]
-    public void DepsConstructor_NullOrchestrator_Throws()
+    [Theory]
+    [InlineData(nameof(LocalPipelineExecutorDependencies.Orchestrator), "deps.Orchestrator")]
+    [InlineData(nameof(LocalPipelineExecutorDependencies.HttpClientFactory), "deps.HttpClientFactory")]
+    [InlineData(nameof(LocalPipelineExecutorDependencies.DefaultPipelineConfig), "deps.DefaultPipelineConfig")]
+    [InlineData(nameof(LocalPipelineExecutorDependencies.QualityGateValidator), "deps.QualityGateValidator")]
+    [InlineData(nameof(LocalPipelineExecutorDependencies.Logger), "deps.Logger")]
+    public void DepsConstructor_NullRequiredMember_Throws(string memberName, string expectedParamName)
     {
-        var deps = CreateValidDeps() with { Orchestrator = null! };
+        var deps = memberName switch
+        {
+            nameof(LocalPipelineExecutorDependencies.Orchestrator) => CreateValidDeps() with { Orchestrator = null! },
+            nameof(LocalPipelineExecutorDependencies.HttpClientFactory) => CreateValidDeps() with { HttpClientFactory = null! },
+            nameof(LocalPipelineExecutorDependencies.DefaultPipelineConfig) => CreateValidDeps() with { DefaultPipelineConfig = null! },
+            nameof(LocalPipelineExecutorDependencies.QualityGateValidator) => CreateValidDeps() with { QualityGateValidator = null! },
+            nameof(LocalPipelineExecutorDependencies.Logger) => CreateValidDeps() with { Logger = null! },
+            _ => throw new ArgumentOutOfRangeException(nameof(memberName))
+        };
         var act = () => new LocalPipelineExecutor(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Orchestrator");
-    }
-
-    [Fact]
-    public void DepsConstructor_NullHttpClientFactory_Throws()
-    {
-        var deps = CreateValidDeps() with { HttpClientFactory = null! };
-        var act = () => new LocalPipelineExecutor(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.HttpClientFactory");
-    }
-
-    [Fact]
-    public void DepsConstructor_NullDefaultPipelineConfig_Throws()
-    {
-        var deps = CreateValidDeps() with { DefaultPipelineConfig = null! };
-        var act = () => new LocalPipelineExecutor(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.DefaultPipelineConfig");
-    }
-
-    [Fact]
-    public void DepsConstructor_NullQualityGateValidator_Throws()
-    {
-        var deps = CreateValidDeps() with { QualityGateValidator = null! };
-        var act = () => new LocalPipelineExecutor(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.QualityGateValidator");
-    }
-
-    [Fact]
-    public void DepsConstructor_NullLogger_Throws()
-    {
-        var deps = CreateValidDeps() with { Logger = null! };
-        var act = () => new LocalPipelineExecutor(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
+        act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
     }
 
     // ── Valid construction ───────────────────────────────────────────────

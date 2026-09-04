@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Prompts;
@@ -15,12 +16,33 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public sealed class PullRequestFinalizationService
 {
     private readonly Serilog.ILogger _logger;
+    private readonly Counter<long> _brainSyncSkipped;
+    private readonly Histogram<double> _stepDuration;
+    private readonly Counter<long> _stepCount;
     private const string PipelineRunIdTag = "pipeline.run_id";
 
-    public PullRequestFinalizationService(Serilog.ILogger logger)
+    public PullRequestFinalizationService(Serilog.ILogger logger, IMeterFactory? meterFactory = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
+
+        if (meterFactory is not null)
+        {
+            var meter = meterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
+            _brainSyncSkipped = meter.CreateCounter<long>("brain.sync.skipped", "{sync}", "Runs where post-run brain sync was skipped (tagged by reason)");
+            _stepDuration = meter.CreateHistogram<double>("pipeline.step.duration", "s", "Duration of individual pipeline steps",
+                advice: new InstrumentAdvice<double>
+                {
+                    HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
+                });
+            _stepCount = meter.CreateCounter<long>("pipeline.step.count", "{step}", "Pipeline step execution count");
+        }
+        else
+        {
+            _brainSyncSkipped = PipelineTelemetry.BrainSyncSkipped;
+            _stepDuration = PipelineTelemetry.StepDuration;
+            _stepCount = PipelineTelemetry.StepCount;
+        }
     }
 
     /// <summary>
@@ -114,8 +136,8 @@ public sealed class PullRequestFinalizationService
             // completion. On the null-PR path no PR was actually created, yet pipeline.step.count
             // is incremented. Consider guarding with a cancelled/skipped flag to suppress
             // misleading observations on these paths.
-            PipelineTelemetry.StepDuration.Record(sw.Elapsed.TotalSeconds, tags);
-            PipelineTelemetry.StepCount.Add(1, tags);
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
         }
 
         if (!prCreationSucceeded)
@@ -207,7 +229,7 @@ public sealed class PullRequestFinalizationService
                 : brainProvider is null ? "no_provider"
                 : brainSync is null ? "no_sync_service"
                 : "read_only";
-            PipelineTelemetry.BrainSyncSkipped.Add(1,
+            _brainSyncSkipped.Add(1,
                 new KeyValuePair<string, object?>("reason", skipReason));
             // TODO [WARNING]: The five log arguments (RunId, isDraft, brainProvider!=null, brainSync!=null, BrainReadOnly)
             // resolve to Information(string, params object[]) because Serilog's ILogger has generic overloads only up to
@@ -303,8 +325,8 @@ public sealed class PullRequestFinalizationService
         {
             sw.Stop();
             var tags = PipelineTelemetry.BuildStepTags("GeneratePrDescription", run);
-            PipelineTelemetry.StepDuration.Record(sw.Elapsed.TotalSeconds, tags);
-            PipelineTelemetry.StepCount.Add(1, tags);
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
         }
     }
 
@@ -353,8 +375,8 @@ public sealed class PullRequestFinalizationService
         {
             sw.Stop();
             var tags = PipelineTelemetry.BuildStepTags("Reflection", run);
-            PipelineTelemetry.StepDuration.Record(sw.Elapsed.TotalSeconds, tags);
-            PipelineTelemetry.StepCount.Add(1, tags);
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
         }
     }
 
@@ -386,8 +408,8 @@ public sealed class PullRequestFinalizationService
         {
             sw.Stop();
             var tags = PipelineTelemetry.BuildStepTags("BrainSyncPostRun", run);
-            PipelineTelemetry.StepDuration.Record(sw.Elapsed.TotalSeconds, tags);
-            PipelineTelemetry.StepCount.Add(1, tags);
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
         }
     }
 
@@ -444,8 +466,8 @@ public sealed class PullRequestFinalizationService
         {
             sw.Stop();
             var tags = PipelineTelemetry.BuildStepTags("FeedbackCollection", run);
-            PipelineTelemetry.StepDuration.Record(sw.Elapsed.TotalSeconds, tags);
-            PipelineTelemetry.StepCount.Add(1, tags);
+            _stepDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            _stepCount.Add(1, tags);
         }
     }
 

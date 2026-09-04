@@ -224,7 +224,7 @@ public sealed partial class PipelineLoopService
         {
             if (item.TaskType != WorkItemTaskType.Implementation)
             {
-                PipelineTelemetry.QueueSweepSkipped.Add(1);
+                _queueSweepSkipped.Add(1);
                 continue;
             }
 
@@ -232,7 +232,7 @@ public sealed partial class PipelineLoopService
             {
                 // Provider was not polled this cycle (e.g. rate-limited template excluded from
                 // pollableTemplates) — fail open, do not cancel
-                PipelineTelemetry.QueueSweepSkipped.Add(1);
+                _queueSweepSkipped.Add(1);
                 continue;
             }
 
@@ -252,7 +252,7 @@ public sealed partial class PipelineLoopService
             // This means QueueSweepCancelled counts "cancel attempts" rather than "confirmed
             // cancellations". To fix, move this Add(1) call inside the try block, after the
             // PostStatusAsync await succeeds.
-            PipelineTelemetry.QueueSweepCancelled.Add(1);
+            _queueSweepCancelled.Add(1);
 
             try
             {
@@ -281,7 +281,7 @@ public sealed partial class PipelineLoopService
             catch (Exception ex)
             {
                 // Unexpected failure (network error, timeout, 5xx). Count and log at Warning.
-                PipelineTelemetry.QueueSweepFailed.Add(1);
+                _queueSweepFailed.Add(1);
                 _logger.Warning(ex,
                     "QueueSweep: PostStatusAsync failed unexpectedly for WorkItem {WorkItemId} — will retry next cycle",
                     item.Id);

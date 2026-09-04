@@ -1,10 +1,12 @@
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
-using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
+using Moq;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
@@ -840,11 +842,16 @@ public class QualityGateExecutorEdgeCaseTests
 /// Uses a MeterListener to capture live metric measurements during a real ProceedToQualityGatesAsync
 /// execution — exercises the production call site rather than calling PipelineTelemetry directly.
 /// </summary>
-[Collection("Metrics")]
 public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
 {
-    private readonly MeterListener _listener = new();
-    private readonly System.Collections.Concurrent.ConcurrentBag<string> _instrumentNames = [];
+    private readonly TestMeterFactory _meterFactory = new();
+    private readonly MetricCollector<double> _histogramCollector;
+    private readonly MetricCollector<long> _counterCollector;
+
+    // Compatibility shim — existing test bodies use _instrumentNames.Should().Contain(name)
+    private IEnumerable<string> _instrumentNames =>
+        _histogramCollector.GetMeasurementSnapshot().Select(_ => _histogramCollector.Instrument!.Name)
+            .Concat(_counterCollector.GetMeasurementSnapshot().Select(_ => _counterCollector.Instrument!.Name));
 
     private readonly Mock<IQualityGateValidator> _mockValidator = new();
     private readonly Mock<IAgentProvider> _mockAgent = new();
@@ -859,16 +866,8 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
 
     public QualityGateExecutorPostPrCiTelemetryTests()
     {
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
-        _listener.SetMeasurementEventCallback<double>((instrument, _, _, _) =>
-            _instrumentNames.Add(instrument.Name));
-        _listener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
-            _instrumentNames.Add(instrument.Name));
-        _listener.Start();
+        _histogramCollector = new MetricCollector<double>(_meterFactory, PipelineTelemetry.SourceName, "quality_gate.post_pr_ci.duration");
+        _counterCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "quality_gate.evaluations");
 
         _run = new PipelineRun
         {
@@ -887,12 +886,18 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
             new CiLogWriter(_mockLogger.Object),
             new FeedbackService(_mockLogger.Object),
             _mockLogger.Object,
-            _mockHistoryService.Object);
+            _mockHistoryService.Object,
+            _meterFactory);
 
         SetupDefaultMocks();
     }
 
-    public void Dispose() => _listener.Dispose();
+    public void Dispose()
+    {
+        _histogramCollector.Dispose();
+        _counterCollector.Dispose();
+        _meterFactory.Dispose();
+    }
 
     /// <summary>
     /// Regression test for issue #2220: WaitForPostPrCiAsync must emit into

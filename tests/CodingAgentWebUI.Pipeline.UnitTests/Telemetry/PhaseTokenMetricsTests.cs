@@ -10,7 +10,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
 /// Tests verifying that AccumulateTokenUsage emits a phase tag when provided,
 /// and that the analysis gate outcome counter emits correctly.
 /// </summary>
-[Collection("Metrics")]
 public class PhaseTokenMetricsTests : IDisposable
 {
     private readonly MeterListener _listener = new();

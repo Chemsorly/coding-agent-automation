@@ -90,9 +90,12 @@ public class GitHubActionsPipelineProviderTests
     [Fact]
     public async Task GetRunStatus_FiltersByCommitSha()
     {
+        // The provider passes HeadSha="abc123" to the GitHub API as a server-side filter.
+        // The mock simulates the real API by returning only the matching run (run1).
+        // If the mock returned both runs, the provider would try to list jobs for run2
+        // (which has no stub) and crash — so this test verifies the server-side filter contract.
         var run1 = CreateWorkflowRun(1, "abc123", WorkflowRunStatus.Completed, WorkflowRunConclusion.Success);
-        var run2 = CreateWorkflowRun(2, "def456", WorkflowRunStatus.Completed, WorkflowRunConclusion.Failure);
-        SetupWorkflowRuns(new[] { run1, run2 });
+        SetupWorkflowRuns(new[] { run1 });
         SetupJobs(1, new[] { CreateJob("build", WorkflowJobStatus.Completed, WorkflowJobConclusion.Success) });
 
         var result = await _provider.GetRunStatusAsync("main", "abc123", CancellationToken.None);

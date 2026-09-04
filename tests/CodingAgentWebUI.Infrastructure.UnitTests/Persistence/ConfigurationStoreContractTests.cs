@@ -32,7 +32,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     // ── Pipeline Configuration ──────────────────────────────────────────
 
     [Fact]
-    public async Task PipelineConfig_EmptyStore_ReturnsDefaults()
+    public virtual async Task PipelineConfig_EmptyStore_ReturnsDefaults()
     {
         var store = CreateStore();
 
@@ -615,5 +615,42 @@ public sealed class InMemoryConfigurationStorePropertyInvariantTests
         // Confirm no duplicate was created
         var all = await store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
         all.Count(c => c.Id == id).Should().Be(1, "upsert must not create a duplicate");
+    }
+}
+
+// ── InMemoryConfigurationStore — shared contract runner ─────────────────────
+
+/// <summary>
+/// Runs all <see cref="ConfigurationStoreContractTests"/> against
+/// <see cref="CodingAgentWebUI.TestUtilities.InMemoryConfigurationStore"/>.
+///
+/// InMemoryConfigurationStore is a test double — if it drifts from the IConfigurationStore
+/// interface contract, tests that use it as a substitute for real implementations will
+/// produce false confidence.
+///
+/// The one intentional deviation: empty-store AgentTimeout is 2 minutes (pre-seeded for
+/// test speed), not the 30-minute production default. The base test is overridden below.
+/// </summary>
+public sealed class InMemoryConfigurationStoreContractTests : ConfigurationStoreContractTests
+{
+    protected override IConfigurationStore CreateStore()
+        => new CodingAgentWebUI.TestUtilities.InMemoryConfigurationStore();
+
+    /// <summary>
+    /// InMemoryConfigurationStore is pre-seeded with a 2-minute test timeout rather than
+    /// the 30-minute production default (intentional — see InMemoryConfigurationStoreBehaviorTests).
+    /// All other contract invariants (save/load round-trip, update, delete, kind filtering) hold.
+    /// </summary>
+    [Fact]
+    public override async Task PipelineConfig_EmptyStore_ReturnsDefaults()
+    {
+        var store = CreateStore();
+
+        var config = await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        config.Should().NotBeNull();
+        config.MaxRetries.Should().Be(3);
+        config.AgentTimeout.Should().Be(TimeSpan.FromMinutes(2),
+            "InMemoryConfigurationStore is pre-seeded with a 2-minute test timeout, not the 30-min production default");
     }
 }

@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -759,6 +760,352 @@ public sealed class RunLifecycleManagerJobCleanupTests
         _mockJobCleanup.Verify(
             c => c.TryDeleteJobForRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    private AgentEntry RegisterAgent(string agentId)
+    {
+        return _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = agentId,
+            Hostname = $"host-{agentId}",
+            Labels = DotnetLabels
+        }, $"conn-{agentId}");
+    }
+}
+
+/// <summary>
+/// Tests for error/fallback paths not covered in the main test classes:
+/// - WorkItemFallbackTransition invocation and failure handling
+/// - FailRunAsync job cleanup
+/// - CancelRunAsync history-throws resilience
+/// - CancelRunAsync Review run type routing
+/// - TransitionWorkItemToFailedAsync (public delegating method)
+/// - Label swap fires even when history throws in FailRunAsync
+/// </summary>
+public sealed class RunLifecycleManagerErrorPathTests
+{
+    private static readonly string[] DotnetLabels = ["dotnet"];
+
+    private readonly Mock<ILogger> _mockLogger = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
+    private readonly Mock<IJobCleanupStrategy> _mockJobCleanup = new();
+    private readonly Mock<IWorkItemFallbackTransitionService> _mockFallbackTransition = new();
+    private readonly AgentRegistryService _registry;
+    private readonly OrchestratorRunService _runService;
+    private readonly AgentReservationService _dispatcher;
+    private readonly RunLifecycleManager _sut;
+
+    public RunLifecycleManagerErrorPathTests()
+    {
+        _registry = new AgentRegistryService(_mockLogger.Object);
+        _runService = new OrchestratorRunService(_mockLogger.Object);
+        _dispatcher = new AgentReservationService(_registry, _mockLogger.Object);
+
+        _mockJobCleanup
+            .Setup(c => c.TryDeleteJobForRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockFallbackTransition
+            .Setup(f => f.TryFallbackChainAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<string?>(), It.IsAny<FailureReason?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
+            _runService,
+            _mockHistoryService.Object,
+            _registry,
+            _mockLabelService.Object,
+            _dispatcher,
+            _mockLogger.Object,
+            JobCleanup: _mockJobCleanup.Object,
+            WorkItemFallbackTransition: _mockFallbackTransition.Object));
+    }
+
+    // ── WorkItemFallbackTransition — FailRunAsync path ────────────────────
+
+    [Fact]
+    public async Task FailRunAsync_WithFallbackTransition_CallsTryFallbackChain_WithFailedStatus()
+    {
+        // RunId must be a valid GUID for TransitionWorkItemAsync to proceed
+        var runId = Guid.NewGuid().ToString();
+        var run = CreateRun(runId, PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        await _sut.FailRunAsync(runId, "agent crashed", CancellationToken.None,
+            FailureReason.AgentError);
+
+        _mockFallbackTransition.Verify(f => f.TryFallbackChainAsync(
+            It.Is<Guid>(g => g.ToString() == runId),
+            WorkItemStatus.Failed,
+            "agent crashed",
+            FailureReason.AgentError,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task FailRunAsync_WithFallbackTransition_ReturnsFalse_LogsWarning_DoesNotThrow()
+    {
+        var runId = Guid.NewGuid().ToString();
+        var run = CreateRun(runId, PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        // Transition rejected (item already terminal)
+        _mockFallbackTransition
+            .Setup(f => f.TryFallbackChainAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<string?>(), It.IsAny<FailureReason?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var act = async () => await _sut.FailRunAsync(runId, "reason", CancellationToken.None);
+
+        await act.Should().NotThrowAsync("rejected transition is non-fatal — run cleanup continues");
+
+        // Label swap must still fire despite rejected transition
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Error,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task FailRunAsync_WithFallbackTransition_Throws_LogsWarning_DoesNotPropagate()
+    {
+        var runId = Guid.NewGuid().ToString();
+        var run = CreateRun(runId, PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        _mockFallbackTransition
+            .Setup(f => f.TryFallbackChainAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<string?>(), It.IsAny<FailureReason?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
+
+        var act = async () => await _sut.FailRunAsync(runId, "reason", CancellationToken.None);
+
+        // Non-OCE exception from fallback is swallowed — run cleanup must not abort
+        await act.Should().NotThrowAsync();
+
+        // Label swap must still fire despite fallback exception
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.Error,
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task FailRunAsync_NonGuidRunId_FallbackTransition_Skipped_RunStillProcessed()
+    {
+        // TransitionWorkItemAsync short-circuits when runId is not a valid GUID.
+        // FailRunAsync must still complete: label swap, agent clear, job cleanup.
+        const string nonGuidRunId = "not-a-guid";
+        var run = CreateRun(nonGuidRunId, PipelineRunType.Implementation);
+        run.AgentId = "agent-1";
+        _runService.AddRun(run);
+        RegisterAgent("agent-1");
+
+        await _sut.FailRunAsync(nonGuidRunId, "reason", CancellationToken.None);
+
+        // FallbackTransition NOT called (non-GUID runId skips the DB path)
+        _mockFallbackTransition.Verify(f => f.TryFallbackChainAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Label swap still fires
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Job cleanup still fires
+        _mockJobCleanup.Verify(c => c.TryDeleteJobForRunAsync(
+            It.IsAny<RunId>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── FailRunAsync — job cleanup ────────────────────────────────────────
+
+    [Fact]
+    public async Task FailRunAsync_CallsJobCleanup_WithCorrectRunId()
+    {
+        const string runIdValue = "run-fail-with-cleanup";
+        var run = CreateRun(runIdValue, PipelineRunType.Implementation);
+        _runService.AddRun(run);
+
+        await _sut.FailRunAsync(runIdValue, "timeout", CancellationToken.None);
+
+        _mockJobCleanup.Verify(c => c.TryDeleteJobForRunAsync(
+            It.Is<RunId>(r => r.Value == runIdValue),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── FailRunAsync — label swap fires even when history throws ──────────
+
+    [Fact]
+    public async Task FailRunAsync_WhenHistoryThrows_LabelSwapStillFires()
+    {
+        var run = CreateRun("run-history-fail-label", PipelineRunType.Implementation);
+        run.AgentId = "agent-1";
+        _runService.AddRun(run);
+        RegisterAgent("agent-1");
+
+        _mockHistoryService
+            .Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB write failed"));
+
+        await _sut.FailRunAsync("run-history-fail-label", "reason", CancellationToken.None);
+
+        // Label swap must fire after the history try/catch
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── CancelRunAsync — resilience ───────────────────────────────────────
+
+    [Fact]
+    public async Task CancelRunAsync_WhenHistoryThrows_AgentStillCleared_LabelStillSwapped()
+    {
+        var run = CreateRun("run-cancel-history-err", PipelineRunType.Implementation);
+        run.AgentId = "agent-1";
+        _runService.AddRun(run);
+        RegisterAgent("agent-1");
+
+        _mockHistoryService
+            .Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB write failed"));
+
+        var result = await _sut.CancelRunAsync("run-cancel-history-err", CancellationToken.None);
+
+        // Run still returned
+        result.Should().NotBeNull();
+
+        // Agent cleared despite history exception
+        var agent = _registry.GetByAgentId("agent-1");
+        agent!.ActiveJobId.Should().BeNull();
+        agent.Status.Should().Be(AgentStatus.Idle);
+
+        // Label swap still fires
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Cancelled, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_ReviewRun_SwapsLabelViaRepoProviderAndPullRequestTarget()
+    {
+        var run = CreateRun("run-cancel-review", PipelineRunType.Review);
+        run.AgentId = "agent-1";
+        _runService.AddRun(run);
+        RegisterAgent("agent-1");
+
+        await _sut.CancelRunAsync("run-cancel-review", CancellationToken.None);
+
+        // Review cancelled: label via repo provider + PullRequest target
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "rp-1", "org/repo#1", AgentLabels.Cancelled, LabelTargetKind.PullRequest,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_RunHasNoAgent_LabelStillSwapped()
+    {
+        // Run exists but has no AgentId set — ClearAgentStateAsync should skip without error
+        var run = CreateRun("run-cancel-no-agent", PipelineRunType.Implementation);
+        // run.AgentId is null — not set
+        _runService.AddRun(run);
+
+        var result = await _sut.CancelRunAsync("run-cancel-no-agent", CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.CurrentStep.Should().Be(PipelineStep.Cancelled);
+
+        // Label swap still fires even with no agent to clear
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Cancelled, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_AgentDeregisteredBeforeCleanup_LabelStillSwapped()
+    {
+        // Agent was registered but deregistered between cancel being triggered and cleanup
+        var run = CreateRun("run-cancel-ghost-agent", PipelineRunType.Implementation);
+        run.AgentId = "ghost-agent";
+        _runService.AddRun(run);
+        // Deliberately NOT registering "ghost-agent" — simulates deregistration
+
+        var act = async () => await _sut.CancelRunAsync("run-cancel-ghost-agent", CancellationToken.None);
+
+        await act.Should().NotThrowAsync("missing agent in registry must not abort cancel");
+
+        // Label swap still fires
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Cancelled, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── TransitionWorkItemToFailedAsync (public delegating method) ────────
+
+    [Fact]
+    public async Task TransitionWorkItemToFailedAsync_CallsFallbackChain_WithFailedStatus()
+    {
+        var runId = Guid.NewGuid().ToString();
+
+        await _sut.TransitionWorkItemToFailedAsync(runId, CancellationToken.None,
+            errorMessage: "pipeline step failed", failureReason: FailureReason.QualityGateExhausted);
+
+        _mockFallbackTransition.Verify(f => f.TryFallbackChainAsync(
+            It.Is<Guid>(g => g.ToString() == runId),
+            WorkItemStatus.Failed,
+            "pipeline step failed",
+            FailureReason.QualityGateExhausted,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TransitionWorkItemToFailedAsync_NonGuidRunId_Skipped_DoesNotThrow()
+    {
+        // Non-GUID runId is silently skipped — no exception
+        var act = async () =>
+            await _sut.TransitionWorkItemToFailedAsync("not-a-guid", CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+
+        _mockFallbackTransition.Verify(f => f.TryFallbackChainAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task TransitionWorkItemToFailedAsync_FallbackThrows_DoesNotPropagate()
+    {
+        var runId = Guid.NewGuid().ToString();
+
+        _mockFallbackTransition
+            .Setup(f => f.TryFallbackChainAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<string?>(), It.IsAny<FailureReason?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB error"));
+
+        var act = async () =>
+            await _sut.TransitionWorkItemToFailedAsync(runId, CancellationToken.None);
+
+        await act.Should().NotThrowAsync("non-OCE exception from fallback must be swallowed");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    private static PipelineRun CreateRun(string runId, PipelineRunType runType = PipelineRunType.Implementation)
+    {
+        return new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = runType
+        };
     }
 
     private AgentEntry RegisterAgent(string agentId)

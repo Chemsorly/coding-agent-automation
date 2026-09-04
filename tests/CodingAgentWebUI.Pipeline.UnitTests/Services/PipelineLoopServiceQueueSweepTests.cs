@@ -1,11 +1,10 @@
-using System.Collections.Concurrent;
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Moq;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
@@ -18,35 +17,23 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Tests call <c>SweepPendingWorkItemsAsync</c> directly (it is <c>internal</c>) and also
 /// exercise <c>BuildEligibilityMap</c> (also <c>internal static</c>) in isolation.
 /// </summary>
-/// <remarks>
-/// Metrics assertions use [Collection("Metrics")] to serialize against other metrics tests and
-/// avoid cross-talk on the static <see cref="PipelineTelemetry.Meter"/>.
-/// </remarks>
-[Collection("Metrics")]
 public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
 {
     private readonly Mock<IWorkItemSweepClient> _sweepClientMock = new();
     private readonly Mock<IConfigurationStore> _mockStore = new();
     private readonly Mock<IProviderFactory> _mockFactory = new();
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
-    private readonly MeterListener _listener = new();
-    private readonly ConcurrentBag<(string Name, long Value)> _counters = [];
+    private readonly TestMeterFactory _meterFactory = new();
+    private readonly MetricCollector<long> _cancelledCollector;
+    private readonly MetricCollector<long> _skippedCollector;
+    private readonly MetricCollector<long> _failedCollector;
     private PipelineLoopService? _loopService;
 
     public PipelineLoopServiceQueueSweepTests()
     {
-        // Capture telemetry from the pipeline meter
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
-        {
-            _counters.Add((instrument.Name, measurement));
-        });
-        _listener.Start();
-
+        _cancelledCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.queue_sweep.cancelled");
+        _skippedCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.queue_sweep.skipped");
+        _failedCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.queue_sweep.failed");
         // Logger forward for ForContext calls used inside the service
         _mockLogger
             .Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<bool>()))
@@ -58,7 +45,10 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _listener.Dispose();
+        _cancelledCollector.Dispose();
+        _skippedCollector.Dispose();
+        _failedCollector.Dispose();
+        _meterFactory.Dispose();
         if (_loopService is not null)
         {
             try { await _loopService.StopAsync(CancellationToken.None); } catch { }
@@ -91,7 +81,8 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
             DependencyChecker     = null,
             HousekeepingService   = null,
             LeaderElection        = null,
-            WorkItemClient        = sweepClient
+            WorkItemClient        = sweepClient,
+            MeterFactory          = _meterFactory
         });
         return _loopService;
     }
@@ -123,8 +114,16 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     private static IReadOnlyDictionary<string, HashSet<string>> EmptyEligibilityMap() =>
         new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
 
-    private long CounterValue(string name) =>
-        _counters.Where(c => c.Name == name).Sum(c => c.Value);
+    private long CounterValue(string name)
+    {
+        return name switch
+        {
+            "pipeline.queue_sweep.cancelled" => _cancelledCollector.GetMeasurementSnapshot().Sum(m => m.Value),
+            "pipeline.queue_sweep.skipped" => _skippedCollector.GetMeasurementSnapshot().Sum(m => m.Value),
+            "pipeline.queue_sweep.failed" => _failedCollector.GetMeasurementSnapshot().Sum(m => m.Value),
+            _ => 0
+        };
+    }
 
     // ── BuildEligibilityMap unit tests ────────────────────────────────────────
 
@@ -606,12 +605,17 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     [Fact]
     public void QueueSweepCounters_EmitCorrectMetricNames()
     {
-        PipelineTelemetry.QueueSweepCancelled.Add(1);
-        PipelineTelemetry.QueueSweepSkipped.Add(1);
-        PipelineTelemetry.QueueSweepFailed.Add(1);
+        using var cancelledCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.queue_sweep.cancelled");
+        using var skippedCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.queue_sweep.skipped");
+        using var failedCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.queue_sweep.failed");
 
-        _counters.Should().Contain(c => c.Name == "pipeline.queue_sweep.cancelled");
-        _counters.Should().Contain(c => c.Name == "pipeline.queue_sweep.skipped");
-        _counters.Should().Contain(c => c.Name == "pipeline.queue_sweep.failed");
+        var meter = _meterFactory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
+        meter.CreateCounter<long>("pipeline.queue_sweep.cancelled").Add(1);
+        meter.CreateCounter<long>("pipeline.queue_sweep.skipped").Add(1);
+        meter.CreateCounter<long>("pipeline.queue_sweep.failed").Add(1);
+
+        cancelledCollector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
+        skippedCollector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
+        failedCollector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
     }
 }

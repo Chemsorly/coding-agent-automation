@@ -1,9 +1,9 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
@@ -11,70 +11,42 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// Unit tests for <see cref="PipelineRunInstrumentation"/> verifying that the helper
 /// correctly records metrics and manages activity lifecycle.
 /// </summary>
-[Collection("Metrics")]
 public class PipelineRunInstrumentationTests : IDisposable
 {
-    private readonly MeterListener _listener = new();
-    private readonly ConcurrentBag<(string InstrumentName, double Value, List<KeyValuePair<string, object?>> Tags)> _doubleMeasurements = [];
-    private readonly ConcurrentBag<(string InstrumentName, long Value, List<KeyValuePair<string, object?>> Tags)> _longMeasurements = [];
+    private readonly TestMeterFactory _meterFactory = new();
 
-    public PipelineRunInstrumentationTests()
-    {
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
+    public PipelineRunInstrumentationTests() { }
 
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
-        {
-            var tagList = new List<KeyValuePair<string, object?>>();
-            foreach (var tag in tags)
-                tagList.Add(tag);
-            _longMeasurements.Add((instrument.Name, measurement, tagList));
-        });
+    public void Dispose() => _meterFactory.Dispose();
 
-        _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, state) =>
-        {
-            var tagList = new List<KeyValuePair<string, object?>>();
-            foreach (var tag in tags)
-                tagList.Add(tag);
-            _doubleMeasurements.Add((instrument.Name, measurement, tagList));
-        });
+    private PipelineRunInstrumentation StartRun(
+        string runId = "run-1", string issueIdentifier = "issue-1",
+        PipelineRunType runType = PipelineRunType.Implementation,
+        string? projectId = "proj-1", string? projectName = "My Project",
+        ActivityKind kind = ActivityKind.Internal,
+        ActivityContext parentContext = default)
+        => PipelineRunInstrumentation.Start(runId, issueIdentifier, runType, projectId, projectName, kind, parentContext, _meterFactory);
 
-        _listener.Start();
+    private MetricCollector<long> LongCollector(string instrumentName) =>
+        new(_meterFactory, PipelineTelemetry.SourceName, instrumentName);
 
-        // Warm up static instruments
-        PipelineTelemetry.JobsDispatched.Add(0);
-        PipelineTelemetry.JobsCompleted.Add(0);
-        PipelineTelemetry.JobsFailed.Add(0);
-        PipelineTelemetry.JobDuration.Record(0);
-        PipelineTelemetry.DecompositionDuration.Record(0);
+    private MetricCollector<double> DoubleCollector(string instrumentName) =>
+        new(_meterFactory, PipelineTelemetry.SourceName, instrumentName);
 
-        ClearMeasurements();
-    }
-
-    public void Dispose() => _listener.Dispose();
-
-    private void ClearMeasurements()
-    {
-        _longMeasurements.Clear();
-        _doubleMeasurements.Clear();
-    }
+    // ── Test methods use per-test collectors ─────────────────────────────────
 
     [Fact]
     public void Start_RecordsJobsDispatchedCounter()
     {
-        ClearMeasurements();
+        using var dispatchedCollector = LongCollector("pipeline.jobs.dispatched");
 
-        using var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "My Project");
+        using var instrumentation = StartRun("run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "My Project");
 
-        var dispatched = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.dispatched" && m.Value == 1).ToList();
-        dispatched.Should().HaveCount(1);
-        dispatched[0].Tags.Should().Contain(t => t.Key == "run_type" && (string?)t.Value == "implementation");
-        dispatched[0].Tags.Should().Contain(t => t.Key == "pipeline.project_id" && (string?)t.Value == "proj-1");
-        dispatched[0].Tags.Should().Contain(t => t.Key == "pipeline.project_name" && (string?)t.Value == "My Project");
+        var snapshot = dispatchedCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle(m => m.Value == 1);
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("run_type", "implementation"));
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1"));
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_name", "My Project"));
     }
 
     [Fact]
@@ -127,69 +99,60 @@ public class PipelineRunInstrumentationTests : IDisposable
     [Fact]
     public void Dispose_WithMarkCompleted_RecordsJobsCompleted()
     {
-        ClearMeasurements();
+        using var completedCollector = LongCollector("pipeline.jobs.completed");
+        using var failedCollector = LongCollector("pipeline.jobs.failed");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun();
         instrumentation.MarkCompleted();
         instrumentation.Dispose();
 
-        var completed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.completed" && m.Value == 1).ToList();
-        completed.Should().HaveCount(1);
-
-        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
-        failed.Should().BeEmpty();
+        completedCollector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
+        failedCollector.GetMeasurementSnapshot().Should().BeEmpty();
     }
 
     [Fact]
     public void Dispose_WithoutMarkCompleted_RecordsJobsFailed()
     {
-        ClearMeasurements();
+        using var failedCollector = LongCollector("pipeline.jobs.failed");
+        using var completedCollector = LongCollector("pipeline.jobs.completed");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun();
         instrumentation.Dispose();
 
-        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
-        failed.Should().HaveCount(1);
-        failed[0].Tags.Should().Contain(t => t.Key == "failure_reason" && (string?)t.Value == "unknown");
-
-        var completed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.completed" && m.Value == 1).ToList();
-        completed.Should().BeEmpty();
+        var failedSnapshot = failedCollector.GetMeasurementSnapshot();
+        failedSnapshot.Should().ContainSingle(m => m.Value == 1);
+        failedSnapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("failure_reason", "unknown"));
+        completedCollector.GetMeasurementSnapshot().Should().BeEmpty();
     }
 
     [Fact]
     public void Dispose_RecordsJobDuration()
     {
-        ClearMeasurements();
+        using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun(runType: PipelineRunType.Implementation);
         using var mres1 = new ManualResetEventSlim(false);
         mres1.Wait(10); // Ensure non-zero duration
         instrumentation.Dispose();
 
-        var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
-        duration.Should().HaveCount(1);
-        duration[0].Value.Should().BeGreaterThan(0);
-        duration[0].Tags.Should().Contain(t => t.Key == "run_type" && (string?)t.Value == "implementation");
+        var snapshot = durationCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle();
+        snapshot[0].Value.Should().BeGreaterThan(0);
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("run_type", "implementation"));
     }
 
     [Fact]
     public void Dispose_DoubleDispose_RecordsOnlyOnce()
     {
-        ClearMeasurements();
+        using var failedCollector = LongCollector("pipeline.jobs.failed");
+        using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun();
         instrumentation.Dispose();
         instrumentation.Dispose();
 
-        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
-        failed.Should().HaveCount(1);
-
-        var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
-        duration.Should().HaveCount(1);
+        failedCollector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
+        durationCollector.GetMeasurementSnapshot().Should().ContainSingle();
     }
 
     [Theory]
@@ -197,17 +160,16 @@ public class PipelineRunInstrumentationTests : IDisposable
     [InlineData(PipelineRunType.Decomposition, "creation")]
     public void Dispose_DecompositionRunType_RecordsDecompositionDuration(PipelineRunType runType, string expectedPhase)
     {
-        ClearMeasurements();
+        using var decompositionCollector = DoubleCollector("pipeline.decomposition.duration");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", runType, "proj-1", "Proj");
+        var instrumentation = StartRun(runType: runType, projectId: "proj-1", projectName: "Proj");
         instrumentation.Dispose();
 
-        var decomposition = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.decomposition.duration").ToList();
-        decomposition.Should().HaveCount(1);
-        decomposition[0].Tags.Should().Contain(t => t.Key == "phase" && (string?)t.Value == expectedPhase);
-        decomposition[0].Tags.Should().Contain(t => t.Key == "pipeline.project_id" && (string?)t.Value == "proj-1");
-        decomposition[0].Tags.Should().Contain(t => t.Key == "pipeline.project_name" && (string?)t.Value == "Proj");
+        var snapshot = decompositionCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle();
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("phase", expectedPhase));
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1"));
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_name", "Proj"));
     }
 
     [Theory]
@@ -215,14 +177,12 @@ public class PipelineRunInstrumentationTests : IDisposable
     [InlineData(PipelineRunType.Review)]
     public void Dispose_NonDecompositionRunType_DoesNotRecordDecompositionDuration(PipelineRunType runType)
     {
-        ClearMeasurements();
+        using var decompositionCollector = DoubleCollector("pipeline.decomposition.duration");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", runType, "proj-1", "Proj");
+        var instrumentation = StartRun(runType: runType);
         instrumentation.Dispose();
 
-        var decomposition = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.decomposition.duration").ToList();
-        decomposition.Should().BeEmpty();
+        decompositionCollector.GetMeasurementSnapshot().Should().BeEmpty();
     }
 
     [Fact]
@@ -270,86 +230,73 @@ public class PipelineRunInstrumentationTests : IDisposable
         activity!.Duration.Should().BeGreaterThan(TimeSpan.Zero);
     }
 
-    // TODO: Thread.Sleep-based timing assertions are inherently non-deterministic and could flake under
-    // heavy CI load. The 10ms sleep + BeLessThan(0.05) threshold provides 40ms margin but consider
-    // increasing delays or asserting relative ordering. The unused frozenTime variable suggests an
-    // incomplete assertion that was going to verify something more specific.
     [Fact]
     public void StopTiming_FreezesElapsedDuration()
     {
-        ClearMeasurements();
+        using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun();
         using var mres2 = new ManualResetEventSlim(false);
-        mres2.Wait(10); // Ensure non-zero duration
+        mres2.Wait(10); // Ensure non-zero duration before freeze
         instrumentation.StopTiming();
 
-        var frozenTime = Stopwatch.GetTimestamp();
+        var freezeTimestamp = Stopwatch.GetTimestamp();
         using var mres3 = new ManualResetEventSlim(false);
-        mres3.Wait(500); // Simulate expensive cleanup after StopTiming
+        mres3.Wait(50); // Let at least 50ms pass after freeze
+        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds + 0.010; // +10ms = pre-freeze segment
 
         instrumentation.Dispose();
 
-        var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
-        duration.Should().HaveCount(1);
-        // Duration should be much less than the total elapsed time (should not include the 500ms sleep).
-        // Use a generous threshold (0.5s) to tolerate CI jitter on the initial segment,
-        // while still proving the timer froze (unfrozen would be > 0.5s).
-        duration[0].Value.Should().BeLessThan(0.5);
+        var snapshot = durationCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle();
+        snapshot[0].Value.Should().BeGreaterThan(0, "frozen duration must be non-zero");
+        snapshot[0].Value.Should().BeLessThan(totalElapsedSeconds,
+            "frozen duration must be less than total elapsed time — StopTiming must have frozen the timer");
     }
 
     [Fact]
     public void StopTiming_IsIdempotent()
     {
-        ClearMeasurements();
+        using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun();
         using var mres4 = new ManualResetEventSlim(false);
         mres4.Wait(10); // Ensure non-zero duration before freeze
 
         instrumentation.StopTiming();
-        using var mres5 = new ManualResetEventSlim(false);
-        mres5.Wait(500); // 500ms after freeze point — frozen duration is ~10ms; unfrozen (no-op broken) would be ~510ms
 
-        instrumentation.StopTiming(); // should be no-ops
+        var freezeTimestamp = Stopwatch.GetTimestamp();
+        using var mres5 = new ManualResetEventSlim(false);
+        mres5.Wait(50); // Let at least 50ms pass after freeze
+
+        instrumentation.StopTiming(); // must be no-ops
         instrumentation.StopTiming();
         instrumentation.Dispose();
 
-        var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
-        duration.Should().HaveCount(1);
-        // Lower bound: catches regressions that zero out the duration.
-        // Upper bound (0.3s): frozen path records ~10ms + CI jitter; unfrozen (broken) path would record ~510ms.
-        // The 500ms post-freeze gap ensures a clear 17:1 ratio between the two cases, tolerating heavy CI load.
-        duration[0].Value.Should().BeGreaterThan(0)
-            .And.BeLessThan(0.3,
-                "StopTiming should freeze elapsed time at first call; subsequent calls must not extend it");
+        var totalElapsedSeconds = Stopwatch.GetElapsedTime(freezeTimestamp).TotalSeconds + 0.010;
+
+        var snapshot = durationCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle();
+        snapshot[0].Value.Should().BeGreaterThan(0, "frozen duration must be non-zero")
+            .And.BeLessThan(totalElapsedSeconds,
+                "StopTiming must freeze elapsed time at first call; subsequent calls must not extend it");
     }
 
     [Fact]
     public void MarkCompleted_ThenStopTiming_StillRecordsCorrectStatus()
     {
-        ClearMeasurements();
+        using var completedCollector = LongCollector("pipeline.jobs.completed");
+        using var failedCollector = LongCollector("pipeline.jobs.failed");
+        using var durationCollector = DoubleCollector("pipeline.jobs.duration");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
-
-        // Mirrors actual usage: MarkCompleted() in try block, StopTiming() in finally block
+        var instrumentation = StartRun();
         instrumentation.MarkCompleted();
         instrumentation.StopTiming();
-
         instrumentation.Dispose();
 
-        var completed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.completed" && m.Value == 1).ToList();
-        completed.Should().HaveCount(1);
-
-        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
-        failed.Should().BeEmpty();
-
-        var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
-        duration.Should().HaveCount(1);
-        duration[0].Value.Should().BeGreaterThan(0);
+        completedCollector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
+        failedCollector.GetMeasurementSnapshot().Should().BeEmpty();
+        durationCollector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value > 0);
     }
 
     // ── failure_reason tag tests ─────────────────────────────────────────────
@@ -357,45 +304,42 @@ public class PipelineRunInstrumentationTests : IDisposable
     [Fact]
     public void Dispose_WithoutMarkFailed_RecordsFailureReasonUnknown()
     {
-        ClearMeasurements();
+        using var failedCollector = LongCollector("pipeline.jobs.failed");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun();
         instrumentation.Dispose();
 
-        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
-        failed.Should().HaveCount(1);
-        failed[0].Tags.Should().Contain(t => t.Key == "failure_reason" && (string?)t.Value == "unknown");
+        var snapshot = failedCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle(m => m.Value == 1);
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("failure_reason", "unknown"));
     }
 
     [Fact]
     public void Dispose_WithMarkFailed_KnownReason_RecordsSnakeCaseTag()
     {
-        ClearMeasurements();
+        using var failedCollector = LongCollector("pipeline.jobs.failed");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun();
         instrumentation.MarkFailed(FailureReason.QualityGateExhausted);
         instrumentation.Dispose();
 
-        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
-        failed.Should().HaveCount(1);
-        failed[0].Tags.Should().Contain(t => t.Key == "failure_reason" && (string?)t.Value == "quality_gate_exhausted");
+        var snapshot = failedCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle(m => m.Value == 1);
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("failure_reason", "quality_gate_exhausted"));
     }
 
     [Fact]
     public void Dispose_WithMarkFailed_NullReason_RecordsUnknown()
     {
-        ClearMeasurements();
+        using var failedCollector = LongCollector("pipeline.jobs.failed");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun();
         instrumentation.MarkFailed(null);
         instrumentation.Dispose();
 
-        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
-        failed.Should().HaveCount(1);
-        failed[0].Tags.Should().Contain(t => t.Key == "failure_reason" && (string?)t.Value == "unknown");
+        var snapshot = failedCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle(m => m.Value == 1);
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("failure_reason", "unknown"));
     }
 
     [Theory]
@@ -407,33 +351,30 @@ public class PipelineRunInstrumentationTests : IDisposable
     [InlineData(FailureReason.QualityGateExhausted, "quality_gate_exhausted")]
     public void Dispose_WithMarkFailed_AllReasons_ProduceSnakeCaseTag(FailureReason reason, string expectedTag)
     {
-        ClearMeasurements();
+        using var failedCollector = LongCollector("pipeline.jobs.failed");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun();
         instrumentation.MarkFailed(reason);
         instrumentation.Dispose();
 
-        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
-        failed.Should().HaveCount(1);
-        failed[0].Tags.Should().Contain(t => t.Key == "failure_reason" && (string?)t.Value == expectedTag);
+        var snapshot = failedCollector.GetMeasurementSnapshot();
+        snapshot.Should().ContainSingle(m => m.Value == 1);
+        snapshot[0].Tags.Should().Contain(new KeyValuePair<string, object?>("failure_reason", expectedTag));
     }
 
     [Fact]
     public void Dispose_WithMarkCompleted_DoesNotIncludeFailureReasonTag()
     {
-        ClearMeasurements();
+        using var completedCollector = LongCollector("pipeline.jobs.completed");
+        using var failedCollector = LongCollector("pipeline.jobs.failed");
 
-        var instrumentation = PipelineRunInstrumentation.Start(
-            "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
+        var instrumentation = StartRun();
         instrumentation.MarkCompleted();
         instrumentation.Dispose();
 
-        var completed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.completed" && m.Value == 1).ToList();
-        completed.Should().HaveCount(1);
-        completed[0].Tags.Should().NotContain(t => t.Key == "failure_reason");
-
-        var failed = _longMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.failed" && m.Value == 1).ToList();
-        failed.Should().BeEmpty();
+        var completedSnapshot = completedCollector.GetMeasurementSnapshot();
+        completedSnapshot.Should().ContainSingle(m => m.Value == 1);
+        completedSnapshot[0].Tags.Should().NotContain(t => t.Key == "failure_reason");
+        failedCollector.GetMeasurementSnapshot().Should().BeEmpty();
     }
 }

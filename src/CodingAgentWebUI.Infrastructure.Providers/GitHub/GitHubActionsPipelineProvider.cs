@@ -70,15 +70,18 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     {
         ArgumentNullException.ThrowIfNull(branchName);
 
-        var request = new WorkflowRunsRequest { Branch = branchName };
+        // Pass head_sha as a server-side filter when a specific SHA is requested.
+        // Previously this was a client-side Where() on the default page of results (30 runs),
+        // which caused the SHA to become invisible once enough re-trigger commits pushed it off
+        // the first page — making every subsequent poll return Pending even though CI had run.
+        var request = commitSha != null
+            ? new WorkflowRunsRequest { Branch = branchName, HeadSha = commitSha }
+            : new WorkflowRunsRequest { Branch = branchName };
         var runs = await ExecuteWithResilienceAsync(
             client => client.Actions.Workflows.Runs.List(Owner, Repo, request),
             "GetRunStatus.ListRuns", ct);
 
-        // Filter by commit SHA if provided
-        var matchingRuns = commitSha != null
-            ? runs.WorkflowRuns.Where(r => r.HeadSha == commitSha).ToList()
-            : runs.WorkflowRuns.ToList();
+        var matchingRuns = runs.WorkflowRuns.ToList();
 
         if (matchingRuns.Count == 0)
         {

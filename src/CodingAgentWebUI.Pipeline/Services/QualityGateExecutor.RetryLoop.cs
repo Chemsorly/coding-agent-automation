@@ -69,7 +69,7 @@ public partial class QualityGateExecutor
         }
         finally
         {
-            PipelineTelemetry.QualityGateDuration.Record(
+            _qualityGateDuration.Record(
                 qgStopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
         }
@@ -214,7 +214,7 @@ public partial class QualityGateExecutor
                 // ExternalCiDuration (which is recorded in AppendExternalCiIfNeededAsync for the
                 // pre-PR CI pass). Using a distinct metric avoids inflating pre-PR p50/p99 with
                 // post-PR observations and makes the per-phase time budget observable in Grafana.
-                PipelineTelemetry.PostPrCiDuration.Record(
+                _postPrCiDuration.Record(
                     ciPollStopwatch.Elapsed.TotalSeconds,
                     PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
 
@@ -267,8 +267,8 @@ public partial class QualityGateExecutor
             // incrementing the step count. For long CI waits (potentially hours) a cancellation mid-poll
             // produces an unrealistically short sample that will distort p50/p99 histogram aggregations.
             // Consider guarding with: if (!ct.IsCancellationRequested) { ... Record/Add ... }
-            PipelineTelemetry.StepDuration.Record(waitSw.Elapsed.TotalSeconds, stepTags);
-            PipelineTelemetry.StepCount.Add(1, stepTags);
+            _stepDuration.Record(waitSw.Elapsed.TotalSeconds, stepTags);
+            _stepCount.Add(1, stepTags);
         }
 
         return new QualityGateReport
@@ -422,7 +422,7 @@ public partial class QualityGateExecutor
         {
             run.RetryCount++;
             // NOTE: Consider using BuildTags (run_type + project_id + project_name) for dimensional consistency with duration metrics
-            PipelineTelemetry.QualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
+            _qualityGateRetries.Add(1, PipelineTelemetry.RunTypeTag(run.RunType));
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
 
@@ -591,9 +591,9 @@ public partial class QualityGateExecutor
         if (report.ExternalCi is not null)
             EmitGateEvaluation(PipelineTelemetry.QualityGateNames.ExternalCi, report.ExternalCi.Passed);
 
-        static void EmitGateEvaluation(string gateName, bool passed)
+        void EmitGateEvaluation(string gateName, bool passed)
         {
-            PipelineTelemetry.QualityGateEvaluations.Add(1,
+            _qualityGateEvaluations.Add(1,
                 new("gate_name", gateName), new("result", passed ? "pass" : "fail"));
         }
     }

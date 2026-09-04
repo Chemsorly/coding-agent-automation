@@ -1,98 +1,97 @@
-using System.Collections.Concurrent;
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Moq;
-using CodingAgentWebUI.Pipeline.Interfaces;
-using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
 
-[Collection("Metrics")]
 public class StepMetricsTests : IDisposable
 {
-    private readonly MeterListener _listener = new();
-    private readonly ConcurrentBag<(string Name, double Value, KeyValuePair<string, object?>[] Tags)> _histograms = [];
-    private readonly ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> _counters = [];
+    private readonly TestMeterFactory _factory = new();
 
-    public StepMetricsTests()
-    {
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
+    public void Dispose() => _factory.Dispose();
 
-        _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, state) =>
-        {
-            _histograms.Add((instrument.Name, measurement, tags.ToArray()));
-        });
-
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) =>
-        {
-            _counters.Add((instrument.Name, measurement, tags.ToArray()));
-        });
-
-        _listener.Start();
-    }
-
-    public void Dispose() => _listener.Dispose();
+    private System.Diagnostics.Metrics.Meter CreateMeter() =>
+        _factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
 
     [Fact]
     public async Task PipelineStepRunner_EmitsStepDurationAndCount()
     {
+        var meter = CreateMeter();
+        using var histCollector = new MetricCollector<double>(_factory, PipelineTelemetry.SourceName, "pipeline.step.duration");
+        using var countCollector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "pipeline.step.count");
+
         var step = new FakeStep("TestStep", StepResult.Continue);
         var context = BuildContext();
 
-        await PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None);
+        await PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None, meter);
 
-        _histograms.Should().Contain(h => h.Name == "pipeline.step.duration"
-            && h.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
-        var hist = _histograms.First(h => h.Name == "pipeline.step.duration"
-            && h.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
+        histCollector.GetMeasurementSnapshot().Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
+        var hist = histCollector.GetMeasurementSnapshot().First(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
         hist.Value.Should().BeGreaterThanOrEqualTo(0);
 
-        _counters.Should().Contain(c => c.Name == "pipeline.step.count"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
-        var counter = _counters.First(c => c.Name == "pipeline.step.count"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
-        counter.Value.Should().Be(1);
+        countCollector.GetMeasurementSnapshot().Should().Contain(m =>
+            m.Value == 1 && m.Tags.Contains(new KeyValuePair<string, object?>("step_name", "TestStep")));
     }
 
     [Fact]
     public async Task PipelineStepRunner_EmitsMetricsOnStop()
     {
+        var meter = CreateMeter();
+        using var histCollector = new MetricCollector<double>(_factory, PipelineTelemetry.SourceName, "pipeline.step.duration");
+        using var countCollector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "pipeline.step.count");
+
         var step = new FakeStep("StopStep", StepResult.Stop);
         var context = BuildContext();
 
-        await PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None);
+        await PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None, meter);
 
-        _histograms.Should().Contain(h => h.Name == "pipeline.step.duration"
-            && h.Tags.Contains(new KeyValuePair<string, object?>("step_name", "StopStep")));
-        _counters.Should().Contain(c => c.Name == "pipeline.step.count"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("step_name", "StopStep")));
+        histCollector.GetMeasurementSnapshot().Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("step_name", "StopStep")));
+        countCollector.GetMeasurementSnapshot().Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("step_name", "StopStep")));
     }
 
     [Fact]
     public async Task PipelineStepRunner_EmitsMetricsOnException()
     {
+        var meter = CreateMeter();
+        using var histCollector = new MetricCollector<double>(_factory, PipelineTelemetry.SourceName, "pipeline.step.duration");
+        using var countCollector = new MetricCollector<long>(_factory, PipelineTelemetry.SourceName, "pipeline.step.count");
+
         var step = new ThrowingStep("FailStep");
         var context = BuildContext();
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None));
+            () => PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None, meter));
 
-        _histograms.Should().Contain(h => h.Name == "pipeline.step.duration"
-            && h.Tags.Contains(new KeyValuePair<string, object?>("step_name", "FailStep")));
-        _counters.Should().Contain(c => c.Name == "pipeline.step.count"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("step_name", "FailStep")));
+        histCollector.GetMeasurementSnapshot().Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("step_name", "FailStep")));
+        countCollector.GetMeasurementSnapshot().Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("step_name", "FailStep")));
     }
 
     [Fact]
     public void AccumulateTokenUsage_EmitsTokensUsedCounter()
     {
+        // AccumulateTokenUsage calls the static PipelineTelemetry counters — assert with MeterListener
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        var counters = new System.Collections.Concurrent.ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)>();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName) l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
+            counters.Add((instrument.Name, measurement, tags.ToArray())));
+        listener.Start();
+
         var run = CreateRun(PipelineRunType.Implementation, "proj-1", "TestProj");
         var result = new AgentResult
         {
@@ -102,9 +101,9 @@ public class StepMetricsTests : IDisposable
         };
 
         run.AccumulateTokenUsage(result);
+        listener.Dispose();
 
-        // Filter by tags to isolate from parallel test classes sharing the static Meter
-        var counter = _counters.Should().Contain(c => c.Name == "agent.tokens.used"
+        var counter = counters.Should().Contain(c => c.Name == "agent.tokens.used"
             && c.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1")))
             .Which;
         counter.Value.Should().Be(150);
@@ -115,26 +114,64 @@ public class StepMetricsTests : IDisposable
     [Fact]
     public void AccumulateTokenUsage_NullResult_DoesNotEmit()
     {
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        var counters = new System.Collections.Concurrent.ConcurrentBag<string>();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName) l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
+        {
+            if (tags.ToArray().Contains(new KeyValuePair<string, object?>("pipeline.project_id", "null-result-test")))
+                counters.Add(instrument.Name);
+        });
+        listener.Start();
+
         var run = CreateRun(projectId: "null-result-test");
         run.AccumulateTokenUsage(null);
-        _counters.Should().NotContain(c => c.Name == "agent.tokens.used"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "null-result-test")));
+        listener.Dispose();
+
+        counters.Should().NotContain("agent.tokens.used");
     }
 
     [Fact]
     public void AccumulateTokenUsage_NullUsage_DoesNotEmit()
     {
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        var counters = new System.Collections.Concurrent.ConcurrentBag<string>();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName) l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
+        {
+            if (tags.ToArray().Contains(new KeyValuePair<string, object?>("pipeline.project_id", "null-usage-test")))
+                counters.Add(instrument.Name);
+        });
+        listener.Start();
+
         var run = CreateRun(projectId: "null-usage-test");
         var result = new AgentResult { ExitCode = 0, OutputLines = [], Usage = null };
         run.AccumulateTokenUsage(result);
-        _counters.Should().NotContain(c => c.Name == "agent.tokens.used"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "null-usage-test")));
+        listener.Dispose();
+
+        counters.Should().NotContain("agent.tokens.used");
     }
 
     [Fact]
     public void AccumulateTokenUsage_WithCost_EmitsCostUsdCounter()
     {
-        var run = CreateRun(PipelineRunType.Implementation, "proj-1", "TestProj");
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        var histograms = new System.Collections.Concurrent.ConcurrentBag<(string Name, double Value, KeyValuePair<string, object?>[] Tags)>();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName) l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
+            histograms.Add((instrument.Name, measurement, tags.ToArray())));
+        listener.Start();
+
+        var run = CreateRun(PipelineRunType.Implementation, "proj-cost-1", "TestProj");
         var result = new AgentResult
         {
             ExitCode = 0,
@@ -144,10 +181,10 @@ public class StepMetricsTests : IDisposable
         };
 
         run.AccumulateTokenUsage(result);
+        listener.Dispose();
 
-        // Counter<double> measurements route to _histograms via SetMeasurementEventCallback<double>
-        var metric = _histograms.Should().Contain(h => h.Name == "agent.cost.usd"
-            && h.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1")))
+        var metric = histograms.Should().Contain(h => h.Name == "agent.cost.usd"
+            && h.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "proj-cost-1")))
             .Which;
         metric.Value.Should().Be(0.05);
         metric.Tags.Should().Contain(new KeyValuePair<string, object?>("run_type", "implementation"));
@@ -157,6 +194,19 @@ public class StepMetricsTests : IDisposable
     [Fact]
     public void AccumulateTokenUsage_NullCost_DoesNotEmitCostUsd()
     {
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        var histograms = new System.Collections.Concurrent.ConcurrentBag<string>();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName) l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((instrument, _, tags, _) =>
+        {
+            if (tags.ToArray().Contains(new KeyValuePair<string, object?>("pipeline.project_id", "null-cost-test")))
+                histograms.Add(instrument.Name);
+        });
+        listener.Start();
+
         var run = CreateRun(PipelineRunType.Implementation, "null-cost-test", "TestProj");
         var result = new AgentResult
         {
@@ -167,9 +217,9 @@ public class StepMetricsTests : IDisposable
         };
 
         run.AccumulateTokenUsage(result);
+        listener.Dispose();
 
-        _histograms.Should().NotContain(h => h.Name == "agent.cost.usd"
-            && h.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "null-cost-test")));
+        histograms.Should().NotContain("agent.cost.usd");
     }
 
     [Fact]

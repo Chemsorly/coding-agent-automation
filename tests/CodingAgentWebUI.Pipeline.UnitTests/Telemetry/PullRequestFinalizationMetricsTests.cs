@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Moq;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
@@ -15,52 +16,40 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
 /// including on failure paths (proving the finally-block fires) and verifying
 /// that draft / no-PR-number paths correctly suppress metric emission for skipped phases.
 /// </summary>
-[Collection("Metrics")]
 public class PullRequestFinalizationMetricsTests : IDisposable
 {
-    private readonly MeterListener _listener = new();
-    private readonly ConcurrentBag<(string Name, double Value, KeyValuePair<string, object?>[] Tags)> _histograms = [];
-    private readonly ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> _counters = [];
-
-    // TODO: _histograms and _counters listen on the process-wide PipelineTelemetry meter. xUnit
-    // creates a new class instance per test so there is no inter-test sharing within this class, but
-    // the MeterListener is active for the lifetime of each instance and captures all measurements
-    // emitted by any code on any thread while the listener is alive. [Collection("Metrics")]
-    // serialises tests within this class but does not isolate them from other [Collection("Metrics")]
-    // classes. Positive Contain assertions are robust to extra measurements, but the
-    // RunFullPrCreationAsync_CreatePullRequestMetric_DoesNotSubsumeSubPhases test builds
-    // capturedStepNames from the whole bag — if a prior test in the same collection emitted a
-    // "GeneratePrDescription" measurement, the capturedStepNames.Contain assertion may pass even if
-    // RunPostPrSequenceAsync failed to emit it in the current test. This is a tautology risk: consider
-    // snapshotting the bag size before the act step and filtering to entries added after that point.
+    private readonly TestMeterFactory _meterFactory = new();
+    private readonly MetricCollector<double> _histogramCollector;
+    private readonly MetricCollector<long> _counterCollector;
 
     private readonly Mock<Serilog.ILogger> _logger = new();
     private readonly PullRequestFinalizationService _sut;
 
+    // Compatibility shims — expose collected measurements in the same shape the existing
+    // assertion code expects, avoiding a mass-rewrite of every test body.
+    private IReadOnlyList<(string Name, double Value, KeyValuePair<string, object?>[] Tags)> _histograms =>
+        _histogramCollector.GetMeasurementSnapshot()
+            .Select(m => (_histogramCollector.Instrument!.Name, m.Value, m.Tags.ToArray()))
+            .ToList();
+
+    private IReadOnlyList<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> _counters =>
+        _counterCollector.GetMeasurementSnapshot()
+            .Select(m => (_counterCollector.Instrument!.Name, m.Value, m.Tags.ToArray()))
+            .ToList();
+
     public PullRequestFinalizationMetricsTests()
     {
-        _sut = new PullRequestFinalizationService(_logger.Object);
-
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
-
-        _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
-        {
-            _histograms.Add((instrument.Name, measurement, tags.ToArray()));
-        });
-
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
-        {
-            _counters.Add((instrument.Name, measurement, tags.ToArray()));
-        });
-
-        _listener.Start();
+        _histogramCollector = new MetricCollector<double>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.step.duration");
+        _counterCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.step.count");
+        _sut = new PullRequestFinalizationService(_logger.Object, _meterFactory);
     }
 
-    public void Dispose() => _listener.Dispose();
+    public void Dispose()
+    {
+        _histogramCollector.Dispose();
+        _counterCollector.Dispose();
+        _meterFactory.Dispose();
+    }
 
     private static PipelineRun CreateRun() => new()
     {

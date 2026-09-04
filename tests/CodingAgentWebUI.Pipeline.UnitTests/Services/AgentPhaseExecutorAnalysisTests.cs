@@ -1,12 +1,12 @@
-using System.Collections.Concurrent;
-using System.Diagnostics.Metrics;
 using System.Text.Json;
 using AwesomeAssertions;
-using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
+using Moq;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
@@ -14,11 +14,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// Isolated unit tests for <see cref="AgentPhaseExecutor.ExecuteAnalysisPhaseAsync"/>.
 /// Tests warm-up, prompt dispatch, retry logic, confidence gate assessment, and the existing-analysis skip path.
 /// </summary>
-/// <remarks>
-/// This class is in <see cref="Collection"/>("Metrics") to prevent concurrent <see cref="MeterListener"/>
-/// contention with other metric tests that listen on the same static <see cref="PipelineTelemetry.Meter"/>.
-/// </remarks>
-[Collection("Metrics")]
 public class AgentPhaseExecutorAnalysisTests : IDisposable
 {
     private readonly Mock<IAgentProvider> _mockAgent;
@@ -30,9 +25,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     private readonly AgentPhaseExecutor _executor;
     private readonly string _workspacePath;
 
-    // MeterListener for metric-assertion tests
-    private readonly MeterListener _meterListener = new();
-    private readonly ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> _counters = [];
+    private readonly TestMeterFactory _meterFactory = new();
 
     public AgentPhaseExecutorAnalysisTests()
     {
@@ -63,7 +56,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             AnalysisReviewEnabled = false
         };
 
-        _executor = new AgentPhaseExecutor(_mockLogger.Object);
+        _executor = new AgentPhaseExecutor(_mockLogger.Object, _meterFactory);
 
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
@@ -73,23 +66,11 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             .Returns(Task.CompletedTask);
         _mockIssueOps.Setup(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-
-        // Wire up the MeterListener to capture all long-valued counters from the pipeline meter
-        _meterListener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
-        _meterListener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
-        {
-            _counters.Add((instrument.Name, measurement, tags.ToArray()));
-        });
-        _meterListener.Start();
     }
 
     public void Dispose()
     {
-        _meterListener.Dispose();
+        _meterFactory.Dispose();
         try { Directory.Delete(_workspacePath, recursive: true); } catch { }
     }
 
@@ -488,42 +469,42 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     {
         // not_ready recommendation with no blocking issues — unambiguously exercises the not_ready path
         SetupAgentWithValidAnalysis("not_ready");
+        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.analysis.gate_outcome");
 
         var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeFalse();
         _run.AnalysisRecommendation.Should().Be(AnalysisGateResult.NotReady);
-        _counters.Should().Contain(c =>
-            c.Name == "pipeline.analysis.gate_outcome"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("outcome", "not_ready")));
+        collector.GetMeasurementSnapshot().Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "not_ready")));
     }
 
     [Fact]
     public async Task EvaluateAnalysisGate_WontDoAssessment_EmitsWontDoMetric()
     {
         SetupAgentWithValidAnalysis("wont_do");
+        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.analysis.gate_outcome");
 
         var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeFalse();
         _run.AnalysisRecommendation.Should().Be(AnalysisGateResult.WontDo);
-        _counters.Should().Contain(c =>
-            c.Name == "pipeline.analysis.gate_outcome"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("outcome", "wont_do")));
+        collector.GetMeasurementSnapshot().Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "wont_do")));
     }
 
     [Fact]
     public async Task EvaluateAnalysisGate_ReadyAssessment_EmitsReadyMetricAndReturnsTrue()
     {
         SetupAgentWithValidAnalysis("ready");
+        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.analysis.gate_outcome");
 
         var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeTrue();
         _run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
-        _counters.Should().Contain(c =>
-            c.Name == "pipeline.analysis.gate_outcome"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("outcome", "ready")));
+        collector.GetMeasurementSnapshot().Should().Contain(m =>
+            m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "ready")));
     }
 
     private AgentPhaseContext BuildContext()

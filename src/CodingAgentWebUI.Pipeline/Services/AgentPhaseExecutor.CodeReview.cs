@@ -101,7 +101,7 @@ public partial class AgentPhaseExecutor
                 "Pipeline {RunId} no reviewer configurations matched — review phase skipped (no configs or all disabled). " +
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
                 run.RunId);
-            PipelineTelemetry.ReviewSkipped.Add(1,
+            _reviewSkipped.Add(1,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
             return;
         }

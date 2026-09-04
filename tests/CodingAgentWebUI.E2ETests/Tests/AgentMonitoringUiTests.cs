@@ -96,34 +96,34 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         var issueItem = Page.Locator("[data-testid='issue-item']").First;
         var dispatchBtn = issueItem.Locator("button:has-text('Dispatch')");
 
-        if (await dispatchBtn.CountAsync() > 0)
-        {
-            await dispatchBtn.ClickAsync();
-            await Page.WaitForTimeoutAsync(2000);
+        // Assert the dispatch button is present — fail loudly if seeding or template setup failed.
+        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 10_000 });
 
-            // Agent receives job
-            var job = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await dispatchBtn.ClickAsync();
+        await Page.WaitForTimeoutAsync(2000);
 
-            // Report step transitions
-            await agent.AcceptJobAsync(job.JobId);
-            await agent.ReportStepAsync(job.JobId, PipelineStep.CloningRepository);
-            await agent.ReportStepAsync(job.JobId, PipelineStep.GeneratingCode,
-                new Dictionary<string, string> { ["BranchName"] = "feature/ui-test" });
+        // Agent receives job
+        var job = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
-            // Wait for the server to reflect the active run, then open its detail page.
-            var runService = Fixture.RunService;
-            await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "UI-200"));
-            var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "UI-200").RunId;
+        // Report step transitions
+        await agent.AcceptJobAsync(job.JobId);
+        await agent.ReportStepAsync(job.JobId, PipelineStep.CloningRepository);
+        await agent.ReportStepAsync(job.JobId, PipelineStep.GeneratingCode,
+            new Dictionary<string, string> { ["BranchName"] = "feature/ui-test" });
 
-            var detail = new RunDetailPage(Page, BaseUrl);
-            await detail.NavigateAsync(runId);
+        // Wait for the server to reflect the active run, then open its detail page.
+        var runService = Fixture.RunService;
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "UI-200"));
+        var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "UI-200").RunId;
 
-            // Assert: run progress is visible on the detail page (issue id or a live step name).
-            var bodyText = await detail.GetPageTextAsync();
-            Assert.True(
-                bodyText?.Contains("UI-200") == true || bodyText?.Contains("Generating") == true || bodyText?.Contains("Cloning") == true,
-                "Run progress should be visible on the run detail page during active execution");
-        }
+        var detail = new RunDetailPage(Page, BaseUrl);
+        await detail.NavigateAsync(runId);
+
+        // Assert: run progress is visible on the detail page (issue id or a live step name).
+        var bodyText = await detail.GetPageTextAsync();
+        Assert.True(
+            bodyText?.Contains("UI-200") == true || bodyText?.Contains("Generating") == true || bodyText?.Contains("Cloning") == true,
+            "Run progress should be visible on the run detail page during active execution");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -147,30 +147,30 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         var issueItem = Page.Locator("[data-testid='issue-item']").First;
         var dispatchBtn = issueItem.Locator("button:has-text('Dispatch')");
 
-        if (await dispatchBtn.CountAsync() > 0)
-        {
-            await dispatchBtn.ClickAsync();
-            await Page.WaitForTimeoutAsync(2000);
+        // Assert the dispatch button is present — fail loudly if seeding or template setup failed.
+        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 10_000 });
 
-            // Agent completes the job
-            var job = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await agent.AcceptAndCompleteJobAsync(job.JobId);
+        await dispatchBtn.ClickAsync();
+        await Page.WaitForTimeoutAsync(2000);
 
-            // Wait for history to update
-            await WaitForHistoryAsync(
-                r => r.IssueIdentifier == "UI-300" && r.FinalStep == PipelineStep.Completed,
-                TimeSpan.FromSeconds(15));
+        // Agent completes the job
+        var job = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await agent.AcceptAndCompleteJobAsync(job.JobId);
 
-            // Navigate to the Runs history page and confirm the completed run is listed.
-            await Page.GotoAsync($"{BaseUrl}/runs");
-            await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-            await Page.WaitForTimeoutAsync(2000);
+        // Wait for history to update
+        await WaitForHistoryAsync(
+            r => r.IssueIdentifier == "UI-300" && r.FinalStep == PipelineStep.Completed,
+            TimeSpan.FromSeconds(15));
 
-            var bodyText = await Page.TextContentAsync("body");
-            Assert.True(
-                bodyText?.Contains("UI-300") == true,
-                "Completed run should appear on the Runs history page");
-        }
+        // Navigate to the Runs history page and confirm the completed run is listed.
+        await Page.GotoAsync($"{BaseUrl}/runs");
+        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
+        await Page.WaitForTimeoutAsync(2000);
+
+        var bodyText = await Page.TextContentAsync("body");
+        Assert.True(
+            bodyText?.Contains("UI-300") == true,
+            "Completed run should appear on the Runs history page");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -195,16 +195,16 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
         var issueItem = Page.Locator("[data-testid='issue-item']").First;
         var dispatchBtn = issueItem.Locator("button:has-text('Dispatch')");
 
-        if (await dispatchBtn.CountAsync() > 0)
-        {
-            await dispatchBtn.ClickAsync();
-            await Page.WaitForTimeoutAsync(2000);
+        // Assert the dispatch button is present — fail loudly if seeding or template setup failed.
+        await Assertions.Expect(dispatchBtn).ToBeVisibleAsync(new() { Timeout = 10_000 });
 
-            // Assert: success feedback message appears (toast or inline)
-            var bodyText = await Page.TextContentAsync("body");
-            Assert.True(
-                bodyText?.Contains("Dispatched") == true || bodyText?.Contains("✅") == true,
-                "Dispatch success feedback should appear in the UI");
-        }
+        await dispatchBtn.ClickAsync();
+        await Page.WaitForTimeoutAsync(2000);
+
+        // Assert: success feedback message appears (toast or inline)
+        var bodyText = await Page.TextContentAsync("body");
+        Assert.True(
+            bodyText?.Contains("Dispatched") == true || bodyText?.Contains("✅") == true,
+            "Dispatch success feedback should appear in the UI");
     }
 }

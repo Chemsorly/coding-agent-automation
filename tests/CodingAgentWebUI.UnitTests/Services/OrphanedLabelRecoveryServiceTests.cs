@@ -113,14 +113,25 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(r => r.IsIssueBeingProcessed("42", "provider-1"))
             .Returns(true);
 
-        // Act: start service, wait for sweep to complete (no swap expected)
+        // Gate on the IsIssueBeingProcessed call — fires when the sweep has reached this check,
+        // meaning it is deterministically past any point where a swap could be triggered.
+        var sweepReachedCheck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockRunService
+            .Setup(r => r.IsIssueBeingProcessed("42", "provider-1"))
+            .Returns(true)
+            .Callback(() => sweepReachedCheck.TrySetResult());
+
+        // Act: start service, wait for the sweep to reach the IsIssueBeingProcessed check
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
 
-        // Wait long enough for the grace period + sweep to run
-        await Task.Delay(TimeSpan.FromSeconds(2));
+        var completed = await Task.WhenAny(sweepReachedCheck.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().BeSameAs(sweepReachedCheck.Task, "sweep must reach the IsIssueBeingProcessed check");
 
-        // Assert: SwapLabelAsync was NOT called
+        // Brief yield so any async continuations after the check complete
+        await Task.Yield();
+
+        // Assert: SwapLabelAsync was NOT called — active run was skipped
         _mockLabelService.Verify(
             l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
@@ -233,10 +244,23 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
             .Returns(false);
 
-        // Act: start and wait past grace period
+        // Gate: GetAllTemplatesAsync is always called at the start of each sweep.
+        // When it returns (empty), the sweep is complete — no providers will be scanned.
+        var sweepCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockConfigClient
+            .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineJobTemplate>())
+            .Callback(() => sweepCompleted.TrySetResult());
+
+        // Act: start and wait for the sweep to complete
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
-        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var completed = await Task.WhenAny(sweepCompleted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().BeSameAs(sweepCompleted.Task, "sweep must complete after grace period");
+
+        // Brief yield so any async continuations after GetAllTemplatesAsync complete
+        await Task.Yield();
 
         // Assert: no provider scans attempted
         _mockConfigClient.Verify(
@@ -507,17 +531,22 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(r => r.IsIssueBeingProcessed("1635", "provider-1"))
             .Returns(false);
 
-        // But it completed recently (within 120s grace period)
+        // Gate: WasRecentlyCompleted is called during the sweep — fires when sweep has evaluated this issue
+        var sweepCheckedRecent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockRunService
             .Setup(r => r.WasRecentlyCompleted("1635", "provider-1"))
-            .Returns(true);
+            .Returns(true)
+            .Callback(() => sweepCheckedRecent.TrySetResult());
 
-        // Act: start the service and wait for sweep to complete
+        // Act: start the service and wait for sweep to reach the recent-completion check
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
 
-        // Wait long enough for the grace period + sweep to run
-        await Task.Delay(TimeSpan.FromSeconds(2));
+        var completed = await Task.WhenAny(sweepCheckedRecent.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().BeSameAs(sweepCheckedRecent.Task, "sweep must reach the WasRecentlyCompleted check");
+
+        // Brief yield so async continuations after the check complete
+        await Task.Yield();
 
         // Assert: SwapLabelAsync was NOT called — grace period protected the issue
         _mockLabelService.Verify(
@@ -552,15 +581,22 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(r => r.WasRecentlyCompleted("2087", "provider-1"))
             .Returns(false);
 
-        // Defense 3: API confirms a non-terminal WorkItem exists — issue is NOT orphaned
+        // Gate: IsIssueDistributedAsync is the Defense 3 check — fires when sweep evaluated this issue
+        var defense3Checked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockWorkItemClient
             .Setup(w => w.IsIssueDistributedAsync("2087", "provider-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .ReturnsAsync(true)
+            .Callback(() => defense3Checked.TrySetResult());
 
         // Act
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
-        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var completed = await Task.WhenAny(defense3Checked.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().BeSameAs(defense3Checked.Task, "sweep must reach the IsIssueDistributedAsync check");
+
+        // Brief yield so async continuations after the check complete
+        await Task.Yield();
 
         // Assert: SwapLabelAsync was NOT called — live WorkItem blocked the false-positive
         _mockLabelService.Verify(
@@ -595,15 +631,22 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(r => r.WasRecentlyCompleted("2087", "provider-1"))
             .Returns(false);
 
-        // Defense 3 fails — API unreachable
+        // Gate: Defense 3 throws — fires when sweep has attempted the API check
+        var defense3Attempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockWorkItemClient
             .Setup(w => w.IsIssueDistributedAsync("2087", "provider-1", It.IsAny<CancellationToken>()))
+            .Callback(() => defense3Attempted.TrySetResult())
             .ThrowsAsync(new HttpRequestException("API unreachable"));
 
         // Act
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
-        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        var completed = await Task.WhenAny(defense3Attempted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().BeSameAs(defense3Attempted.Task, "sweep must attempt the IsIssueDistributedAsync check");
+
+        // Brief yield so the exception-handling async continuations after the throw complete
+        await Task.Yield();
 
         // Assert: SwapLabelAsync was NOT called — fail-safe skips on API error
         _mockLabelService.Verify(

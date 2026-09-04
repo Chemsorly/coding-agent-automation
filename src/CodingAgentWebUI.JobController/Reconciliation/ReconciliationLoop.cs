@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using k8s.Models;
 using Serilog;
+using System.Diagnostics.Metrics;
 
 namespace CodingAgentWebUI.JobController.Reconciliation;
 
@@ -53,6 +54,9 @@ public sealed class ReconciliationLoop
     // Consider replacing with a ConcurrentDictionary<Guid, byte> or adding a lock if the public
     // surface of OnLeadershipAcquired is ever called from a different thread than ReconcileOnceAsync.
     private readonly HashSet<Guid> _reconciledTerminalIds = new();
+    private readonly Histogram<double> _timeoutExecutionAge;
+    private readonly Counter<long> _timeoutCanaryViolations;
+    private readonly Counter<long> _agentTimeouts;
 
     /// <summary>
     /// Called by <see cref="ReconciliationService"/> when this instance becomes the leader.
@@ -64,7 +68,9 @@ public sealed class ReconciliationLoop
     public ReconciliationLoop(
         IPipelineApiWorkItemClient workItemClient,
         IKubernetesJobClient k8sClient,
-        DispatchServiceOptions options)
+        DispatchServiceOptions options,
+        IMeterFactory? pipelineMeterFactory = null,
+        IMeterFactory? workDistMeterFactory = null)
     {
         ArgumentNullException.ThrowIfNull(workItemClient);
         ArgumentNullException.ThrowIfNull(k8sClient);
@@ -72,6 +78,24 @@ public sealed class ReconciliationLoop
         _workItemClient = workItemClient;
         _k8sClient = k8sClient;
         _options = options;
+
+        if (workDistMeterFactory is not null)
+        {
+            var meter = workDistMeterFactory.Create(new MeterOptions(WorkDistributionTelemetry.MeterName));
+            _timeoutExecutionAge = meter.CreateHistogram<double>("workdistribution.timeout_execution_age_seconds", "s",
+                "Execution age at timeout enforcement — canary for anchor correctness",
+                advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
+            _timeoutCanaryViolations = meter.CreateCounter<long>("workdistribution.timeout_canary_violations", "{violation}",
+                "Timeout enforcement blocked by canary invariant — indicates timestamp bug");
+            _agentTimeouts = meter.CreateCounter<long>("workdistribution.agent_timeouts", "{job}",
+                "Agent jobs killed by session timeout enforcer");
+        }
+        else
+        {
+            _timeoutExecutionAge = WorkDistributionTelemetry.TimeoutExecutionAge;
+            _timeoutCanaryViolations = WorkDistributionTelemetry.TimeoutCanaryViolations;
+            _agentTimeouts = WorkDistributionTelemetry.AgentTimeouts;
+        }
     }
 
     /// <summary>
@@ -164,7 +188,7 @@ public sealed class ReconciliationLoop
                 ? (DateTimeOffset.UtcNow - item.DispatchedAt.Value).TotalSeconds
                 : effectiveTimeoutSeconds;
 
-            WorkDistributionTelemetry.TimeoutExecutionAge.Record(executionAgeSeconds,
+            _timeoutExecutionAge.Record(executionAgeSeconds,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
 
             // Canary guard: if age is suspiciously low the timeout anchor is wrong (INV-001).
@@ -173,7 +197,7 @@ public sealed class ReconciliationLoop
             {
                 Log.Warning("WorkItem {Id} timeout canary violation: execution age {AgeSeconds:F1}s < {MinAge}s — skipping enforcement",
                     item.Id, executionAgeSeconds, TimeoutCanaryMinAgeSeconds);
-                WorkDistributionTelemetry.TimeoutCanaryViolations.Add(1,
+                _timeoutCanaryViolations.Add(1,
                     new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
                 continue;
             }
@@ -219,7 +243,7 @@ public sealed class ReconciliationLoop
                     duration: null, agentId: jobName,
                     failureReason: FailureReason.Timeout);
 
-                WorkDistributionTelemetry.AgentTimeouts.Add(1,
+                _agentTimeouts.Add(1,
                     new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
 
                 await SafeDeleteJobAsync(jobName, ct);

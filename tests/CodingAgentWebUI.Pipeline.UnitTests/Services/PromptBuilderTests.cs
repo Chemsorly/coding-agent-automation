@@ -978,8 +978,6 @@ public class PromptBuilderTests
         result.Should().NotContain("ACCURACY OVER THOROUGHNESS:");
     }
 
-    // TODO: Convert to [Theory]/[InlineData] — the test name communicates which prompt failed
-    // when using [InlineData], avoiding a debugger re-run for diagnosis.
     [Theory]
     [InlineData(nameof(DefaultPrompts.CodeReview))]
     [InlineData(nameof(DefaultPrompts.CorrectnessReview))]
