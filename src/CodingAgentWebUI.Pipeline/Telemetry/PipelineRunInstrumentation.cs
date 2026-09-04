@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -34,9 +35,18 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
     private bool _disposed;
     private FailureReason? _failureReason;
 
+    // Instrument references — either the static PipelineTelemetry fields or factory-created instances
+    private readonly Counter<long> _jobsDispatched;
+    private readonly Counter<long> _jobsCompleted;
+    private readonly Counter<long> _jobsFailed;
+    private readonly Histogram<double> _jobDuration;
+    private readonly Histogram<double> _decompositionDuration;
+
     private PipelineRunInstrumentation(
         Activity? activity, TagList tags,
-        PipelineRunType runType, string? projectId, string? projectName)
+        PipelineRunType runType, string? projectId, string? projectName,
+        Counter<long> jobsDispatched, Counter<long> jobsCompleted, Counter<long> jobsFailed,
+        Histogram<double> jobDuration, Histogram<double> decompositionDuration)
     {
         Activity = activity;
         _tags = tags;
@@ -44,7 +54,12 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
         _projectId = projectId;
         _projectName = projectName;
         _stopwatch = Stopwatch.StartNew();
-        PipelineTelemetry.JobsDispatched.Add(1, tags);
+        _jobsDispatched = jobsDispatched;
+        _jobsCompleted = jobsCompleted;
+        _jobsFailed = jobsFailed;
+        _jobDuration = jobDuration;
+        _decompositionDuration = decompositionDuration;
+        _jobsDispatched.Add(1, tags);
     }
 
     /// <summary>
@@ -58,11 +73,13 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
     /// <param name="projectName">The project name (set as <c>pipeline.project_name</c> tag).</param>
     /// <param name="kind">The <see cref="ActivityKind"/> for the activity. Defaults to <see cref="ActivityKind.Internal"/>.</param>
     /// <param name="parentContext">Optional parent <see cref="ActivityContext"/> for trace propagation.</param>
+    /// <param name="meterFactory">Optional meter factory. When provided, instruments are created from an isolated meter instead of the static <see cref="PipelineTelemetry"/> fields.</param>
     public static PipelineRunInstrumentation Start(
         string runId, string issueIdentifier,
         PipelineRunType runType, string? projectId, string? projectName,
         ActivityKind kind = ActivityKind.Internal,
-        ActivityContext parentContext = default)
+        ActivityContext parentContext = default,
+        IMeterFactory? meterFactory = null)
     {
         var activity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline", kind, parentContext);
         activity?.SetTag("pipeline.run_id", runId);
@@ -70,7 +87,31 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
         activity?.SetTag("pipeline.run_type", runType.ToString());
         PipelineTelemetry.SetProjectTags(activity, projectId, projectName);
         var tags = PipelineTelemetry.BuildTags(runType, projectId, projectName);
-        return new PipelineRunInstrumentation(activity, tags, runType, projectId, projectName);
+
+        Counter<long> jobsDispatched, jobsCompleted, jobsFailed;
+        Histogram<double> jobDuration, decompositionDuration;
+
+        if (meterFactory is not null)
+        {
+            var meter = meterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
+            jobsDispatched = meter.CreateCounter<long>("pipeline.jobs.dispatched");
+            jobsCompleted = meter.CreateCounter<long>("pipeline.jobs.completed");
+            jobsFailed = meter.CreateCounter<long>("pipeline.jobs.failed");
+            jobDuration = meter.CreateHistogram<double>("pipeline.jobs.duration", "s", "Duration of pipeline jobs in seconds",
+                new InstrumentAdvice<double> { HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
+            decompositionDuration = meter.CreateHistogram<double>("pipeline.decomposition.duration", "s", "Duration of decomposition phases in seconds");
+        }
+        else
+        {
+            jobsDispatched = PipelineTelemetry.JobsDispatched;
+            jobsCompleted = PipelineTelemetry.JobsCompleted;
+            jobsFailed = PipelineTelemetry.JobsFailed;
+            jobDuration = PipelineTelemetry.JobDuration;
+            decompositionDuration = PipelineTelemetry.DecompositionDuration;
+        }
+
+        return new PipelineRunInstrumentation(activity, tags, runType, projectId, projectName,
+            jobsDispatched, jobsCompleted, jobsFailed, jobDuration, decompositionDuration);
     }
 
     /// <summary>
@@ -106,7 +147,7 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
         _disposed = true;
 
         _stopwatch.Stop();
-        PipelineTelemetry.JobDuration.Record(_stopwatch.Elapsed.TotalSeconds, _tags);
+        _jobDuration.Record(_stopwatch.Elapsed.TotalSeconds, _tags);
 
         if (_runType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
         {
@@ -115,14 +156,14 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
             // DecompositionDuration is therefore always emitted from the agent side — the correct
             // emission path. No caller-provided flag is needed.
             var phase = _runType == PipelineRunType.DecompositionAnalysis ? "analysis" : "creation";
-            PipelineTelemetry.DecompositionDuration.Record(_stopwatch.Elapsed.TotalSeconds,
+            _decompositionDuration.Record(_stopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.ProjectIdTag(_projectId),
                 PipelineTelemetry.ProjectNameTag(_projectName),
                 new KeyValuePair<string, object?>("phase", phase));
         }
 
         if (_completed)
-            PipelineTelemetry.JobsCompleted.Add(1, _tags);
+            _jobsCompleted.Add(1, _tags);
         else
         {
             var tagValue = _failureReason.HasValue
@@ -135,7 +176,7 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
             // so this is safe. Do not add 6 or more standard tags without revisiting this copy strategy.
             var failureTags = _tags;
             failureTags.Add(new KeyValuePair<string, object?>("failure_reason", tagValue));
-            PipelineTelemetry.JobsFailed.Add(1, failureTags);
+            _jobsFailed.Add(1, failureTags);
         }
 
         Activity?.Dispose();

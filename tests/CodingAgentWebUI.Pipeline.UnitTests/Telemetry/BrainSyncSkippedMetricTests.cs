@@ -1,10 +1,10 @@
-using System.Collections.Concurrent;
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Moq;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
@@ -12,40 +12,20 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Telemetry;
 /// <summary>
 /// Unit tests verifying that <c>brain.sync.skipped</c> is emitted with the correct reason tag
 /// whenever the post-run brain sync gate in <see cref="PullRequestFinalizationService.RunPostPrSequenceAsync"/>
-/// is skipped. These tests address the CRITICAL finding that post-run brain metrics were always absent
-/// in Prometheus: <c>brain.sync.skipped</c> now fires on every finalized run where the sync is skipped,
-/// making the skip reason diagnosable without Loki queries.
+/// is skipped.
 /// </summary>
-[Collection("Metrics")]
 public class BrainSyncSkippedMetricTests : IDisposable
 {
     private readonly PullRequestFinalizationService _sut;
     private readonly Mock<Serilog.ILogger> _logger = new();
-    private readonly MeterListener _listener = new();
-    private ConcurrentBag<(string Name, KeyValuePair<string, object?>[] Tags)> _measurements = [];
+    private readonly TestMeterFactory _meterFactory = new();
 
     public BrainSyncSkippedMetricTests()
     {
-        _sut = new PullRequestFinalizationService(_logger.Object);
-
-        _listener.InstrumentPublished = (instrument, listener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                listener.EnableMeasurementEvents(instrument);
-        };
-        _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
-        {
-            _measurements.Add((instrument.Name, tags.ToArray()));
-        });
-        _listener.Start();
-
-        // Warm-up: reference the instrument before any test emits, in case the static counter
-        // was published before Start() and InstrumentPublished won't fire retroactively.
-        PipelineTelemetry.BrainSyncSkipped.Add(0);
-        _measurements = [];
+        _sut = new PullRequestFinalizationService(_logger.Object, _meterFactory);
     }
 
-    public void Dispose() => _listener.Dispose();
+    public void Dispose() => _meterFactory.Dispose();
 
     private static PipelineRun CreateRun() => new()
     {
@@ -98,14 +78,13 @@ public class BrainSyncSkippedMetricTests : IDisposable
         var run = CreateRun();
         var brainProvider = new Mock<IRepositoryProvider>().Object;
         var brainSync = new Mock<IBrainSyncService>().Object;
+        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "brain.sync.skipped");
 
-        _measurements = [];
         await _sut.RunPostPrSequenceAsync(
             BuildRequest(run, isDraft: true, brainProvider, brainSync),
             CancellationToken.None);
 
-        _measurements.Should().Contain(m =>
-            m.Name == "brain.sync.skipped" &&
+        collector.GetMeasurementSnapshot().Should().Contain(m =>
             m.Tags.Contains(new KeyValuePair<string, object?>("reason", "is_draft")));
     }
 
@@ -114,14 +93,13 @@ public class BrainSyncSkippedMetricTests : IDisposable
     {
         var run = CreateRun();
         var brainSync = new Mock<IBrainSyncService>().Object;
+        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "brain.sync.skipped");
 
-        _measurements = [];
         await _sut.RunPostPrSequenceAsync(
             BuildRequest(run, isDraft: false, brainProvider: null, brainSync),
             CancellationToken.None);
 
-        _measurements.Should().Contain(m =>
-            m.Name == "brain.sync.skipped" &&
+        collector.GetMeasurementSnapshot().Should().Contain(m =>
             m.Tags.Contains(new KeyValuePair<string, object?>("reason", "no_provider")));
     }
 
@@ -130,14 +108,13 @@ public class BrainSyncSkippedMetricTests : IDisposable
     {
         var run = CreateRun();
         var brainProvider = new Mock<IRepositoryProvider>().Object;
+        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "brain.sync.skipped");
 
-        _measurements = [];
         await _sut.RunPostPrSequenceAsync(
             BuildRequest(run, isDraft: false, brainProvider, brainSync: null),
             CancellationToken.None);
 
-        _measurements.Should().Contain(m =>
-            m.Name == "brain.sync.skipped" &&
+        collector.GetMeasurementSnapshot().Should().Contain(m =>
             m.Tags.Contains(new KeyValuePair<string, object?>("reason", "no_sync_service")));
     }
 
@@ -147,14 +124,13 @@ public class BrainSyncSkippedMetricTests : IDisposable
         var run = CreateRun();
         var brainProvider = new Mock<IRepositoryProvider>().Object;
         var brainSync = new Mock<IBrainSyncService>().Object;
+        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "brain.sync.skipped");
 
-        _measurements = [];
         await _sut.RunPostPrSequenceAsync(
             BuildRequest(run, isDraft: false, brainProvider, brainSync, brainReadOnly: true),
             CancellationToken.None);
 
-        _measurements.Should().Contain(m =>
-            m.Name == "brain.sync.skipped" &&
+        collector.GetMeasurementSnapshot().Should().Contain(m =>
             m.Tags.Contains(new KeyValuePair<string, object?>("reason", "read_only")));
     }
 
@@ -171,12 +147,12 @@ public class BrainSyncSkippedMetricTests : IDisposable
                 It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Action<string>>(), It.IsAny<int>()))
             .Returns(Task.CompletedTask);
+        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "brain.sync.skipped");
 
-        _measurements = [];
         await _sut.RunPostPrSequenceAsync(
             BuildRequest(run, isDraft: false, brainProvider, brainSync.Object),
             CancellationToken.None);
 
-        _measurements.Should().NotContain(m => m.Name == "brain.sync.skipped");
+        collector.GetMeasurementSnapshot().Should().BeEmpty();
     }
 }

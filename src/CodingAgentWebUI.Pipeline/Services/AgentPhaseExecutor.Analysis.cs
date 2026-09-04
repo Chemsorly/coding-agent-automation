@@ -370,7 +370,7 @@ public partial class AgentPhaseExecutor
         run.AnalysisBlockingIssues = assessment?.BlockingIssues ?? Array.Empty<string>();
 
         if (run.AnalysisRecommendation is not null)
-            PipelineTelemetry.RecordAnalysisGateOutcome(run.AnalysisRecommendation.Value, run);
+            RecordAnalysisGateOutcome(run.AnalysisRecommendation.Value, run);
 
         // isNotReady is checked first: non-empty blockingIssues forces not_ready regardless of recommendation
         var isNotReady = assessment != null && (

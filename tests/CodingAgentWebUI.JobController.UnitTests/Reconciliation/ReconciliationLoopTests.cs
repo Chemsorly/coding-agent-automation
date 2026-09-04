@@ -3,7 +3,9 @@ using CodingAgentWebUI.JobController.Dispatch;
 using CodingAgentWebUI.JobController.Reconciliation;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Telemetry;
+using CodingAgentWebUI.TestUtilities;
 using k8s.Models;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 
@@ -1391,25 +1393,26 @@ public sealed class ReconciliationLoopErrorTests
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────
 // These tests use MeterListener directly (IDisposable).
-// [Collection("Metrics")] serializes all instances of this class so that stray recordings
-// from sibling test instances do not contaminate snapshot-delta assertions. The static
-// WorkDistributionTelemetry.Meter and PipelineTelemetry.Meter are process-wide: any active
-// listener receives recordings from all concurrent callers, regardless of test instance.
+// The static WorkDistributionTelemetry.Meter and PipelineTelemetry.Meter are process-wide.
+// ReconciliationLoop tests now use TestMeterFactory for isolated instrument capture.
+// LogTerminalStatus tests still use MeterListener against static meters since that method
+// calls static PipelineTelemetry/WorkDistributionTelemetry instruments directly.
 
-[Collection("Metrics")]
 public sealed class ReconciliationLoopMetricTests : IDisposable
 {
     private readonly Mock<IPipelineApiWorkItemClient> _workItemClient = new();
     private readonly Mock<IKubernetesJobClient> _k8sClient = new();
     private readonly DispatchServiceOptions _options;
 
+    private readonly TestMeterFactory _workDistFactory = new();
+    private readonly TestMeterFactory _pipelineFactory = new();
+
     private readonly MeterListener _listener = new();
 
-    // WorkDistribution meter recordings: (InstrumentName, DoubleValue, LongValue, AgentSelector)
+    // WorkDistribution meter recordings (for LogTerminalStatus static calls): (InstrumentName, DoubleValue, LongValue, AgentSelector)
     private readonly ConcurrentBag<(string InstrumentName, double DoubleValue, long LongValue, string? AgentSelector)> _recordings = [];
 
-    // Pipeline meter recordings — separate bags for counters and histograms to avoid
-    // needing a union type. Tags are captured as a materialized list for assertion.
+    // Pipeline meter recordings — for LogTerminalStatus static calls
     private readonly ConcurrentBag<(string InstrumentName, long Value, List<KeyValuePair<string, object?>> Tags)> _pipelineCounters = [];
     private readonly ConcurrentBag<(string InstrumentName, double Value, List<KeyValuePair<string, object?>> Tags)> _pipelineHistograms = [];
 
@@ -1430,7 +1433,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
 
-        // Enable all instruments on both the WorkDistribution and Pipeline meters
+        // Enable static meters for LogTerminalStatus tests
         _listener.InstrumentPublished = (instrument, listener) =>
         {
             if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName ||
@@ -1438,7 +1441,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 listener.EnableMeasurementEvents(instrument);
         };
 
-        // Capture Histogram<double> recordings — routed by meter name
+        // Capture Histogram<double> recordings
         _listener.SetMeasurementEventCallback<double>((instrument, measurement, tags, _) =>
         {
             if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName)
@@ -1458,7 +1461,7 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             }
         });
 
-        // Capture Counter<long> recordings — routed by meter name
+        // Capture Counter<long> recordings
         _listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
         {
             if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName)
@@ -1481,10 +1484,17 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
         _listener.Start();
     }
 
-    public void Dispose() => _listener.Dispose();
+    public void Dispose()
+    {
+        _listener.Dispose();
+        _workDistFactory.Dispose();
+        _pipelineFactory.Dispose();
+    }
 
     private ReconciliationLoop CreateLoop() =>
-        new(_workItemClient.Object, _k8sClient.Object, _options);
+        new(_workItemClient.Object, _k8sClient.Object, _options,
+            pipelineMeterFactory: _pipelineFactory,
+            workDistMeterFactory: _workDistFactory);
 
     // ─── AC: DispatchedAt = UtcNow - 30s → enforcement skipped, canary incremented ──
 
@@ -1506,6 +1516,9 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([item]);
 
+        using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
+        using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
+
         // Act
         var loop = CreateLoop();
         await loop.EnforceTimeoutsAsync(CancellationToken.None);
@@ -1517,22 +1530,13 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // Assert — canary counter incremented with correct tag
-        _recordings.Should().Contain(
-            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
-                 && r.LongValue == 1L
-                 && r.AgentSelector == "test",
+        canaryCollector.GetMeasurementSnapshot().Should().Contain(
+            m => m.Value == 1L && m.Tags.Contains(new KeyValuePair<string, object?>("agent_selector", "test")),
             "timeout_canary_violations must be incremented by 1 with agent_selector=test");
 
-        // Assert — execution age histogram recorded (≈ 30s; window tolerates clock jitter)
-        // TODO: The lower bound >= 25.0 gives only a 5s tolerance against wall-clock jitter between
-        // UtcNow.AddSeconds(-30) in Arrange and the UtcNow call inside EnforceTimeoutsAsync. On a
-        // heavily loaded CI agent with >5s thread preemption this assertion could fail spuriously.
-        // Consider lowering the bound (e.g. >= 20.0) or using a time-frozen anchor to eliminate the
-        // flakiness surface. (Correctness review warning)
-        _recordings.Should().Contain(
-            r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
-                 && r.DoubleValue >= 25.0 && r.DoubleValue < 60.0
-                 && r.AgentSelector == "test",
+        // Assert — execution age histogram recorded (≈ 30s)
+        ageCollector.GetMeasurementSnapshot().Should().Contain(
+            m => m.Value >= 25.0 && m.Value < 60.0 && m.Tags.Contains(new KeyValuePair<string, object?>("agent_selector", "test")),
             "timeout_execution_age_seconds must record ≈ 30s for a 30s-old work item");
     }
 
@@ -1561,10 +1565,8 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        // Snapshot canary count before act to tolerate stray recordings from parallel tests
-        var canaryCountBefore = _recordings.Count(
-            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
-                 && r.AgentSelector == "test");
+        using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
+        using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
 
         // Act
         var loop = CreateLoop();
@@ -1576,22 +1578,13 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
             It.IsAny<CancellationToken>()), Times.Once);
 
-        // Assert — canary counter NOT incremented (snapshot delta)
-        var canaryCountAfter = _recordings.Count(
-            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
-                 && r.AgentSelector == "test");
-        canaryCountAfter.Should().Be(canaryCountBefore,
+        // Assert — canary counter NOT incremented
+        canaryCollector.GetMeasurementSnapshot().Should().BeEmpty(
             "timeout_canary_violations must not be incremented when execution age >= 60s");
 
         // Assert — execution age histogram recorded (≈ 7200s)
-        // TODO: This Contain assertion does not verify the recording happened exactly once for this
-        // item. If a future refactor moves or duplicates the Record(...) call, this would still pass.
-        // Consider adding a count assertion (e.g. count of matching entries == 1 via snapshot-delta)
-        // to confirm the item was recorded exactly once before enforcement. (TestQuality review warning)
-        _recordings.Should().Contain(
-            r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
-                 && r.DoubleValue >= 3600.0
-                 && r.AgentSelector == "test",
+        ageCollector.GetMeasurementSnapshot().Should().Contain(
+            m => m.Value >= 3600.0 && m.Tags.Contains(new KeyValuePair<string, object?>("agent_selector", "test")),
             "timeout_execution_age_seconds must record ≈ 7200s");
     }
 
@@ -1602,10 +1595,6 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     {
         // Arrange
         var id = Guid.NewGuid();
-        // TODO: Replace magic number 1800 with (int)PipelineConstants.DefaultAgentTimeout.TotalSeconds
-        // so a change to DefaultAgentTimeout causes this test to fail rather than silently pass
-        // with an item age and expected value both derived from the same stale literal.
-        // (TestQualityReviewer review [WARNING] @ ReconciliationLoopMetricTests.cs:1411)
         const int itemTimeoutSeconds = 1800; // global default
         var item = new ActiveWorkItemDto
         {
@@ -1626,10 +1615,8 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
                 It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        // Snapshot canary count before act
-        var canaryCountBefore = _recordings.Count(
-            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
-                 && r.AgentSelector == "test");
+        using var canaryCollector = new MetricCollector<long>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_canary_violations");
+        using var ageCollector = new MetricCollector<double>(_workDistFactory, WorkDistributionTelemetry.MeterName, "workdistribution.timeout_execution_age_seconds");
 
         // Act
         var loop = CreateLoop();
@@ -1641,22 +1628,14 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
             It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"),
             It.IsAny<CancellationToken>()), Times.Once);
 
-        // Assert — canary counter NOT incremented (snapshot delta)
-        var canaryCountAfter = _recordings.Count(
-            r => r.InstrumentName == "workdistribution.timeout_canary_violations"
-                 && r.AgentSelector == "test");
-        canaryCountAfter.Should().Be(canaryCountBefore,
+        // Assert — canary counter NOT incremented
+        canaryCollector.GetMeasurementSnapshot().Should().BeEmpty(
             "timeout_canary_violations must not be incremented when DispatchedAt is null (falls back to full timeout age)");
 
-        // Assert — execution age histogram recorded with exact fallback value (1800.0 = global default, not clock-based)
-        // TODO: This Contain assertion does not bound the number of matching recordings. Using
-        // Should().ContainSingle(...) would make the intent explicit and catch loop-iteration bugs
-        // where Record(...) is called multiple times for the same item. (TestQuality review warning)
-        _recordings.Should().Contain(
-            r => r.InstrumentName == "workdistribution.timeout_execution_age_seconds"
-                 && r.DoubleValue == (double)itemTimeoutSeconds
-                 && r.AgentSelector == "test",
-            $"timeout_execution_age_seconds must record exactly {itemTimeoutSeconds}s for null DispatchedAt (falls back to effective timeout)");
+        // Assert — execution age histogram recorded with exact fallback value
+        ageCollector.GetMeasurementSnapshot().Should().Contain(
+            m => m.Value == (double)itemTimeoutSeconds && m.Tags.Contains(new KeyValuePair<string, object?>("agent_selector", "test")),
+            $"timeout_execution_age_seconds must record exactly {itemTimeoutSeconds}s for null DispatchedAt");
     }
 
     // ─── pipeline.jobs.* emission tests (Issue #2256) ────────────────────────────

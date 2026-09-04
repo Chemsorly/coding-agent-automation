@@ -76,7 +76,7 @@ public partial class QualityGateExecutor
             var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
 
             // TODO: Duration includes infrastructure retry wait times — consider recording per-attempt duration for better histogram granularity
-            PipelineTelemetry.ExternalCiDuration.Record(
+            _externalCiDuration.Record(
                 ciPollStopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
 

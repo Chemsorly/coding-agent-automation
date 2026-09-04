@@ -20,7 +20,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// 2. Renaming <see cref="PipelineTelemetry.SourceName"/> without updating the agent Program.cs.
 /// 3. Accidentally creating new quality gate instruments on a different meter.
 /// </summary>
-[Collection("Metrics")]
 public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
 {
     private readonly MeterListener _listener = new();

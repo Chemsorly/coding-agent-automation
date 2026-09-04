@@ -14,6 +14,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Moq" />
     <PackageReference Include="xunit" />
@@ -32,6 +33,7 @@
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Kubernetes\CodingAgentWebUI.Kubernetes.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Api.Client\CodingAgentWebUI.Api.Client.csproj" />
+    <ProjectReference Include="..\CodingAgentWebUI.TestUtilities\CodingAgentWebUI.TestUtilities.csproj" />
   </ItemGroup>
 
 </Project>

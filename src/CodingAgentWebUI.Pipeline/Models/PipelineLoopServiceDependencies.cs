@@ -35,4 +35,11 @@ public sealed record PipelineLoopServiceDependencies
     /// is skipped — safe default for environments that do not run the sweep (e.g. test environments).
     /// </summary>
     public IWorkItemSweepClient? WorkItemClient { get; init; }
+
+    /// <summary>
+    /// Optional meter factory for isolated metric instrumentation (test environments).
+    /// When non-null, queue sweep instruments are created from this factory instead of using the
+    /// shared static <see cref="CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry"/> counters.
+    /// </summary>
+    public System.Diagnostics.Metrics.IMeterFactory? MeterFactory { get; init; }
 }
